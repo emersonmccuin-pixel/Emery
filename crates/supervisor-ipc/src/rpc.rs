@@ -56,10 +56,7 @@ impl SupervisorRpc {
 
         match self.dispatch(method, request.params) {
             Ok(result) => ResponseEnvelope::success(request.request_id, result),
-            Err(error) => ResponseEnvelope::error(
-                request.request_id,
-                classify_error(error),
-            ),
+            Err(error) => ResponseEnvelope::error(request.request_id, classify_error(error)),
         }
     }
 
@@ -67,31 +64,41 @@ impl SupervisorRpc {
         match method {
             Method::SystemHello => Ok(serde_json::to_value(self.system_hello()?)?),
             Method::SystemHealth => Ok(self.system_health()?),
-            Method::SystemBootstrapState => Ok(serde_json::to_value(self.system_bootstrap_state()?)?),
+            Method::SystemBootstrapState => {
+                Ok(serde_json::to_value(self.system_bootstrap_state()?)?)
+            }
             Method::ProjectList => Ok(serde_json::to_value(self.supervisor.list_projects()?)?),
             Method::ProjectGet => {
                 let params: ProjectGetParams = serde_json::from_value(params)?;
                 let project = self
                     .supervisor
                     .get_project(&params.project_id)?
-                    .ok_or_else(|| anyhow::anyhow!("project {} was not found", params.project_id))?;
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("project {} was not found", params.project_id)
+                    })?;
                 Ok(serde_json::to_value(project)?)
             }
             Method::SessionList => {
                 let filter: SessionListFilter = serde_json::from_value(params)?;
-                Ok(serde_json::to_value(self.supervisor.list_sessions(filter)?)?)
+                Ok(serde_json::to_value(
+                    self.supervisor.list_sessions(filter)?,
+                )?)
             }
             Method::SessionGet => {
                 let params: SessionGetParams = serde_json::from_value(params)?;
                 let session = self
                     .supervisor
                     .get_session(&params.session_id)?
-                    .ok_or_else(|| anyhow::anyhow!("session {} was not found", params.session_id))?;
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("session {} was not found", params.session_id)
+                    })?;
                 Ok(serde_json::to_value(session)?)
             }
             Method::SessionCreate => {
                 let request: CreateSessionRequest = serde_json::from_value(params)?;
-                Ok(serde_json::to_value(self.supervisor.create_session(request)?)?)
+                Ok(serde_json::to_value(
+                    self.supervisor.create_session(request)?,
+                )?)
             }
         }
     }
@@ -156,6 +163,11 @@ fn classify_error(error: anyhow::Error) -> ErrorBody {
         }
     } else if message.contains("does not belong to project") {
         "invalid_request"
+    } else if message.contains("failed to create session artifact directory")
+        || message.contains("failed to initialize")
+        || message.contains("failed to write")
+    {
+        "artifact_io_failure"
     } else if error.downcast_ref::<serde_json::Error>().is_some() {
         "invalid_request"
     } else {
