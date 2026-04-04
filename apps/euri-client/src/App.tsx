@@ -5,7 +5,11 @@ import {
   bootstrapShell,
   connectionLabel,
   detachSession,
+  getDocument,
+  getWorkItem,
   interruptSession,
+  listDocuments,
+  listWorkItems,
   saveWorkspace,
   sendSessionInput,
   terminateSession,
@@ -13,21 +17,41 @@ import {
 } from "./lib";
 import type {
   ConnectionStatusEvent,
+  DocumentDetail,
+  DocumentSummary,
   SessionAttachResponse,
   SessionOutputEvent,
   SessionStateChangedEvent,
   SessionSummary,
   ShellBootstrap,
+  WorkItemDetail,
+  WorkItemSummary,
   WorkspacePayload,
   WorkspaceResource,
 } from "./types";
+import { DocumentPane, WorkItemPane, documentPreview } from "./workbench";
 
-function resourceLabel(resource: WorkspaceResource, sessions: SessionSummary[], projectName?: string) {
+function resourceLabel(
+  resource: WorkspaceResource,
+  sessions: SessionSummary[],
+  workItems: Record<string, WorkItemDetail>,
+  documents: Record<string, DocumentDetail>,
+  projectName?: string,
+) {
   if (resource.resource_type === "project_home") {
     return projectName ? `${projectName}` : "Project";
   }
-  const session = sessions.find((entry) => entry.id === resource.session_id);
-  return session?.title ?? session?.current_mode ?? "Session";
+  if (resource.resource_type === "session_terminal") {
+    const session = sessions.find((entry) => entry.id === resource.session_id);
+    return session?.title ?? session?.current_mode ?? "Session";
+  }
+  if (resource.resource_type === "work_item_detail") {
+    return workItems[resource.work_item_id]?.callsign ?? "Work item";
+  }
+  if (resource.resource_type === "document_detail") {
+    return documents[resource.document_id]?.title ?? "Document";
+  }
+  return "Resource";
 }
 
 function decodeBase64Utf8(base64: string): string {
@@ -57,7 +81,7 @@ function sessionTone(session: Pick<SessionSummary, "runtime_state" | "activity_s
 
 function buildWorkspacePayload(
   selectedProjectId: string | null,
-  leftPanel: "projects" | "sessions",
+  leftPanel: WorkspacePayload["left_panel"],
   openResources: WorkspaceResource[],
   activeResourceId: string | null,
 ): WorkspacePayload {
@@ -74,16 +98,77 @@ export default function App() {
   const [bootstrap, setBootstrap] = useState<ShellBootstrap | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [leftPanel, setLeftPanel] = useState<"projects" | "sessions">("projects");
+  const [leftPanel, setLeftPanel] = useState<WorkspacePayload["left_panel"]>("projects");
   const [openResources, setOpenResources] = useState<WorkspaceResource[]>([]);
   const [activeResourceId, setActiveResourceId] = useState<string | null>(null);
   const [attachedSessions, setAttachedSessions] = useState<Record<string, SessionAttachResponse>>({});
   const [terminalOutput, setTerminalOutput] = useState<Record<string, string>>({});
   const [terminalInput, setTerminalInput] = useState<Record<string, string>>({});
+  const [workItemsByProject, setWorkItemsByProject] = useState<Record<string, WorkItemSummary[]>>({});
+  const [documentsByProject, setDocumentsByProject] = useState<Record<string, DocumentSummary[]>>({});
+  const [workItemDetails, setWorkItemDetails] = useState<Record<string, WorkItemDetail>>({});
+  const [documentDetails, setDocumentDetails] = useState<Record<string, DocumentDetail>>({});
   const [connectionEvent, setConnectionEvent] = useState<ConnectionStatusEvent | null>(null);
+  const [loadingKeys, setLoadingKeys] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const restoreApplied = useRef(false);
   const persistTimeout = useRef<number | null>(null);
+
+  function setLoading(key: string, value: boolean) {
+    setLoadingKeys((current) => ({ ...current, [key]: value }));
+  }
+
+  async function loadProjectReads(projectId: string) {
+    if (workItemsByProject[projectId] && documentsByProject[projectId]) {
+      return;
+    }
+
+    setLoading(`project:${projectId}`, true);
+    try {
+      const [workItems, documents] = await Promise.all([
+        workItemsByProject[projectId] ? Promise.resolve(workItemsByProject[projectId]) : listWorkItems(projectId),
+        documentsByProject[projectId] ? Promise.resolve(documentsByProject[projectId]) : listDocuments(projectId),
+      ]);
+      setWorkItemsByProject((current) => ({ ...current, [projectId]: workItems }));
+      setDocumentsByProject((current) => ({ ...current, [projectId]: documents }));
+    } catch (invokeError) {
+      setError(String(invokeError));
+    } finally {
+      setLoading(`project:${projectId}`, false);
+    }
+  }
+
+  async function ensureWorkItemDetail(workItemId: string) {
+    if (workItemDetails[workItemId]) {
+      return;
+    }
+
+    setLoading(`work-item:${workItemId}`, true);
+    try {
+      const detail = await getWorkItem(workItemId);
+      setWorkItemDetails((current) => ({ ...current, [workItemId]: detail }));
+    } catch (invokeError) {
+      setError(String(invokeError));
+    } finally {
+      setLoading(`work-item:${workItemId}`, false);
+    }
+  }
+
+  async function ensureDocumentDetail(documentId: string) {
+    if (documentDetails[documentId]) {
+      return;
+    }
+
+    setLoading(`document:${documentId}`, true);
+    try {
+      const detail = await getDocument(documentId);
+      setDocumentDetails((current) => ({ ...current, [documentId]: detail }));
+    } catch (invokeError) {
+      setError(String(invokeError));
+    } finally {
+      setLoading(`document:${documentId}`, false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -215,6 +300,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!selectedProjectId) {
+      return;
+    }
+    void loadProjectReads(selectedProjectId);
+  }, [selectedProjectId]);
+
+  useEffect(() => {
     if (!bootstrap || !restoreApplied.current) {
       return;
     }
@@ -243,6 +335,18 @@ export default function App() {
     }
   }, [attachedSessions, bootstrap, openResources]);
 
+  useEffect(() => {
+    if (!activeResource) {
+      return;
+    }
+    if (activeResource.resource_type === "work_item_detail") {
+      void ensureWorkItemDetail(activeResource.work_item_id);
+    }
+    if (activeResource.resource_type === "document_detail") {
+      void ensureDocumentDetail(activeResource.document_id);
+    }
+  }, [activeResourceId, openResources]);
+
   const selectedProject = useMemo(
     () => bootstrap?.projects.find((project) => project.id === selectedProjectId) ?? null,
     [bootstrap, selectedProjectId],
@@ -252,9 +356,12 @@ export default function App() {
     [selectedProjectId, sessions],
   );
   const activeResource = openResources.find((resource) => resource.resource_id === activeResourceId) ?? null;
+  const currentWorkItems = selectedProjectId ? workItemsByProject[selectedProjectId] ?? [] : [];
+  const currentDocuments = selectedProjectId ? documentsByProject[selectedProjectId] ?? [] : [];
 
   async function openProject(projectId: string) {
     setSelectedProjectId(projectId);
+    void loadProjectReads(projectId);
     const resourceId = `project_home:${projectId}`;
     const existing = openResources.find((resource) => resource.resource_id === resourceId);
     if (!existing) {
@@ -298,6 +405,42 @@ export default function App() {
     }
   }
 
+  async function openWorkItem(workItemId: string, projectId: string) {
+    void loadProjectReads(projectId);
+    void ensureWorkItemDetail(workItemId);
+    const resourceId = `work_item_detail:${workItemId}`;
+    if (!openResources.some((resource) => resource.resource_id === resourceId)) {
+      setOpenResources((current) => [
+        ...current,
+        {
+          resource_type: "work_item_detail",
+          work_item_id: workItemId,
+          project_id: projectId,
+          resource_id: resourceId,
+        },
+      ]);
+    }
+    setActiveResourceId(resourceId);
+  }
+
+  async function openDocument(documentId: string, projectId: string) {
+    void loadProjectReads(projectId);
+    void ensureDocumentDetail(documentId);
+    const resourceId = `document_detail:${documentId}`;
+    if (!openResources.some((resource) => resource.resource_id === resourceId)) {
+      setOpenResources((current) => [
+        ...current,
+        {
+          resource_type: "document_detail",
+          document_id: documentId,
+          project_id: projectId,
+          resource_id: resourceId,
+        },
+      ]);
+    }
+    setActiveResourceId(resourceId);
+  }
+
   async function closeResource(resource: WorkspaceResource) {
     const remaining = openResources.filter((entry) => entry.resource_id !== resource.resource_id);
     setOpenResources(remaining);
@@ -314,6 +457,22 @@ export default function App() {
           setError(String(invokeError));
         }
       }
+
+      setAttachedSessions((current) => {
+        const next = { ...current };
+        delete next[resource.session_id];
+        return next;
+      });
+      setTerminalInput((current) => {
+        const next = { ...current };
+        delete next[resource.session_id];
+        return next;
+      });
+      setTerminalOutput((current) => {
+        const next = { ...current };
+        delete next[resource.session_id];
+        return next;
+      });
     }
   }
 
@@ -359,7 +518,7 @@ export default function App() {
 
       <div className="shell-grid">
         <aside className="sidebar">
-          <div className="sidebar-tabs">
+          <div className="sidebar-tabs sidebar-tabs-wide">
             <button
               className={leftPanel === "projects" ? "active" : ""}
               onClick={() => setLeftPanel("projects")}
@@ -371,6 +530,12 @@ export default function App() {
               onClick={() => setLeftPanel("sessions")}
             >
               Sessions
+            </button>
+            <button className={leftPanel === "work" ? "active" : ""} onClick={() => setLeftPanel("work")}>
+              Work
+            </button>
+            <button className={leftPanel === "docs" ? "active" : ""} onClick={() => setLeftPanel("docs")}>
+              Docs
             </button>
           </div>
 
@@ -389,7 +554,9 @@ export default function App() {
                 </button>
               ))}
             </div>
-          ) : (
+          ) : null}
+
+          {leftPanel === "sessions" ? (
             <div className="panel-list">
               {filteredSessions.map((session) => (
                 <button
@@ -406,7 +573,55 @@ export default function App() {
                 </button>
               ))}
             </div>
-          )}
+          ) : null}
+
+          {leftPanel === "work" ? (
+            <div className="panel-list">
+              {selectedProjectId && loadingKeys[`project:${selectedProjectId}`] ? (
+                <div className="empty-panel">Loading work items…</div>
+              ) : currentWorkItems.length > 0 ? (
+                currentWorkItems.map((workItem) => (
+                  <button
+                    key={workItem.id}
+                    className="list-card"
+                    onClick={() => void openWorkItem(workItem.id, workItem.project_id)}
+                  >
+                    <span className="list-title">
+                      {workItem.callsign} · {workItem.title}
+                    </span>
+                    <span className="list-meta">
+                      {workItem.status} · {workItem.work_item_type}
+                      {workItem.priority ? ` · ${workItem.priority}` : ""}
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <div className="empty-panel">No work items for this project yet.</div>
+              )}
+            </div>
+          ) : null}
+
+          {leftPanel === "docs" ? (
+            <div className="panel-list">
+              {selectedProjectId && loadingKeys[`project:${selectedProjectId}`] ? (
+                <div className="empty-panel">Loading documents…</div>
+              ) : currentDocuments.length > 0 ? (
+                currentDocuments.map((document) => (
+                  <button
+                    key={document.id}
+                    className="list-card"
+                    onClick={() => void openDocument(document.id, document.project_id)}
+                  >
+                    <span className="list-title">{document.title}</span>
+                    <span className="list-meta">{document.doc_type} · {document.status}</span>
+                    <span className="list-meta list-preview">{documentPreview(document.content_markdown)}</span>
+                  </button>
+                ))
+              ) : (
+                <div className="empty-panel">No documents for this project yet.</div>
+              )}
+            </div>
+          ) : null}
         </aside>
 
         <main className="workspace">
@@ -417,8 +632,8 @@ export default function App() {
             </div>
             <div className="summary-stats">
               <span>{bootstrap.bootstrap.project_count} projects</span>
-              <span>{bootstrap.bootstrap.account_count} accounts</span>
-              <span>{bootstrap.bootstrap.restorable_workspace_count} saved workspaces</span>
+              <span>{currentWorkItems.length} work items</span>
+              <span>{currentDocuments.length} docs</span>
             </div>
           </div>
 
@@ -432,6 +647,8 @@ export default function App() {
                 {resourceLabel(
                   resource,
                   sessions,
+                  workItemDetails,
+                  documentDetails,
                   bootstrap.projects.find((project) =>
                     resource.resource_type === "project_home" && project.id === resource.project_id,
                   )?.name,
@@ -451,14 +668,19 @@ export default function App() {
 
           <section className="workspace-pane">
             {!activeResource ? (
-              <div className="empty-pane">Open a project or session.</div>
+              <div className="empty-pane">Open a project, session, work item, or document.</div>
             ) : activeResource.resource_type === "project_home" ? (
               <ProjectHome
                 project={bootstrap.projects.find((project) => project.id === activeResource.project_id) ?? null}
                 sessions={sessions.filter((entry) => entry.project_id === activeResource.project_id)}
+                workItems={workItemsByProject[activeResource.project_id] ?? []}
+                documents={documentsByProject[activeResource.project_id] ?? []}
+                loading={Boolean(loadingKeys[`project:${activeResource.project_id}`])}
                 onOpenSession={openSession}
+                onOpenWorkItem={openWorkItem}
+                onOpenDocument={openDocument}
               />
-            ) : (
+            ) : activeResource.resource_type === "session_terminal" ? (
               <SessionPane
                 session={sessions.find((entry) => entry.id === activeResource.session_id) ?? null}
                 attachment={attachedSessions[activeResource.session_id] ?? null}
@@ -471,6 +693,30 @@ export default function App() {
                 onInterrupt={() => void interruptSession(activeResource.session_id)}
                 onTerminate={() => void terminateSession(activeResource.session_id)}
               />
+            ) : activeResource.resource_type === "work_item_detail" ? (
+              <WorkItemPane
+                detail={workItemDetails[activeResource.work_item_id] ?? null}
+                relatedDocs={(documentsByProject[activeResource.project_id] ?? []).filter(
+                  (document) => document.work_item_id === activeResource.work_item_id,
+                )}
+                relatedSessions={sessions.filter((session) => session.work_item_id === activeResource.work_item_id)}
+                loading={Boolean(loadingKeys[`work-item:${activeResource.work_item_id}`])}
+                onOpenDocument={openDocument}
+                onOpenSession={openSession}
+              />
+            ) : (
+              <DocumentPane
+                detail={documentDetails[activeResource.document_id] ?? null}
+                loading={Boolean(loadingKeys[`document:${activeResource.document_id}`])}
+                linkedWorkItem={
+                  documentDetails[activeResource.document_id]?.work_item_id
+                    ? (workItemsByProject[activeResource.project_id] ?? []).find(
+                        (item) => item.id === documentDetails[activeResource.document_id]?.work_item_id,
+                      ) ?? null
+                    : null
+                }
+                onOpenWorkItem={openWorkItem}
+              />
             )}
           </section>
         </main>
@@ -482,11 +728,21 @@ export default function App() {
 function ProjectHome({
   project,
   sessions,
+  workItems,
+  documents,
+  loading,
   onOpenSession,
+  onOpenWorkItem,
+  onOpenDocument,
 }: {
   project: ShellBootstrap["projects"][number] | null;
   sessions: SessionSummary[];
+  workItems: WorkItemSummary[];
+  documents: DocumentSummary[];
+  loading: boolean;
   onOpenSession: (sessionId: string) => void;
+  onOpenWorkItem: (workItemId: string, projectId: string) => void;
+  onOpenDocument: (documentId: string, projectId: string) => void;
 }) {
   if (!project) {
     return <div className="empty-pane">Pick a project to start.</div>;
@@ -509,11 +765,39 @@ function ProjectHome({
           <h3>Live sessions</h3>
           <p>{project.live_session_count} active runtime sessions.</p>
         </section>
+        <section className="card">
+          <h3>Workbench</h3>
+          <p>{loading ? "Loading…" : `${workItems.length} work items · ${documents.length} docs`}</p>
+        </section>
         <section className="card session-card-list">
           <h3>Recent sessions</h3>
           {sessions.slice(0, 6).map((session) => (
             <button key={session.id} className="session-link" onClick={() => onOpenSession(session.id)}>
               {session.title ?? session.current_mode}
+            </button>
+          ))}
+        </section>
+        <section className="card session-card-list">
+          <h3>Open work</h3>
+          {workItems.slice(0, 5).map((workItem) => (
+            <button
+              key={workItem.id}
+              className="session-link"
+              onClick={() => onOpenWorkItem(workItem.id, workItem.project_id)}
+            >
+              {workItem.callsign} · {workItem.title}
+            </button>
+          ))}
+        </section>
+        <section className="card session-card-list">
+          <h3>Recent docs</h3>
+          {documents.slice(0, 5).map((document) => (
+            <button
+              key={document.id}
+              className="session-link"
+              onClick={() => onOpenDocument(document.id, document.project_id)}
+            >
+              {document.title}
             </button>
           ))}
         </section>
@@ -573,12 +857,19 @@ function SessionPane({
       </div>
 
       <pre className="terminal-surface">{output || "Attached. Waiting for output…"}</pre>
+      
+      {!session.live && !attachment ? (
+        <div className="card compact-card">
+          This session is not live. The shell keeps the tab as a read surface, but attach and input are disabled.
+        </div>
+      ) : null}
 
       <div className="terminal-controls">
         <textarea
           value={input}
           onChange={(event) => onInputChange(event.target.value)}
           placeholder="Send input to the attached session"
+          disabled={!session.live}
         />
         <div className="action-row">
           <button onClick={onSubmitInput} disabled={!session.live}>

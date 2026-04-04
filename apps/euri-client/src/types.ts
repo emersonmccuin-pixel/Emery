@@ -147,6 +147,45 @@ export type SessionStateChangedEvent = {
   live: boolean;
 };
 
+export type WorkItemSummary = {
+  id: string;
+  project_id: string;
+  parent_id: string | null;
+  root_work_item_id: string | null;
+  callsign: string;
+  child_sequence: number | null;
+  title: string;
+  description: string;
+  acceptance_criteria: string | null;
+  work_item_type: string;
+  status: string;
+  priority: string | null;
+  created_by: string | null;
+  created_at: number;
+  updated_at: number;
+  closed_at: number | null;
+  child_count: number;
+};
+
+export type WorkItemDetail = WorkItemSummary;
+
+export type DocumentSummary = {
+  id: string;
+  project_id: string;
+  work_item_id: string | null;
+  session_id: string | null;
+  doc_type: string;
+  title: string;
+  slug: string;
+  status: string;
+  content_markdown: string;
+  created_at: number;
+  updated_at: number;
+  archived_at: number | null;
+};
+
+export type DocumentDetail = DocumentSummary;
+
 export type WorkspaceResource =
   | {
       resource_type: "project_home";
@@ -157,12 +196,24 @@ export type WorkspaceResource =
       resource_type: "session_terminal";
       session_id: string;
       resource_id: string;
+    }
+  | {
+      resource_type: "work_item_detail";
+      work_item_id: string;
+      project_id: string;
+      resource_id: string;
+    }
+  | {
+      resource_type: "document_detail";
+      document_id: string;
+      project_id: string;
+      resource_id: string;
     };
 
 export type WorkspacePayload = {
   version: 1;
   selected_project_id: string | null;
-  left_panel: "projects" | "sessions";
+  left_panel: "projects" | "sessions" | "work" | "docs";
   open_resources: WorkspaceResource[];
   active_resource_id: string | null;
 };

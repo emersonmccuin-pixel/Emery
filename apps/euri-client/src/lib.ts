@@ -1,8 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ConnectionStatusEvent,
+  DocumentDetail,
+  DocumentSummary,
   SessionAttachResponse,
   ShellBootstrap,
+  WorkItemDetail,
+  WorkItemSummary,
   WorkspacePayload,
 } from "./types";
 
@@ -36,6 +40,25 @@ export async function saveWorkspace(payload: WorkspacePayload): Promise<void> {
 
 export async function watchLiveSessions(sessionIds: string[]): Promise<void> {
   await invoke("watch_live_sessions", { sessionIds });
+}
+
+export async function listWorkItems(projectId: string): Promise<WorkItemSummary[]> {
+  return invoke("list_work_items", { projectId });
+}
+
+export async function getWorkItem(workItemId: string): Promise<WorkItemDetail> {
+  return invoke("get_work_item", { workItemId });
+}
+
+export async function listDocuments(
+  projectId: string,
+  workItemId?: string | null,
+): Promise<DocumentSummary[]> {
+  return invoke("list_documents", { projectId, workItemId });
+}
+
+export async function getDocument(documentId: string): Promise<DocumentDetail> {
+  return invoke("get_document", { documentId });
 }
 
 export function connectionLabel(event: ConnectionStatusEvent | null): string {

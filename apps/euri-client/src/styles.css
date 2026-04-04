@@ -147,6 +147,10 @@ button {
   margin-bottom: 14px;
 }
 
+.sidebar-tabs-wide {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .sidebar-tabs button,
 .action-row button,
 .tab,
@@ -201,6 +205,10 @@ button {
   font-size: 0.86rem;
 }
 
+.list-preview {
+  display: block;
+}
+
 .indicator {
   width: 0.6rem;
   height: 0.6rem;
@@ -248,10 +256,63 @@ button {
 }
 
 .project-home,
-.session-pane {
+.session-pane,
+.detail-pane {
   display: grid;
   gap: 16px;
   height: 100%;
+}
+
+.detail-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.detail-copy {
+  margin: 0;
+  color: #dfd8ca;
+  white-space: pre-wrap;
+}
+
+.compact-card {
+  padding: 14px 18px;
+}
+
+.markdown-card {
+  display: grid;
+  gap: 12px;
+}
+
+.markdown-surface {
+  margin: 0;
+  border-radius: 16px;
+  padding: 16px;
+  overflow: auto;
+  background: rgba(16, 14, 13, 0.92);
+  color: #dfd8ca;
+  white-space: pre-wrap;
+  font-family:
+    "IBM Plex Mono",
+    "Cascadia Code",
+    monospace;
+}
+
+.inline-link {
+  width: fit-content;
+}
+
+.empty-panel {
+  padding: 0.8rem;
+  border-radius: 14px;
+  background: rgba(242, 237, 225, 0.05);
+  color: #c3bcaf;
 }
 
 .hero-panel,
@@ -338,9 +399,14 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+
   .topbar,
   .workspace-summary,
-  .session-header {
+  .session-header,
+  .detail-header {
     grid-auto-flow: row;
     align-items: start;
   }

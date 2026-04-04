@@ -453,6 +453,76 @@ fn save_workspace_state(
         .map_err(error_string)
 }
 
+#[tauri::command]
+fn list_work_items(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    project_id: String,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "work_item.list",
+            json!({
+                "project_id": project_id
+            }),
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn get_work_item(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    work_item_id: String,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "work_item.get",
+            json!({
+                "work_item_id": work_item_id
+            }),
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn list_documents(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    project_id: String,
+    work_item_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "document.list",
+            json!({
+                "project_id": project_id,
+                "work_item_id": work_item_id
+            }),
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn get_document(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    document_id: String,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "document.get",
+            json!({
+                "document_id": document_id
+            }),
+        )
+        .map_err(error_string)
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(Arc::new(SupervisorManager::default()))
@@ -464,7 +534,11 @@ fn main() {
             send_session_input,
             interrupt_session,
             terminate_session,
-            save_workspace_state
+            save_workspace_state,
+            list_work_items,
+            get_work_item,
+            list_documents,
+            get_document
         ])
         .run(tauri::generate_context!())
         .expect("failed to run EURI client");
