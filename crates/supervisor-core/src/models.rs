@@ -82,9 +82,15 @@ pub struct SessionDetail {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionRuntimeView {
+    pub runtime_state: String,
     pub attached_clients: usize,
+    pub started_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
+    pub artifact_root: String,
+    pub raw_log_path: String,
+    pub replay_cursor: u64,
+    pub replay_byte_count: usize,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -136,6 +142,8 @@ pub struct NewSessionRecord {
     pub activity_state: String,
     pub pty_owner_key: String,
     pub cwd: String,
+    pub transcript_primary_artifact_id: Option<String>,
+    pub raw_log_artifact_id: Option<String>,
     pub command: String,
     pub args_json: String,
     pub env_preset_ref: Option<String>,
@@ -143,6 +151,22 @@ pub struct NewSessionRecord {
     pub restore_policy: String,
     pub initial_terminal_cols: i64,
     pub initial_terminal_rows: i64,
+    pub started_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionArtifactRecord {
+    pub id: String,
+    pub session_id: String,
+    pub artifact_class: String,
+    pub artifact_type: String,
+    pub path: String,
+    pub is_durable: bool,
+    pub is_primary: bool,
+    pub source: Option<String>,
+    pub generator_ref: Option<String>,
+    pub supersedes_artifact_id: Option<String>,
+    pub created_at: i64,
 }

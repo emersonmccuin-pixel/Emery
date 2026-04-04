@@ -23,8 +23,8 @@ pub struct Supervisor {
 impl Supervisor {
     pub fn bootstrap(paths: AppPaths) -> Result<Self> {
         let databases = DatabaseSet::initialize(&paths)?;
+        databases.reconcile_interrupted_sessions(unix_time_seconds())?;
         let registry = SessionRegistry::new();
-        registry.hydrate(databases.list_active_runtime_sessions()?)?;
         let service = SupervisorService::new(databases.clone(), registry.clone());
         Ok(Self {
             databases,
@@ -81,4 +81,11 @@ fn unix_time_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .expect("system time must be after unix epoch")
         .as_millis() as u64
+}
+
+fn unix_time_seconds() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time must be after unix epoch")
+        .as_secs() as i64
 }

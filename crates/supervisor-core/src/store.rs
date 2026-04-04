@@ -6,8 +6,8 @@ use serde::Serialize;
 
 use crate::bootstrap::AppPaths;
 use crate::models::{
-    NewSessionRecord, ProjectDetail, ProjectRootSummary, ProjectSummary, SessionListFilter,
-    SessionSummary,
+    NewSessionRecord, ProjectDetail, ProjectRootSummary, ProjectSummary, SessionArtifactRecord,
+    SessionListFilter, SessionSummary,
 };
 use crate::schema::{migrate_app_db, migrate_knowledge_db};
 
@@ -69,8 +69,12 @@ impl DatabaseSet {
             account_count: count_rows(&connection, "accounts")?,
             live_session_count: count_live_runtime_sessions(&connection)?,
             restorable_workspace_count: count_rows(&connection, "workspace_state")?,
-            interrupted_session_count: count_sessions(&connection, "interrupted")?,
+            interrupted_session_count: count_interrupted_sessions(&connection)?,
         })
+    }
+
+    pub fn paths(&self) -> &AppPaths {
+        &self.paths
     }
 
     pub fn list_projects(&self) -> Result<Vec<ProjectSummary>> {
@@ -114,7 +118,8 @@ impl DatabaseSet {
             })
         })?;
 
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     }
 
     pub fn get_project(&self, project_id: &str) -> Result<Option<ProjectDetail>> {
@@ -209,22 +214,24 @@ impl DatabaseSet {
 
         let mut statement = connection.prepare(&sql)?;
         let rows = statement.query_map(params_from_iter(values.iter()), map_session_summary)?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     }
 
-    pub fn list_active_runtime_sessions(&self) -> Result<Vec<SessionSummary>> {
-        self.list_sessions(&SessionListFilter {
-            status: Some("active".to_string()),
-            runtime_state: None,
-            project_id: None,
-            limit: None,
-        })
-        .map(|sessions| {
-            sessions
-                .into_iter()
-                .filter(|session| matches!(session.runtime_state.as_str(), "starting" | "running" | "stopping"))
-                .collect()
-        })
+    pub fn reconcile_interrupted_sessions(&self, now: i64) -> Result<usize> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let updated = connection.execute(
+            "UPDATE sessions
+             SET runtime_state = 'interrupted',
+                 status = 'interrupted',
+                 activity_state = 'idle',
+                 ended_at = COALESCE(ended_at, ?1),
+                 updated_at = ?1
+             WHERE status = 'active'
+               AND runtime_state IN ('starting', 'running', 'stopping')",
+            params![now],
+        )?;
+        Ok(updated)
     }
 
     pub fn get_session(&self, session_id: &str) -> Result<Option<SessionSummary>> {
@@ -266,7 +273,11 @@ impl DatabaseSet {
             .map_err(Into::into)
     }
 
-    pub fn insert_session(&self, record: &NewSessionRecord) -> Result<()> {
+    pub fn insert_session(
+        &self,
+        record: &NewSessionRecord,
+        artifacts: &[SessionArtifactRecord],
+    ) -> Result<()> {
         let mut connection = open_connection(&self.paths.app_db)?;
         let tx = connection.transaction()?;
 
@@ -348,7 +359,7 @@ impl DatabaseSet {
                 updated_at,
                 archived_at
              ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0, 1, ?13, ?14, ?15, NULL, ?16, ?17, NULL, NULL, NULL, NULL, NULL, NULL, ?18, ?19, NULL
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0, 1, ?13, ?14, ?15, NULL, ?16, ?17, ?18, ?19, ?20, NULL, NULL, NULL, ?21, ?22, NULL
              )",
             params![
                 record.id,
@@ -368,10 +379,46 @@ impl DatabaseSet {
                 record.activity_state,
                 record.pty_owner_key,
                 record.cwd,
+                record.transcript_primary_artifact_id,
+                record.raw_log_artifact_id,
+                record.started_at,
                 record.created_at,
                 record.updated_at,
             ],
         )?;
+
+        for artifact in artifacts {
+            tx.execute(
+                "INSERT INTO session_artifacts (
+                    id,
+                    session_id,
+                    artifact_class,
+                    artifact_type,
+                    path,
+                    is_durable,
+                    is_primary,
+                    source,
+                    generator_ref,
+                    supersedes_artifact_id,
+                    created_at
+                 ) VALUES (
+                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11
+                 )",
+                params![
+                    artifact.id,
+                    artifact.session_id,
+                    artifact.artifact_class,
+                    artifact.artifact_type,
+                    artifact.path,
+                    bool_to_sqlite(artifact.is_durable),
+                    bool_to_sqlite(artifact.is_primary),
+                    artifact.source,
+                    artifact.generator_ref,
+                    artifact.supersedes_artifact_id,
+                    artifact.created_at,
+                ],
+            )?;
+        }
 
         tx.commit()?;
         Ok(())
@@ -379,7 +426,11 @@ impl DatabaseSet {
 
     pub fn account_exists(&self, account_id: &str) -> Result<bool> {
         let connection = open_connection(&self.paths.app_db)?;
-        exists(&connection, "SELECT 1 FROM accounts WHERE id = ?1", [account_id])
+        exists(
+            &connection,
+            "SELECT 1 FROM accounts WHERE id = ?1",
+            [account_id],
+        )
     }
 
     pub fn ensure_project_root_belongs_to_project(
@@ -460,7 +511,8 @@ impl DatabaseSet {
             })
         })?;
 
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     }
 }
 
@@ -503,6 +555,18 @@ fn count_live_runtime_sessions(connection: &Connection) -> Result<i64> {
         [],
         |row| row.get(0),
     )?)
+}
+
+fn count_interrupted_sessions(connection: &Connection) -> Result<i64> {
+    Ok(connection.query_row(
+        "SELECT COUNT(*) FROM sessions WHERE status = 'interrupted' OR runtime_state = 'interrupted'",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
+fn bool_to_sqlite(value: bool) -> i64 {
+    if value { 1 } else { 0 }
 }
 
 fn exists<P>(connection: &Connection, sql: &str, params: P) -> Result<bool>
