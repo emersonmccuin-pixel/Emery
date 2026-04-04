@@ -8,7 +8,7 @@ fn main() -> Result<()> {
     let rpc = SupervisorRpc::new(supervisor);
 
     let response = rpc.handle_json(
-        r#"{"type":"request","request_id":"bootstrap","method":"system.health","params":{}}"#,
+        r#"{"type":"request","request_id":"bootstrap","method":"system.hello","params":{}}"#,
     )?;
 
     println!("{}", serde_json::to_string_pretty(&response)?);
