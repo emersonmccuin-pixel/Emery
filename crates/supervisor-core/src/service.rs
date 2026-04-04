@@ -9,7 +9,7 @@ use crate::models::{
     CreateSessionRequest, NewSessionRecord, ProjectDetail, ProjectSummary, SessionArtifactRecord,
     SessionDetail, SessionListFilter, SessionSummary,
 };
-use crate::runtime::{SessionRegistry, SessionRuntimeRegistration};
+use crate::runtime::{SessionLaunchRequest, SessionRegistry, SessionRuntimeRegistration};
 use crate::store::DatabaseSet;
 
 #[derive(Debug, Clone)]
@@ -84,7 +84,7 @@ impl SupervisorService {
             current_mode: request.current_mode.unwrap_or(request.origin_mode),
             title: request.title,
             title_source: title_source.to_string(),
-            runtime_state: "running".to_string(),
+            runtime_state: "starting".to_string(),
             status: "active".to_string(),
             activity_state: "idle".to_string(),
             pty_owner_key: pty_owner_key.clone(),
@@ -100,7 +100,7 @@ impl SupervisorService {
                 .unwrap_or_else(|| "reattach".to_string()),
             initial_terminal_cols: request.initial_terminal_cols.unwrap_or(120),
             initial_terminal_rows: request.initial_terminal_rows.unwrap_or(40),
-            started_at: Some(now),
+            started_at: None,
             created_at: now,
             updated_at: now,
         };
@@ -113,8 +113,21 @@ impl SupervisorService {
             return Err(error);
         }
 
-        if let Err(error) = self.registry.mark_running(&session_id, now) {
-            let _ = self.registry.remove_session(&session_id);
+        let launch = SessionLaunchRequest {
+            session_id: session_id.clone(),
+            command: record.command.clone(),
+            args: request.args,
+            cwd: PathBuf::from(&record.cwd),
+            initial_terminal_cols: record.initial_terminal_cols,
+            initial_terminal_rows: record.initial_terminal_rows,
+        };
+
+        if let Err(error) = self.registry.launch_session(self.databases.clone(), launch) {
+            let failed_at = unix_time_seconds();
+            let _ = self.registry.mark_launch_failed(&session_id, failed_at);
+            let _ = self
+                .databases
+                .mark_session_failed_to_start(&session_id, failed_at);
             return Err(error);
         }
 
@@ -131,6 +144,23 @@ impl SupervisorService {
         }
 
         detail
+    }
+
+    pub fn forward_input(&self, session_id: &str, input: &[u8]) -> Result<()> {
+        self.registry.forward_input(session_id, input)
+    }
+
+    pub fn resize_session(&self, session_id: &str, cols: i64, rows: i64) -> Result<()> {
+        self.registry.resize_session(session_id, cols, rows)
+    }
+
+    pub fn interrupt_session(&self, session_id: &str) -> Result<()> {
+        self.registry.interrupt_session(session_id)
+    }
+
+    pub fn terminate_session(&self, session_id: &str) -> Result<()> {
+        self.registry
+            .terminate_session(session_id, &self.databases)
     }
 
     fn validate_create_request(&self, request: &CreateSessionRequest) -> Result<()> {

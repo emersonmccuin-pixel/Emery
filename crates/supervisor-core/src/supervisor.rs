@@ -74,6 +74,22 @@ impl Supervisor {
     pub fn create_session(&self, request: CreateSessionRequest) -> Result<SessionDetail> {
         self.service.create_session(request)
     }
+
+    pub fn forward_input(&self, session_id: &str, input: &[u8]) -> Result<()> {
+        self.service.forward_input(session_id, input)
+    }
+
+    pub fn resize_session(&self, session_id: &str, cols: i64, rows: i64) -> Result<()> {
+        self.service.resize_session(session_id, cols, rows)
+    }
+
+    pub fn interrupt_session(&self, session_id: &str) -> Result<()> {
+        self.service.interrupt_session(session_id)
+    }
+
+    pub fn terminate_session(&self, session_id: &str) -> Result<()> {
+        self.service.terminate_session(session_id)
+    }
 }
 
 fn unix_time_ms() -> u64 {

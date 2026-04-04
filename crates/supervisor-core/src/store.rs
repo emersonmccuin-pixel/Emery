@@ -424,6 +424,81 @@ impl DatabaseSet {
         Ok(())
     }
 
+    pub fn mark_session_started(&self, session_id: &str, started_at: i64) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "UPDATE sessions
+             SET runtime_state = 'running',
+                 status = 'active',
+                 started_at = COALESCE(started_at, ?2),
+                 updated_at = ?2
+             WHERE id = ?1",
+            params![session_id, started_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn mark_session_stopping(&self, session_id: &str, updated_at: i64) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "UPDATE sessions
+             SET runtime_state = 'stopping',
+                 status = 'active',
+                 updated_at = ?2
+             WHERE id = ?1",
+            params![session_id, updated_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn mark_session_failed_to_start(&self, session_id: &str, failed_at: i64) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "UPDATE sessions
+             SET runtime_state = 'failed',
+                 status = 'failed',
+                 activity_state = 'idle',
+                 ended_at = COALESCE(ended_at, ?2),
+                 updated_at = ?2
+             WHERE id = ?1",
+            params![session_id, failed_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn record_session_output(&self, session_id: &str, timestamp: i64) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "UPDATE sessions
+             SET last_output_at = ?2,
+                 updated_at = ?2
+             WHERE id = ?1",
+            params![session_id, timestamp],
+        )?;
+        Ok(())
+    }
+
+    pub fn mark_session_finished(
+        &self,
+        session_id: &str,
+        runtime_state: &str,
+        status: &str,
+        ended_at: i64,
+    ) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "UPDATE sessions
+             SET runtime_state = ?2,
+                 status = ?3,
+                 activity_state = 'idle',
+                 ended_at = COALESCE(ended_at, ?4),
+                 updated_at = ?4
+             WHERE id = ?1",
+            params![session_id, runtime_state, status, ended_at],
+        )?;
+        Ok(())
+    }
+
     pub fn account_exists(&self, account_id: &str) -> Result<bool> {
         let connection = open_connection(&self.paths.app_db)?;
         exists(
