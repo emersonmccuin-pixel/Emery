@@ -7,5 +7,6 @@ Thumbs.db
 node_modules/
 dist/
 target/
+*.tsbuildinfo
 
 *.log
