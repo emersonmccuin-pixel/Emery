@@ -1,9 +1,12 @@
 use anyhow::Result;
 use serde_json::{Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};
-use supervisor_core::Supervisor;
+use supervisor_core::{CreateSessionRequest, SessionListFilter, Supervisor};
 
-use crate::protocol::{ErrorBody, HelloResult, Method, RequestEnvelope, ResponseEnvelope};
+use crate::protocol::{
+    ErrorBody, HelloResult, Method, ProjectGetParams, RequestEnvelope, ResponseEnvelope,
+    SessionGetParams,
+};
 
 const PROTOCOL_VERSION: &str = "1";
 const SUPERVISOR_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -12,11 +15,15 @@ const MIN_SUPPORTED_CLIENT_VERSION: &str = "0.1.0";
 #[derive(Debug, Clone)]
 pub struct SupervisorRpc {
     supervisor: Supervisor,
+    ipc_endpoint: String,
 }
 
 impl SupervisorRpc {
-    pub fn new(supervisor: Supervisor) -> Self {
-        Self { supervisor }
+    pub fn new(supervisor: Supervisor, ipc_endpoint: impl Into<String>) -> Self {
+        Self {
+            supervisor,
+            ipc_endpoint: ipc_endpoint.into(),
+        }
     }
 
     pub fn handle_json(&self, message: &str) -> Result<ResponseEnvelope> {
@@ -47,25 +54,45 @@ impl SupervisorRpc {
             }
         };
 
-        match self.dispatch(method) {
+        match self.dispatch(method, request.params) {
             Ok(result) => ResponseEnvelope::success(request.request_id, result),
             Err(error) => ResponseEnvelope::error(
                 request.request_id,
-                ErrorBody {
-                    code: "database_unavailable",
-                    message: error.to_string(),
-                    retryable: true,
-                    details: Value::Null,
-                },
+                classify_error(error),
             ),
         }
     }
 
-    fn dispatch(&self, method: Method) -> Result<Value> {
+    fn dispatch(&self, method: Method, params: Value) -> Result<Value> {
         match method {
             Method::SystemHello => Ok(serde_json::to_value(self.system_hello()?)?),
             Method::SystemHealth => Ok(self.system_health()?),
             Method::SystemBootstrapState => Ok(serde_json::to_value(self.system_bootstrap_state()?)?),
+            Method::ProjectList => Ok(serde_json::to_value(self.supervisor.list_projects()?)?),
+            Method::ProjectGet => {
+                let params: ProjectGetParams = serde_json::from_value(params)?;
+                let project = self
+                    .supervisor
+                    .get_project(&params.project_id)?
+                    .ok_or_else(|| anyhow::anyhow!("project {} was not found", params.project_id))?;
+                Ok(serde_json::to_value(project)?)
+            }
+            Method::SessionList => {
+                let filter: SessionListFilter = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(self.supervisor.list_sessions(filter)?)?)
+            }
+            Method::SessionGet => {
+                let params: SessionGetParams = serde_json::from_value(params)?;
+                let session = self
+                    .supervisor
+                    .get_session(&params.session_id)?
+                    .ok_or_else(|| anyhow::anyhow!("session {} was not found", params.session_id))?;
+                Ok(serde_json::to_value(session)?)
+            }
+            Method::SessionCreate => {
+                let request: CreateSessionRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(self.supervisor.create_session(request)?)?)
+            }
         }
     }
 
@@ -78,8 +105,14 @@ impl SupervisorRpc {
                 Method::SystemHello.as_str(),
                 Method::SystemHealth.as_str(),
                 Method::SystemBootstrapState.as_str(),
+                Method::ProjectList.as_str(),
+                Method::ProjectGet.as_str(),
+                Method::SessionList.as_str(),
+                Method::SessionGet.as_str(),
+                Method::SessionCreate.as_str(),
             ],
             app_data_root: self.supervisor.paths().root.display().to_string(),
+            ipc_endpoint: self.ipc_endpoint.clone(),
         })
     }
 
@@ -107,6 +140,32 @@ fn invalid_request(message: &str) -> ErrorBody {
         code: "invalid_request",
         message: message.to_string(),
         retryable: false,
+        details: Value::Null,
+    }
+}
+
+fn classify_error(error: anyhow::Error) -> ErrorBody {
+    let message = error.to_string();
+    let code = if message.contains("was not found") {
+        if message.contains("project ") {
+            "project_not_found"
+        } else if message.contains("session ") {
+            "session_not_found"
+        } else {
+            "invalid_request"
+        }
+    } else if message.contains("does not belong to project") {
+        "invalid_request"
+    } else if error.downcast_ref::<serde_json::Error>().is_some() {
+        "invalid_request"
+    } else {
+        "database_unavailable"
+    };
+
+    ErrorBody {
+        code,
+        message,
+        retryable: code == "database_unavailable",
         details: Value::Null,
     }
 }

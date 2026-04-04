@@ -1,16 +1,23 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
 use anyhow::Result;
 use supervisor_core::{AppPaths, Supervisor};
-use supervisor_ipc::SupervisorRpc;
+use supervisor_ipc::{LocalIpcServer, SupervisorRpc};
 
 fn main() -> Result<()> {
     let paths = AppPaths::discover()?;
     let supervisor = Supervisor::bootstrap(paths)?;
-    let rpc = SupervisorRpc::new(supervisor);
+    let endpoint = endpoint_name(supervisor.paths().root.display().to_string().as_str());
+    let rpc = SupervisorRpc::new(supervisor.clone(), endpoint.clone());
+    let server = LocalIpcServer::new(endpoint.clone(), rpc);
 
-    let response = rpc.handle_json(
-        r#"{"type":"request","request_id":"bootstrap","method":"system.hello","params":{}}"#,
-    )?;
+    eprintln!("euri-supervisor listening on {endpoint}");
+    server.serve()
+}
 
-    println!("{}", serde_json::to_string_pretty(&response)?);
-    Ok(())
+fn endpoint_name(app_data_root: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    app_data_root.hash(&mut hasher);
+    format!("euri-supervisor-{:016x}", hasher.finish())
 }

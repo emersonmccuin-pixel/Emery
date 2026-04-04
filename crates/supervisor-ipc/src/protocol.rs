@@ -6,6 +6,11 @@ pub enum Method {
     SystemHello,
     SystemHealth,
     SystemBootstrapState,
+    ProjectList,
+    ProjectGet,
+    SessionList,
+    SessionGet,
+    SessionCreate,
 }
 
 impl Method {
@@ -14,6 +19,11 @@ impl Method {
             Self::SystemHello => "system.hello",
             Self::SystemHealth => "system.health",
             Self::SystemBootstrapState => "system.bootstrap_state",
+            Self::ProjectList => "project.list",
+            Self::ProjectGet => "project.get",
+            Self::SessionList => "session.list",
+            Self::SessionGet => "session.get",
+            Self::SessionCreate => "session.create",
         }
     }
 }
@@ -26,6 +36,11 @@ impl TryFrom<&str> for Method {
             "system.hello" => Ok(Self::SystemHello),
             "system.health" => Ok(Self::SystemHealth),
             "system.bootstrap_state" => Ok(Self::SystemBootstrapState),
+            "project.list" => Ok(Self::ProjectList),
+            "project.get" => Ok(Self::ProjectGet),
+            "session.list" => Ok(Self::SessionList),
+            "session.get" => Ok(Self::SessionGet),
+            "session.create" => Ok(Self::SessionCreate),
             _ => Err(()),
         }
     }
@@ -78,6 +93,17 @@ pub struct HelloResult {
     pub min_supported_client_version: &'static str,
     pub capabilities: Vec<&'static str>,
     pub app_data_root: String,
+    pub ipc_endpoint: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProjectGetParams {
+    pub project_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionGetParams {
+    pub session_id: String,
 }
 
 impl ResponseEnvelope {
