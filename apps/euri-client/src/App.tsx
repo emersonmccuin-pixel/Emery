@@ -1,10 +1,6 @@
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import { FitAddon } from "@xterm/addon-fit";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { Terminal } from "@xterm/xterm";
-import "@xterm/xterm/css/xterm.css";
 import {
-  attachSession,
   bootstrapShell,
   connectionLabel,
   createPlanningAssignment,
@@ -13,7 +9,6 @@ import {
   createSession,
   createWorkItem,
   deletePlanningAssignment,
-  detachSession,
   exportDiagnosticsBundle,
   getProject,
   getSession,
@@ -24,9 +19,8 @@ import {
   listPlanningAssignments,
   listWorkflowReconciliationProposals,
   listWorkItems,
+  pollEvents,
   saveWorkspace,
-  resizeSession,
-  sendSessionInput,
   terminateSession,
   updateDocument,
   updateProject,
@@ -34,6 +28,9 @@ import {
   updateWorkItem,
   watchLiveSessions,
 } from "./lib";
+import { sessionStore } from "./session-store";
+import { SessionPane } from "./session-pane";
+import { directWriteToTerminal } from "./terminal-surface";
 import {
   configureDiagnostics,
   diagnosticsEnabled,
@@ -51,7 +48,6 @@ import type {
   PlanningAssignmentSummary,
   ProjectDetail,
   ProjectSummary,
-  SessionAttachResponse,
   SessionDetail,
   SessionOutputEvent,
   SessionStateChangedEvent,
@@ -106,213 +102,6 @@ function decodeBase64Utf8(base64: string): string {
   const binary = atob(base64);
   const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
   return new TextDecoder().decode(bytes);
-}
-
-const CURSOR_POSITION_QUERY = "\u001b[6n";
-const DEFAULT_CURSOR_POSITION_RESPONSE = "\u001b[1;1R";
-
-type TerminalCompatibilityResult = {
-  visibleText: string;
-  pendingFragment: string;
-  cursorPositionQueries: number;
-};
-
-function processTerminalCompatibility(
-  chunk: string,
-  pendingFragment: string,
-): TerminalCompatibilityResult {
-  const combined = `${pendingFragment}${chunk}`;
-  let visibleText = "";
-  let index = 0;
-  let cursorPositionQueries = 0;
-
-  while (index < combined.length) {
-    if (!combined.startsWith("\u001b", index)) {
-      visibleText += combined[index];
-      index += 1;
-      continue;
-    }
-
-    const remaining = combined.slice(index);
-    if (remaining.startsWith(CURSOR_POSITION_QUERY)) {
-      cursorPositionQueries += 1;
-      index += CURSOR_POSITION_QUERY.length;
-      continue;
-    }
-
-    if (CURSOR_POSITION_QUERY.startsWith(remaining)) {
-      return {
-        visibleText,
-        pendingFragment: remaining,
-        cursorPositionQueries,
-      };
-    }
-
-    visibleText += combined[index];
-    index += 1;
-  }
-
-  return {
-    visibleText,
-    pendingFragment: "",
-    cursorPositionQueries,
-  };
-}
-
-function DirectTerminal({
-  sessionId,
-  output,
-  live,
-  onInput,
-  onResize,
-}: {
-  sessionId: string;
-  output: string;
-  live: boolean;
-  onInput: (input: string) => void;
-  onResize: (cols: number, rows: number) => void;
-}) {
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const terminalRef = useRef<Terminal | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
-  const renderedOutputRef = useRef("");
-  const resizeTimeoutRef = useRef<number | null>(null);
-  const lastGeometryRef = useRef<{ cols: number; rows: number } | null>(null);
-  const handleInput = useEffectEvent((input: string) => {
-    onInput(input);
-  });
-  const handleResize = useEffectEvent((cols: number, rows: number) => {
-    onResize(cols, rows);
-  });
-
-  useEffect(() => {
-    const host = hostRef.current;
-    if (!host) {
-      return;
-    }
-
-    const terminal = new Terminal({
-      allowTransparency: true,
-      convertEol: false,
-      cursorBlink: true,
-      fontFamily: '"IBM Plex Mono", "Cascadia Code", monospace',
-      fontSize: 14,
-      scrollback: 5000,
-      theme: {
-        background: "#0f0d0c",
-        foreground: "#dfd8ca",
-        cursor: "#f3df95",
-        selectionBackground: "rgba(243, 223, 149, 0.22)",
-      },
-    });
-    const fitAddon = new FitAddon();
-    terminal.loadAddon(fitAddon);
-    terminal.open(host);
-    terminalRef.current = terminal;
-    fitAddonRef.current = fitAddon;
-    renderedOutputRef.current = "";
-
-    const flushResize = () => {
-      if (!terminalRef.current || !fitAddonRef.current) {
-        return;
-      }
-      fitAddonRef.current.fit();
-      const nextGeometry = {
-        cols: terminalRef.current.cols,
-        rows: terminalRef.current.rows,
-      };
-      if (
-        nextGeometry.cols <= 0 ||
-        nextGeometry.rows <= 0 ||
-        (lastGeometryRef.current &&
-          lastGeometryRef.current.cols === nextGeometry.cols &&
-          lastGeometryRef.current.rows === nextGeometry.rows)
-      ) {
-        return;
-      }
-      lastGeometryRef.current = nextGeometry;
-      handleResize(nextGeometry.cols, nextGeometry.rows);
-    };
-
-    const scheduleResize = () => {
-      if (resizeTimeoutRef.current) {
-        window.clearTimeout(resizeTimeoutRef.current);
-      }
-      resizeTimeoutRef.current = window.setTimeout(() => {
-        resizeTimeoutRef.current = null;
-        flushResize();
-      }, 60);
-    };
-
-    const resizeObserver = new ResizeObserver(() => {
-      scheduleResize();
-    });
-    resizeObserver.observe(host);
-
-    const dataSubscription = terminal.onData((data) => {
-      if (live) {
-        handleInput(data);
-      }
-    });
-
-    const focusTerminal = () => terminal.focus();
-    host.addEventListener("click", focusTerminal);
-    scheduleResize();
-    terminal.focus();
-
-    return () => {
-      if (resizeTimeoutRef.current) {
-        window.clearTimeout(resizeTimeoutRef.current);
-        resizeTimeoutRef.current = null;
-      }
-      resizeObserver.disconnect();
-      dataSubscription.dispose();
-      host.removeEventListener("click", focusTerminal);
-      terminal.dispose();
-      terminalRef.current = null;
-      fitAddonRef.current = null;
-      renderedOutputRef.current = "";
-      lastGeometryRef.current = null;
-    };
-  }, [handleInput, handleResize, live, sessionId]);
-
-  useEffect(() => {
-    const terminal = terminalRef.current;
-    if (!terminal) {
-      return;
-    }
-    const previous = renderedOutputRef.current;
-    if (output === previous) {
-      return;
-    }
-    if (!output) {
-      terminal.reset();
-      renderedOutputRef.current = "";
-      return;
-    }
-
-    if (output.startsWith(previous)) {
-      terminal.write(output.slice(previous.length));
-    } else {
-      terminal.reset();
-      terminal.write(output);
-    }
-    renderedOutputRef.current = output;
-  }, [output]);
-
-  useEffect(() => {
-    if (live) {
-      terminalRef.current?.focus();
-    }
-  }, [live]);
-
-  return (
-    <div
-      ref={hostRef}
-      className={`terminal-surface ${live ? "live" : "readonly"}`}
-      aria-label={`Terminal for session ${sessionId}`}
-    />
-  );
 }
 
 function sessionTone(session: Pick<SessionSummary, "runtime_state" | "activity_state" | "needs_input_reason">) {
@@ -448,9 +237,7 @@ export default function App() {
   const [planningViewMode, setPlanningViewMode] = useState<PlanningViewMode>("all");
   const [openResources, setOpenResources] = useState<WorkspaceResource[]>([]);
   const [activeResourceId, setActiveResourceId] = useState<string | null>(null);
-  const [attachedSessions, setAttachedSessions] = useState<Record<string, SessionAttachResponse>>({});
-  const [terminalOutput, setTerminalOutput] = useState<Record<string, string>>({});
-  const [terminalInput, setTerminalInput] = useState<Record<string, string>>({});
+  // attachedSessions removed — TerminalSurface manages its own attach/detach lifecycle
   const [projectDetails, setProjectDetails] = useState<Record<string, ProjectDetail>>({});
   const [workItemsByProject, setWorkItemsByProject] = useState<Record<string, WorkItemSummary[]>>({});
   const [documentsByProject, setDocumentsByProject] = useState<Record<string, DocumentSummary[]>>({});
@@ -491,8 +278,7 @@ export default function App() {
   });
   const restoreApplied = useRef(false);
   const persistTimeout = useRef<number | null>(null);
-  const terminalCompatibilityPending = useRef<Record<string, string>>({});
-  const shouldReattachOpenSessions = useRef(false);
+  // shouldReattachOpenSessions removed — TerminalSurface handles reconnect internally
 
   function setLoading(key: string, value: boolean) {
     setLoadingKeys((current) => ({ ...current, [key]: value }));
@@ -500,78 +286,6 @@ export default function App() {
 
   function clearError() {
     setError(null);
-  }
-
-  function respondToCursorPositionQuery(sessionId: string, count: number, source: "replay" | "live") {
-    if (count <= 0) {
-      return;
-    }
-
-    recordClientEvent(
-      makeClientEvent("terminal", "cursor_position_query_detected", {
-        session_id: sessionId,
-        payload: {
-          count,
-          source,
-          response: JSON.stringify(DEFAULT_CURSOR_POSITION_RESPONSE),
-        },
-      }),
-    );
-
-    for (let index = 0; index < count; index += 1) {
-      const correlationId = newCorrelationId("terminal-cpr");
-      void sendSessionInput(sessionId, DEFAULT_CURSOR_POSITION_RESPONSE, correlationId)
-        .then(() => {
-          recordClientEvent(
-            makeClientEvent("terminal", "cursor_position_query_answered", {
-              correlation_id: correlationId,
-              session_id: sessionId,
-              payload: {
-                source,
-              },
-            }),
-          );
-        })
-        .catch((invokeError) => {
-          recordClientEvent(
-            makeClientEvent("terminal", "cursor_position_query_response_failed", {
-              correlation_id: correlationId,
-              session_id: sessionId,
-              payload: {
-                source,
-                error: String(invokeError),
-              },
-            }),
-          );
-        });
-    }
-  }
-
-  function appendTerminalChunk(sessionId: string, chunk: string, source: "replay" | "live") {
-    const compatibility = processTerminalCompatibility(
-      chunk,
-      terminalCompatibilityPending.current[sessionId] ?? "",
-    );
-    terminalCompatibilityPending.current[sessionId] = compatibility.pendingFragment;
-    respondToCursorPositionQuery(sessionId, compatibility.cursorPositionQueries, source);
-    if (!compatibility.visibleText) {
-      return;
-    }
-    setTerminalOutput((current) => ({
-      ...current,
-      [sessionId]: `${current[sessionId] ?? ""}${compatibility.visibleText}`,
-    }));
-  }
-
-  function replaceTerminalReplay(sessionId: string, chunks: string[]) {
-    terminalCompatibilityPending.current[sessionId] = "";
-    setTerminalOutput((current) => ({
-      ...current,
-      [sessionId]: "",
-    }));
-    for (const chunk of chunks) {
-      appendTerminalChunk(sessionId, chunk, "replay");
-    }
   }
 
   function applyProjectDetail(detail: ProjectDetail) {
@@ -618,102 +332,47 @@ export default function App() {
 
   function applySessionDetail(detail: SessionDetail) {
     setSessions((current) => applySessionToList(current, sessionSummaryFromDetail(detail)));
-    setAttachedSessions((current) => {
-      const existing = current[detail.id];
-      if (!existing) {
-        return current;
-      }
-      if (!detail.live) {
-        const next = { ...current };
-        delete next[detail.id];
-        return next;
-      }
-      return {
-        ...current,
-        [detail.id]: {
-          ...existing,
-          session: detail,
-        },
-      };
-    });
-    if (!detail.live) {
-      setTerminalInput((current) => {
-        if (!(detail.id in current)) {
-          return current;
-        }
-        return {
-          ...current,
-          [detail.id]: "",
-        };
-      });
-    }
   }
 
   function applySessionStateChange(payload: SessionStateChangedEvent) {
-    setSessions((current) =>
-      current.map((entry) =>
-        entry.id === payload.session_id
-          ? {
-              ...entry,
-              runtime_state: payload.runtime_state,
-              status: payload.status,
-              activity_state: payload.activity_state,
-              needs_input_reason: payload.needs_input_reason,
-              last_output_at: payload.last_output_at,
-              last_attached_at: payload.last_attached_at,
-              updated_at: payload.updated_at,
-              live: payload.live,
-            }
-          : entry,
-      ),
-    );
-    setAttachedSessions((current) => {
-      const existing = current[payload.session_id];
-      if (!existing) {
+    setSessions((current) => {
+      const index = current.findIndex((entry) => entry.id === payload.session_id);
+      if (index === -1) return current;
+      const entry = current[index];
+      // Skip update if nothing visible changed (updated_at changes every
+      // heartbeat so we exclude it — only re-render for fields the UI shows)
+      if (
+        entry.runtime_state === payload.runtime_state &&
+        entry.status === payload.status &&
+        entry.activity_state === payload.activity_state &&
+        entry.needs_input_reason === payload.needs_input_reason &&
+        entry.live === payload.live
+      ) {
         return current;
       }
-      if (!payload.live) {
-        const next = { ...current };
-        delete next[payload.session_id];
-        return next;
-      }
-      return {
-        ...current,
-        [payload.session_id]: {
-          ...existing,
-          session: {
-            ...existing.session,
-            runtime_state: payload.runtime_state,
-            status: payload.status,
-            activity_state: payload.activity_state,
-            needs_input_reason: payload.needs_input_reason,
-            last_output_at: payload.last_output_at,
-            last_attached_at: payload.last_attached_at,
-            updated_at: payload.updated_at,
-            live: payload.live,
-            runtime: existing.session.runtime
-              ? {
-                  ...existing.session.runtime,
-                  runtime_state: payload.runtime_state,
-                  attached_clients: payload.attached_clients,
-                  updated_at: payload.updated_at,
-                }
-              : null,
-          },
-        },
+      const next = [...current];
+      next[index] = {
+        ...entry,
+        runtime_state: payload.runtime_state,
+        status: payload.status,
+        activity_state: payload.activity_state,
+        needs_input_reason: payload.needs_input_reason,
+        last_output_at: payload.last_output_at,
+        last_attached_at: payload.last_attached_at,
+        updated_at: payload.updated_at,
+        live: payload.live,
       };
+      return next;
     });
-    if (!payload.live) {
-      setTerminalInput((current) => {
-        if (!(payload.session_id in current)) {
-          return current;
-        }
-        return {
-          ...current,
-          [payload.session_id]: "",
-        };
-      });
-    }
+    // Update external store for SessionPane subscriptions
+    sessionStore.updateSession(payload.session_id, {
+      runtime_state: payload.runtime_state,
+      status: payload.status,
+      activity_state: payload.activity_state,
+      needs_input_reason: payload.needs_input_reason,
+      live: payload.live,
+      attached_clients: payload.attached_clients,
+    });
   }
 
   async function reconcileSessionState(sessionId: string) {
@@ -747,24 +406,7 @@ export default function App() {
     }
   }
 
-  async function attachLiveSession(sessionId: string, correlationId: string, force = false) {
-    const existingSession = sessions.find((entry) => entry.id === sessionId) ?? null;
-    if (!existingSession?.live) {
-      return;
-    }
-    if (!force && attachedSessions[sessionId]) {
-      return;
-    }
-
-    const response = await attachSession(sessionId, correlationId);
-    setAttachedSessions((current) => ({ ...current, [sessionId]: response }));
-    applySessionDetail(response.session);
-    replaceTerminalReplay(
-      sessionId,
-      response.replay.chunks.map((chunk) => decodeBase64Utf8(chunk.data)),
-    );
-    await watchLiveSessions([sessionId], correlationId);
-  }
+  // attachLiveSession removed — TerminalSurface handles attach/replay internally
 
   function applyPlanningAssignment(projectId: string, assignment: PlanningAssignmentSummary) {
     setPlanningAssignmentsByProject((current) => ({
@@ -914,6 +556,22 @@ export default function App() {
         configureDiagnostics(payload.hello.diagnostics_enabled);
         setBootstrap(payload);
         setSessions(payload.sessions);
+        // Seed the external session store for SessionPane subscriptions
+        for (const session of payload.sessions) {
+          sessionStore.seedSession(session.id, {
+            runtime_state: session.runtime_state,
+            status: session.status,
+            activity_state: session.activity_state,
+            needs_input_reason: session.needs_input_reason,
+            live: session.live,
+            title: session.title,
+            current_mode: session.current_mode,
+            agent_kind: session.agent_kind,
+            cwd: session.cwd,
+            attached_clients: 0,
+          });
+        }
+        sessionStore.seedComplete();
         recordClientEvent(
           makeClientEvent("shell", "bootstrap.completed", {
             correlation_id: correlationId,
@@ -957,11 +615,12 @@ export default function App() {
 
     void start();
 
-    const listeners = Promise.all([
-      listen<ConnectionStatusEvent>("supervisor://connection", (event) => {
+    const connectionListener = listen<ConnectionStatusEvent>(
+      "supervisor://connection",
+      (event) => {
         setConnectionEvent(event.payload);
         if (event.payload.state === "reconnecting" || event.payload.state === "disconnected") {
-          shouldReattachOpenSessions.current = true;
+          // reconnect handled by TerminalSurface internally
         }
         recordClientEvent(
           makeClientEvent("shell", "connection.status_changed", {
@@ -971,30 +630,60 @@ export default function App() {
             },
           }),
         );
-      }),
-      listen<{ event: string; payload: SessionOutputEvent | SessionStateChangedEvent }>(
-        "supervisor://event",
-        (event) => {
-          if (event.payload.event === "session.output") {
-            const payload = event.payload.payload as SessionOutputEvent;
-            appendTerminalChunk(payload.session_id, decodeBase64Utf8(payload.data), "live");
-            return;
-          }
+      },
+    );
 
-          if (event.payload.event === "session.state_changed") {
-            const payload = event.payload.payload as SessionStateChangedEvent;
-            applySessionStateChange(payload);
-          }
-        },
-      ),
-    ]);
-
-    void listeners.then((items) => {
-      unlisteners.push(...items);
+    void connectionListener.then((unlisten) => {
+      unlisteners.push(unlisten);
     });
+
+    let stateChangeTimer: number | null = null;
+    let pendingStateChanges: SessionStateChangedEvent[] = [];
+
+    function flushStateChanges() {
+      stateChangeTimer = null;
+      const batch = pendingStateChanges;
+      pendingStateChanges = [];
+      if (batch.length === 0) return;
+      // Apply only the latest state per session
+      const latest = new Map<string, SessionStateChangedEvent>();
+      for (const event of batch) {
+        latest.set(event.session_id, event);
+      }
+      for (const event of latest.values()) {
+        applySessionStateChange(event);
+      }
+    }
+
+    async function pollEventLoop() {
+      while (!cancelled) {
+        try {
+          const events = await pollEvents();
+          for (const entry of events) {
+            if (entry.event === "session.output") {
+              const payload = entry.payload as SessionOutputEvent;
+              directWriteToTerminal(payload.session_id, decodeBase64Utf8(payload.data));
+            } else if (entry.event === "session.state_changed") {
+              pendingStateChanges.push(entry.payload as SessionStateChangedEvent);
+              if (stateChangeTimer === null) {
+                stateChangeTimer = window.setTimeout(flushStateChanges, 200);
+              }
+            }
+          }
+        } catch {
+          // transient poll failure, retry on next tick
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+
+    void pollEventLoop();
 
     return () => {
       cancelled = true;
+      if (stateChangeTimer !== null) {
+        window.clearTimeout(stateChangeTimer);
+      }
       if (persistTimeout.current) {
         window.clearTimeout(persistTimeout.current);
       }
@@ -1026,41 +715,7 @@ export default function App() {
     }, 250);
   }, [activeResourceId, bootstrap, leftPanel, openResources, selectedProjectId]);
 
-  useEffect(() => {
-    if (!bootstrap || openResources.length === 0) {
-      return;
-    }
-    const sessionResources = openResources.filter(
-      (resource): resource is Extract<WorkspaceResource, { resource_type: "session_terminal" }> =>
-        resource.resource_type === "session_terminal",
-    );
-    for (const resource of sessionResources) {
-      if (!attachedSessions[resource.session_id]) {
-        void openSession(resource.session_id);
-      }
-    }
-  }, [attachedSessions, bootstrap, openResources]);
-
-  useEffect(() => {
-    if (
-      !bootstrap ||
-      connectionEvent?.state !== "connected" ||
-      !shouldReattachOpenSessions.current
-    ) {
-      return;
-    }
-
-    shouldReattachOpenSessions.current = false;
-    const sessionResources = openResources.filter(
-      (resource): resource is Extract<WorkspaceResource, { resource_type: "session_terminal" }> =>
-        resource.resource_type === "session_terminal",
-    );
-    for (const resource of sessionResources) {
-      void attachLiveSession(resource.session_id, newCorrelationId("session-reattach"), true).catch(
-        (invokeError) => setError(String(invokeError)),
-      );
-    }
-  }, [bootstrap, connectionEvent, openResources, sessions]);
+  // Auto-attach and reconnect effects removed — TerminalSurface manages its own lifecycle
 
   const activeResource = openResources.find((resource) => resource.resource_id === activeResourceId) ?? null;
 
@@ -1136,13 +791,7 @@ export default function App() {
     setActiveResourceId(resourceId);
   }
 
-  async function openSession(sessionId: string) {
-    const existingSession = sessions.find((entry) => entry.id === sessionId);
-    if (!existingSession) {
-      return;
-    }
-
-    const correlationId = newCorrelationId("session-open");
+  function openSession(sessionId: string) {
     const resourceId = `session_terminal:${sessionId}`;
     if (!openResources.some((resource) => resource.resource_id === resourceId)) {
       setOpenResources((current) => [
@@ -1151,22 +800,6 @@ export default function App() {
       ]);
     }
     setActiveResourceId(resourceId);
-
-    if (!existingSession.live || attachedSessions[sessionId]) {
-      return;
-    }
-
-    try {
-      await attachLiveSession(sessionId, correlationId);
-      clearError();
-    } catch (invokeError) {
-      const message = String(invokeError);
-      if (message.includes("session_not_live")) {
-        await reconcileSessionState(sessionId);
-      } else {
-        setError(message);
-      }
-    }
   }
 
   async function openWorkItem(workItemId: string, projectId: string) {
@@ -1213,33 +846,7 @@ export default function App() {
       setActiveResourceId(remaining[remaining.length - 1]?.resource_id ?? null);
     }
 
-    if (resource.resource_type === "session_terminal") {
-      const attachment = attachedSessions[resource.session_id];
-      const session = sessions.find((entry) => entry.id === resource.session_id) ?? null;
-      if (attachment && session?.live) {
-        try {
-          await detachSession(resource.session_id, attachment.attachment_id, newCorrelationId("session-close"));
-        } catch (invokeError) {
-          setError(String(invokeError));
-        }
-      }
-
-      setAttachedSessions((current) => {
-        const next = { ...current };
-        delete next[resource.session_id];
-        return next;
-      });
-      setTerminalInput((current) => {
-        const next = { ...current };
-        delete next[resource.session_id];
-        return next;
-      });
-      setTerminalOutput((current) => {
-        const next = { ...current };
-        delete next[resource.session_id];
-        return next;
-      });
-    }
+    // TerminalSurface cleanup handles detach on unmount
   }
 
   async function handleInterruptSession(sessionId: string) {
@@ -1259,35 +866,7 @@ export default function App() {
     }
   }
 
-  async function submitTerminalInput(sessionId: string) {
-    const value = terminalInput[sessionId];
-    if (!value) {
-      return;
-    }
-
-    const result = await handleSessionAction(sessionId, () =>
-      sendSessionInput(
-        sessionId,
-        value.endsWith("\n") ? value : `${value}\n`,
-        newCorrelationId("session-input"),
-      ),
-    );
-    if (result !== null) {
-      setTerminalInput((current) => ({ ...current, [sessionId]: "" }));
-    }
-  }
-
-  function forwardTerminalInput(sessionId: string, input: string) {
-    void handleSessionAction(sessionId, () =>
-      sendSessionInput(sessionId, input, newCorrelationId("session-input-direct")),
-    );
-  }
-
-  function syncTerminalSize(sessionId: string, cols: number, rows: number) {
-    void handleSessionAction(sessionId, () =>
-      resizeSession(sessionId, cols, rows, newCorrelationId("session-resize")),
-    );
-  }
+  // forwardTerminalInput + syncTerminalSize removed — TerminalSurface calls invokes directly
 
   async function handleCreateProject() {
     const correlationId = newCorrelationId("project-create");
@@ -1505,9 +1084,7 @@ export default function App() {
         ]);
       }
       setActiveResourceId(resourceId);
-      if (detail.live) {
-        await attachLiveSession(detail.id, correlationId, true);
-      }
+      // TerminalSurface will auto-attach when it mounts
       clearError();
     } catch (invokeError) {
       setError(String(invokeError));
@@ -2135,17 +1712,7 @@ export default function App() {
               />
             ) : activeResource.resource_type === "session_terminal" ? (
               <SessionPane
-                session={sessions.find((entry) => entry.id === activeResource.session_id) ?? null}
                 sessionId={activeResource.session_id}
-                attachment={attachedSessions[activeResource.session_id] ?? null}
-                output={terminalOutput[activeResource.session_id] ?? ""}
-                input={terminalInput[activeResource.session_id] ?? ""}
-                onInputChange={(value) =>
-                  setTerminalInput((current) => ({ ...current, [activeResource.session_id]: value }))
-                }
-                onSubmitInput={() => void submitTerminalInput(activeResource.session_id)}
-                onDirectInput={(value) => forwardTerminalInput(activeResource.session_id, value)}
-                onResize={(cols, rows) => syncTerminalSize(activeResource.session_id, cols, rows)}
                 onInterrupt={() => void handleInterruptSession(activeResource.session_id)}
                 onTerminate={() => void handleTerminateSession(activeResource.session_id)}
               />
@@ -2345,101 +1912,4 @@ function ProjectHome({
   );
 }
 
-function SessionPane({
-  session,
-  sessionId,
-  attachment,
-  output,
-  input,
-  onInputChange,
-  onSubmitInput,
-  onDirectInput,
-  onResize,
-  onInterrupt,
-  onTerminate,
-}: {
-  session: SessionSummary | null;
-  sessionId: string;
-  attachment: SessionAttachResponse | null;
-  output: string;
-  input: string;
-  onInputChange: (value: string) => void;
-  onSubmitInput: () => void;
-  onDirectInput: (value: string) => void;
-  onResize: (cols: number, rows: number) => void;
-  onInterrupt: () => void;
-  onTerminate: () => void;
-}) {
-  if (!session) {
-    return <div className="empty-pane">Session not found.</div>;
-  }
-
-  const tone = sessionTone(session);
-
-  return (
-    <div className="session-pane">
-      <div className="session-header">
-        <div>
-          <div className="eyebrow">{session.live ? "Attached session" : "Ended session"}</div>
-          <h2>{session.title ?? session.current_mode}</h2>
-          <p>
-            {session.agent_kind} · {session.cwd}
-          </p>
-        </div>
-        <div className="session-status-cluster">
-          <span className={`status-chip ${tone}`}>{session.runtime_state}</span>
-          <span className="status-chip neutral">{session.activity_state}</span>
-          {session.needs_input_reason ? (
-            <span className="status-chip neutral">{session.needs_input_reason}</span>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="session-meta">
-        <span>status {session.status}</span>
-        <span>live {session.live ? "yes" : "no"}</span>
-        <span>attached {attachment?.session.runtime?.attached_clients ?? 0}</span>
-      </div>
-
-      <div className="terminal-hint">
-        {session.live
-          ? "Click inside the terminal surface to type directly into the attached session."
-          : "This terminal is read-only because the session has ended."}
-      </div>
-
-      <DirectTerminal
-        sessionId={sessionId}
-        output={output || "Attached. Waiting for output...\r\n"}
-        live={session.live}
-        onInput={onDirectInput}
-        onResize={onResize}
-      />
-
-      {!session.live && !attachment ? (
-        <div className="card compact-card">
-          This session is not live. The shell keeps the tab as a read surface, but attach and input are disabled.
-        </div>
-      ) : null}
-
-      <div className="terminal-controls">
-        <textarea
-          value={input}
-          onChange={(event) => onInputChange(event.target.value)}
-          placeholder="Fallback line send for the attached session"
-          disabled={!session.live}
-        />
-        <div className="action-row">
-          <button onClick={onSubmitInput} disabled={!session.live}>
-            Send input
-          </button>
-          <button onClick={onInterrupt} disabled={!session.live}>
-            Interrupt
-          </button>
-          <button className="danger" onClick={onTerminate} disabled={!session.live}>
-            Terminate
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+// SessionPane moved to ./session-pane.tsx

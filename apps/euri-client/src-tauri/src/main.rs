@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::hash::{Hash, Hasher};
@@ -33,6 +33,7 @@ const DIAGNOSTICS_ENV: &str = "EURI_DEV_DIAGNOSTICS";
 struct SupervisorManager {
     worker: Mutex<Option<WorkerHandle>>,
     diagnostics: DiagnosticsState,
+    event_buffer: Arc<Mutex<VecDeque<FrontendEvent>>>,
 }
 
 #[derive(Debug)]
@@ -114,6 +115,7 @@ impl SupervisorManager {
         Self {
             worker: Mutex::new(None),
             diagnostics: DiagnosticsState::from_env(),
+            event_buffer: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
 }
@@ -203,7 +205,11 @@ impl SupervisorManager {
             .lock()
             .map_err(|_| anyhow!("supervisor manager lock poisoned"))?;
         if guard.is_none() {
-            *guard = Some(connect_worker(app, self.diagnostics.clone())?);
+            *guard = Some(connect_worker(
+                app,
+                self.diagnostics.clone(),
+                Arc::clone(&self.event_buffer),
+            )?);
         }
         Ok(guard)
     }
@@ -1008,6 +1014,14 @@ fn export_diagnostics_bundle(
         .map_err(error_string)
 }
 
+#[tauri::command]
+fn poll_events(manager: State<'_, Arc<SupervisorManager>>) -> Vec<FrontendEvent> {
+    let Ok(mut buf) = manager.event_buffer.lock() else {
+        return Vec::new();
+    };
+    buf.drain(..).collect()
+}
+
 fn main() {
     if let Err(error) = debug_dev_server_preflight() {
         eprintln!("{error}");
@@ -1044,13 +1058,18 @@ fn main() {
             list_workflow_reconciliation_proposals,
             update_workflow_reconciliation_proposal,
             create_session,
-            export_diagnostics_bundle
+            export_diagnostics_bundle,
+            poll_events
         ])
         .run(tauri::generate_context!())
         .expect("failed to run EURI client");
 }
 
-fn connect_worker(app: &AppHandle, diagnostics: DiagnosticsState) -> Result<WorkerHandle> {
+fn connect_worker(
+    app: &AppHandle,
+    diagnostics: DiagnosticsState,
+    event_buffer: Arc<Mutex<VecDeque<FrontendEvent>>>,
+) -> Result<WorkerHandle> {
     let paths = AppPaths::discover()?;
     let endpoint = endpoint_name(paths.root.display().to_string().as_str());
     emit_connection(app, "reconnecting", Some("connecting to supervisor"))?;
@@ -1074,6 +1093,7 @@ fn connect_worker(app: &AppHandle, diagnostics: DiagnosticsState) -> Result<Work
     let app_for_reader = app.clone();
     let pending_for_reader = Arc::clone(&pending);
     let diagnostics_for_reader = diagnostics.clone();
+    let event_buffer_for_reader = Arc::clone(&event_buffer);
 
     thread::spawn(move || {
         let mut reader = BufReader::new(reader_stream);
@@ -1129,13 +1149,13 @@ fn connect_worker(app: &AppHandle, diagnostics: DiagnosticsState) -> Result<Work
                                 "event": event.event,
                             }),
                         );
-                        let _ = app_for_reader.emit(
-                            "supervisor://event",
-                            FrontendEvent {
-                                event: event.event,
-                                payload: event.payload,
-                            },
-                        );
+                        let frontend_event = FrontendEvent {
+                            event: event.event,
+                            payload: event.payload,
+                        };
+                        if let Ok(mut buf) = event_buffer_for_reader.lock() {
+                            buf.push_back(frontend_event);
+                        }
                     }
                     Err(error) => {
                         diagnostics_for_reader.record(

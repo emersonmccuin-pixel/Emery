@@ -1314,6 +1314,8 @@ impl SupervisorService {
                 "cwd": detail.summary.cwd,
                 "origin_mode": detail.summary.origin_mode,
                 "current_mode": detail.summary.current_mode,
+                "title": detail.summary.title,
+                "title_source": detail.summary.title_source,
             }),
         )?;
         Ok(detail)

@@ -282,11 +282,18 @@ button {
 }
 
 .project-home,
-.session-pane,
 .detail-pane {
   display: grid;
   gap: 16px;
   height: 100%;
+}
+
+.session-pane {
+  display: grid;
+  grid-template-rows: auto auto auto 1fr auto auto;
+  gap: 16px;
+  height: 100%;
+  overflow: hidden;
 }
 
 .detail-header {
@@ -473,8 +480,9 @@ button {
 
 .terminal-surface {
   border-radius: 18px;
-  min-height: 340px;
+  min-height: 0;
   overflow: hidden;
+  contain: layout size;
   background: #0f0d0c;
   color: #dfd8ca;
   font-family:
@@ -509,12 +517,6 @@ button {
 .terminal-controls {
   display: grid;
   gap: 12px;
-}
-
-.terminal-controls textarea {
-  width: 100%;
-  min-height: 92px;
-  resize: vertical;
 }
 
 .action-row .danger {

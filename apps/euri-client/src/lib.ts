@@ -75,6 +75,15 @@ export async function saveWorkspace(
   await invoke("save_workspace_state", { payload, correlationId });
 }
 
+export type PollableEvent = {
+  event: string;
+  payload: unknown;
+};
+
+export async function pollEvents(): Promise<PollableEvent[]> {
+  return invoke("poll_events");
+}
+
 export async function watchLiveSessions(
   sessionIds: string[],
   correlationId?: string,

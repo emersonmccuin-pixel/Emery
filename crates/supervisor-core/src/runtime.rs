@@ -518,6 +518,24 @@ impl SessionRegistry {
             .get_mut(session_id)
             .ok_or_else(|| anyhow!("session {session_id} was not registered"))?;
         if !state.attachments.remove(attachment_id) {
+            if !is_live_runtime_state(&state.runtime_state) || state.controller.is_none() {
+                let attached_clients = state.attached_clients;
+                drop(guard);
+                self.diagnostics.record(
+                    "runtime",
+                    "session.detach_ignored",
+                    DiagnosticContext {
+                        session_id: Some(session_id.to_string()),
+                        ..DiagnosticContext::default()
+                    },
+                    serde_json::json!({
+                        "attachment_id": attachment_id,
+                        "remaining_attached_clients": attached_clients,
+                        "reason": "attachment_missing_after_exit",
+                    }),
+                )?;
+                return Ok(attached_clients);
+            }
             return Err(anyhow!(
                 "attachment {attachment_id} was not found for session {session_id}"
             ));

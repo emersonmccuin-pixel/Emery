@@ -90,7 +90,8 @@ impl SupervisorRpc {
         message: &str,
         connection: Arc<ConnectionState>,
     ) -> Result<ResponseEnvelope> {
-        let request: RequestEnvelope = serde_json::from_str(message)?;
+        let mut request: RequestEnvelope = serde_json::from_str(message)?;
+        normalize_rpc_value(&mut request.params);
         Ok(self.handle_request(request, connection))
     }
 
@@ -898,4 +899,71 @@ fn unix_time_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .expect("system time must be after unix epoch")
         .as_millis() as u64
+}
+
+fn normalize_rpc_value(value: &mut Value) {
+    match value {
+        Value::String(text) => {
+            if let Some(normalized) = normalize_rpc_string(text) {
+                *text = normalized;
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                normalize_rpc_value(item);
+            }
+        }
+        Value::Object(map) => {
+            for item in map.values_mut() {
+                normalize_rpc_value(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn normalize_rpc_string(value: &str) -> Option<String> {
+    let normalized = value.replace("Â·", "·").replace("┬╖", "·");
+    if normalized != value {
+        Some(normalized)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_rpc_string, normalize_rpc_value};
+    use serde_json::json;
+
+    #[test]
+    fn normalizes_common_middot_mojibake_sequences() {
+        assert_eq!(
+            normalize_rpc_string("TEST-PROJECT-1 ┬╖ stabilization test").as_deref(),
+            Some("TEST-PROJECT-1 · stabilization test")
+        );
+        assert_eq!(
+            normalize_rpc_string("TEST-PROJECT-1 Â· stabilization test").as_deref(),
+            Some("TEST-PROJECT-1 · stabilization test")
+        );
+        assert_eq!(normalize_rpc_string("plain ascii title"), None);
+    }
+
+    #[test]
+    fn normalizes_nested_rpc_payload_strings() {
+        let mut payload = json!({
+            "title": "TEST-PROJECT-1 ┬╖ stabilization test",
+            "nested": {
+                "items": ["keep", "TEST-PROJECT-1 Â· verification"]
+            }
+        });
+
+        normalize_rpc_value(&mut payload);
+
+        assert_eq!(payload["title"], "TEST-PROJECT-1 · stabilization test");
+        assert_eq!(
+            payload["nested"]["items"][1],
+            "TEST-PROJECT-1 · verification"
+        );
+    }
 }
