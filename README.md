@@ -21,3 +21,17 @@ Current progression:
 Next planned item:
 
 - `EURI-5`: define the Tauri client architecture on top of the supervisor-backed core
+
+## Development Diagnostics
+
+Set `EURI_DEV_DIAGNOSTICS=1` before launching the client or supervisor to enable the first
+development-only diagnostics slice.
+
+When enabled:
+
+- the supervisor writes structured JSONL events to `logs/diagnostics/supervisor-events.jsonl`
+- session-scoped diagnostics are mirrored under `sessions/<session-id>/debug/diagnostics.jsonl`
+- the thin client records shell/session/workbench events in memory and exposes an `Export debug bundle`
+  action in the top bar
+- exported bundles are written by the supervisor into either `sessions/<session-id>/debug/` or
+  `logs/diagnostics/bundles/` when no session is selected
