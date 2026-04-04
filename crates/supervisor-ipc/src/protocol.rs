@@ -11,6 +11,10 @@ pub enum Method {
     SessionList,
     SessionGet,
     SessionCreate,
+    SessionInput,
+    SessionResize,
+    SessionInterrupt,
+    SessionTerminate,
 }
 
 impl Method {
@@ -24,6 +28,10 @@ impl Method {
             Self::SessionList => "session.list",
             Self::SessionGet => "session.get",
             Self::SessionCreate => "session.create",
+            Self::SessionInput => "session.input",
+            Self::SessionResize => "session.resize",
+            Self::SessionInterrupt => "session.interrupt",
+            Self::SessionTerminate => "session.terminate",
         }
     }
 }
@@ -41,6 +49,10 @@ impl TryFrom<&str> for Method {
             "session.list" => Ok(Self::SessionList),
             "session.get" => Ok(Self::SessionGet),
             "session.create" => Ok(Self::SessionCreate),
+            "session.input" => Ok(Self::SessionInput),
+            "session.resize" => Ok(Self::SessionResize),
+            "session.interrupt" => Ok(Self::SessionInterrupt),
+            "session.terminate" => Ok(Self::SessionTerminate),
             _ => Err(()),
         }
     }
@@ -103,6 +115,24 @@ pub struct ProjectGetParams {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SessionGetParams {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionInputParams {
+    pub session_id: String,
+    pub input: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionResizeParams {
+    pub session_id: String,
+    pub cols: i64,
+    pub rows: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionControlParams {
     pub session_id: String,
 }
 

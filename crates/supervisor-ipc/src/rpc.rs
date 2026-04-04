@@ -5,7 +5,7 @@ use supervisor_core::{CreateSessionRequest, SessionListFilter, Supervisor};
 
 use crate::protocol::{
     ErrorBody, HelloResult, Method, ProjectGetParams, RequestEnvelope, ResponseEnvelope,
-    SessionGetParams,
+    SessionControlParams, SessionGetParams, SessionInputParams, SessionResizeParams,
 };
 
 const PROTOCOL_VERSION: &str = "1";
@@ -100,6 +100,28 @@ impl SupervisorRpc {
                     self.supervisor.create_session(request)?,
                 )?)
             }
+            Method::SessionInput => {
+                let params: SessionInputParams = serde_json::from_value(params)?;
+                self.supervisor
+                    .forward_input(&params.session_id, params.input.as_bytes())?;
+                Ok(json!({ "accepted": true }))
+            }
+            Method::SessionResize => {
+                let params: SessionResizeParams = serde_json::from_value(params)?;
+                self.supervisor
+                    .resize_session(&params.session_id, params.cols, params.rows)?;
+                Ok(json!({ "accepted": true }))
+            }
+            Method::SessionInterrupt => {
+                let params: SessionControlParams = serde_json::from_value(params)?;
+                self.supervisor.interrupt_session(&params.session_id)?;
+                Ok(json!({ "accepted": true }))
+            }
+            Method::SessionTerminate => {
+                let params: SessionControlParams = serde_json::from_value(params)?;
+                self.supervisor.terminate_session(&params.session_id)?;
+                Ok(json!({ "accepted": true }))
+            }
         }
     }
 
@@ -117,6 +139,10 @@ impl SupervisorRpc {
                 Method::SessionList.as_str(),
                 Method::SessionGet.as_str(),
                 Method::SessionCreate.as_str(),
+                Method::SessionInput.as_str(),
+                Method::SessionResize.as_str(),
+                Method::SessionInterrupt.as_str(),
+                Method::SessionTerminate.as_str(),
             ],
             app_data_root: self.supervisor.paths().root.display().to_string(),
             ipc_endpoint: self.ipc_endpoint.clone(),
@@ -161,6 +187,10 @@ fn classify_error(error: anyhow::Error) -> ErrorBody {
         } else {
             "invalid_request"
         }
+    } else if message.contains("is not live") {
+        "session_not_live"
+    } else if message.contains("invalid terminal dimensions") {
+        "invalid_terminal_dimensions"
     } else if message.contains("does not belong to project") {
         "invalid_request"
     } else if message.contains("failed to create session artifact directory")
