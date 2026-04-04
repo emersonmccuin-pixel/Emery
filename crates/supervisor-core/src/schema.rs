@@ -16,6 +16,10 @@ const APP_MIGRATIONS: &[(&str, &str)] = &[
         "0003_planning_assignment_constraints",
         include_str!("migrations/app/0003_planning_assignment_constraints.sql"),
     ),
+    (
+        "0004_workflow_reconciliation_shape",
+        include_str!("migrations/app/0004_workflow_reconciliation_shape.sql"),
+    ),
 ];
 const KNOWLEDGE_MIGRATIONS: &[(&str, &str)] = &[(
     "0001_initial",

@@ -7,12 +7,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use supervisor_core::{
     CreateAccountRequest, CreateDocumentRequest, CreatePlanningAssignmentRequest,
     CreateProjectRequest, CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
-    CreateWorkItemRequest, CreateWorktreeRequest, DeletePlanningAssignmentRequest,
-    DocumentListFilter, PlanningAssignmentListFilter, RemoveProjectRootRequest, SessionListFilter,
-    SessionSpecListFilter, Supervisor, UpdateAccountRequest, UpdateDocumentRequest,
-    UpdatePlanningAssignmentRequest, UpdateProjectRequest, UpdateProjectRootRequest,
-    UpdateSessionSpecRequest, UpdateWorkItemRequest, UpdateWorktreeRequest, WorkItemListFilter,
-    WorktreeListFilter,
+    CreateWorkItemRequest, CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
+    DeletePlanningAssignmentRequest, DocumentListFilter, PlanningAssignmentListFilter,
+    RemoveProjectRootRequest, SessionListFilter, SessionSpecListFilter, Supervisor,
+    UpdateAccountRequest, UpdateDocumentRequest, UpdatePlanningAssignmentRequest,
+    UpdateProjectRequest, UpdateProjectRootRequest, UpdateSessionSpecRequest,
+    UpdateWorkItemRequest, UpdateWorkflowReconciliationProposalRequest, UpdateWorktreeRequest,
+    WorkItemListFilter, WorkflowReconciliationProposalListFilter, WorktreeListFilter,
 };
 
 use crate::protocol::{
@@ -20,7 +21,8 @@ use crate::protocol::{
     ProjectGetParams, ProjectRootListParams, RequestEnvelope, ResponseEnvelope,
     SessionAttachParams, SessionControlParams, SessionDetachParams, SessionGetParams,
     SessionInputParams, SessionResizeParams, SessionSpecGetParams, SubscriptionCloseParams,
-    SubscriptionOpenParams, WorkItemGetParams, WorktreeGetParams,
+    SubscriptionOpenParams, WorkItemGetParams, WorkflowReconciliationProposalGetParams,
+    WorktreeGetParams,
 };
 
 const PROTOCOL_VERSION: &str = "1";
@@ -340,6 +342,46 @@ impl SupervisorRpc {
                     self.supervisor.delete_planning_assignment(request)?,
                 )?)
             }
+            Method::WorkflowReconciliationProposalList => {
+                let filter: WorkflowReconciliationProposalListFilter =
+                    serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor
+                        .list_workflow_reconciliation_proposals(filter)?,
+                )?)
+            }
+            Method::WorkflowReconciliationProposalGet => {
+                let params: WorkflowReconciliationProposalGetParams =
+                    serde_json::from_value(params)?;
+                let proposal = self
+                    .supervisor
+                    .get_workflow_reconciliation_proposal(
+                        &params.workflow_reconciliation_proposal_id,
+                    )?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "workflow reconciliation proposal {} was not found",
+                            params.workflow_reconciliation_proposal_id
+                        )
+                    })?;
+                Ok(serde_json::to_value(proposal)?)
+            }
+            Method::WorkflowReconciliationProposalCreate => {
+                let request: CreateWorkflowReconciliationProposalRequest =
+                    serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor
+                        .create_workflow_reconciliation_proposal(request)?,
+                )?)
+            }
+            Method::WorkflowReconciliationProposalUpdate => {
+                let request: UpdateWorkflowReconciliationProposalRequest =
+                    serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor
+                        .update_workflow_reconciliation_proposal(request)?,
+                )?)
+            }
             Method::SessionList => {
                 let filter: SessionListFilter = serde_json::from_value(params)?;
                 Ok(serde_json::to_value(
@@ -530,6 +572,10 @@ impl SupervisorRpc {
                 Method::PlanningAssignmentCreate.as_str(),
                 Method::PlanningAssignmentUpdate.as_str(),
                 Method::PlanningAssignmentDelete.as_str(),
+                Method::WorkflowReconciliationProposalList.as_str(),
+                Method::WorkflowReconciliationProposalGet.as_str(),
+                Method::WorkflowReconciliationProposalCreate.as_str(),
+                Method::WorkflowReconciliationProposalUpdate.as_str(),
                 Method::SessionList.as_str(),
                 Method::SessionGet.as_str(),
                 Method::SessionCreate.as_str(),
@@ -592,6 +638,8 @@ fn classify_error(error: anyhow::Error) -> ErrorBody {
             "document_not_found"
         } else if message.contains("planning assignment ") {
             "planning_assignment_not_found"
+        } else if message.contains("workflow reconciliation proposal ") {
+            "workflow_reconciliation_proposal_not_found"
         } else if message.contains("session spec ") {
             "session_spec_not_found"
         } else if message.contains("session ") {
@@ -620,6 +668,13 @@ fn classify_error(error: anyhow::Error) -> ErrorBody {
         || message.contains("cadence key")
         || message.contains("cadence type")
         || message.contains("planning assignment for work item")
+        || message.contains("reconciliation target entity type")
+        || message.contains("reconciliation proposal type")
+        || message.contains("reconciliation status")
+        || message.contains("reconciliation confidence")
+        || message.contains("proposed_change_payload")
+        || message.contains("does not match")
+        || message.contains("no longer editable")
     {
         "invalid_request"
     } else if message.contains("does not belong to project")

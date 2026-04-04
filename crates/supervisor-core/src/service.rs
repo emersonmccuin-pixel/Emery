@@ -2,27 +2,31 @@ use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
-use serde_json::json;
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::models::{
     AccountDetail, AccountSummary, AccountUpdateRecord, CreateAccountRequest,
     CreateDocumentRequest, CreatePlanningAssignmentRequest, CreateProjectRequest,
     CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
-    CreateWorkItemRequest, CreateWorktreeRequest, DeletePlanningAssignmentRequest, DocumentDetail,
-    DocumentListFilter, DocumentSummary, DocumentUpdateRecord, NewAccountRecord, NewDocumentRecord,
-    NewPlanningAssignmentRecord, NewProjectRecord, NewProjectRootRecord, NewSessionRecord,
-    NewSessionSpecRecord, NewWorkItemRecord, NewWorktreeRecord, PlanningAssignmentDetail,
-    PlanningAssignmentListFilter, PlanningAssignmentSummary, PlanningAssignmentUpdateRecord,
-    ProjectDetail, ProjectRootSummary, ProjectRootUpdateRecord, ProjectSummary,
-    ProjectUpdateRecord, RemoveProjectRootRequest, SessionArtifactRecord, SessionAttachResponse,
-    SessionDetachResponse, SessionDetail, SessionListFilter, SessionOutputEvent, SessionSpecDetail,
-    SessionSpecListFilter, SessionSpecSummary, SessionSpecUpdateRecord, SessionSummary,
-    UpdateAccountRequest, UpdateDocumentRequest, UpdatePlanningAssignmentRequest,
-    UpdateProjectRequest, UpdateProjectRootRequest, UpdateSessionSpecRequest,
-    UpdateWorkItemRequest, UpdateWorktreeRequest, WorkItemDetail, WorkItemListFilter,
-    WorkItemSummary, WorkItemUpdateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary,
-    WorktreeUpdateRecord,
+    CreateWorkItemRequest, CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
+    DeletePlanningAssignmentRequest, DocumentDetail, DocumentListFilter, DocumentSummary,
+    DocumentUpdateRecord, NewAccountRecord, NewDocumentRecord, NewPlanningAssignmentRecord,
+    NewProjectRecord, NewProjectRootRecord, NewSessionRecord, NewSessionSpecRecord,
+    NewWorkItemRecord, NewWorkflowReconciliationProposalRecord, NewWorktreeRecord,
+    PlanningAssignmentDetail, PlanningAssignmentListFilter, PlanningAssignmentSummary,
+    PlanningAssignmentUpdateRecord, ProjectDetail, ProjectRootSummary, ProjectRootUpdateRecord,
+    ProjectSummary, ProjectUpdateRecord, RemoveProjectRootRequest, SessionArtifactRecord,
+    SessionAttachResponse, SessionDetachResponse, SessionDetail, SessionListFilter,
+    SessionOutputEvent, SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary,
+    SessionSpecUpdateRecord, SessionSummary, UpdateAccountRequest, UpdateDocumentRequest,
+    UpdatePlanningAssignmentRequest, UpdateProjectRequest, UpdateProjectRootRequest,
+    UpdateSessionSpecRequest, UpdateWorkItemRequest, UpdateWorkflowReconciliationProposalRequest,
+    UpdateWorktreeRequest, WorkItemDetail, WorkItemListFilter, WorkItemSummary,
+    WorkItemUpdateRecord, WorkflowReconciliationProposalDetail,
+    WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
+    WorkflowReconciliationProposalUpdateRecord, WorktreeDetail, WorktreeListFilter,
+    WorktreeSummary, WorktreeUpdateRecord,
 };
 use crate::runtime::{SessionLaunchRequest, SessionRegistry, SessionRuntimeRegistration};
 use crate::store::DatabaseSet;
@@ -924,6 +928,210 @@ impl SupervisorService {
             })
     }
 
+    pub fn list_workflow_reconciliation_proposals(
+        &self,
+        filter: WorkflowReconciliationProposalListFilter,
+    ) -> Result<Vec<WorkflowReconciliationProposalSummary>> {
+        if let Some(work_item_id) = filter.work_item_id.as_deref() {
+            self.ensure_work_item_exists(work_item_id)?;
+        }
+
+        if let Some(source_session_id) = filter.source_session_id.as_deref() {
+            self.ensure_session_exists(source_session_id)?;
+        }
+
+        let scoped_work_item_ids = match filter.project_id.as_deref() {
+            Some(project_id) => {
+                self.ensure_project_exists(project_id)?;
+                Some(self.databases.list_work_item_ids_for_project(project_id)?)
+            }
+            None => None,
+        };
+
+        self.databases
+            .list_workflow_reconciliation_proposals(&filter, scoped_work_item_ids.as_deref())
+    }
+
+    pub fn get_workflow_reconciliation_proposal(
+        &self,
+        proposal_id: &str,
+    ) -> Result<Option<WorkflowReconciliationProposalDetail>> {
+        self.databases
+            .get_workflow_reconciliation_proposal(proposal_id)
+    }
+
+    pub fn create_workflow_reconciliation_proposal(
+        &self,
+        request: CreateWorkflowReconciliationProposalRequest,
+    ) -> Result<WorkflowReconciliationProposalDetail> {
+        let source_session_id = required_trimmed(
+            "workflow reconciliation proposal source session id",
+            &request.source_session_id,
+        )?;
+        let source_session = self
+            .get_session(&source_session_id)?
+            .ok_or_else(|| anyhow!("session {} was not found", source_session_id))?;
+
+        let work_item_id = self.resolve_reconciliation_work_item_id(
+            &source_session.summary.project_id,
+            request.work_item_id,
+        )?;
+        let target_entity_type =
+            validate_reconciliation_target_entity_type(&request.target_entity_type)?;
+        let target_entity_id = optional_trimmed(request.target_entity_id);
+        self.validate_reconciliation_target(
+            &source_session.summary.project_id,
+            work_item_id.as_deref(),
+            &target_entity_type,
+            target_entity_id.as_deref(),
+        )?;
+
+        let status =
+            validate_reconciliation_status(request.status.as_deref().unwrap_or("pending"))?;
+        let now = unix_time_seconds();
+        let proposal_id = format!("wrp_{}", Uuid::new_v4().simple());
+        let record = NewWorkflowReconciliationProposalRecord {
+            id: proposal_id.clone(),
+            source_session_id,
+            work_item_id,
+            target_entity_type,
+            target_entity_id,
+            proposal_type: validate_reconciliation_proposal_type(&request.proposal_type)?,
+            proposed_change_payload_json: serialize_reconciliation_payload(
+                &request.proposed_change_payload,
+            )?,
+            reason: required_trimmed("workflow reconciliation proposal reason", &request.reason)?,
+            confidence: validate_reconciliation_confidence(request.confidence.unwrap_or(0.5))?,
+            status: status.clone(),
+            created_at: now,
+            updated_at: now,
+            resolved_at: resolved_at_for_reconciliation_status(&status, None, now),
+        };
+
+        self.databases
+            .insert_workflow_reconciliation_proposal(&record)?;
+        self.databases
+            .get_workflow_reconciliation_proposal(&proposal_id)?
+            .ok_or_else(|| {
+                anyhow!(
+                    "workflow reconciliation proposal {} was not found",
+                    proposal_id
+                )
+            })
+    }
+
+    pub fn update_workflow_reconciliation_proposal(
+        &self,
+        request: UpdateWorkflowReconciliationProposalRequest,
+    ) -> Result<WorkflowReconciliationProposalDetail> {
+        let existing = self
+            .databases
+            .get_workflow_reconciliation_proposal(&request.workflow_reconciliation_proposal_id)?
+            .ok_or_else(|| {
+                anyhow!(
+                    "workflow reconciliation proposal {} was not found",
+                    request.workflow_reconciliation_proposal_id
+                )
+            })?;
+        let source_session = self
+            .get_session(&existing.summary.source_session_id)?
+            .ok_or_else(|| {
+                anyhow!(
+                    "session {} was not found",
+                    existing.summary.source_session_id
+                )
+            })?;
+
+        let next_status = match request.status.as_deref() {
+            Some(status) => validate_reconciliation_status(status)?,
+            None => existing.summary.status.clone(),
+        };
+        validate_reconciliation_transition(&existing.summary.status, &next_status)?;
+
+        if existing.summary.status != "pending"
+            && (request.work_item_id.is_some()
+                || request.target_entity_type.is_some()
+                || request.target_entity_id.is_some()
+                || request.proposal_type.is_some()
+                || request.proposed_change_payload.is_some()
+                || request.reason.is_some()
+                || request.confidence.is_some())
+        {
+            return Err(anyhow!(
+                "workflow reconciliation proposal {} is no longer editable",
+                existing.summary.id
+            ));
+        }
+
+        let work_item_id = match request.work_item_id {
+            Some(work_item_id) => self.resolve_reconciliation_work_item_id(
+                &source_session.summary.project_id,
+                Some(work_item_id),
+            )?,
+            None => existing.summary.work_item_id.clone(),
+        };
+        let target_entity_type = match request.target_entity_type.as_deref() {
+            Some(target_entity_type) => {
+                validate_reconciliation_target_entity_type(target_entity_type)?
+            }
+            None => existing.summary.target_entity_type.clone(),
+        };
+        let target_entity_id = match request.target_entity_id {
+            Some(target_entity_id) => optional_trimmed(Some(target_entity_id)),
+            None => existing.summary.target_entity_id.clone(),
+        };
+        self.validate_reconciliation_target(
+            &source_session.summary.project_id,
+            work_item_id.as_deref(),
+            &target_entity_type,
+            target_entity_id.as_deref(),
+        )?;
+
+        let updated_at = unix_time_seconds();
+        let record = WorkflowReconciliationProposalUpdateRecord {
+            id: existing.summary.id.clone(),
+            work_item_id,
+            target_entity_type,
+            target_entity_id,
+            proposal_type: match request.proposal_type.as_deref() {
+                Some(proposal_type) => validate_reconciliation_proposal_type(proposal_type)?,
+                None => existing.summary.proposal_type.clone(),
+            },
+            proposed_change_payload_json: match request.proposed_change_payload.as_ref() {
+                Some(payload) => serialize_reconciliation_payload(payload)?,
+                None => serde_json::to_string(&existing.summary.proposed_change_payload)?,
+            },
+            reason: match request.reason.as_deref() {
+                Some(reason) => {
+                    required_trimmed("workflow reconciliation proposal reason", reason)?
+                }
+                None => existing.summary.reason.clone(),
+            },
+            confidence: match request.confidence {
+                Some(confidence) => validate_reconciliation_confidence(confidence)?,
+                None => existing.summary.confidence,
+            },
+            status: next_status.clone(),
+            updated_at,
+            resolved_at: resolved_at_for_reconciliation_status(
+                &next_status,
+                existing.summary.resolved_at,
+                updated_at,
+            ),
+        };
+
+        self.databases
+            .update_workflow_reconciliation_proposal(&record)?;
+        self.databases
+            .get_workflow_reconciliation_proposal(&existing.summary.id)?
+            .ok_or_else(|| {
+                anyhow!(
+                    "workflow reconciliation proposal {} was not found",
+                    existing.summary.id
+                )
+            })
+    }
+
     pub fn list_sessions(&self, filter: SessionListFilter) -> Result<Vec<SessionSummary>> {
         let sessions = self.databases.list_sessions(&filter)?;
         self.with_runtime_flags(sessions)
@@ -1421,6 +1629,141 @@ impl SupervisorService {
         Err(anyhow!("unable to allocate a unique document slug"))
     }
 
+    fn resolve_reconciliation_work_item_id(
+        &self,
+        project_id: &str,
+        work_item_id: Option<String>,
+    ) -> Result<Option<String>> {
+        let Some(work_item_id) = optional_trimmed(work_item_id) else {
+            return Ok(None);
+        };
+        self.databases
+            .ensure_work_item_belongs_to_project(&work_item_id, project_id)?;
+        Ok(Some(work_item_id))
+    }
+
+    fn validate_reconciliation_target(
+        &self,
+        project_id: &str,
+        work_item_id: Option<&str>,
+        target_entity_type: &str,
+        target_entity_id: Option<&str>,
+    ) -> Result<()> {
+        if let Some(work_item_id) = work_item_id {
+            self.databases
+                .ensure_work_item_belongs_to_project(work_item_id, project_id)?;
+        }
+
+        match (target_entity_type, target_entity_id) {
+            ("work_item", Some(target_entity_id)) => {
+                self.databases
+                    .ensure_work_item_belongs_to_project(target_entity_id, project_id)?;
+                if let Some(work_item_id) = work_item_id
+                    && work_item_id != target_entity_id
+                {
+                    return Err(anyhow!(
+                        "workflow reconciliation proposal work item {} does not match target work item {}",
+                        work_item_id,
+                        target_entity_id
+                    ));
+                }
+            }
+            ("planning_assignment", Some(target_entity_id)) => {
+                let assignment = self
+                    .databases
+                    .get_planning_assignment(target_entity_id)?
+                    .ok_or_else(|| {
+                        anyhow!("planning assignment {} was not found", target_entity_id)
+                    })?;
+                self.databases.ensure_work_item_belongs_to_project(
+                    &assignment.summary.work_item_id,
+                    project_id,
+                )?;
+                if let Some(work_item_id) = work_item_id
+                    && work_item_id != assignment.summary.work_item_id
+                {
+                    return Err(anyhow!(
+                        "workflow reconciliation proposal work item {} does not match planning assignment {}",
+                        work_item_id,
+                        target_entity_id
+                    ));
+                }
+            }
+            ("document", Some(target_entity_id)) => {
+                let document = self
+                    .get_document(target_entity_id)?
+                    .ok_or_else(|| anyhow!("document {} was not found", target_entity_id))?;
+                if document.summary.project_id != project_id {
+                    return Err(anyhow!(
+                        "document {} does not belong to project {}",
+                        target_entity_id,
+                        project_id
+                    ));
+                }
+                if let Some(work_item_id) = work_item_id
+                    && document.summary.work_item_id.as_deref() != Some(work_item_id)
+                {
+                    return Err(anyhow!(
+                        "workflow reconciliation proposal work item {} does not match document {}",
+                        work_item_id,
+                        target_entity_id
+                    ));
+                }
+            }
+            ("session", Some(target_entity_id)) => {
+                let session = self
+                    .get_session(target_entity_id)?
+                    .ok_or_else(|| anyhow!("session {} was not found", target_entity_id))?;
+                if session.summary.project_id != project_id {
+                    return Err(anyhow!(
+                        "session {} does not belong to project {}",
+                        target_entity_id,
+                        project_id
+                    ));
+                }
+                if let Some(work_item_id) = work_item_id
+                    && session.summary.work_item_id.as_deref() != Some(work_item_id)
+                {
+                    return Err(anyhow!(
+                        "workflow reconciliation proposal work item {} does not match session {}",
+                        work_item_id,
+                        target_entity_id
+                    ));
+                }
+            }
+            ("project", Some(target_entity_id)) => {
+                if target_entity_id != project_id {
+                    return Err(anyhow!(
+                        "project {} does not match reconciliation source project {}",
+                        target_entity_id,
+                        project_id
+                    ));
+                }
+            }
+            ("project_root", Some(target_entity_id)) => {
+                self.databases
+                    .ensure_project_root_belongs_to_project(target_entity_id, project_id)?;
+            }
+            ("worktree", Some(target_entity_id)) => {
+                self.databases
+                    .ensure_worktree_belongs_to_project(target_entity_id, project_id)?;
+            }
+            (
+                "work_item"
+                | "planning_assignment"
+                | "document"
+                | "session"
+                | "project"
+                | "project_root"
+                | "worktree",
+                None,
+            ) => {}
+            _ => {}
+        }
+
+        Ok(())
+    }
+
     fn ensure_project_exists(&self, project_id: &str) -> Result<()> {
         if self.get_project(project_id)?.is_none() {
             return Err(anyhow!("project {} was not found", project_id));
@@ -1825,6 +2168,84 @@ fn validate_cadence_key(cadence_type: &str, value: &str) -> Result<String> {
     ))
 }
 
+fn validate_reconciliation_target_entity_type(value: &str) -> Result<String> {
+    let normalized = required_trimmed("reconciliation target entity type", value)?.to_lowercase();
+    match normalized.as_str() {
+        "work_item"
+        | "planning_assignment"
+        | "document"
+        | "session"
+        | "project"
+        | "project_root"
+        | "worktree" => Ok(normalized),
+        _ => Err(anyhow!(
+            "reconciliation target entity type must be one of: work_item, planning_assignment, document, session, project, project_root, worktree"
+        )),
+    }
+}
+
+fn validate_reconciliation_proposal_type(value: &str) -> Result<String> {
+    let normalized = required_trimmed("reconciliation proposal type", value)?.to_lowercase();
+    if normalized
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_')
+    {
+        return Ok(normalized);
+    }
+
+    Err(anyhow!(
+        "reconciliation proposal type must use lowercase letters, numbers, '-' or '_'"
+    ))
+}
+
+fn validate_reconciliation_status(value: &str) -> Result<String> {
+    let normalized = required_trimmed("reconciliation status", value)?.to_lowercase();
+    match normalized.as_str() {
+        "pending" | "accepted" | "dismissed" | "applied" => Ok(normalized),
+        _ => Err(anyhow!(
+            "reconciliation status must be one of: pending, accepted, dismissed, applied"
+        )),
+    }
+}
+
+fn validate_reconciliation_transition(current: &str, next: &str) -> Result<()> {
+    let valid = match current {
+        "pending" => matches!(next, "pending" | "accepted" | "dismissed" | "applied"),
+        "accepted" => matches!(next, "accepted" | "applied"),
+        "dismissed" => next == "dismissed",
+        "applied" => next == "applied",
+        _ => false,
+    };
+
+    if valid {
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "reconciliation status transition {} -> {} is invalid",
+        current,
+        next
+    ))
+}
+
+fn validate_reconciliation_confidence(value: f64) -> Result<f64> {
+    if !(0.0..=1.0).contains(&value) {
+        return Err(anyhow!(
+            "reconciliation confidence must be between 0.0 and 1.0"
+        ));
+    }
+    Ok(value)
+}
+
+fn serialize_reconciliation_payload(value: &Value) -> Result<String> {
+    if !value.is_object() {
+        return Err(anyhow!(
+            "reconciliation proposed_change_payload must be a JSON object"
+        ));
+    }
+    Ok(serde_json::to_string(value)?)
+}
+
 fn required_document_content(value: &str) -> Result<String> {
     let normalized = value.trim();
     if normalized.is_empty() {
@@ -1961,6 +2382,17 @@ fn matches_date_key(value: &str) -> bool {
     let month = value[5..7].parse::<u8>().unwrap_or(0);
     let day = value[8..10].parse::<u8>().unwrap_or(0);
     (1..=12).contains(&month) && (1..=31).contains(&day)
+}
+
+fn resolved_at_for_reconciliation_status(
+    status: &str,
+    requested: Option<i64>,
+    now: i64,
+) -> Option<i64> {
+    match status {
+        "accepted" | "dismissed" | "applied" => Some(requested.unwrap_or(now)),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone)]

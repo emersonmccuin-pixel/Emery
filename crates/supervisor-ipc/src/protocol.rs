@@ -38,6 +38,10 @@ pub enum Method {
     PlanningAssignmentCreate,
     PlanningAssignmentUpdate,
     PlanningAssignmentDelete,
+    WorkflowReconciliationProposalList,
+    WorkflowReconciliationProposalGet,
+    WorkflowReconciliationProposalCreate,
+    WorkflowReconciliationProposalUpdate,
     SessionList,
     SessionGet,
     SessionCreate,
@@ -89,6 +93,10 @@ impl Method {
             Self::PlanningAssignmentCreate => "planning_assignment.create",
             Self::PlanningAssignmentUpdate => "planning_assignment.update",
             Self::PlanningAssignmentDelete => "planning_assignment.delete",
+            Self::WorkflowReconciliationProposalList => "workflow_reconciliation_proposal.list",
+            Self::WorkflowReconciliationProposalGet => "workflow_reconciliation_proposal.get",
+            Self::WorkflowReconciliationProposalCreate => "workflow_reconciliation_proposal.create",
+            Self::WorkflowReconciliationProposalUpdate => "workflow_reconciliation_proposal.update",
             Self::SessionList => "session.list",
             Self::SessionGet => "session.get",
             Self::SessionCreate => "session.create",
@@ -144,6 +152,14 @@ impl TryFrom<&str> for Method {
             "planning_assignment.create" => Ok(Self::PlanningAssignmentCreate),
             "planning_assignment.update" => Ok(Self::PlanningAssignmentUpdate),
             "planning_assignment.delete" => Ok(Self::PlanningAssignmentDelete),
+            "workflow_reconciliation_proposal.list" => Ok(Self::WorkflowReconciliationProposalList),
+            "workflow_reconciliation_proposal.get" => Ok(Self::WorkflowReconciliationProposalGet),
+            "workflow_reconciliation_proposal.create" => {
+                Ok(Self::WorkflowReconciliationProposalCreate)
+            }
+            "workflow_reconciliation_proposal.update" => {
+                Ok(Self::WorkflowReconciliationProposalUpdate)
+            }
             "session.list" => Ok(Self::SessionList),
             "session.get" => Ok(Self::SessionGet),
             "session.create" => Ok(Self::SessionCreate),
@@ -248,6 +264,11 @@ pub struct WorkItemGetParams {
 #[derive(Debug, Clone, Deserialize)]
 pub struct DocumentGetParams {
     pub document_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkflowReconciliationProposalGetParams {
+    pub workflow_reconciliation_proposal_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

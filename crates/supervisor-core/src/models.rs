@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectSummary {
@@ -183,6 +184,29 @@ pub struct PlanningAssignmentSummary {
 pub struct PlanningAssignmentDetail {
     #[serde(flatten)]
     pub summary: PlanningAssignmentSummary,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkflowReconciliationProposalSummary {
+    pub id: String,
+    pub source_session_id: String,
+    pub work_item_id: Option<String>,
+    pub target_entity_type: String,
+    pub target_entity_id: Option<String>,
+    pub proposal_type: String,
+    pub proposed_change_payload: Value,
+    pub reason: String,
+    pub confidence: f64,
+    pub status: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub resolved_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkflowReconciliationProposalDetail {
+    #[serde(flatten)]
+    pub summary: WorkflowReconciliationProposalSummary,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -398,6 +422,17 @@ pub struct PlanningAssignmentListFilter {
     pub limit: Option<usize>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct WorkflowReconciliationProposalListFilter {
+    pub project_id: Option<String>,
+    pub work_item_id: Option<String>,
+    pub source_session_id: Option<String>,
+    pub target_entity_type: Option<String>,
+    pub proposal_type: Option<String>,
+    pub status: Option<String>,
+    pub limit: Option<usize>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateDocumentRequest {
     pub project_id: String,
@@ -442,6 +477,32 @@ pub struct UpdatePlanningAssignmentRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeletePlanningAssignmentRequest {
     pub planning_assignment_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateWorkflowReconciliationProposalRequest {
+    pub source_session_id: String,
+    pub work_item_id: Option<String>,
+    pub target_entity_type: String,
+    pub target_entity_id: Option<String>,
+    pub proposal_type: String,
+    pub proposed_change_payload: Value,
+    pub reason: String,
+    pub confidence: Option<f64>,
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateWorkflowReconciliationProposalRequest {
+    pub workflow_reconciliation_proposal_id: String,
+    pub work_item_id: Option<String>,
+    pub target_entity_type: Option<String>,
+    pub target_entity_id: Option<String>,
+    pub proposal_type: Option<String>,
+    pub proposed_change_payload: Option<Value>,
+    pub reason: Option<String>,
+    pub confidence: Option<f64>,
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -684,6 +745,38 @@ pub struct PlanningAssignmentUpdateRecord {
     pub cadence_key: String,
     pub created_by: String,
     pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewWorkflowReconciliationProposalRecord {
+    pub id: String,
+    pub source_session_id: String,
+    pub work_item_id: Option<String>,
+    pub target_entity_type: String,
+    pub target_entity_id: Option<String>,
+    pub proposal_type: String,
+    pub proposed_change_payload_json: String,
+    pub reason: String,
+    pub confidence: f64,
+    pub status: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub resolved_at: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkflowReconciliationProposalUpdateRecord {
+    pub id: String,
+    pub work_item_id: Option<String>,
+    pub target_entity_type: String,
+    pub target_entity_id: Option<String>,
+    pub proposal_type: String,
+    pub proposed_change_payload_json: String,
+    pub reason: String,
+    pub confidence: f64,
+    pub status: String,
+    pub updated_at: i64,
+    pub resolved_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]

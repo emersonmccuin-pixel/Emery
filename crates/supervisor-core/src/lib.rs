@@ -10,7 +10,8 @@ pub use bootstrap::AppPaths;
 pub use models::{
     AccountDetail, AccountSummary, CreateAccountRequest, CreateDocumentRequest,
     CreatePlanningAssignmentRequest, CreateProjectRequest, CreateProjectRootRequest,
-    CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest, CreateWorktreeRequest,
+    CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest,
+    CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
     DeletePlanningAssignmentRequest, DocumentDetail, DocumentListFilter, DocumentSummary,
     EncodedTerminalChunk, PlanningAssignmentDetail, PlanningAssignmentListFilter,
     PlanningAssignmentSummary, ProjectDetail, ProjectRootSummary, ProjectSummary,
@@ -19,8 +20,10 @@ pub use models::{
     SessionSpecListFilter, SessionSpecSummary, SessionSummary, UpdateAccountRequest,
     UpdateDocumentRequest, UpdatePlanningAssignmentRequest, UpdateProjectRequest,
     UpdateProjectRootRequest, UpdateSessionSpecRequest, UpdateWorkItemRequest,
-    UpdateWorktreeRequest, WorkItemDetail, WorkItemListFilter, WorkItemSummary, WorktreeDetail,
-    WorktreeListFilter, WorktreeSummary,
+    UpdateWorkflowReconciliationProposalRequest, UpdateWorktreeRequest, WorkItemDetail,
+    WorkItemListFilter, WorkItemSummary, WorkflowReconciliationProposalDetail,
+    WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
+    WorktreeDetail, WorktreeListFilter, WorktreeSummary,
 };
 pub use runtime::SessionRegistry;
 pub use service::SupervisorService;

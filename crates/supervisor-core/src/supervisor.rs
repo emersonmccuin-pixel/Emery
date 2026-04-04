@@ -6,7 +6,8 @@ use crate::bootstrap::AppPaths;
 use crate::models::{
     AccountDetail, AccountSummary, CreateAccountRequest, CreateDocumentRequest,
     CreatePlanningAssignmentRequest, CreateProjectRequest, CreateProjectRootRequest,
-    CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest, CreateWorktreeRequest,
+    CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest,
+    CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
     DeletePlanningAssignmentRequest, DocumentDetail, DocumentListFilter, DocumentSummary,
     PlanningAssignmentDetail, PlanningAssignmentListFilter, PlanningAssignmentSummary,
     ProjectDetail, ProjectRootSummary, ProjectSummary, RemoveProjectRootRequest,
@@ -14,8 +15,10 @@ use crate::models::{
     SessionOutputEvent, SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary,
     SessionSummary, UpdateAccountRequest, UpdateDocumentRequest, UpdatePlanningAssignmentRequest,
     UpdateProjectRequest, UpdateProjectRootRequest, UpdateSessionSpecRequest,
-    UpdateWorkItemRequest, UpdateWorktreeRequest, WorkItemDetail, WorkItemListFilter,
-    WorkItemSummary, WorktreeDetail, WorktreeListFilter, WorktreeSummary,
+    UpdateWorkItemRequest, UpdateWorkflowReconciliationProposalRequest, UpdateWorktreeRequest,
+    WorkItemDetail, WorkItemListFilter, WorkItemSummary, WorkflowReconciliationProposalDetail,
+    WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
+    WorktreeDetail, WorktreeListFilter, WorktreeSummary,
 };
 use crate::runtime::SessionRegistry;
 use crate::service::SupervisorService;
@@ -221,6 +224,37 @@ impl Supervisor {
         request: DeletePlanningAssignmentRequest,
     ) -> Result<PlanningAssignmentDetail> {
         self.service.delete_planning_assignment(request)
+    }
+
+    pub fn list_workflow_reconciliation_proposals(
+        &self,
+        filter: WorkflowReconciliationProposalListFilter,
+    ) -> Result<Vec<WorkflowReconciliationProposalSummary>> {
+        self.service.list_workflow_reconciliation_proposals(filter)
+    }
+
+    pub fn get_workflow_reconciliation_proposal(
+        &self,
+        proposal_id: &str,
+    ) -> Result<Option<WorkflowReconciliationProposalDetail>> {
+        self.service
+            .get_workflow_reconciliation_proposal(proposal_id)
+    }
+
+    pub fn create_workflow_reconciliation_proposal(
+        &self,
+        request: CreateWorkflowReconciliationProposalRequest,
+    ) -> Result<WorkflowReconciliationProposalDetail> {
+        self.service
+            .create_workflow_reconciliation_proposal(request)
+    }
+
+    pub fn update_workflow_reconciliation_proposal(
+        &self,
+        request: UpdateWorkflowReconciliationProposalRequest,
+    ) -> Result<WorkflowReconciliationProposalDetail> {
+        self.service
+            .update_workflow_reconciliation_proposal(request)
     }
 
     pub fn list_sessions(&self, filter: SessionListFilter) -> Result<Vec<SessionSummary>> {

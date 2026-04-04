@@ -3,19 +3,23 @@ use std::path::Path;
 use anyhow::{Result, anyhow};
 use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Type};
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::bootstrap::AppPaths;
 use crate::models::{
     AccountDetail, AccountSummary, AccountUpdateRecord, DocumentDetail, DocumentListFilter,
     DocumentSummary, DocumentUpdateRecord, NewAccountRecord, NewDocumentRecord,
     NewPlanningAssignmentRecord, NewProjectRecord, NewProjectRootRecord, NewSessionRecord,
-    NewSessionSpecRecord, NewWorkItemRecord, NewWorktreeRecord, PlanningAssignmentDetail,
-    PlanningAssignmentListFilter, PlanningAssignmentSummary, PlanningAssignmentUpdateRecord,
-    ProjectDetail, ProjectRootSummary, ProjectRootUpdateRecord, ProjectSummary,
-    ProjectUpdateRecord, SessionArtifactRecord, SessionListFilter, SessionSpecDetail,
-    SessionSpecListFilter, SessionSpecSummary, SessionSpecUpdateRecord, SessionSummary,
-    WorkItemDetail, WorkItemListFilter, WorkItemSummary, WorkItemUpdateRecord, WorktreeDetail,
-    WorktreeListFilter, WorktreeSummary, WorktreeUpdateRecord,
+    NewSessionSpecRecord, NewWorkItemRecord, NewWorkflowReconciliationProposalRecord,
+    NewWorktreeRecord, PlanningAssignmentDetail, PlanningAssignmentListFilter,
+    PlanningAssignmentSummary, PlanningAssignmentUpdateRecord, ProjectDetail, ProjectRootSummary,
+    ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord, SessionArtifactRecord,
+    SessionListFilter, SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary,
+    SessionSpecUpdateRecord, SessionSummary, WorkItemDetail, WorkItemListFilter, WorkItemSummary,
+    WorkItemUpdateRecord, WorkflowReconciliationProposalDetail,
+    WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
+    WorkflowReconciliationProposalUpdateRecord, WorktreeDetail, WorktreeListFilter,
+    WorktreeSummary, WorktreeUpdateRecord,
 };
 use crate::schema::{migrate_app_db, migrate_knowledge_db};
 
@@ -1664,6 +1668,203 @@ impl DatabaseSet {
         }
     }
 
+    pub fn list_workflow_reconciliation_proposals(
+        &self,
+        filter: &WorkflowReconciliationProposalListFilter,
+        scoped_work_item_ids: Option<&[String]>,
+    ) -> Result<Vec<WorkflowReconciliationProposalSummary>> {
+        if matches!(scoped_work_item_ids, Some(ids) if ids.is_empty()) {
+            return Ok(Vec::new());
+        }
+
+        let connection = open_connection(&self.paths.app_db)?;
+        let mut sql = String::from(
+            "SELECT
+                id,
+                source_session_id,
+                work_item_id,
+                target_entity_type,
+                target_entity_id,
+                proposal_type,
+                proposed_change_payload,
+                reason,
+                confidence,
+                status,
+                created_at,
+                updated_at,
+                resolved_at
+             FROM workflow_reconciliation_proposals
+             WHERE 1 = 1",
+        );
+        let mut values = Vec::new();
+
+        if let Some(scoped_work_item_ids) = scoped_work_item_ids {
+            sql.push_str(" AND work_item_id IN (");
+            sql.push_str(&vec!["?"; scoped_work_item_ids.len()].join(", "));
+            sql.push(')');
+            values.extend(scoped_work_item_ids.iter().cloned());
+        }
+
+        if let Some(work_item_id) = filter.work_item_id.as_deref() {
+            sql.push_str(" AND work_item_id = ?");
+            values.push(work_item_id.to_string());
+        }
+
+        if let Some(source_session_id) = filter.source_session_id.as_deref() {
+            sql.push_str(" AND source_session_id = ?");
+            values.push(source_session_id.to_string());
+        }
+
+        if let Some(target_entity_type) = filter.target_entity_type.as_deref() {
+            sql.push_str(" AND target_entity_type = ?");
+            values.push(target_entity_type.to_string());
+        }
+
+        if let Some(proposal_type) = filter.proposal_type.as_deref() {
+            sql.push_str(" AND proposal_type = ?");
+            values.push(proposal_type.to_string());
+        }
+
+        if let Some(status) = filter.status.as_deref() {
+            sql.push_str(" AND status = ?");
+            values.push(status.to_string());
+        }
+
+        sql.push_str(" ORDER BY created_at DESC, id DESC");
+
+        if let Some(limit) = filter.limit {
+            sql.push_str(" LIMIT ?");
+            values.push((limit as i64).to_string());
+        }
+
+        let mut statement = connection.prepare(&sql)?;
+        let rows = statement.query_map(
+            params_from_iter(values.iter()),
+            map_workflow_reconciliation_proposal_summary,
+        )?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn get_workflow_reconciliation_proposal(
+        &self,
+        proposal_id: &str,
+    ) -> Result<Option<WorkflowReconciliationProposalDetail>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection
+            .query_row(
+                "SELECT
+                    id,
+                    source_session_id,
+                    work_item_id,
+                    target_entity_type,
+                    target_entity_id,
+                    proposal_type,
+                    proposed_change_payload,
+                    reason,
+                    confidence,
+                    status,
+                    created_at,
+                    updated_at,
+                    resolved_at
+                 FROM workflow_reconciliation_proposals
+                 WHERE id = ?1",
+                [proposal_id],
+                |row| {
+                    Ok(WorkflowReconciliationProposalDetail {
+                        summary: map_workflow_reconciliation_proposal_summary(row)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn insert_workflow_reconciliation_proposal(
+        &self,
+        record: &NewWorkflowReconciliationProposalRecord,
+    ) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "INSERT INTO workflow_reconciliation_proposals (
+                id,
+                source_session_id,
+                work_item_id,
+                target_entity_type,
+                target_entity_id,
+                proposal_type,
+                proposed_change_payload,
+                reason,
+                confidence,
+                status,
+                created_at,
+                updated_at,
+                resolved_at
+             ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13
+             )",
+            params![
+                record.id,
+                record.source_session_id,
+                record.work_item_id,
+                record.target_entity_type,
+                record.target_entity_id,
+                record.proposal_type,
+                record.proposed_change_payload_json,
+                record.reason,
+                record.confidence,
+                record.status,
+                record.created_at,
+                record.updated_at,
+                record.resolved_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_workflow_reconciliation_proposal(
+        &self,
+        record: &WorkflowReconciliationProposalUpdateRecord,
+    ) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let updated = connection.execute(
+            "UPDATE workflow_reconciliation_proposals
+             SET work_item_id = ?2,
+                 target_entity_type = ?3,
+                 target_entity_id = ?4,
+                 proposal_type = ?5,
+                 proposed_change_payload = ?6,
+                 reason = ?7,
+                 confidence = ?8,
+                 status = ?9,
+                 updated_at = ?10,
+                 resolved_at = ?11
+             WHERE id = ?1",
+            params![
+                record.id,
+                record.work_item_id,
+                record.target_entity_type,
+                record.target_entity_id,
+                record.proposal_type,
+                record.proposed_change_payload_json,
+                record.reason,
+                record.confidence,
+                record.status,
+                record.updated_at,
+                record.resolved_at,
+            ],
+        )?;
+
+        if updated == 0 {
+            return Err(anyhow!(
+                "workflow reconciliation proposal {} was not found",
+                record.id
+            ));
+        }
+
+        Ok(())
+    }
+
     pub fn list_sessions(&self, filter: &SessionListFilter) -> Result<Vec<SessionSummary>> {
         let connection = open_connection(&self.paths.app_db)?;
         let mut sql = String::from(
@@ -2364,7 +2565,32 @@ fn map_planning_assignment_summary(row: &Row<'_>) -> rusqlite::Result<PlanningAs
     })
 }
 
+fn map_workflow_reconciliation_proposal_summary(
+    row: &Row<'_>,
+) -> rusqlite::Result<WorkflowReconciliationProposalSummary> {
+    Ok(WorkflowReconciliationProposalSummary {
+        id: row.get(0)?,
+        source_session_id: row.get(1)?,
+        work_item_id: row.get(2)?,
+        target_entity_type: row.get(3)?,
+        target_entity_id: row.get(4)?,
+        proposal_type: row.get(5)?,
+        proposed_change_payload: parse_json_value(row.get_ref(6)?.as_str()?)?,
+        reason: row.get(7)?,
+        confidence: row.get(8)?,
+        status: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
+        resolved_at: row.get(12)?,
+    })
+}
+
 fn parse_args_json(value: &str) -> rusqlite::Result<Vec<String>> {
+    serde_json::from_str(value)
+        .map_err(|error| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(error)))
+}
+
+fn parse_json_value(value: &str) -> rusqlite::Result<Value> {
     serde_json::from_str(value)
         .map_err(|error| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(error)))
 }
