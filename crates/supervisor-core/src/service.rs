@@ -1196,6 +1196,10 @@ impl SupervisorService {
             return Ok(None);
         };
 
+        let mut summaries = self.with_runtime_flags(vec![summary])?;
+        let summary = summaries
+            .pop()
+            .ok_or_else(|| anyhow!("session {session_id} was not readable"))?;
         let runtime = self.registry.runtime_for(session_id)?;
         Ok(Some(SessionDetail { summary, runtime }))
     }

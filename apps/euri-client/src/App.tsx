@@ -568,6 +568,11 @@ export default function App() {
               if (!existing) {
                 return current;
               }
+              if (!payload.live) {
+                const next = { ...current };
+                delete next[payload.session_id];
+                return next;
+              }
               return {
                 ...current,
                 [payload.session_id]: {
@@ -794,7 +799,8 @@ export default function App() {
 
     if (resource.resource_type === "session_terminal") {
       const attachment = attachedSessions[resource.session_id];
-      if (attachment) {
+      const session = sessions.find((entry) => entry.id === resource.session_id) ?? null;
+      if (attachment && session?.live) {
         try {
           await detachSession(resource.session_id, attachment.attachment_id, newCorrelationId("session-close"));
         } catch (invokeError) {
@@ -817,6 +823,24 @@ export default function App() {
         delete next[resource.session_id];
         return next;
       });
+    }
+  }
+
+  async function handleInterruptSession(sessionId: string) {
+    try {
+      await interruptSession(sessionId, newCorrelationId("session-interrupt"));
+      clearError();
+    } catch (invokeError) {
+      setError(String(invokeError));
+    }
+  }
+
+  async function handleTerminateSession(sessionId: string) {
+    try {
+      await terminateSession(sessionId, newCorrelationId("session-terminate"));
+      clearError();
+    } catch (invokeError) {
+      setError(String(invokeError));
     }
   }
 
@@ -1694,8 +1718,8 @@ export default function App() {
                   setTerminalInput((current) => ({ ...current, [activeResource.session_id]: value }))
                 }
                 onSubmitInput={() => void submitTerminalInput(activeResource.session_id)}
-                onInterrupt={() => void interruptSession(activeResource.session_id, newCorrelationId("session-interrupt"))}
-                onTerminate={() => void terminateSession(activeResource.session_id, newCorrelationId("session-terminate"))}
+                onInterrupt={() => void handleInterruptSession(activeResource.session_id)}
+                onTerminate={() => void handleTerminateSession(activeResource.session_id)}
               />
             ) : activeResource.resource_type === "work_item_detail" ? (
               <WorkItemPane
