@@ -35,3 +35,24 @@ When enabled:
   action in the top bar
 - exported bundles are written by the supervisor into either `sessions/<session-id>/debug/` or
   `logs/diagnostics/bundles/` when no session is selected
+
+## Hidden Dev Launch On Windows
+
+The visible `npm list @tauri-apps/api` / Tauri CLI console window comes from the Tauri dev
+tooling rather than from repo-owned code.
+
+To start the thin shell without that visible npm/cmd window, use the repo launcher instead of
+`cargo tauri dev`:
+
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-euri-client-hidden.ps1`
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-euri-client-hidden.ps1 -EnableDiagnostics`
+
+This launcher:
+
+- starts the Vite dev server hidden in the background on `127.0.0.1:1420`
+- waits for the frontend to become reachable
+- launches the debug `euri-client.exe` directly
+
+To stop the hidden dev processes:
+
+- `powershell -ExecutionPolicy Bypass -File .\scripts\stop-euri-client-hidden.ps1`
