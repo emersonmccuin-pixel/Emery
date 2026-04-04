@@ -5,25 +5,26 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use supervisor_core::{
-    CreateAccountRequest, CreateDocumentRequest, CreatePlanningAssignmentRequest,
-    CreateProjectRequest, CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
-    CreateWorkItemRequest, CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
-    DeletePlanningAssignmentRequest, DocumentListFilter, PlanningAssignmentListFilter,
-    RemoveProjectRootRequest, SessionListFilter, SessionSpecListFilter, Supervisor,
-    UpdateAccountRequest, UpdateDocumentRequest, UpdatePlanningAssignmentRequest,
-    UpdateProjectRequest, UpdateProjectRootRequest, UpdateSessionSpecRequest,
-    UpdateWorkItemRequest, UpdateWorkflowReconciliationProposalRequest,
+    CreateAccountRequest, CreateDiagnosticsBundleRequest, CreateDocumentRequest,
+    CreatePlanningAssignmentRequest, CreateProjectRequest, CreateProjectRootRequest,
+    CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest,
+    CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
+    DeletePlanningAssignmentRequest, DiagnosticContext, DocumentListFilter,
+    PlanningAssignmentListFilter, RemoveProjectRootRequest, SessionListFilter,
+    SessionSpecListFilter, Supervisor, UpdateAccountRequest, UpdateDocumentRequest,
+    UpdatePlanningAssignmentRequest, UpdateProjectRequest, UpdateProjectRootRequest,
+    UpdateSessionSpecRequest, UpdateWorkItemRequest, UpdateWorkflowReconciliationProposalRequest,
     UpdateWorkspaceStateRequest, UpdateWorktreeRequest, WorkItemListFilter,
     WorkflowReconciliationProposalListFilter, WorktreeListFilter,
 };
 
 use crate::protocol::{
-    AccountGetParams, DocumentGetParams, ErrorBody, EventEnvelope, HelloResult, Method,
-    ProjectGetParams, ProjectRootListParams, RequestEnvelope, ResponseEnvelope,
-    SessionAttachParams, SessionControlParams, SessionDetachParams, SessionGetParams,
-    SessionInputParams, SessionResizeParams, SessionSpecGetParams, SubscriptionCloseParams,
-    SubscriptionOpenParams, WorkItemGetParams, WorkflowReconciliationProposalGetParams,
-    WorkspaceStateGetParams, WorktreeGetParams,
+    AccountGetParams, DiagnosticsExportBundleParams, DocumentGetParams, ErrorBody, EventEnvelope,
+    HelloResult, Method, ProjectGetParams, ProjectRootListParams, RequestEnvelope,
+    ResponseEnvelope, SessionAttachParams, SessionControlParams, SessionDetachParams,
+    SessionGetParams, SessionInputParams, SessionResizeParams, SessionSpecGetParams,
+    SubscriptionCloseParams, SubscriptionOpenParams, WorkItemGetParams,
+    WorkflowReconciliationProposalGetParams, WorkspaceStateGetParams, WorktreeGetParams,
 };
 
 const PROTOCOL_VERSION: &str = "1";
@@ -49,6 +50,13 @@ struct SessionOutputSubscription {
     session_id: String,
 }
 
+#[derive(Debug, Clone, Default)]
+struct RpcDiagnosticIds {
+    session_id: Option<String>,
+    project_id: Option<String>,
+    work_item_id: Option<String>,
+}
+
 impl SupervisorRpc {
     pub fn new(supervisor: Supervisor, ipc_endpoint: impl Into<String>) -> Self {
         Self {
@@ -68,6 +76,15 @@ impl SupervisorRpc {
         })
     }
 
+    pub fn record_connection_event(&self, event: &str, payload: Value) {
+        let _ = self.supervisor.record_diagnostic_event(
+            "rpc",
+            event.to_string(),
+            DiagnosticContext::default(),
+            payload,
+        );
+    }
+
     pub fn handle_json(
         &self,
         message: &str,
@@ -82,6 +99,14 @@ impl SupervisorRpc {
         request: RequestEnvelope,
         connection: Arc<ConnectionState>,
     ) -> ResponseEnvelope {
+        let diag_ids = diagnostic_ids(&request.method, &request.params);
+        let diag_context = DiagnosticContext {
+            request_id: Some(request.request_id.clone()),
+            correlation_id: request.correlation_id.clone(),
+            session_id: diag_ids.session_id.clone(),
+            project_id: diag_ids.project_id.clone(),
+            work_item_id: diag_ids.work_item_id.clone(),
+        };
         if request.message_type != "request" {
             return ResponseEnvelope::error(
                 request.request_id,
@@ -104,9 +129,40 @@ impl SupervisorRpc {
             }
         };
 
+        let _ = self.supervisor.record_diagnostic_event(
+            "rpc",
+            "request.received",
+            diag_context.clone(),
+            json!({
+                "method": request.method,
+            }),
+        );
+
         match self.dispatch(method, request.params, connection) {
-            Ok(result) => ResponseEnvelope::success(request.request_id, result),
-            Err(error) => ResponseEnvelope::error(request.request_id, classify_error(error)),
+            Ok(result) => {
+                let _ = self.supervisor.record_diagnostic_event(
+                    "rpc",
+                    "request.completed",
+                    diag_context,
+                    json!({
+                        "ok": true,
+                    }),
+                );
+                ResponseEnvelope::success(request.request_id, result)
+            }
+            Err(error) => {
+                let classified = classify_error(error);
+                let _ = self.supervisor.record_diagnostic_event(
+                    "rpc",
+                    "request.failed",
+                    diag_context,
+                    json!({
+                        "code": classified.code,
+                        "message": classified.message,
+                    }),
+                );
+                ResponseEnvelope::error(request.request_id, classified)
+            }
         }
     }
 
@@ -409,6 +465,17 @@ impl SupervisorRpc {
                     self.supervisor.update_workspace_state(request)?,
                 )?)
             }
+            Method::DiagnosticsExportBundle => {
+                let request: DiagnosticsExportBundleParams = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor
+                        .export_diagnostics_bundle(CreateDiagnosticsBundleRequest {
+                            session_id: request.session_id,
+                            incident_label: request.incident_label,
+                            client_context: request.client_context,
+                        })?,
+                )?)
+            }
             Method::SessionList => {
                 let filter: SessionListFilter = serde_json::from_value(params)?;
                 Ok(serde_json::to_value(
@@ -656,6 +723,7 @@ impl SupervisorRpc {
                 Method::WorkflowReconciliationProposalUpdate.as_str(),
                 Method::WorkspaceStateGet.as_str(),
                 Method::WorkspaceStateUpdate.as_str(),
+                Method::DiagnosticsExportBundle.as_str(),
                 Method::SessionList.as_str(),
                 Method::SessionGet.as_str(),
                 Method::SessionCreate.as_str(),
@@ -670,6 +738,7 @@ impl SupervisorRpc {
             ],
             app_data_root: self.supervisor.paths().root.display().to_string(),
             ipc_endpoint: self.ipc_endpoint.clone(),
+            diagnostics_enabled: self.supervisor.diagnostics_enabled(),
         })
     }
 
@@ -699,6 +768,43 @@ fn invalid_request(message: &str) -> ErrorBody {
         retryable: false,
         details: Value::Null,
     }
+}
+
+fn diagnostic_ids(method: &str, params: &Value) -> RpcDiagnosticIds {
+    let project_id = params
+        .get("project_id")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let session_id = params
+        .get("session_id")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let work_item_id = params
+        .get("work_item_id")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+
+    let scope = params
+        .get("scope")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    if method == "workspace_state.update" || method == "workspace_state.get" {
+        return RpcDiagnosticIds {
+            session_id,
+            project_id,
+            work_item_id,
+        };
+    }
+
+    let mut ids = RpcDiagnosticIds {
+        session_id,
+        project_id,
+        work_item_id,
+    };
+    if ids.project_id.is_none() {
+        ids.project_id = scope;
+    }
+    ids
 }
 
 fn classify_error(error: anyhow::Error) -> ErrorBody {

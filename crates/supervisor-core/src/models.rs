@@ -905,6 +905,14 @@ pub struct UpdateWorkspaceStateRequest {
     pub payload: Value,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateDiagnosticsBundleRequest {
+    pub session_id: Option<String>,
+    pub incident_label: Option<String>,
+    #[serde(default)]
+    pub client_context: Value,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct SessionListFilter {
     pub project_id: Option<String>,

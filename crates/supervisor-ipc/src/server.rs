@@ -47,6 +47,7 @@ impl LocalIpcServer {
             match stream {
                 Ok(stream) => {
                     let rpc = Arc::clone(&self.rpc);
+                    rpc.record_connection_event("connection.accepted", serde_json::json!({}));
                     thread::spawn(move || {
                         if let Err(error) = handle_client(rpc, stream) {
                             eprintln!("client connection failed: {error:#}");
@@ -100,6 +101,7 @@ fn handle_client(rpc: Arc<SupervisorRpc>, stream: Stream) -> Result<()> {
         outbound_tx,
     );
     rpc.close_connection(connection);
+    rpc.record_connection_event("connection.closed", serde_json::json!({}));
 
     let _ = event_handle.join();
     match writer_handle.join() {

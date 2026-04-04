@@ -5,10 +5,13 @@ use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use crate::diagnostics::{
+    DiagnosticContext, DiagnosticsBundleRequest, DiagnosticsBundleResult, DiagnosticsHub,
+};
 use crate::models::{
     AccountDetail, AccountSummary, AccountUpdateRecord, CreateAccountRequest,
-    CreateDocumentRequest, CreatePlanningAssignmentRequest, CreateProjectRequest,
-    CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
+    CreateDiagnosticsBundleRequest, CreateDocumentRequest, CreatePlanningAssignmentRequest,
+    CreateProjectRequest, CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
     CreateWorkItemRequest, CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
     DeletePlanningAssignmentRequest, DocumentDetail, DocumentListFilter, DocumentSummary,
     DocumentUpdateRecord, GetWorkspaceStateRequest, NewAccountRecord, NewDocumentRecord,
@@ -36,13 +39,19 @@ use crate::store::DatabaseSet;
 pub struct SupervisorService {
     databases: DatabaseSet,
     registry: SessionRegistry,
+    diagnostics: DiagnosticsHub,
 }
 
 impl SupervisorService {
-    pub fn new(databases: DatabaseSet, registry: SessionRegistry) -> Self {
+    pub fn new(
+        databases: DatabaseSet,
+        registry: SessionRegistry,
+        diagnostics: DiagnosticsHub,
+    ) -> Self {
         Self {
             databases,
             registry,
+            diagnostics,
         }
     }
 
@@ -1160,9 +1169,26 @@ impl SupervisorService {
         };
         self.databases
             .save_workspace_state(&normalized, &record_id, saved_at)?;
-        self.databases
+        let record = self
+            .databases
             .get_workspace_state(&normalized.scope)?
-            .ok_or_else(|| anyhow!("workspace_state {} was not found", normalized.scope))
+            .ok_or_else(|| anyhow!("workspace_state {} was not found", normalized.scope))?;
+        self.record_diagnostic(
+            "service",
+            "workspace_state.updated",
+            DiagnosticContext::default(),
+            json!({
+                "scope": record.scope,
+                "saved_at": record.saved_at,
+                "resource_count": record
+                    .payload
+                    .get("open_resources")
+                    .and_then(Value::as_array)
+                    .map(|items| items.len())
+                    .unwrap_or_default(),
+            }),
+        )?;
+        Ok(record)
     }
 
     pub fn get_session(&self, session_id: &str) -> Result<Option<SessionDetail>> {
@@ -1269,7 +1295,24 @@ impl SupervisorService {
             let _ = self.registry.remove_session(&session_id);
         }
 
-        detail
+        let detail = detail?;
+        self.record_diagnostic(
+            "service",
+            "session.created",
+            DiagnosticContext {
+                session_id: Some(detail.summary.id.clone()),
+                project_id: Some(detail.summary.project_id.clone()),
+                work_item_id: detail.summary.work_item_id.clone(),
+                ..DiagnosticContext::default()
+            },
+            json!({
+                "account_id": detail.summary.account_id,
+                "cwd": detail.summary.cwd,
+                "origin_mode": detail.summary.origin_mode,
+                "current_mode": detail.summary.current_mode,
+            }),
+        )?;
+        Ok(detail)
     }
 
     pub fn forward_input(&self, session_id: &str, input: &[u8]) -> Result<()> {
@@ -1302,14 +1345,31 @@ impl SupervisorService {
             .get_session(session_id)?
             .ok_or_else(|| anyhow!("session {session_id} was not found"))?;
 
-        Ok(SessionAttachResponse {
+        let response = SessionAttachResponse {
             attachment_id: snapshot.attachment_id,
             session,
             terminal_cols: snapshot.terminal_cols,
             terminal_rows: snapshot.terminal_rows,
             replay: snapshot.replay,
             output_cursor: snapshot.output_cursor,
-        })
+        };
+        self.record_diagnostic(
+            "service",
+            "session.attach_completed",
+            DiagnosticContext {
+                session_id: Some(response.session.summary.id.clone()),
+                project_id: Some(response.session.summary.project_id.clone()),
+                work_item_id: response.session.summary.work_item_id.clone(),
+                ..DiagnosticContext::default()
+            },
+            json!({
+                "attachment_id": response.attachment_id,
+                "terminal_cols": response.terminal_cols,
+                "terminal_rows": response.terminal_rows,
+                "output_cursor": response.output_cursor,
+            }),
+        )?;
+        Ok(response)
     }
 
     pub fn detach_session(
@@ -1318,11 +1378,24 @@ impl SupervisorService {
         attachment_id: &str,
     ) -> Result<SessionDetachResponse> {
         let remaining_attached_clients = self.registry.detach_session(session_id, attachment_id)?;
-        Ok(SessionDetachResponse {
+        let response = SessionDetachResponse {
             session_id: session_id.to_string(),
             attachment_id: attachment_id.to_string(),
             remaining_attached_clients,
-        })
+        };
+        self.record_diagnostic(
+            "service",
+            "session.detach_completed",
+            DiagnosticContext {
+                session_id: Some(response.session_id.clone()),
+                ..DiagnosticContext::default()
+            },
+            json!({
+                "attachment_id": response.attachment_id,
+                "remaining_attached_clients": response.remaining_attached_clients,
+            }),
+        )?;
+        Ok(response)
     }
 
     pub fn subscribe_session_output(
@@ -1356,6 +1429,61 @@ impl SupervisorService {
     ) -> Result<()> {
         self.registry
             .unsubscribe_state_changes(session_id, subscription_id)
+    }
+
+    pub fn export_diagnostics_bundle(
+        &self,
+        request: CreateDiagnosticsBundleRequest,
+    ) -> Result<DiagnosticsBundleResult> {
+        let session_detail = match request.session_id.as_deref() {
+            Some(session_id) => self.get_session(session_id)?,
+            None => None,
+        };
+        let session_meta = match request.session_id.as_deref() {
+            Some(session_id) => {
+                let path = self
+                    .databases
+                    .paths()
+                    .sessions_dir
+                    .join(session_id)
+                    .join("meta.json");
+                if path.exists() {
+                    Some(serde_json::from_slice::<Value>(
+                        &fs::read(&path)
+                            .with_context(|| format!("failed to read {}", path.display()))?,
+                    )?)
+                } else {
+                    None
+                }
+            }
+            None => None,
+        };
+        let result = self.diagnostics.export_bundle(
+            DiagnosticsBundleRequest {
+                session_id: request.session_id.clone(),
+                incident_label: request.incident_label.clone(),
+                client_context: request.client_context,
+            },
+            json!({
+                "health": self.databases.health_snapshot()?,
+                "bootstrap": self.databases.bootstrap_state()?,
+                "session": session_detail,
+                "session_meta": session_meta,
+            }),
+        )?;
+        self.record_diagnostic(
+            "service",
+            "diagnostics.bundle_exported",
+            DiagnosticContext {
+                session_id: request.session_id,
+                ..DiagnosticContext::default()
+            },
+            json!({
+                "bundle_path": result.bundle_path,
+                "incident_label": request.incident_label,
+            }),
+        )?;
+        Ok(result)
     }
 
     fn build_session_spec_record(
@@ -1923,6 +2051,7 @@ impl SupervisorService {
         let context_dir = session_dir.join("context");
         let extraction_dir = session_dir.join("extraction");
         let review_dir = session_dir.join("review");
+        let debug_dir = self.diagnostics.session_debug_dir(session_id);
         let meta_path = session_dir.join("meta.json");
         let raw_log_path = session_dir.join("raw-terminal.log");
 
@@ -1932,6 +2061,7 @@ impl SupervisorService {
             &context_dir,
             &extraction_dir,
             &review_dir,
+            &debug_dir,
         ] {
             fs::create_dir_all(dir).with_context(|| {
                 format!(
@@ -2025,6 +2155,16 @@ impl SupervisorService {
 
         fs::write(&bootstrap.meta_path, serde_json::to_vec_pretty(&payload)?)
             .with_context(|| format!("failed to write {}", bootstrap.meta_path.display()))
+    }
+
+    fn record_diagnostic(
+        &self,
+        subsystem: impl Into<String>,
+        event: impl Into<String>,
+        context: DiagnosticContext,
+        payload: Value,
+    ) -> Result<()> {
+        self.diagnostics.record(subsystem, event, context, payload)
     }
 }
 

@@ -1,4 +1,5 @@
 mod bootstrap;
+mod diagnostics;
 mod models;
 mod runtime;
 mod schema;
@@ -7,11 +8,14 @@ mod store;
 mod supervisor;
 
 pub use bootstrap::AppPaths;
+pub use diagnostics::{
+    DiagnosticContext, DiagnosticsBundleRequest, DiagnosticsBundleResult, DiagnosticsHub,
+};
 pub use models::{
-    AccountDetail, AccountSummary, CreateAccountRequest, CreateDocumentRequest,
-    CreatePlanningAssignmentRequest, CreateProjectRequest, CreateProjectRootRequest,
-    CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest,
-    CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
+    AccountDetail, AccountSummary, CreateAccountRequest, CreateDiagnosticsBundleRequest,
+    CreateDocumentRequest, CreatePlanningAssignmentRequest, CreateProjectRequest,
+    CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
+    CreateWorkItemRequest, CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
     DeletePlanningAssignmentRequest, DocumentDetail, DocumentListFilter, DocumentSummary,
     EncodedTerminalChunk, GetWorkspaceStateRequest, PlanningAssignmentDetail,
     PlanningAssignmentListFilter, PlanningAssignmentSummary, ProjectDetail, ProjectRootSummary,

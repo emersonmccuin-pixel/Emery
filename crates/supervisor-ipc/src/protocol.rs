@@ -44,6 +44,7 @@ pub enum Method {
     WorkflowReconciliationProposalUpdate,
     WorkspaceStateGet,
     WorkspaceStateUpdate,
+    DiagnosticsExportBundle,
     SessionList,
     SessionGet,
     SessionCreate,
@@ -101,6 +102,7 @@ impl Method {
             Self::WorkflowReconciliationProposalUpdate => "workflow_reconciliation_proposal.update",
             Self::WorkspaceStateGet => "workspace_state.get",
             Self::WorkspaceStateUpdate => "workspace_state.update",
+            Self::DiagnosticsExportBundle => "diagnostics.export_bundle",
             Self::SessionList => "session.list",
             Self::SessionGet => "session.get",
             Self::SessionCreate => "session.create",
@@ -166,6 +168,7 @@ impl TryFrom<&str> for Method {
             }
             "workspace_state.get" => Ok(Self::WorkspaceStateGet),
             "workspace_state.update" => Ok(Self::WorkspaceStateUpdate),
+            "diagnostics.export_bundle" => Ok(Self::DiagnosticsExportBundle),
             "session.list" => Ok(Self::SessionList),
             "session.get" => Ok(Self::SessionGet),
             "session.create" => Ok(Self::SessionCreate),
@@ -187,6 +190,8 @@ pub struct RequestEnvelope {
     #[serde(rename = "type")]
     pub message_type: String,
     pub request_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
     pub method: String,
     #[serde(default)]
     pub params: Value,
@@ -230,6 +235,7 @@ pub struct HelloResult {
     pub capabilities: Vec<&'static str>,
     pub app_data_root: String,
     pub ipc_endpoint: String,
+    pub diagnostics_enabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -280,6 +286,14 @@ pub struct WorkflowReconciliationProposalGetParams {
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkspaceStateGetParams {
     pub scope: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DiagnosticsExportBundleParams {
+    pub session_id: Option<String>,
+    pub incident_label: Option<String>,
+    #[serde(default)]
+    pub client_context: Value,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -3,11 +3,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 
 use crate::bootstrap::AppPaths;
+use crate::diagnostics::{DiagnosticContext, DiagnosticsBundleResult, DiagnosticsHub};
 use crate::models::{
-    AccountDetail, AccountSummary, CreateAccountRequest, CreateDocumentRequest,
-    CreatePlanningAssignmentRequest, CreateProjectRequest, CreateProjectRootRequest,
-    CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest,
-    CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
+    AccountDetail, AccountSummary, CreateAccountRequest, CreateDiagnosticsBundleRequest,
+    CreateDocumentRequest, CreatePlanningAssignmentRequest, CreateProjectRequest,
+    CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
+    CreateWorkItemRequest, CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
     DeletePlanningAssignmentRequest, DocumentDetail, DocumentListFilter, DocumentSummary,
     GetWorkspaceStateRequest, PlanningAssignmentDetail, PlanningAssignmentListFilter,
     PlanningAssignmentSummary, ProjectDetail, ProjectRootSummary, ProjectSummary,
@@ -31,6 +32,7 @@ pub struct Supervisor {
     databases: DatabaseSet,
     registry: SessionRegistry,
     service: SupervisorService,
+    diagnostics: DiagnosticsHub,
     paths: AppPaths,
     started_at_unix_ms: u64,
 }
@@ -39,15 +41,28 @@ impl Supervisor {
     pub fn bootstrap(paths: AppPaths) -> Result<Self> {
         let databases = DatabaseSet::initialize(&paths)?;
         databases.reconcile_interrupted_sessions(unix_time_seconds())?;
-        let registry = SessionRegistry::new();
-        let service = SupervisorService::new(databases.clone(), registry.clone());
-        Ok(Self {
+        let diagnostics = DiagnosticsHub::from_env(&paths)?;
+        let registry = SessionRegistry::new(diagnostics.clone());
+        let service =
+            SupervisorService::new(databases.clone(), registry.clone(), diagnostics.clone());
+        let supervisor = Self {
             databases,
             registry,
             service,
+            diagnostics,
             paths,
             started_at_unix_ms: unix_time_ms(),
-        })
+        };
+        supervisor.record_diagnostic_event(
+            "supervisor",
+            "bootstrap.completed",
+            DiagnosticContext::default(),
+            serde_json::json!({
+                "app_data_root": supervisor.paths.root.display().to_string(),
+                "diagnostics_enabled": supervisor.diagnostics.enabled(),
+            }),
+        )?;
+        Ok(supervisor)
     }
 
     pub fn paths(&self) -> &AppPaths {
@@ -56,6 +71,20 @@ impl Supervisor {
 
     pub fn started_at_unix_ms(&self) -> u64 {
         self.started_at_unix_ms
+    }
+
+    pub fn diagnostics_enabled(&self) -> bool {
+        self.diagnostics.enabled()
+    }
+
+    pub fn record_diagnostic_event(
+        &self,
+        subsystem: impl Into<String>,
+        event: impl Into<String>,
+        context: DiagnosticContext,
+        payload: serde_json::Value,
+    ) -> Result<()> {
+        self.diagnostics.record(subsystem, event, context, payload)
     }
 
     pub fn health_snapshot(&self) -> Result<HealthSnapshot> {
@@ -345,6 +374,13 @@ impl Supervisor {
     ) -> Result<()> {
         self.service
             .unsubscribe_session_state_changed(session_id, subscription_id)
+    }
+
+    pub fn export_diagnostics_bundle(
+        &self,
+        request: CreateDiagnosticsBundleRequest,
+    ) -> Result<DiagnosticsBundleResult> {
+        self.service.export_diagnostics_bundle(request)
     }
 }
 

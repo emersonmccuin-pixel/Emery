@@ -12,6 +12,7 @@ use base64::Engine as _;
 use portable_pty::{Child, ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use uuid::Uuid;
 
+use crate::diagnostics::{DiagnosticContext, DiagnosticsHub};
 use crate::models::{
     EncodedTerminalChunk, ReplaySnapshot, SessionOutputEvent, SessionRuntimeView,
     SessionStateChangedEvent,
@@ -25,6 +26,7 @@ const QUIET_INPUT_THRESHOLD_SECS: i64 = 3;
 #[derive(Debug, Clone)]
 pub struct SessionRegistry {
     inner: Arc<Mutex<HashMap<String, RuntimeSessionState>>>,
+    diagnostics: DiagnosticsHub,
 }
 
 #[derive(Debug, Clone)]
@@ -101,9 +103,10 @@ impl std::fmt::Debug for SessionProcessController {
 }
 
 impl SessionRegistry {
-    pub fn new() -> Self {
+    pub fn new(diagnostics: DiagnosticsHub) -> Self {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
+            diagnostics,
         }
     }
 
@@ -114,7 +117,7 @@ impl SessionRegistry {
         let raw_log = RawLogWriter::open(registration.raw_log_path.clone())?;
         let mut guard = self.lock()?;
         guard.insert(
-            registration.session_id,
+            registration.session_id.clone(),
             RuntimeSessionState {
                 runtime_state: "starting".to_string(),
                 activity_state: "starting".to_string(),
@@ -127,8 +130,8 @@ impl SessionRegistry {
                 last_runtime_activity_at: None,
                 created_at: registration.created_at,
                 updated_at: registration.created_at,
-                artifact_root: registration.artifact_root,
-                raw_log_path: registration.raw_log_path,
+                artifact_root: registration.artifact_root.clone(),
+                raw_log_path: registration.raw_log_path.clone(),
                 replay: ReplayBuffer::new(DEFAULT_REPLAY_LIMIT_BYTES),
                 raw_log,
                 output_subscribers: HashMap::new(),
@@ -138,6 +141,18 @@ impl SessionRegistry {
                 activity_monitor_running: false,
             },
         );
+        self.diagnostics.record(
+            "runtime",
+            "session.registered",
+            DiagnosticContext {
+                session_id: Some(registration.session_id),
+                ..DiagnosticContext::default()
+            },
+            serde_json::json!({
+                "artifact_root": registration.artifact_root.display().to_string(),
+                "raw_log_path": registration.raw_log_path.display().to_string(),
+            }),
+        )?;
         Ok(())
     }
 
@@ -158,7 +173,7 @@ impl SessionRegistry {
             .map_err(|error| anyhow!("failed to open PTY for {}: {error}", request.session_id))?;
 
         let mut command = CommandBuilder::new(&request.command);
-        command.cwd(request.cwd);
+        command.cwd(request.cwd.clone());
         for arg in &request.args {
             command.arg(arg);
         }
@@ -205,6 +220,22 @@ impl SessionRegistry {
         databases.mark_session_started(&request.session_id, started_at)?;
         self.broadcast_state_change(&request.session_id)?;
         self.ensure_activity_monitor(&request.session_id, databases.clone());
+        self.diagnostics.record(
+            "runtime",
+            "session.launch_succeeded",
+            DiagnosticContext {
+                session_id: Some(request.session_id.clone()),
+                ..DiagnosticContext::default()
+            },
+            serde_json::json!({
+                "command": request.command.clone(),
+                "args": request.args.clone(),
+                "cwd": request.cwd.display().to_string(),
+                "initial_terminal_cols": request.initial_terminal_cols,
+                "initial_terminal_rows": request.initial_terminal_rows,
+                "pid": controller.pid,
+            }),
+        )?;
 
         let output_registry = self.clone();
         let output_databases = databases.clone();
@@ -244,6 +275,18 @@ impl SessionRegistry {
         state.attachments.clear();
         state.attached_clients = 0;
         state.requested_stop = None;
+        self.diagnostics.record_with_level(
+            "error",
+            "runtime",
+            "session.launch_failed",
+            DiagnosticContext {
+                session_id: Some(session_id.to_string()),
+                ..DiagnosticContext::default()
+            },
+            serde_json::json!({
+                "failed_at": failed_at,
+            }),
+        )?;
         Ok(())
     }
 
@@ -297,7 +340,18 @@ impl SessionRegistry {
         }
 
         let controller = self.live_controller(session_id)?;
-        controller.write_input(input)
+        controller.write_input(input)?;
+        self.diagnostics.record(
+            "runtime",
+            "session.input_forwarded",
+            DiagnosticContext {
+                session_id: Some(session_id.to_string()),
+                ..DiagnosticContext::default()
+            },
+            serde_json::json!({
+                "byte_count": input.len(),
+            }),
+        )
     }
 
     pub fn note_input(&self, session_id: &str, timestamp: i64) -> Result<()> {
@@ -325,7 +379,19 @@ impl SessionRegistry {
             cols: clamp_terminal_dimension(cols),
             pixel_width: 0,
             pixel_height: 0,
-        })
+        })?;
+        self.diagnostics.record(
+            "runtime",
+            "session.resized",
+            DiagnosticContext {
+                session_id: Some(session_id.to_string()),
+                ..DiagnosticContext::default()
+            },
+            serde_json::json!({
+                "cols": cols,
+                "rows": rows,
+            }),
+        )
     }
 
     pub fn interrupt_session(&self, session_id: &str) -> Result<()> {
@@ -346,6 +412,15 @@ impl SessionRegistry {
 
         let controller = self.live_controller(session_id)?;
         controller.write_input(&[0x03])?;
+        self.diagnostics.record(
+            "runtime",
+            "session.interrupt_requested",
+            DiagnosticContext {
+                session_id: Some(session_id.to_string()),
+                ..DiagnosticContext::default()
+            },
+            serde_json::json!({}),
+        )?;
         self.broadcast_state_change(session_id)
     }
 
@@ -369,6 +444,15 @@ impl SessionRegistry {
         databases.mark_session_stopping(session_id, now)?;
         let controller = self.live_controller(session_id)?;
         controller.terminate()?;
+        self.diagnostics.record(
+            "runtime",
+            "session.terminate_requested",
+            DiagnosticContext {
+                session_id: Some(session_id.to_string()),
+                ..DiagnosticContext::default()
+            },
+            serde_json::json!({}),
+        )?;
         self.broadcast_state_change(session_id)
     }
 
@@ -400,6 +484,20 @@ impl SessionRegistry {
         let output_cursor = state.replay.latest_sequence();
         drop(guard);
         self.broadcast_state_change(session_id)?;
+        self.diagnostics.record(
+            "runtime",
+            "session.attached",
+            DiagnosticContext {
+                session_id: Some(session_id.to_string()),
+                ..DiagnosticContext::default()
+            },
+            serde_json::json!({
+                "attachment_id": attachment_id,
+                "terminal_cols": terminal_cols,
+                "terminal_rows": terminal_rows,
+                "output_cursor": output_cursor,
+            }),
+        )?;
 
         Ok(SessionAttachmentSnapshot {
             attachment_id,
@@ -425,6 +523,18 @@ impl SessionRegistry {
         let attached_clients = state.attached_clients;
         drop(guard);
         self.broadcast_state_change(session_id)?;
+        self.diagnostics.record(
+            "runtime",
+            "session.detached",
+            DiagnosticContext {
+                session_id: Some(session_id.to_string()),
+                ..DiagnosticContext::default()
+            },
+            serde_json::json!({
+                "attachment_id": attachment_id,
+                "remaining_attached_clients": attached_clients,
+            }),
+        )?;
         Ok(attached_clients)
     }
 
@@ -458,6 +568,18 @@ impl SessionRegistry {
         state
             .output_subscribers
             .insert(subscription_id.clone(), sender);
+        self.diagnostics.record(
+            "runtime",
+            "session.output_subscription_opened",
+            DiagnosticContext {
+                session_id: Some(session_id.to_string()),
+                ..DiagnosticContext::default()
+            },
+            serde_json::json!({
+                "subscription_id": subscription_id,
+                "after_sequence": after_sequence,
+            }),
+        )?;
         Ok((subscription_id, receiver))
     }
 
@@ -471,6 +593,17 @@ impl SessionRegistry {
                 "subscription {subscription_id} was not found for session {session_id}"
             ));
         }
+        self.diagnostics.record(
+            "runtime",
+            "session.output_subscription_closed",
+            DiagnosticContext {
+                session_id: Some(session_id.to_string()),
+                ..DiagnosticContext::default()
+            },
+            serde_json::json!({
+                "subscription_id": subscription_id,
+            }),
+        )?;
         Ok(())
     }
 
@@ -492,6 +625,17 @@ impl SessionRegistry {
         state
             .state_subscribers
             .insert(subscription_id.clone(), sender);
+        self.diagnostics.record(
+            "runtime",
+            "session.state_subscription_opened",
+            DiagnosticContext {
+                session_id: Some(session_id.to_string()),
+                ..DiagnosticContext::default()
+            },
+            serde_json::json!({
+                "subscription_id": subscription_id,
+            }),
+        )?;
         Ok((subscription_id, receiver))
     }
 
@@ -505,6 +649,17 @@ impl SessionRegistry {
                 "subscription {subscription_id} was not found for session {session_id}"
             ));
         }
+        self.diagnostics.record(
+            "runtime",
+            "session.state_subscription_closed",
+            DiagnosticContext {
+                session_id: Some(session_id.to_string()),
+                ..DiagnosticContext::default()
+            },
+            serde_json::json!({
+                "subscription_id": subscription_id,
+            }),
+        )?;
         Ok(())
     }
 
@@ -692,6 +847,17 @@ impl SessionRegistry {
             now,
         )?;
         self.broadcast_state_change(session_id)?;
+        self.diagnostics.record(
+            "runtime",
+            "session.waiting_for_input",
+            DiagnosticContext {
+                session_id: Some(session_id.to_string()),
+                ..DiagnosticContext::default()
+            },
+            serde_json::json!({
+                "quiet_for_secs": now - last_runtime_activity_at,
+            }),
+        )?;
         Ok(ActivityMonitorStatus::Continue)
     }
 
@@ -777,6 +943,19 @@ fn wait_for_exit(
                             "failed to publish exit state for session {session_id}: {error:#}"
                         );
                     }
+                    let _ = registry.diagnostics.record(
+                        "runtime",
+                        "session.exited",
+                        DiagnosticContext {
+                            session_id: Some(session_id.to_string()),
+                            ..DiagnosticContext::default()
+                        },
+                        serde_json::json!({
+                            "runtime_state": state.runtime_state,
+                            "status": state.status,
+                            "exit_code": exit_code,
+                        }),
+                    );
                 }
                 Err(error) => {
                     eprintln!("failed to finalize runtime for session {session_id}: {error:#}");
@@ -802,6 +981,18 @@ fn wait_for_exit(
                     "failed to publish failed exit state for session {session_id}: {event_error:#}"
                 );
             }
+            let _ = registry.diagnostics.record_with_level(
+                "error",
+                "runtime",
+                "session.wait_failed",
+                DiagnosticContext {
+                    session_id: Some(session_id.to_string()),
+                    ..DiagnosticContext::default()
+                },
+                serde_json::json!({
+                    "error": error.to_string(),
+                }),
+            );
             eprintln!("session {session_id} wait failed: {error}");
         }
     }
