@@ -5,12 +5,14 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use supervisor_core::{
-    CreateAccountRequest, CreateDocumentRequest, CreateProjectRequest, CreateProjectRootRequest,
-    CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest, CreateWorktreeRequest,
-    DocumentListFilter, RemoveProjectRootRequest, SessionListFilter, SessionSpecListFilter,
-    Supervisor, UpdateAccountRequest, UpdateDocumentRequest, UpdateProjectRequest,
-    UpdateProjectRootRequest, UpdateSessionSpecRequest, UpdateWorkItemRequest,
-    UpdateWorktreeRequest, WorkItemListFilter, WorktreeListFilter,
+    CreateAccountRequest, CreateDocumentRequest, CreatePlanningAssignmentRequest,
+    CreateProjectRequest, CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
+    CreateWorkItemRequest, CreateWorktreeRequest, DeletePlanningAssignmentRequest,
+    DocumentListFilter, PlanningAssignmentListFilter, RemoveProjectRootRequest, SessionListFilter,
+    SessionSpecListFilter, Supervisor, UpdateAccountRequest, UpdateDocumentRequest,
+    UpdatePlanningAssignmentRequest, UpdateProjectRequest, UpdateProjectRootRequest,
+    UpdateSessionSpecRequest, UpdateWorkItemRequest, UpdateWorktreeRequest, WorkItemListFilter,
+    WorktreeListFilter,
 };
 
 use crate::protocol::{
@@ -314,6 +316,30 @@ impl SupervisorRpc {
                     self.supervisor.update_document(request)?,
                 )?)
             }
+            Method::PlanningAssignmentList => {
+                let filter: PlanningAssignmentListFilter = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.list_planning_assignments(filter)?,
+                )?)
+            }
+            Method::PlanningAssignmentCreate => {
+                let request: CreatePlanningAssignmentRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.create_planning_assignment(request)?,
+                )?)
+            }
+            Method::PlanningAssignmentUpdate => {
+                let request: UpdatePlanningAssignmentRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.update_planning_assignment(request)?,
+                )?)
+            }
+            Method::PlanningAssignmentDelete => {
+                let request: DeletePlanningAssignmentRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.delete_planning_assignment(request)?,
+                )?)
+            }
             Method::SessionList => {
                 let filter: SessionListFilter = serde_json::from_value(params)?;
                 Ok(serde_json::to_value(
@@ -500,6 +526,10 @@ impl SupervisorRpc {
                 Method::DocumentGet.as_str(),
                 Method::DocumentCreate.as_str(),
                 Method::DocumentUpdate.as_str(),
+                Method::PlanningAssignmentList.as_str(),
+                Method::PlanningAssignmentCreate.as_str(),
+                Method::PlanningAssignmentUpdate.as_str(),
+                Method::PlanningAssignmentDelete.as_str(),
                 Method::SessionList.as_str(),
                 Method::SessionGet.as_str(),
                 Method::SessionCreate.as_str(),
@@ -560,6 +590,8 @@ fn classify_error(error: anyhow::Error) -> ErrorBody {
             "work_item_not_found"
         } else if message.contains("document ") {
             "document_not_found"
+        } else if message.contains("planning assignment ") {
+            "planning_assignment_not_found"
         } else if message.contains("session spec ") {
             "session_spec_not_found"
         } else if message.contains("session ") {
@@ -585,6 +617,9 @@ fn classify_error(error: anyhow::Error) -> ErrorBody {
         || message.contains("already has an active live session")
         || message.contains("project slug")
         || message.contains("document slug")
+        || message.contains("cadence key")
+        || message.contains("cadence type")
+        || message.contains("planning assignment for work item")
     {
         "invalid_request"
     } else if message.contains("does not belong to project")

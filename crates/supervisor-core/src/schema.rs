@@ -12,6 +12,10 @@ const APP_MIGRATIONS: &[(&str, &str)] = &[
         "0002_session_spec_fields",
         include_str!("migrations/app/0002_session_spec_fields.sql"),
     ),
+    (
+        "0003_planning_assignment_constraints",
+        include_str!("migrations/app/0003_planning_assignment_constraints.sql"),
+    ),
 ];
 const KNOWLEDGE_MIGRATIONS: &[(&str, &str)] = &[(
     "0001_initial",

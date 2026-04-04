@@ -7,19 +7,22 @@ use uuid::Uuid;
 
 use crate::models::{
     AccountDetail, AccountSummary, AccountUpdateRecord, CreateAccountRequest,
-    CreateDocumentRequest, CreateProjectRequest, CreateProjectRootRequest, CreateSessionRequest,
-    CreateSessionSpecRequest, CreateWorkItemRequest, CreateWorktreeRequest, DocumentDetail,
+    CreateDocumentRequest, CreatePlanningAssignmentRequest, CreateProjectRequest,
+    CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
+    CreateWorkItemRequest, CreateWorktreeRequest, DeletePlanningAssignmentRequest, DocumentDetail,
     DocumentListFilter, DocumentSummary, DocumentUpdateRecord, NewAccountRecord, NewDocumentRecord,
-    NewProjectRecord, NewProjectRootRecord, NewSessionRecord, NewSessionSpecRecord,
-    NewWorkItemRecord, NewWorktreeRecord, ProjectDetail, ProjectRootSummary,
-    ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord, RemoveProjectRootRequest,
-    SessionArtifactRecord, SessionAttachResponse, SessionDetachResponse, SessionDetail,
-    SessionListFilter, SessionOutputEvent, SessionSpecDetail, SessionSpecListFilter,
-    SessionSpecSummary, SessionSpecUpdateRecord, SessionSummary, UpdateAccountRequest,
-    UpdateDocumentRequest, UpdateProjectRequest, UpdateProjectRootRequest,
-    UpdateSessionSpecRequest, UpdateWorkItemRequest, UpdateWorktreeRequest, WorkItemDetail,
-    WorkItemListFilter, WorkItemSummary, WorkItemUpdateRecord, WorktreeDetail, WorktreeListFilter,
-    WorktreeSummary, WorktreeUpdateRecord,
+    NewPlanningAssignmentRecord, NewProjectRecord, NewProjectRootRecord, NewSessionRecord,
+    NewSessionSpecRecord, NewWorkItemRecord, NewWorktreeRecord, PlanningAssignmentDetail,
+    PlanningAssignmentListFilter, PlanningAssignmentSummary, PlanningAssignmentUpdateRecord,
+    ProjectDetail, ProjectRootSummary, ProjectRootUpdateRecord, ProjectSummary,
+    ProjectUpdateRecord, RemoveProjectRootRequest, SessionArtifactRecord, SessionAttachResponse,
+    SessionDetachResponse, SessionDetail, SessionListFilter, SessionOutputEvent, SessionSpecDetail,
+    SessionSpecListFilter, SessionSpecSummary, SessionSpecUpdateRecord, SessionSummary,
+    UpdateAccountRequest, UpdateDocumentRequest, UpdatePlanningAssignmentRequest,
+    UpdateProjectRequest, UpdateProjectRootRequest, UpdateSessionSpecRequest,
+    UpdateWorkItemRequest, UpdateWorktreeRequest, WorkItemDetail, WorkItemListFilter,
+    WorkItemSummary, WorkItemUpdateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary,
+    WorktreeUpdateRecord,
 };
 use crate::runtime::{SessionLaunchRequest, SessionRegistry, SessionRuntimeRegistration};
 use crate::store::DatabaseSet;
@@ -748,6 +751,177 @@ impl SupervisorService {
         self.databases.update_document(&record)?;
         self.get_document(&existing.summary.id)?
             .ok_or_else(|| anyhow!("document {} was not found", existing.summary.id))
+    }
+
+    pub fn list_planning_assignments(
+        &self,
+        filter: PlanningAssignmentListFilter,
+    ) -> Result<Vec<PlanningAssignmentSummary>> {
+        if let Some(work_item_id) = filter.work_item_id.as_deref() {
+            self.ensure_work_item_exists(work_item_id)?;
+        }
+
+        let scoped_work_item_ids = match filter.project_id.as_deref() {
+            Some(project_id) => {
+                self.ensure_project_exists(project_id)?;
+                Some(self.databases.list_work_item_ids_for_project(project_id)?)
+            }
+            None => None,
+        };
+
+        self.databases
+            .list_planning_assignments(&filter, scoped_work_item_ids.as_deref())
+    }
+
+    pub fn create_planning_assignment(
+        &self,
+        request: CreatePlanningAssignmentRequest,
+    ) -> Result<PlanningAssignmentDetail> {
+        let work_item_id =
+            required_trimmed("planning assignment work item id", &request.work_item_id)?;
+        self.ensure_work_item_exists(&work_item_id)?;
+
+        let cadence_type = validate_cadence_type(&request.cadence_type)?;
+        let cadence_key = validate_cadence_key(&cadence_type, &request.cadence_key)?;
+        if self.databases.planning_assignment_exists_active(
+            &work_item_id,
+            &cadence_type,
+            &cadence_key,
+            None,
+        )? {
+            return Err(anyhow!(
+                "planning assignment for work item {} and cadence {}:{} already exists",
+                work_item_id,
+                cadence_type,
+                cadence_key
+            ));
+        }
+
+        let now = unix_time_seconds();
+        let planning_assignment_id = format!("plan_{}", Uuid::new_v4().simple());
+        let record = NewPlanningAssignmentRecord {
+            id: planning_assignment_id.clone(),
+            work_item_id,
+            cadence_type,
+            cadence_key,
+            created_by: required_trimmed("planning assignment created_by", &request.created_by)?,
+            created_at: now,
+            updated_at: now,
+            removed_at: None,
+        };
+
+        self.databases.insert_planning_assignment(&record)?;
+        self.databases
+            .get_planning_assignment(&planning_assignment_id)?
+            .ok_or_else(|| {
+                anyhow!(
+                    "planning assignment {} was not found",
+                    planning_assignment_id
+                )
+            })
+    }
+
+    pub fn update_planning_assignment(
+        &self,
+        request: UpdatePlanningAssignmentRequest,
+    ) -> Result<PlanningAssignmentDetail> {
+        let existing = self
+            .databases
+            .get_planning_assignment(&request.planning_assignment_id)?
+            .ok_or_else(|| {
+                anyhow!(
+                    "planning assignment {} was not found",
+                    request.planning_assignment_id
+                )
+            })?;
+        if existing.summary.removed_at.is_some() {
+            return Err(anyhow!(
+                "planning assignment {} was not found",
+                request.planning_assignment_id
+            ));
+        }
+
+        let work_item_id = match request.work_item_id.as_deref() {
+            Some(work_item_id) => {
+                let work_item_id =
+                    required_trimmed("planning assignment work item id", work_item_id)?;
+                self.ensure_work_item_exists(&work_item_id)?;
+                work_item_id
+            }
+            None => existing.summary.work_item_id.clone(),
+        };
+        let cadence_type = match request.cadence_type.as_deref() {
+            Some(cadence_type) => validate_cadence_type(cadence_type)?,
+            None => existing.summary.cadence_type.clone(),
+        };
+        let cadence_key = match request.cadence_key.as_deref() {
+            Some(cadence_key) => validate_cadence_key(&cadence_type, cadence_key)?,
+            None => existing.summary.cadence_key.clone(),
+        };
+        if self.databases.planning_assignment_exists_active(
+            &work_item_id,
+            &cadence_type,
+            &cadence_key,
+            Some(&existing.summary.id),
+        )? {
+            return Err(anyhow!(
+                "planning assignment for work item {} and cadence {}:{} already exists",
+                work_item_id,
+                cadence_type,
+                cadence_key
+            ));
+        }
+
+        let record = PlanningAssignmentUpdateRecord {
+            id: existing.summary.id.clone(),
+            work_item_id,
+            cadence_type,
+            cadence_key,
+            created_by: match request.created_by.as_deref() {
+                Some(created_by) => required_trimmed("planning assignment created_by", created_by)?,
+                None => existing.summary.created_by.clone(),
+            },
+            updated_at: unix_time_seconds(),
+        };
+
+        self.databases.update_planning_assignment(&record)?;
+        self.databases
+            .get_planning_assignment(&existing.summary.id)?
+            .ok_or_else(|| anyhow!("planning assignment {} was not found", existing.summary.id))
+    }
+
+    pub fn delete_planning_assignment(
+        &self,
+        request: DeletePlanningAssignmentRequest,
+    ) -> Result<PlanningAssignmentDetail> {
+        let existing = self
+            .databases
+            .get_planning_assignment(&request.planning_assignment_id)?
+            .ok_or_else(|| {
+                anyhow!(
+                    "planning assignment {} was not found",
+                    request.planning_assignment_id
+                )
+            })?;
+        if existing.summary.removed_at.is_some() {
+            return Err(anyhow!(
+                "planning assignment {} was not found",
+                request.planning_assignment_id
+            ));
+        }
+
+        self.databases.soft_delete_planning_assignment(
+            &request.planning_assignment_id,
+            unix_time_seconds(),
+        )?;
+        self.databases
+            .get_planning_assignment(&request.planning_assignment_id)?
+            .ok_or_else(|| {
+                anyhow!(
+                    "planning assignment {} was not found",
+                    request.planning_assignment_id
+                )
+            })
     }
 
     pub fn list_sessions(&self, filter: SessionListFilter) -> Result<Vec<SessionSummary>> {
@@ -1605,6 +1779,52 @@ fn validate_document_status(value: &str) -> Result<String> {
     }
 }
 
+fn validate_cadence_type(value: &str) -> Result<String> {
+    let normalized = required_trimmed("cadence type", value)?.to_lowercase();
+    match normalized.as_str() {
+        "quarter" | "sprint" | "week" | "day" => Ok(normalized),
+        _ => Err(anyhow!(
+            "cadence type must be one of: quarter, sprint, week, day"
+        )),
+    }
+}
+
+fn validate_cadence_key(cadence_type: &str, value: &str) -> Result<String> {
+    let normalized = required_trimmed("cadence key", value)?.to_uppercase();
+    let valid = match cadence_type {
+        "quarter" => matches_quarter_key(&normalized),
+        "sprint" => matches_sprint_key(&normalized),
+        "week" => {
+            if !matches_week_key(&normalized) {
+                false
+            } else {
+                let week = normalized[6..8].parse::<u8>().unwrap_or(0);
+                (1..=53).contains(&week)
+            }
+        }
+        "day" => matches_date_key(&normalized),
+        _ => false,
+    };
+
+    if valid {
+        return Ok(normalized);
+    }
+
+    let example = match cadence_type {
+        "quarter" => "YYYY-Q1",
+        "sprint" => "YYYY-S1",
+        "week" => "YYYY-W01",
+        "day" => "YYYY-MM-DD",
+        _ => "a supported cadence key",
+    };
+    Err(anyhow!(
+        "cadence key {} is invalid for cadence type {}; expected {}",
+        value,
+        cadence_type,
+        example
+    ))
+}
+
 fn required_document_content(value: &str) -> Result<String> {
     let normalized = value.trim();
     if normalized.is_empty() {
@@ -1695,6 +1915,52 @@ fn slugify_name(value: &str) -> String {
     }
 
     slug.trim_matches('-').to_string()
+}
+
+fn matches_quarter_key(value: &str) -> bool {
+    value.len() == 7
+        && value.as_bytes()[4] == b'-'
+        && value.as_bytes()[5] == b'Q'
+        && value[..4].chars().all(|ch| ch.is_ascii_digit())
+        && matches!(value.as_bytes()[6], b'1'..=b'4')
+}
+
+fn matches_sprint_key(value: &str) -> bool {
+    value.len() >= 7
+        && value.as_bytes()[4] == b'-'
+        && value.as_bytes()[5] == b'S'
+        && value[..4].chars().all(|ch| ch.is_ascii_digit())
+        && value[6..].chars().all(|ch| ch.is_ascii_digit())
+}
+
+fn matches_week_key(value: &str) -> bool {
+    value.len() == 8
+        && value.as_bytes()[4] == b'-'
+        && value.as_bytes()[5] == b'W'
+        && value[..4].chars().all(|ch| ch.is_ascii_digit())
+        && value[6..].chars().all(|ch| ch.is_ascii_digit())
+}
+
+fn matches_date_key(value: &str) -> bool {
+    if value.len() != 10 {
+        return false;
+    }
+
+    let bytes = value.as_bytes();
+    if bytes[4] != b'-' || bytes[7] != b'-' {
+        return false;
+    }
+    if !bytes
+        .iter()
+        .enumerate()
+        .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit())
+    {
+        return false;
+    }
+
+    let month = value[5..7].parse::<u8>().unwrap_or(0);
+    let day = value[8..10].parse::<u8>().unwrap_or(0);
+    (1..=12).contains(&month) && (1..=31).contains(&day)
 }
 
 #[derive(Debug, Clone)]

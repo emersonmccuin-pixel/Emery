@@ -167,6 +167,24 @@ pub struct DocumentDetail {
     pub summary: DocumentSummary,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct PlanningAssignmentSummary {
+    pub id: String,
+    pub work_item_id: String,
+    pub cadence_type: String,
+    pub cadence_key: String,
+    pub created_by: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub removed_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PlanningAssignmentDetail {
+    #[serde(flatten)]
+    pub summary: PlanningAssignmentSummary,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateProjectRequest {
     pub name: String,
@@ -369,6 +387,17 @@ pub struct DocumentListFilter {
     pub limit: Option<usize>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct PlanningAssignmentListFilter {
+    pub project_id: Option<String>,
+    pub work_item_id: Option<String>,
+    pub cadence_type: Option<String>,
+    pub cadence_key: Option<String>,
+    #[serde(default)]
+    pub include_removed: bool,
+    pub limit: Option<usize>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateDocumentRequest {
     pub project_id: String,
@@ -391,6 +420,28 @@ pub struct UpdateDocumentRequest {
     pub slug: Option<String>,
     pub status: Option<String>,
     pub content_markdown: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreatePlanningAssignmentRequest {
+    pub work_item_id: String,
+    pub cadence_type: String,
+    pub cadence_key: String,
+    pub created_by: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdatePlanningAssignmentRequest {
+    pub planning_assignment_id: String,
+    pub work_item_id: Option<String>,
+    pub cadence_type: Option<String>,
+    pub cadence_key: Option<String>,
+    pub created_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeletePlanningAssignmentRequest {
+    pub planning_assignment_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -611,6 +662,28 @@ pub struct DocumentUpdateRecord {
     pub content_markdown: String,
     pub updated_at: i64,
     pub archived_at: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewPlanningAssignmentRecord {
+    pub id: String,
+    pub work_item_id: String,
+    pub cadence_type: String,
+    pub cadence_key: String,
+    pub created_by: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub removed_at: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PlanningAssignmentUpdateRecord {
+    pub id: String,
+    pub work_item_id: String,
+    pub cadence_type: String,
+    pub cadence_key: String,
+    pub created_by: String,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -5,15 +5,17 @@ use anyhow::Result;
 use crate::bootstrap::AppPaths;
 use crate::models::{
     AccountDetail, AccountSummary, CreateAccountRequest, CreateDocumentRequest,
-    CreateProjectRequest, CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
-    CreateWorkItemRequest, CreateWorktreeRequest, DocumentDetail, DocumentListFilter,
-    DocumentSummary, ProjectDetail, ProjectRootSummary, ProjectSummary, RemoveProjectRootRequest,
+    CreatePlanningAssignmentRequest, CreateProjectRequest, CreateProjectRootRequest,
+    CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest, CreateWorktreeRequest,
+    DeletePlanningAssignmentRequest, DocumentDetail, DocumentListFilter, DocumentSummary,
+    PlanningAssignmentDetail, PlanningAssignmentListFilter, PlanningAssignmentSummary,
+    ProjectDetail, ProjectRootSummary, ProjectSummary, RemoveProjectRootRequest,
     SessionAttachResponse, SessionDetachResponse, SessionDetail, SessionListFilter,
     SessionOutputEvent, SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary,
-    SessionSummary, UpdateAccountRequest, UpdateDocumentRequest, UpdateProjectRequest,
-    UpdateProjectRootRequest, UpdateSessionSpecRequest, UpdateWorkItemRequest,
-    UpdateWorktreeRequest, WorkItemDetail, WorkItemListFilter, WorkItemSummary, WorktreeDetail,
-    WorktreeListFilter, WorktreeSummary,
+    SessionSummary, UpdateAccountRequest, UpdateDocumentRequest, UpdatePlanningAssignmentRequest,
+    UpdateProjectRequest, UpdateProjectRootRequest, UpdateSessionSpecRequest,
+    UpdateWorkItemRequest, UpdateWorktreeRequest, WorkItemDetail, WorkItemListFilter,
+    WorkItemSummary, WorktreeDetail, WorktreeListFilter, WorktreeSummary,
 };
 use crate::runtime::SessionRegistry;
 use crate::service::SupervisorService;
@@ -191,6 +193,34 @@ impl Supervisor {
 
     pub fn update_document(&self, request: UpdateDocumentRequest) -> Result<DocumentDetail> {
         self.service.update_document(request)
+    }
+
+    pub fn list_planning_assignments(
+        &self,
+        filter: PlanningAssignmentListFilter,
+    ) -> Result<Vec<PlanningAssignmentSummary>> {
+        self.service.list_planning_assignments(filter)
+    }
+
+    pub fn create_planning_assignment(
+        &self,
+        request: CreatePlanningAssignmentRequest,
+    ) -> Result<PlanningAssignmentDetail> {
+        self.service.create_planning_assignment(request)
+    }
+
+    pub fn update_planning_assignment(
+        &self,
+        request: UpdatePlanningAssignmentRequest,
+    ) -> Result<PlanningAssignmentDetail> {
+        self.service.update_planning_assignment(request)
+    }
+
+    pub fn delete_planning_assignment(
+        &self,
+        request: DeletePlanningAssignmentRequest,
+    ) -> Result<PlanningAssignmentDetail> {
+        self.service.delete_planning_assignment(request)
     }
 
     pub fn list_sessions(&self, filter: SessionListFilter) -> Result<Vec<SessionSummary>> {

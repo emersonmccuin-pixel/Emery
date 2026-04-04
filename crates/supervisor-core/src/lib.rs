@@ -9,15 +9,18 @@ mod supervisor;
 pub use bootstrap::AppPaths;
 pub use models::{
     AccountDetail, AccountSummary, CreateAccountRequest, CreateDocumentRequest,
-    CreateProjectRequest, CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
-    CreateWorkItemRequest, CreateWorktreeRequest, DocumentDetail, DocumentListFilter,
-    DocumentSummary, EncodedTerminalChunk, ProjectDetail, ProjectRootSummary, ProjectSummary,
+    CreatePlanningAssignmentRequest, CreateProjectRequest, CreateProjectRootRequest,
+    CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest, CreateWorktreeRequest,
+    DeletePlanningAssignmentRequest, DocumentDetail, DocumentListFilter, DocumentSummary,
+    EncodedTerminalChunk, PlanningAssignmentDetail, PlanningAssignmentListFilter,
+    PlanningAssignmentSummary, ProjectDetail, ProjectRootSummary, ProjectSummary,
     RemoveProjectRootRequest, ReplaySnapshot, SessionAttachResponse, SessionDetachResponse,
     SessionDetail, SessionListFilter, SessionOutputEvent, SessionRuntimeView, SessionSpecDetail,
     SessionSpecListFilter, SessionSpecSummary, SessionSummary, UpdateAccountRequest,
-    UpdateDocumentRequest, UpdateProjectRequest, UpdateProjectRootRequest,
-    UpdateSessionSpecRequest, UpdateWorkItemRequest, UpdateWorktreeRequest, WorkItemDetail,
-    WorkItemListFilter, WorkItemSummary, WorktreeDetail, WorktreeListFilter, WorktreeSummary,
+    UpdateDocumentRequest, UpdatePlanningAssignmentRequest, UpdateProjectRequest,
+    UpdateProjectRootRequest, UpdateSessionSpecRequest, UpdateWorkItemRequest,
+    UpdateWorktreeRequest, WorkItemDetail, WorkItemListFilter, WorkItemSummary, WorktreeDetail,
+    WorktreeListFilter, WorktreeSummary,
 };
 pub use runtime::SessionRegistry;
 pub use service::SupervisorService;

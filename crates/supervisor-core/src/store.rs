@@ -7,9 +7,11 @@ use serde::Serialize;
 use crate::bootstrap::AppPaths;
 use crate::models::{
     AccountDetail, AccountSummary, AccountUpdateRecord, DocumentDetail, DocumentListFilter,
-    DocumentSummary, DocumentUpdateRecord, NewAccountRecord, NewDocumentRecord, NewProjectRecord,
-    NewProjectRootRecord, NewSessionRecord, NewSessionSpecRecord, NewWorkItemRecord,
-    NewWorktreeRecord, ProjectDetail, ProjectRootSummary, ProjectRootUpdateRecord, ProjectSummary,
+    DocumentSummary, DocumentUpdateRecord, NewAccountRecord, NewDocumentRecord,
+    NewPlanningAssignmentRecord, NewProjectRecord, NewProjectRootRecord, NewSessionRecord,
+    NewSessionSpecRecord, NewWorkItemRecord, NewWorktreeRecord, PlanningAssignmentDetail,
+    PlanningAssignmentListFilter, PlanningAssignmentSummary, PlanningAssignmentUpdateRecord,
+    ProjectDetail, ProjectRootSummary, ProjectRootUpdateRecord, ProjectSummary,
     ProjectUpdateRecord, SessionArtifactRecord, SessionListFilter, SessionSpecDetail,
     SessionSpecListFilter, SessionSpecSummary, SessionSpecUpdateRecord, SessionSummary,
     WorkItemDetail, WorkItemListFilter, WorkItemSummary, WorkItemUpdateRecord, WorktreeDetail,
@@ -1433,6 +1435,235 @@ impl DatabaseSet {
         }
     }
 
+    pub fn list_work_item_ids_for_project(&self, project_id: &str) -> Result<Vec<String>> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let mut statement = connection.prepare(
+            "SELECT id
+             FROM work_items
+             WHERE project_id = ?1",
+        )?;
+        let rows = statement.query_map([project_id], |row| row.get(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn list_planning_assignments(
+        &self,
+        filter: &PlanningAssignmentListFilter,
+        scoped_work_item_ids: Option<&[String]>,
+    ) -> Result<Vec<PlanningAssignmentSummary>> {
+        if matches!(scoped_work_item_ids, Some(ids) if ids.is_empty()) {
+            return Ok(Vec::new());
+        }
+
+        let connection = open_connection(&self.paths.app_db)?;
+        let mut sql = String::from(
+            "SELECT
+                id,
+                work_item_id,
+                cadence_type,
+                cadence_key,
+                created_by,
+                created_at,
+                updated_at,
+                removed_at
+             FROM planning_assignments
+             WHERE 1 = 1",
+        );
+        let mut values = Vec::new();
+
+        if let Some(scoped_work_item_ids) = scoped_work_item_ids {
+            sql.push_str(" AND work_item_id IN (");
+            sql.push_str(&vec!["?"; scoped_work_item_ids.len()].join(", "));
+            sql.push(')');
+            values.extend(scoped_work_item_ids.iter().cloned());
+        }
+
+        if let Some(work_item_id) = filter.work_item_id.as_deref() {
+            sql.push_str(" AND work_item_id = ?");
+            values.push(work_item_id.to_string());
+        }
+
+        if let Some(cadence_type) = filter.cadence_type.as_deref() {
+            sql.push_str(" AND cadence_type = ?");
+            values.push(cadence_type.to_string());
+        }
+
+        if let Some(cadence_key) = filter.cadence_key.as_deref() {
+            sql.push_str(" AND cadence_key = ?");
+            values.push(cadence_key.to_string());
+        }
+
+        if !filter.include_removed {
+            sql.push_str(" AND removed_at IS NULL");
+        }
+
+        sql.push_str(" ORDER BY updated_at DESC, created_at DESC");
+
+        if let Some(limit) = filter.limit {
+            sql.push_str(" LIMIT ?");
+            values.push((limit as i64).to_string());
+        }
+
+        let mut statement = connection.prepare(&sql)?;
+        let rows = statement.query_map(
+            params_from_iter(values.iter()),
+            map_planning_assignment_summary,
+        )?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn get_planning_assignment(
+        &self,
+        planning_assignment_id: &str,
+    ) -> Result<Option<PlanningAssignmentDetail>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection
+            .query_row(
+                "SELECT
+                    id,
+                    work_item_id,
+                    cadence_type,
+                    cadence_key,
+                    created_by,
+                    created_at,
+                    updated_at,
+                    removed_at
+                 FROM planning_assignments
+                 WHERE id = ?1",
+                [planning_assignment_id],
+                |row| {
+                    Ok(PlanningAssignmentDetail {
+                        summary: map_planning_assignment_summary(row)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn insert_planning_assignment(&self, record: &NewPlanningAssignmentRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "INSERT INTO planning_assignments (
+                id,
+                work_item_id,
+                cadence_type,
+                cadence_key,
+                created_by,
+                created_at,
+                updated_at,
+                removed_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                record.id,
+                record.work_item_id,
+                record.cadence_type,
+                record.cadence_key,
+                record.created_by,
+                record.created_at,
+                record.updated_at,
+                record.removed_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_planning_assignment(
+        &self,
+        record: &PlanningAssignmentUpdateRecord,
+    ) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let updated = connection.execute(
+            "UPDATE planning_assignments
+             SET work_item_id = ?2,
+                 cadence_type = ?3,
+                 cadence_key = ?4,
+                 created_by = ?5,
+                 updated_at = ?6
+             WHERE id = ?1
+               AND removed_at IS NULL",
+            params![
+                record.id,
+                record.work_item_id,
+                record.cadence_type,
+                record.cadence_key,
+                record.created_by,
+                record.updated_at,
+            ],
+        )?;
+
+        if updated == 0 {
+            return Err(anyhow!("planning assignment {} was not found", record.id));
+        }
+
+        Ok(())
+    }
+
+    pub fn soft_delete_planning_assignment(
+        &self,
+        planning_assignment_id: &str,
+        removed_at: i64,
+    ) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let updated = connection.execute(
+            "UPDATE planning_assignments
+             SET removed_at = COALESCE(removed_at, ?2),
+                 updated_at = ?2
+             WHERE id = ?1
+               AND removed_at IS NULL",
+            params![planning_assignment_id, removed_at],
+        )?;
+
+        if updated == 0 {
+            return Err(anyhow!(
+                "planning assignment {} was not found",
+                planning_assignment_id
+            ));
+        }
+
+        Ok(())
+    }
+
+    pub fn planning_assignment_exists_active(
+        &self,
+        work_item_id: &str,
+        cadence_type: &str,
+        cadence_key: &str,
+        exclude_planning_assignment_id: Option<&str>,
+    ) -> Result<bool> {
+        let connection = open_connection(&self.paths.app_db)?;
+        match exclude_planning_assignment_id {
+            Some(planning_assignment_id) => exists(
+                &connection,
+                "SELECT 1
+                 FROM planning_assignments
+                 WHERE work_item_id = ?1
+                   AND cadence_type = ?2
+                   AND cadence_key = ?3
+                   AND removed_at IS NULL
+                   AND id <> ?4",
+                params![
+                    work_item_id,
+                    cadence_type,
+                    cadence_key,
+                    planning_assignment_id
+                ],
+            ),
+            None => exists(
+                &connection,
+                "SELECT 1
+                 FROM planning_assignments
+                 WHERE work_item_id = ?1
+                   AND cadence_type = ?2
+                   AND cadence_key = ?3
+                   AND removed_at IS NULL",
+                params![work_item_id, cadence_type, cadence_key],
+            ),
+        }
+    }
+
     pub fn list_sessions(&self, filter: &SessionListFilter) -> Result<Vec<SessionSummary>> {
         let connection = open_connection(&self.paths.app_db)?;
         let mut sql = String::from(
@@ -2117,6 +2348,19 @@ fn map_document_summary(row: &Row<'_>) -> rusqlite::Result<DocumentSummary> {
         created_at: row.get(9)?,
         updated_at: row.get(10)?,
         archived_at: row.get(11)?,
+    })
+}
+
+fn map_planning_assignment_summary(row: &Row<'_>) -> rusqlite::Result<PlanningAssignmentSummary> {
+    Ok(PlanningAssignmentSummary {
+        id: row.get(0)?,
+        work_item_id: row.get(1)?,
+        cadence_type: row.get(2)?,
+        cadence_key: row.get(3)?,
+        created_by: row.get(4)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
+        removed_at: row.get(7)?,
     })
 }
 
