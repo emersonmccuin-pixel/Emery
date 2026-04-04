@@ -4,8 +4,11 @@ import type {
   DiagnosticsBundleResult,
   DocumentDetail,
   DocumentSummary,
+  PlanningAssignmentDetail,
+  PlanningAssignmentSummary,
   ProjectDetail,
   SessionAttachResponse,
+  SessionDetail,
   ShellBootstrap,
   WorkflowReconciliationProposalDetail,
   WorkflowReconciliationProposalSummary,
@@ -70,6 +73,13 @@ export async function listWorkItems(
   return invoke("list_work_items", { projectId, correlationId });
 }
 
+export async function getProject(
+  projectId: string,
+  correlationId?: string,
+): Promise<ProjectDetail> {
+  return invoke("get_project", { projectId, correlationId });
+}
+
 export async function createProject(
   input: {
     name: string;
@@ -129,6 +139,33 @@ export async function updateWorkItem(
   correlationId?: string,
 ): Promise<WorkItemDetail> {
   return invoke("update_work_item", { workItemId, input, correlationId });
+}
+
+export async function listPlanningAssignments(
+  projectId: string,
+  workItemId?: string | null,
+  correlationId?: string,
+): Promise<PlanningAssignmentSummary[]> {
+  return invoke("list_planning_assignments", { projectId, workItemId, correlationId });
+}
+
+export async function createPlanningAssignment(
+  input: {
+    work_item_id: string;
+    cadence_type: string;
+    cadence_key: string;
+    created_by: string;
+  },
+  correlationId?: string,
+): Promise<PlanningAssignmentDetail> {
+  return invoke("create_planning_assignment", { input, correlationId });
+}
+
+export async function deletePlanningAssignment(
+  planningAssignmentId: string,
+  correlationId?: string,
+): Promise<PlanningAssignmentDetail> {
+  return invoke("delete_planning_assignment", { planningAssignmentId, correlationId });
 }
 
 export async function listDocuments(
@@ -200,6 +237,31 @@ export async function updateWorkflowReconciliationProposal(
     input,
     correlationId,
   });
+}
+
+export async function createSession(
+  input: {
+    project_id: string;
+    project_root_id?: string | null;
+    worktree_id?: string | null;
+    work_item_id?: string | null;
+    account_id: string;
+    agent_kind: string;
+    cwd: string;
+    command: string;
+    args?: string[];
+    env_preset_ref?: string | null;
+    origin_mode: string;
+    current_mode?: string | null;
+    title?: string | null;
+    title_policy?: string;
+    restore_policy?: string;
+    initial_terminal_cols?: number;
+    initial_terminal_rows?: number;
+  },
+  correlationId?: string,
+): Promise<SessionDetail> {
+  return invoke("create_session", { input, correlationId });
 }
 
 export async function exportDiagnosticsBundle(

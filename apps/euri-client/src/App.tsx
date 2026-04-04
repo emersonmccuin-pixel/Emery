@@ -4,15 +4,20 @@ import {
   attachSession,
   bootstrapShell,
   connectionLabel,
+  createPlanningAssignment,
   createDocument,
   createProject,
+  createSession,
   createWorkItem,
+  deletePlanningAssignment,
   detachSession,
   exportDiagnosticsBundle,
+  getProject,
   getDocument,
   getWorkItem,
   interruptSession,
   listDocuments,
+  listPlanningAssignments,
   listWorkflowReconciliationProposals,
   listWorkItems,
   saveWorkspace,
@@ -38,9 +43,11 @@ import type {
   DiagnosticsBundleResult,
   DocumentDetail,
   DocumentSummary,
+  PlanningAssignmentSummary,
   ProjectDetail,
   ProjectSummary,
   SessionAttachResponse,
+  SessionDetail,
   SessionOutputEvent,
   SessionStateChangedEvent,
   SessionSummary,
@@ -64,6 +71,8 @@ const WORK_ITEM_STATUSES = [
 ] as const;
 const PRIORITIES = ["", "low", "medium", "high", "urgent"] as const;
 const DOCUMENT_STATUSES = ["draft", "active", "archived"] as const;
+
+type PlanningViewMode = "all" | "day" | "week";
 
 function resourceLabel(
   resource: WorkspaceResource,
@@ -173,18 +182,64 @@ function compareProposals(
   return right.created_at - left.created_at || left.id.localeCompare(right.id);
 }
 
+function compareSessions(left: SessionSummary, right: SessionSummary) {
+  return right.updated_at - left.updated_at || left.id.localeCompare(right.id);
+}
+
+function currentDayCadenceKey(now = new Date()) {
+  return now.toISOString().slice(0, 10);
+}
+
+function currentWeekCadenceKey(now = new Date()) {
+  const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const weekNumber = Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return `${date.getUTCFullYear()}-W${String(weekNumber).padStart(2, "0")}`;
+}
+
+function planningAssignmentForKey(
+  assignments: PlanningAssignmentSummary[],
+  workItemId: string,
+  cadenceType: "day" | "week",
+  cadenceKey: string,
+) {
+  return (
+    assignments.find(
+      (assignment) =>
+        assignment.work_item_id === workItemId &&
+        assignment.removed_at === null &&
+        assignment.cadence_type === cadenceType &&
+        assignment.cadence_key === cadenceKey,
+    ) ?? null
+  );
+}
+
+function applySessionToList(
+  items: SessionSummary[],
+  nextSession: SessionSummary,
+) {
+  return upsertById(items, nextSession, compareSessions);
+}
+
 export default function App() {
   const [bootstrap, setBootstrap] = useState<ShellBootstrap | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [leftPanel, setLeftPanel] = useState<WorkspacePayload["left_panel"]>("projects");
+  const [planningViewMode, setPlanningViewMode] = useState<PlanningViewMode>("all");
   const [openResources, setOpenResources] = useState<WorkspaceResource[]>([]);
   const [activeResourceId, setActiveResourceId] = useState<string | null>(null);
   const [attachedSessions, setAttachedSessions] = useState<Record<string, SessionAttachResponse>>({});
   const [terminalOutput, setTerminalOutput] = useState<Record<string, string>>({});
   const [terminalInput, setTerminalInput] = useState<Record<string, string>>({});
+  const [projectDetails, setProjectDetails] = useState<Record<string, ProjectDetail>>({});
   const [workItemsByProject, setWorkItemsByProject] = useState<Record<string, WorkItemSummary[]>>({});
   const [documentsByProject, setDocumentsByProject] = useState<Record<string, DocumentSummary[]>>({});
+  const [planningAssignmentsByProject, setPlanningAssignmentsByProject] = useState<
+    Record<string, PlanningAssignmentSummary[]>
+  >({});
   const [workItemDetails, setWorkItemDetails] = useState<Record<string, WorkItemDetail>>({});
   const [documentDetails, setDocumentDetails] = useState<Record<string, DocumentDetail>>({});
   const [reconciliationByWorkItem, setReconciliationByWorkItem] = useState<
@@ -229,6 +284,7 @@ export default function App() {
   }
 
   function applyProjectDetail(detail: ProjectDetail) {
+    setProjectDetails((current) => ({ ...current, [detail.id]: detail }));
     setBootstrap((current) => {
       if (!current) {
         return current;
@@ -269,20 +325,52 @@ export default function App() {
     }));
   }
 
+  function applySessionDetail(detail: SessionDetail) {
+    setSessions((current) => applySessionToList(current, detail));
+  }
+
+  function applyPlanningAssignment(projectId: string, assignment: PlanningAssignmentSummary) {
+    setPlanningAssignmentsByProject((current) => ({
+      ...current,
+      [projectId]: upsertById(
+        current[projectId] ?? [],
+        assignment,
+        (left, right) => right.updated_at - left.updated_at || left.id.localeCompare(right.id),
+      ),
+    }));
+  }
+
+  function removePlanningAssignment(projectId: string, planningAssignmentId: string) {
+    setPlanningAssignmentsByProject((current) => ({
+      ...current,
+      [projectId]: (current[projectId] ?? []).filter((assignment) => assignment.id !== planningAssignmentId),
+    }));
+  }
+
   async function loadProjectReads(projectId: string, force = false) {
-    if (!force && workItemsByProject[projectId] && documentsByProject[projectId]) {
+    if (
+      !force &&
+      projectDetails[projectId] &&
+      workItemsByProject[projectId] &&
+      documentsByProject[projectId] &&
+      planningAssignmentsByProject[projectId]
+    ) {
       return;
     }
 
     const correlationId = newCorrelationId("project-load");
     setLoading(`project:${projectId}`, true);
     try {
-      const [workItems, documents] = await Promise.all([
+      const [projectDetail, workItems, documents, planningAssignments] = await Promise.all([
+        getProject(projectId, correlationId),
         listWorkItems(projectId, correlationId),
         listDocuments(projectId, undefined, correlationId),
+        listPlanningAssignments(projectId, undefined, correlationId),
       ]);
+      applyProjectDetail(projectDetail);
       setWorkItemsByProject((current) => ({ ...current, [projectId]: workItems }));
       setDocumentsByProject((current) => ({ ...current, [projectId]: documents }));
+      setPlanningAssignmentsByProject((current) => ({ ...current, [projectId]: planningAssignments }));
       recordClientEvent(
         makeClientEvent("shell", "project.reads_loaded", {
           correlation_id: correlationId,
@@ -290,6 +378,7 @@ export default function App() {
           payload: {
             work_item_count: workItems.length,
             document_count: documents.length,
+            planning_assignment_count: planningAssignments.length,
             force_refresh: force,
           },
         }),
@@ -585,7 +674,31 @@ export default function App() {
     () => sessions.filter((entry) => !selectedProjectId || entry.project_id === selectedProjectId),
     [selectedProjectId, sessions],
   );
-  const currentWorkItems = selectedProjectId ? workItemsByProject[selectedProjectId] ?? [] : [];
+  const dayCadenceKey = useMemo(() => currentDayCadenceKey(), []);
+  const weekCadenceKey = useMemo(() => currentWeekCadenceKey(), []);
+  const currentPlanningAssignments = selectedProjectId
+    ? planningAssignmentsByProject[selectedProjectId] ?? []
+    : [];
+  const allCurrentWorkItems = selectedProjectId ? workItemsByProject[selectedProjectId] ?? [] : [];
+  const currentWorkItems = useMemo(() => {
+    if (planningViewMode === "all") {
+      return allCurrentWorkItems;
+    }
+
+    const cadenceType = planningViewMode === "day" ? "day" : "week";
+    const cadenceKey = planningViewMode === "day" ? dayCadenceKey : weekCadenceKey;
+    const assignedWorkItemIds = new Set(
+      currentPlanningAssignments
+        .filter(
+          (assignment) =>
+            assignment.removed_at === null &&
+            assignment.cadence_type === cadenceType &&
+            assignment.cadence_key === cadenceKey,
+        )
+        .map((assignment) => assignment.work_item_id),
+    );
+    return allCurrentWorkItems.filter((workItem) => assignedWorkItemIds.has(workItem.id));
+  }, [allCurrentWorkItems, currentPlanningAssignments, dayCadenceKey, planningViewMode, weekCadenceKey]);
   const currentDocuments = selectedProjectId ? documentsByProject[selectedProjectId] ?? [] : [];
 
   async function openProject(projectId: string) {
@@ -829,8 +942,128 @@ export default function App() {
       clearError();
     } catch (invokeError) {
       setError(String(invokeError));
+      } finally {
+        setLoading(`save-work-item:${workItemId}`, false);
+      }
+    }
+
+  async function handleTogglePlanningAssignment(
+    workItemId: string,
+    cadenceType: "day" | "week",
+    cadenceKey: string,
+  ) {
+    if (!selectedProjectId) {
+      setError("Select a project before updating planning assignments.");
+      return;
+    }
+
+    const existingAssignment = planningAssignmentForKey(
+      planningAssignmentsByProject[selectedProjectId] ?? [],
+      workItemId,
+      cadenceType,
+      cadenceKey,
+    );
+    const loadingKey = `${cadenceType}-assignment:${workItemId}:${cadenceKey}`;
+    const correlationId = newCorrelationId(`${cadenceType}-assignment`);
+    setLoading(loadingKey, true);
+    try {
+      if (existingAssignment) {
+        await deletePlanningAssignment(existingAssignment.id, correlationId);
+        removePlanningAssignment(selectedProjectId, existingAssignment.id);
+      } else {
+        const assignment = await createPlanningAssignment(
+          {
+            work_item_id: workItemId,
+            cadence_type: cadenceType,
+            cadence_key: cadenceKey,
+            created_by: "tauri-client",
+          },
+          correlationId,
+        );
+        applyPlanningAssignment(selectedProjectId, assignment);
+      }
+      clearError();
+    } catch (invokeError) {
+      setError(String(invokeError));
     } finally {
-      setLoading(`save-work-item:${workItemId}`, false);
+      setLoading(loadingKey, false);
+    }
+  }
+
+  async function handleLaunchSessionFromWorkItem(workItemId: string) {
+    if (!selectedProjectId) {
+      setError("Select a project before starting a session.");
+      return;
+    }
+
+    const correlationId = newCorrelationId("work-item-session");
+    setLoading(`launch-session:${workItemId}`, true);
+    try {
+      const project = projectDetails[selectedProjectId] ?? (await getProject(selectedProjectId, correlationId));
+      applyProjectDetail(project);
+
+      const workItem = workItemDetails[workItemId] ?? (await getWorkItem(workItemId, correlationId));
+      applyWorkItemDetail(workItem);
+
+      const account =
+        bootstrap?.accounts.find((entry) => entry.id === project.default_account_id) ??
+        bootstrap?.accounts[0] ??
+        null;
+      if (!account) {
+        throw new Error("No account is configured for this project yet.");
+      }
+
+      const root = project.roots[0] ?? null;
+      if (!root) {
+        throw new Error("The selected project needs at least one root before launching a session.");
+      }
+
+      const detail = await createSession(
+        {
+          project_id: selectedProjectId,
+          project_root_id: root.id,
+          worktree_id: null,
+          work_item_id: workItemId,
+          account_id: account.id,
+          agent_kind: account.agent_kind,
+          cwd: root.path,
+          command: account.binary_path ?? account.agent_kind,
+          args: [],
+          env_preset_ref: account.env_preset_ref,
+          origin_mode: "planning",
+          current_mode: "planning",
+          title: `${workItem.callsign} · ${workItem.title}`,
+          title_policy: "manual",
+          restore_policy: "reattach",
+          initial_terminal_cols: 120,
+          initial_terminal_rows: 40,
+        },
+        correlationId,
+      );
+
+      applySessionDetail(detail);
+      await watchLiveSessions([detail.id], correlationId);
+      const resourceId = `session_terminal:${detail.id}`;
+      if (!openResources.some((resource) => resource.resource_id === resourceId)) {
+        setOpenResources((current) => [
+          ...current,
+          { resource_type: "session_terminal", session_id: detail.id, resource_id: resourceId },
+        ]);
+      }
+      setActiveResourceId(resourceId);
+      if (detail.live) {
+        const response = await attachSession(detail.id, correlationId);
+        setAttachedSessions((current) => ({ ...current, [detail.id]: response }));
+        setTerminalOutput((current) => ({
+          ...current,
+          [detail.id]: response.replay.chunks.map((chunk) => decodeBase64Utf8(chunk.data)).join(""),
+        }));
+      }
+      clearError();
+    } catch (invokeError) {
+      setError(String(invokeError));
+    } finally {
+      setLoading(`launch-session:${workItemId}`, false);
     }
   }
 
@@ -1103,6 +1336,39 @@ export default function App() {
 
           {leftPanel === "work" ? (
             <div className="panel-list">
+              <section className="card compact-editor">
+                <div className="section-header">
+                  <h3>Planning view</h3>
+                  <span className="status-chip neutral">
+                    {planningViewMode === "all"
+                      ? "all work"
+                      : planningViewMode === "day"
+                        ? dayCadenceKey
+                        : weekCadenceKey}
+                  </span>
+                </div>
+                <div className="segmented-control">
+                  <button
+                    className={planningViewMode === "all" ? "active" : ""}
+                    onClick={() => setPlanningViewMode("all")}
+                  >
+                    All
+                  </button>
+                  <button
+                    className={planningViewMode === "day" ? "active" : ""}
+                    onClick={() => setPlanningViewMode("day")}
+                  >
+                    Today
+                  </button>
+                  <button
+                    className={planningViewMode === "week" ? "active" : ""}
+                    onClick={() => setPlanningViewMode("week")}
+                  >
+                    This week
+                  </button>
+                </div>
+              </section>
+
               <section className="card editor-card compact-editor">
                 <div className="section-header">
                   <h3>New work item</h3>
@@ -1136,7 +1402,7 @@ export default function App() {
                       }
                     >
                       <option value="">None</option>
-                      {currentWorkItems.map((item) => (
+                      {allCurrentWorkItems.map((item) => (
                         <option key={item.id} value={item.id}>
                           {item.callsign}
                         </option>
@@ -1230,7 +1496,11 @@ export default function App() {
                   </button>
                 ))
               ) : (
-                <div className="empty-panel">No work items for this project yet.</div>
+                <div className="empty-panel">
+                  {planningViewMode === "all"
+                    ? "No work items for this project yet."
+                    : `No work items assigned for ${planningViewMode === "day" ? dayCadenceKey : weekCadenceKey}.`}
+                </div>
               )}
             </div>
           ) : null}
@@ -1430,6 +1700,20 @@ export default function App() {
             ) : activeResource.resource_type === "work_item_detail" ? (
               <WorkItemPane
                 detail={workItemDetails[activeResource.work_item_id] ?? null}
+                dailyAssignment={planningAssignmentForKey(
+                  planningAssignmentsByProject[activeResource.project_id] ?? [],
+                  activeResource.work_item_id,
+                  "day",
+                  dayCadenceKey,
+                )}
+                weeklyAssignment={planningAssignmentForKey(
+                  planningAssignmentsByProject[activeResource.project_id] ?? [],
+                  activeResource.work_item_id,
+                  "week",
+                  weekCadenceKey,
+                )}
+                dayKey={dayCadenceKey}
+                weekKey={weekCadenceKey}
                 relatedDocs={(documentsByProject[activeResource.project_id] ?? []).filter(
                   (document) => document.work_item_id === activeResource.work_item_id,
                 )}
@@ -1440,9 +1724,17 @@ export default function App() {
                   Boolean(loadingKeys[`proposal:${activeResource.work_item_id}`])
                 }
                 saving={Boolean(loadingKeys[`save-work-item:${activeResource.work_item_id}`])}
+                launchingSession={Boolean(loadingKeys[`launch-session:${activeResource.work_item_id}`])}
                 onOpenDocument={openDocument}
                 onOpenSession={openSession}
                 onSave={(input) => void handleUpdateWorkItem(activeResource.work_item_id, input)}
+                onToggleDailyAssignment={() =>
+                  void handleTogglePlanningAssignment(activeResource.work_item_id, "day", dayCadenceKey)
+                }
+                onToggleWeeklyAssignment={() =>
+                  void handleTogglePlanningAssignment(activeResource.work_item_id, "week", weekCadenceKey)
+                }
+                onLaunchSession={() => void handleLaunchSessionFromWorkItem(activeResource.work_item_id)}
                 onApplyProposal={(proposalId) => {
                   const proposal = (reconciliationByWorkItem[activeResource.work_item_id] ?? []).find(
                     (item) => item.id === proposalId,

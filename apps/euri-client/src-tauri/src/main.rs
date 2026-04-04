@@ -659,6 +659,25 @@ fn list_work_items(
 }
 
 #[tauri::command]
+fn get_project(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    project_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "project.get",
+            json!({
+                "project_id": project_id
+            }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
 fn create_project(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
@@ -734,6 +753,58 @@ fn update_work_item(
 
     manager
         .request_value(&app, "work_item.update", payload, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn list_planning_assignments(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    project_id: String,
+    work_item_id: Option<String>,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "planning_assignment.list",
+            json!({
+                "project_id": project_id,
+                "work_item_id": work_item_id
+            }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn create_planning_assignment(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    input: Value,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(&app, "planning_assignment.create", input, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn delete_planning_assignment(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    planning_assignment_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "planning_assignment.delete",
+            json!({
+                "planning_assignment_id": planning_assignment_id
+            }),
+            correlation_id,
+        )
         .map_err(error_string)
 }
 
@@ -834,6 +905,18 @@ fn update_workflow_reconciliation_proposal(
 }
 
 #[tauri::command]
+fn create_session(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    input: Value,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(&app, "session.create", input, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
 fn get_document(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
@@ -899,18 +982,23 @@ fn main() {
             interrupt_session,
             terminate_session,
             save_workspace_state,
+            get_project,
             create_project,
             update_project,
             list_work_items,
             get_work_item,
             create_work_item,
             update_work_item,
+            list_planning_assignments,
+            create_planning_assignment,
+            delete_planning_assignment,
             list_documents,
             get_document,
             create_document,
             update_document,
             list_workflow_reconciliation_proposals,
             update_workflow_reconciliation_proposal,
+            create_session,
             export_diagnostics_bundle
         ])
         .run(tauri::generate_context!())

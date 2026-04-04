@@ -82,7 +82,10 @@ button {
 .session-status-cluster,
 .summary-stats,
 .session-meta,
-.action-row {
+.action-row,
+.detail-header-actions,
+.planning-actions,
+.segmented-control {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
@@ -169,9 +172,18 @@ button {
 }
 
 .sidebar-tabs button.active,
+.segmented-control button.active,
 .action-row button:hover,
 .session-link:hover {
   background: rgba(216, 162, 90, 0.18);
+}
+
+.segmented-control button {
+  flex: 1 1 0;
+  padding: 0.65rem 0.8rem;
+  border-radius: 14px;
+  background: rgba(242, 237, 225, 0.06);
+  color: inherit;
 }
 
 .panel-list {
@@ -434,6 +446,16 @@ button {
   display: grid;
   align-content: start;
   gap: 10px;
+}
+
+.planning-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0.85rem 0.95rem;
+  border-radius: 16px;
+  background: rgba(242, 237, 225, 0.05);
 }
 
 .session-link {

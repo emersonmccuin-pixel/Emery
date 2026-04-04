@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type {
   DocumentDetail,
   DocumentSummary,
+  PlanningAssignmentSummary,
   SessionSummary,
   WorkItemDetail,
   WorkItemSummary,
@@ -22,23 +23,36 @@ const DOCUMENT_STATUSES = ["draft", "active", "archived"] as const;
 
 export function WorkItemPane({
   detail,
+  dailyAssignment,
+  weeklyAssignment,
+  dayKey,
+  weekKey,
   relatedDocs,
   relatedSessions,
   proposals,
   loading,
   saving,
+  launchingSession,
   onOpenDocument,
   onOpenSession,
   onSave,
+  onToggleDailyAssignment,
+  onToggleWeeklyAssignment,
+  onLaunchSession,
   onApplyProposal,
   onDismissProposal,
 }: {
   detail: WorkItemDetail | null;
+  dailyAssignment: PlanningAssignmentSummary | null;
+  weeklyAssignment: PlanningAssignmentSummary | null;
+  dayKey: string;
+  weekKey: string;
   relatedDocs: DocumentSummary[];
   relatedSessions: SessionSummary[];
   proposals: WorkflowReconciliationProposalSummary[];
   loading: boolean;
   saving: boolean;
+  launchingSession: boolean;
   onOpenDocument: (documentId: string, projectId: string) => void;
   onOpenSession: (sessionId: string) => void;
   onSave: (input: {
@@ -49,6 +63,9 @@ export function WorkItemPane({
     status: string;
     priority?: string | null;
   }) => void;
+  onToggleDailyAssignment: () => void;
+  onToggleWeeklyAssignment: () => void;
+  onLaunchSession: () => void;
   onApplyProposal: (proposalId: string) => void;
   onDismissProposal: (proposalId: string) => void;
 }) {
@@ -88,10 +105,15 @@ export function WorkItemPane({
             {detail.callsign} · {detail.title}
           </h2>
         </div>
-        <div className="status-strip">
-          <span className="status-chip neutral">{detail.status}</span>
-          <span className="status-chip neutral">{detail.work_item_type}</span>
-          {detail.priority ? <span className="status-chip neutral">{detail.priority}</span> : null}
+        <div className="detail-header-actions">
+          <div className="status-strip">
+            <span className="status-chip neutral">{detail.status}</span>
+            <span className="status-chip neutral">{detail.work_item_type}</span>
+            {detail.priority ? <span className="status-chip neutral">{detail.priority}</span> : null}
+          </div>
+          <button className="secondary-button" onClick={onLaunchSession} disabled={launchingSession}>
+            {launchingSession ? "Starting…" : "Start session"}
+          </button>
         </div>
       </div>
 
@@ -187,6 +209,38 @@ export function WorkItemPane({
                 ))}
               </select>
             </label>
+          </div>
+        </section>
+
+        <section className="card session-card-list">
+          <h3>Planning</h3>
+          <div className="planning-row">
+            <div>
+              <strong>Today</strong>
+              <p className="detail-copy">{dayKey}</p>
+            </div>
+            <div className="planning-actions">
+              <span className={`status-chip ${dailyAssignment ? "live" : "neutral"}`}>
+                {dailyAssignment ? "assigned" : "not assigned"}
+              </span>
+              <button className="secondary-button" onClick={onToggleDailyAssignment}>
+                {dailyAssignment ? "Remove" : "Assign"}
+              </button>
+            </div>
+          </div>
+          <div className="planning-row">
+            <div>
+              <strong>This week</strong>
+              <p className="detail-copy">{weekKey}</p>
+            </div>
+            <div className="planning-actions">
+              <span className={`status-chip ${weeklyAssignment ? "live" : "neutral"}`}>
+                {weeklyAssignment ? "assigned" : "not assigned"}
+              </span>
+              <button className="secondary-button" onClick={onToggleWeeklyAssignment}>
+                {weeklyAssignment ? "Remove" : "Assign"}
+              </button>
+            </div>
           </div>
         </section>
 

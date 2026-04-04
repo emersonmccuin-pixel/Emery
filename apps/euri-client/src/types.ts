@@ -197,6 +197,19 @@ export type WorkItemSummary = {
 
 export type WorkItemDetail = WorkItemSummary;
 
+export type PlanningAssignmentSummary = {
+  id: string;
+  work_item_id: string;
+  cadence_type: string;
+  cadence_key: string;
+  created_by: string;
+  created_at: number;
+  updated_at: number;
+  removed_at: number | null;
+};
+
+export type PlanningAssignmentDetail = PlanningAssignmentSummary;
+
 export type WorkflowReconciliationProposalSummary = {
   id: string;
   source_session_id: string;
