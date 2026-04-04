@@ -11,10 +11,14 @@ pub enum Method {
     SessionList,
     SessionGet,
     SessionCreate,
+    SessionAttach,
+    SessionDetach,
     SessionInput,
     SessionResize,
     SessionInterrupt,
     SessionTerminate,
+    SubscriptionOpen,
+    SubscriptionClose,
 }
 
 impl Method {
@@ -28,10 +32,14 @@ impl Method {
             Self::SessionList => "session.list",
             Self::SessionGet => "session.get",
             Self::SessionCreate => "session.create",
+            Self::SessionAttach => "session.attach",
+            Self::SessionDetach => "session.detach",
             Self::SessionInput => "session.input",
             Self::SessionResize => "session.resize",
             Self::SessionInterrupt => "session.interrupt",
             Self::SessionTerminate => "session.terminate",
+            Self::SubscriptionOpen => "subscription.open",
+            Self::SubscriptionClose => "subscription.close",
         }
     }
 }
@@ -49,10 +57,14 @@ impl TryFrom<&str> for Method {
             "session.list" => Ok(Self::SessionList),
             "session.get" => Ok(Self::SessionGet),
             "session.create" => Ok(Self::SessionCreate),
+            "session.attach" => Ok(Self::SessionAttach),
+            "session.detach" => Ok(Self::SessionDetach),
             "session.input" => Ok(Self::SessionInput),
             "session.resize" => Ok(Self::SessionResize),
             "session.interrupt" => Ok(Self::SessionInterrupt),
             "session.terminate" => Ok(Self::SessionTerminate),
+            "subscription.open" => Ok(Self::SubscriptionOpen),
+            "subscription.close" => Ok(Self::SubscriptionClose),
             _ => Err(()),
         }
     }
@@ -134,6 +146,29 @@ pub struct SessionResizeParams {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SessionControlParams {
     pub session_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionAttachParams {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionDetachParams {
+    pub session_id: String,
+    pub attachment_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SubscriptionOpenParams {
+    pub topic: String,
+    pub session_id: Option<String>,
+    pub after_sequence: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SubscriptionCloseParams {
+    pub subscription_id: String,
 }
 
 impl ResponseEnvelope {
