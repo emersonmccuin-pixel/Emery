@@ -11,6 +11,33 @@ export type ProjectSummary = {
   archived_at: number | null;
 };
 
+export type ProjectRootSummary = {
+  id: string;
+  project_id: string;
+  label: string;
+  path: string;
+  git_root_path: string | null;
+  remote_url: string | null;
+  root_kind: string;
+  sort_order: number;
+  created_at: number;
+  updated_at: number;
+  archived_at: number | null;
+};
+
+export type ProjectDetail = {
+  id: string;
+  name: string;
+  slug: string;
+  sort_order: number;
+  default_account_id: string | null;
+  settings_json: string | null;
+  created_at: number;
+  updated_at: number;
+  archived_at: number | null;
+  roots: ProjectRootSummary[];
+};
+
 export type AccountSummary = {
   id: string;
   agent_kind: string;
@@ -169,6 +196,24 @@ export type WorkItemSummary = {
 };
 
 export type WorkItemDetail = WorkItemSummary;
+
+export type WorkflowReconciliationProposalSummary = {
+  id: string;
+  source_session_id: string;
+  work_item_id: string | null;
+  target_entity_type: string;
+  target_entity_id: string | null;
+  proposal_type: string;
+  proposed_change_payload: Record<string, unknown>;
+  reason: string;
+  confidence: number;
+  status: string;
+  created_at: number;
+  updated_at: number;
+  resolved_at: number | null;
+};
+
+export type WorkflowReconciliationProposalDetail = WorkflowReconciliationProposalSummary;
 
 export type DocumentSummary = {
   id: string;

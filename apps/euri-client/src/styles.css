@@ -28,7 +28,9 @@ body {
 }
 
 button,
-textarea {
+textarea,
+input,
+select {
   font: inherit;
 }
 
@@ -221,6 +223,18 @@ button {
   gap: 14px;
 }
 
+.error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0.9rem 1rem;
+  border-radius: 16px;
+  border: 1px solid rgba(199, 92, 85, 0.28);
+  background: rgba(199, 92, 85, 0.14);
+  color: #ffd3cb;
+}
+
 .workspace-summary {
   border-radius: 20px;
   padding: 16px 18px;
@@ -279,6 +293,95 @@ button {
   margin: 0;
   color: #dfd8ca;
   white-space: pre-wrap;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.editor-card,
+.compact-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.field-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+}
+
+.field span {
+  font-size: 0.82rem;
+  color: #cdb58f;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  padding: 0.72rem 0.85rem;
+  border: 1px solid rgba(242, 237, 225, 0.12);
+  border-radius: 14px;
+  background: rgba(16, 14, 13, 0.92);
+  color: inherit;
+}
+
+.field textarea,
+.markdown-editor {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.compact-markdown-editor {
+  min-height: 160px;
+}
+
+.secondary-button {
+  padding: 0.7rem 0.9rem;
+  border-radius: 14px;
+  background: rgba(242, 237, 225, 0.08);
+  color: inherit;
+}
+
+.proposal-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(242, 237, 225, 0.05);
+}
+
+.proposal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.proposal-payload {
+  margin: 0;
+  padding: 12px;
+  border-radius: 14px;
+  overflow: auto;
+  background: rgba(16, 14, 13, 0.92);
+  color: #dfd8ca;
+  white-space: pre-wrap;
+  font-family:
+    "IBM Plex Mono",
+    "Cascadia Code",
+    monospace;
+  font-size: 0.84rem;
 }
 
 .compact-card {
@@ -369,11 +472,6 @@ button {
 .terminal-controls textarea {
   width: 100%;
   min-height: 92px;
-  padding: 12px;
-  border: 1px solid rgba(242, 237, 225, 0.1);
-  border-radius: 16px;
-  background: rgba(16, 14, 13, 0.9);
-  color: inherit;
   resize: vertical;
 }
 
@@ -400,6 +498,10 @@ button {
   }
 
   .detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .field-row {
     grid-template-columns: 1fr;
   }
 

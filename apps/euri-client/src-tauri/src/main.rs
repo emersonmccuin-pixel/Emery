@@ -659,6 +659,36 @@ fn list_work_items(
 }
 
 #[tauri::command]
+fn create_project(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    input: Value,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(&app, "project.create", input, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn update_project(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    project_id: String,
+    input: Value,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    let mut payload = input;
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("project_id".to_string(), Value::String(project_id));
+    }
+
+    manager
+        .request_value(&app, "project.update", payload, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
 fn get_work_item(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
@@ -678,6 +708,36 @@ fn get_work_item(
 }
 
 #[tauri::command]
+fn create_work_item(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    input: Value,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(&app, "work_item.create", input, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn update_work_item(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    work_item_id: String,
+    input: Value,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    let mut payload = input;
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("work_item_id".to_string(), Value::String(work_item_id));
+    }
+
+    manager
+        .request_value(&app, "work_item.update", payload, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
 fn list_documents(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
@@ -693,6 +753,81 @@ fn list_documents(
                 "project_id": project_id,
                 "work_item_id": work_item_id
             }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn create_document(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    input: Value,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(&app, "document.create", input, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn update_document(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    document_id: String,
+    input: Value,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    let mut payload = input;
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("document_id".to_string(), Value::String(document_id));
+    }
+
+    manager
+        .request_value(&app, "document.update", payload, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn list_workflow_reconciliation_proposals(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    work_item_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "workflow_reconciliation_proposal.list",
+            json!({
+                "work_item_id": work_item_id
+            }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn update_workflow_reconciliation_proposal(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    proposal_id: String,
+    input: Value,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    let mut payload = input;
+    if let Some(object) = payload.as_object_mut() {
+        object.insert(
+            "workflow_reconciliation_proposal_id".to_string(),
+            Value::String(proposal_id),
+        );
+    }
+
+    manager
+        .request_value(
+            &app,
+            "workflow_reconciliation_proposal.update",
+            payload,
             correlation_id,
         )
         .map_err(error_string)
@@ -764,10 +899,18 @@ fn main() {
             interrupt_session,
             terminate_session,
             save_workspace_state,
+            create_project,
+            update_project,
             list_work_items,
             get_work_item,
+            create_work_item,
+            update_work_item,
             list_documents,
             get_document,
+            create_document,
+            update_document,
+            list_workflow_reconciliation_proposals,
+            update_workflow_reconciliation_proposal,
             export_diagnostics_bundle
         ])
         .run(tauri::generate_context!())

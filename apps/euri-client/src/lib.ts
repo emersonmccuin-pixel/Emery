@@ -4,8 +4,11 @@ import type {
   DiagnosticsBundleResult,
   DocumentDetail,
   DocumentSummary,
+  ProjectDetail,
   SessionAttachResponse,
   ShellBootstrap,
+  WorkflowReconciliationProposalDetail,
+  WorkflowReconciliationProposalSummary,
   WorkItemDetail,
   WorkItemSummary,
   WorkspacePayload,
@@ -67,11 +70,65 @@ export async function listWorkItems(
   return invoke("list_work_items", { projectId, correlationId });
 }
 
+export async function createProject(
+  input: {
+    name: string;
+    slug?: string;
+    default_account_id?: string | null;
+  },
+  correlationId?: string,
+): Promise<ProjectDetail> {
+  return invoke("create_project", { input, correlationId });
+}
+
+export async function updateProject(
+  projectId: string,
+  input: {
+    name?: string;
+    slug?: string;
+    default_account_id?: string | null;
+  },
+  correlationId?: string,
+): Promise<ProjectDetail> {
+  return invoke("update_project", { projectId, input, correlationId });
+}
+
 export async function getWorkItem(
   workItemId: string,
   correlationId?: string,
 ): Promise<WorkItemDetail> {
   return invoke("get_work_item", { workItemId, correlationId });
+}
+
+export async function createWorkItem(
+  input: {
+    project_id: string;
+    parent_id?: string | null;
+    title: string;
+    description: string;
+    acceptance_criteria?: string | null;
+    work_item_type: string;
+    status?: string;
+    priority?: string | null;
+  },
+  correlationId?: string,
+): Promise<WorkItemDetail> {
+  return invoke("create_work_item", { input, correlationId });
+}
+
+export async function updateWorkItem(
+  workItemId: string,
+  input: {
+    title?: string;
+    description?: string;
+    acceptance_criteria?: string | null;
+    work_item_type?: string;
+    status?: string;
+    priority?: string | null;
+  },
+  correlationId?: string,
+): Promise<WorkItemDetail> {
+  return invoke("update_work_item", { workItemId, input, correlationId });
 }
 
 export async function listDocuments(
@@ -87,6 +144,62 @@ export async function getDocument(
   correlationId?: string,
 ): Promise<DocumentDetail> {
   return invoke("get_document", { documentId, correlationId });
+}
+
+export async function createDocument(
+  input: {
+    project_id: string;
+    work_item_id?: string | null;
+    session_id?: string | null;
+    doc_type: string;
+    title: string;
+    slug?: string;
+    status?: string;
+    content_markdown: string;
+  },
+  correlationId?: string,
+): Promise<DocumentDetail> {
+  return invoke("create_document", { input, correlationId });
+}
+
+export async function updateDocument(
+  documentId: string,
+  input: {
+    work_item_id?: string | null;
+    session_id?: string | null;
+    doc_type?: string;
+    title?: string;
+    slug?: string;
+    status?: string;
+    content_markdown?: string;
+  },
+  correlationId?: string,
+): Promise<DocumentDetail> {
+  return invoke("update_document", { documentId, input, correlationId });
+}
+
+export async function listWorkflowReconciliationProposals(
+  workItemId: string,
+  correlationId?: string,
+): Promise<WorkflowReconciliationProposalSummary[]> {
+  return invoke("list_workflow_reconciliation_proposals", {
+    workItemId,
+    correlationId,
+  });
+}
+
+export async function updateWorkflowReconciliationProposal(
+  proposalId: string,
+  input: {
+    status?: string;
+  },
+  correlationId?: string,
+): Promise<WorkflowReconciliationProposalDetail> {
+  return invoke("update_workflow_reconciliation_proposal", {
+    proposalId,
+    input,
+    correlationId,
+  });
 }
 
 export async function exportDiagnosticsBundle(

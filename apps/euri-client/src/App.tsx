@@ -4,16 +4,24 @@ import {
   attachSession,
   bootstrapShell,
   connectionLabel,
+  createDocument,
+  createProject,
+  createWorkItem,
   detachSession,
   exportDiagnosticsBundle,
   getDocument,
   getWorkItem,
   interruptSession,
   listDocuments,
+  listWorkflowReconciliationProposals,
   listWorkItems,
   saveWorkspace,
   sendSessionInput,
   terminateSession,
+  updateDocument,
+  updateProject,
+  updateWorkflowReconciliationProposal,
+  updateWorkItem,
   watchLiveSessions,
 } from "./lib";
 import {
@@ -25,10 +33,13 @@ import {
   snapshotClientDiagnostics,
 } from "./diagnostics";
 import type {
+  AccountSummary,
   ConnectionStatusEvent,
   DiagnosticsBundleResult,
   DocumentDetail,
   DocumentSummary,
+  ProjectDetail,
+  ProjectSummary,
   SessionAttachResponse,
   SessionOutputEvent,
   SessionStateChangedEvent,
@@ -36,10 +47,23 @@ import type {
   ShellBootstrap,
   WorkItemDetail,
   WorkItemSummary,
+  WorkflowReconciliationProposalSummary,
   WorkspacePayload,
   WorkspaceResource,
 } from "./types";
 import { DocumentPane, WorkItemPane, documentPreview } from "./workbench";
+
+const WORK_ITEM_TYPES = ["epic", "task", "bug", "feature", "research", "support"] as const;
+const WORK_ITEM_STATUSES = [
+  "backlog",
+  "planned",
+  "in_progress",
+  "blocked",
+  "done",
+  "archived",
+] as const;
+const PRIORITIES = ["", "low", "medium", "high", "urgent"] as const;
+const DOCUMENT_STATUSES = ["draft", "active", "archived"] as const;
 
 function resourceLabel(
   resource: WorkspaceResource,
@@ -104,6 +128,51 @@ function buildWorkspacePayload(
   };
 }
 
+function toProjectSummary(detail: ProjectDetail, current?: ProjectSummary | null): ProjectSummary {
+  return {
+    id: detail.id,
+    name: detail.name,
+    slug: detail.slug,
+    sort_order: detail.sort_order,
+    default_account_id: detail.default_account_id,
+    root_count: detail.roots.length,
+    live_session_count: current?.live_session_count ?? 0,
+    created_at: detail.created_at,
+    updated_at: detail.updated_at,
+    archived_at: detail.archived_at,
+  };
+}
+
+function upsertById<T extends { id: string }>(
+  items: T[],
+  nextItem: T,
+  compare: (left: T, right: T) => number,
+) {
+  const nextItems = items.filter((item) => item.id !== nextItem.id);
+  nextItems.push(nextItem);
+  nextItems.sort(compare);
+  return nextItems;
+}
+
+function compareProjects(left: ProjectSummary, right: ProjectSummary) {
+  return left.sort_order - right.sort_order || left.name.localeCompare(right.name);
+}
+
+function compareWorkItems(left: WorkItemSummary, right: WorkItemSummary) {
+  return right.updated_at - left.updated_at || left.callsign.localeCompare(right.callsign);
+}
+
+function compareDocuments(left: DocumentSummary, right: DocumentSummary) {
+  return right.updated_at - left.updated_at || left.title.localeCompare(right.title);
+}
+
+function compareProposals(
+  left: WorkflowReconciliationProposalSummary,
+  right: WorkflowReconciliationProposalSummary,
+) {
+  return right.created_at - left.created_at || left.id.localeCompare(right.id);
+}
+
 export default function App() {
   const [bootstrap, setBootstrap] = useState<ShellBootstrap | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -118,10 +187,36 @@ export default function App() {
   const [documentsByProject, setDocumentsByProject] = useState<Record<string, DocumentSummary[]>>({});
   const [workItemDetails, setWorkItemDetails] = useState<Record<string, WorkItemDetail>>({});
   const [documentDetails, setDocumentDetails] = useState<Record<string, DocumentDetail>>({});
+  const [reconciliationByWorkItem, setReconciliationByWorkItem] = useState<
+    Record<string, WorkflowReconciliationProposalSummary[]>
+  >({});
   const [connectionEvent, setConnectionEvent] = useState<ConnectionStatusEvent | null>(null);
   const [diagnosticsBundle, setDiagnosticsBundle] = useState<DiagnosticsBundleResult | null>(null);
   const [loadingKeys, setLoadingKeys] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
+  const [showProjectCreate, setShowProjectCreate] = useState(false);
+  const [projectCreateForm, setProjectCreateForm] = useState({
+    name: "",
+    slug: "",
+    default_account_id: "",
+  });
+  const [workItemCreateForm, setWorkItemCreateForm] = useState({
+    title: "",
+    description: "",
+    acceptance_criteria: "",
+    work_item_type: "task",
+    status: "backlog",
+    priority: "",
+    parent_id: "",
+  });
+  const [documentCreateForm, setDocumentCreateForm] = useState({
+    title: "",
+    slug: "",
+    doc_type: "note",
+    status: "draft",
+    work_item_id: "",
+    content_markdown: "",
+  });
   const restoreApplied = useRef(false);
   const persistTimeout = useRef<number | null>(null);
 
@@ -129,8 +224,53 @@ export default function App() {
     setLoadingKeys((current) => ({ ...current, [key]: value }));
   }
 
-  async function loadProjectReads(projectId: string) {
-    if (workItemsByProject[projectId] && documentsByProject[projectId]) {
+  function clearError() {
+    setError(null);
+  }
+
+  function applyProjectDetail(detail: ProjectDetail) {
+    setBootstrap((current) => {
+      if (!current) {
+        return current;
+      }
+      const currentSummary = current.projects.find((project) => project.id === detail.id) ?? null;
+      const nextProjects = upsertById(current.projects, toProjectSummary(detail, currentSummary), compareProjects);
+      return {
+        ...current,
+        projects: nextProjects,
+        bootstrap: {
+          ...current.bootstrap,
+          project_count: nextProjects.length,
+        },
+      };
+    });
+  }
+
+  function applyWorkItemDetail(detail: WorkItemDetail) {
+    setWorkItemDetails((current) => ({ ...current, [detail.id]: detail }));
+    setWorkItemsByProject((current) => ({
+      ...current,
+      [detail.project_id]: upsertById(current[detail.project_id] ?? [], detail, compareWorkItems),
+    }));
+  }
+
+  function applyDocumentDetail(detail: DocumentDetail) {
+    setDocumentDetails((current) => ({ ...current, [detail.id]: detail }));
+    setDocumentsByProject((current) => ({
+      ...current,
+      [detail.project_id]: upsertById(current[detail.project_id] ?? [], detail, compareDocuments),
+    }));
+  }
+
+  function applyProposal(workItemId: string, proposal: WorkflowReconciliationProposalSummary) {
+    setReconciliationByWorkItem((current) => ({
+      ...current,
+      [workItemId]: upsertById(current[workItemId] ?? [], proposal, compareProposals),
+    }));
+  }
+
+  async function loadProjectReads(projectId: string, force = false) {
+    if (!force && workItemsByProject[projectId] && documentsByProject[projectId]) {
       return;
     }
 
@@ -138,12 +278,8 @@ export default function App() {
     setLoading(`project:${projectId}`, true);
     try {
       const [workItems, documents] = await Promise.all([
-        workItemsByProject[projectId]
-          ? Promise.resolve(workItemsByProject[projectId])
-          : listWorkItems(projectId, correlationId),
-        documentsByProject[projectId]
-          ? Promise.resolve(documentsByProject[projectId])
-          : listDocuments(projectId, undefined, correlationId),
+        listWorkItems(projectId, correlationId),
+        listDocuments(projectId, undefined, correlationId),
       ]);
       setWorkItemsByProject((current) => ({ ...current, [projectId]: workItems }));
       setDocumentsByProject((current) => ({ ...current, [projectId]: documents }));
@@ -154,9 +290,11 @@ export default function App() {
           payload: {
             work_item_count: workItems.length,
             document_count: documents.length,
+            force_refresh: force,
           },
         }),
       );
+      clearError();
     } catch (invokeError) {
       setError(String(invokeError));
     } finally {
@@ -164,8 +302,8 @@ export default function App() {
     }
   }
 
-  async function ensureWorkItemDetail(workItemId: string) {
-    if (workItemDetails[workItemId]) {
+  async function ensureWorkItemDetail(workItemId: string, force = false) {
+    if (!force && workItemDetails[workItemId]) {
       return;
     }
 
@@ -173,7 +311,7 @@ export default function App() {
     setLoading(`work-item:${workItemId}`, true);
     try {
       const detail = await getWorkItem(workItemId, correlationId);
-      setWorkItemDetails((current) => ({ ...current, [workItemId]: detail }));
+      applyWorkItemDetail(detail);
       recordClientEvent(
         makeClientEvent("workbench", "work_item.loaded", {
           correlation_id: correlationId,
@@ -181,6 +319,7 @@ export default function App() {
           work_item_id: workItemId,
         }),
       );
+      clearError();
     } catch (invokeError) {
       setError(String(invokeError));
     } finally {
@@ -188,8 +327,8 @@ export default function App() {
     }
   }
 
-  async function ensureDocumentDetail(documentId: string) {
-    if (documentDetails[documentId]) {
+  async function ensureDocumentDetail(documentId: string, force = false) {
+    if (!force && documentDetails[documentId]) {
       return;
     }
 
@@ -197,7 +336,7 @@ export default function App() {
     setLoading(`document:${documentId}`, true);
     try {
       const detail = await getDocument(documentId, correlationId);
-      setDocumentDetails((current) => ({ ...current, [documentId]: detail }));
+      applyDocumentDetail(detail);
       recordClientEvent(
         makeClientEvent("workbench", "document.loaded", {
           correlation_id: correlationId,
@@ -208,10 +347,29 @@ export default function App() {
           },
         }),
       );
+      clearError();
     } catch (invokeError) {
       setError(String(invokeError));
     } finally {
       setLoading(`document:${documentId}`, false);
+    }
+  }
+
+  async function ensureReconciliationProposals(workItemId: string, force = false) {
+    if (!force && reconciliationByWorkItem[workItemId]) {
+      return;
+    }
+
+    const correlationId = newCorrelationId("proposal");
+    setLoading(`proposal:${workItemId}`, true);
+    try {
+      const proposals = await listWorkflowReconciliationProposals(workItemId, correlationId);
+      setReconciliationByWorkItem((current) => ({ ...current, [workItemId]: proposals }));
+      clearError();
+    } catch (invokeError) {
+      setError(String(invokeError));
+    } finally {
+      setLoading(`proposal:${workItemId}`, false);
     }
   }
 
@@ -299,17 +457,6 @@ export default function App() {
 
           if (event.payload.event === "session.state_changed") {
             const payload = event.payload.payload as SessionStateChangedEvent;
-            recordClientEvent(
-              makeClientEvent("session", "session.state_changed", {
-                session_id: payload.session_id,
-                payload: {
-                  runtime_state: payload.runtime_state,
-                  activity_state: payload.activity_state,
-                  live: payload.live,
-                  attached_clients: payload.attached_clients,
-                },
-              }),
-            );
             setSessions((current) =>
               current.map((entry) =>
                 entry.id === payload.session_id
@@ -415,17 +562,20 @@ export default function App() {
     }
   }, [attachedSessions, bootstrap, openResources]);
 
+  const activeResource = openResources.find((resource) => resource.resource_id === activeResourceId) ?? null;
+
   useEffect(() => {
     if (!activeResource) {
       return;
     }
     if (activeResource.resource_type === "work_item_detail") {
       void ensureWorkItemDetail(activeResource.work_item_id);
+      void ensureReconciliationProposals(activeResource.work_item_id);
     }
     if (activeResource.resource_type === "document_detail") {
       void ensureDocumentDetail(activeResource.document_id);
     }
-  }, [activeResourceId, openResources]);
+  }, [activeResource]);
 
   const selectedProject = useMemo(
     () => bootstrap?.projects.find((project) => project.id === selectedProjectId) ?? null,
@@ -435,22 +585,14 @@ export default function App() {
     () => sessions.filter((entry) => !selectedProjectId || entry.project_id === selectedProjectId),
     [selectedProjectId, sessions],
   );
-  const activeResource = openResources.find((resource) => resource.resource_id === activeResourceId) ?? null;
   const currentWorkItems = selectedProjectId ? workItemsByProject[selectedProjectId] ?? [] : [];
   const currentDocuments = selectedProjectId ? documentsByProject[selectedProjectId] ?? [] : [];
 
   async function openProject(projectId: string) {
-    recordClientEvent(
-      makeClientEvent("shell", "project.opened", {
-        correlation_id: newCorrelationId("project-open"),
-        project_id: projectId,
-      }),
-    );
     setSelectedProjectId(projectId);
     void loadProjectReads(projectId);
     const resourceId = `project_home:${projectId}`;
-    const existing = openResources.find((resource) => resource.resource_id === resourceId);
-    if (!existing) {
+    if (!openResources.some((resource) => resource.resource_id === resourceId)) {
       setOpenResources((current) => [
         ...current,
         { resource_type: "project_home", project_id: projectId, resource_id: resourceId },
@@ -466,14 +608,6 @@ export default function App() {
     }
 
     const correlationId = newCorrelationId("session-open");
-    recordClientEvent(
-      makeClientEvent("session", "session.open_requested", {
-        correlation_id: correlationId,
-        session_id: sessionId,
-        project_id: existingSession.project_id,
-        work_item_id: existingSession.work_item_id ?? undefined,
-      }),
-    );
     const resourceId = `session_terminal:${sessionId}`;
     if (!openResources.some((resource) => resource.resource_id === resourceId)) {
       setOpenResources((current) => [
@@ -495,41 +629,16 @@ export default function App() {
         [sessionId]: response.replay.chunks.map((chunk) => decodeBase64Utf8(chunk.data)).join(""),
       }));
       await watchLiveSessions([sessionId], correlationId);
-      recordClientEvent(
-        makeClientEvent("session", "session.attach_succeeded", {
-          correlation_id: correlationId,
-          session_id: sessionId,
-          project_id: response.session.project_id,
-          work_item_id: response.session.work_item_id ?? undefined,
-          payload: {
-            output_cursor: response.output_cursor,
-          },
-        }),
-      );
+      clearError();
     } catch (invokeError) {
-      recordClientEvent(
-        makeClientEvent("session", "session.attach_failed", {
-          correlation_id: correlationId,
-          session_id: sessionId,
-          payload: {
-            error: String(invokeError),
-          },
-        }),
-      );
       setError(String(invokeError));
     }
   }
 
   async function openWorkItem(workItemId: string, projectId: string) {
-    recordClientEvent(
-      makeClientEvent("workbench", "work_item.open_requested", {
-        correlation_id: newCorrelationId("work-item-open"),
-        project_id: projectId,
-        work_item_id: workItemId,
-      }),
-    );
     void loadProjectReads(projectId);
     void ensureWorkItemDetail(workItemId);
+    void ensureReconciliationProposals(workItemId);
     const resourceId = `work_item_detail:${workItemId}`;
     if (!openResources.some((resource) => resource.resource_id === resourceId)) {
       setOpenResources((current) => [
@@ -546,15 +655,6 @@ export default function App() {
   }
 
   async function openDocument(documentId: string, projectId: string) {
-    recordClientEvent(
-      makeClientEvent("workbench", "document.open_requested", {
-        correlation_id: newCorrelationId("document-open"),
-        project_id: projectId,
-        payload: {
-          document_id: documentId,
-        },
-      }),
-    );
     void loadProjectReads(projectId);
     void ensureDocumentDetail(documentId);
     const resourceId = `document_detail:${documentId}`;
@@ -583,14 +683,7 @@ export default function App() {
       const attachment = attachedSessions[resource.session_id];
       if (attachment) {
         try {
-          const correlationId = newCorrelationId("session-close");
-          await detachSession(resource.session_id, attachment.attachment_id, correlationId);
-          recordClientEvent(
-            makeClientEvent("session", "session.detach_requested", {
-              correlation_id: correlationId,
-              session_id: resource.session_id,
-            }),
-          );
+          await detachSession(resource.session_id, attachment.attachment_id, newCorrelationId("session-close"));
         } catch (invokeError) {
           setError(String(invokeError));
         }
@@ -620,30 +713,256 @@ export default function App() {
       return;
     }
 
-    const correlationId = newCorrelationId("session-input");
     try {
-      await sendSessionInput(sessionId, value.endsWith("\n") ? value : `${value}\n`, correlationId);
-      recordClientEvent(
-        makeClientEvent("session", "session.input_submitted", {
-          correlation_id: correlationId,
-          session_id: sessionId,
-          payload: {
-            byte_count: value.length,
-          },
-        }),
-      );
+      await sendSessionInput(sessionId, value.endsWith("\n") ? value : `${value}\n`, newCorrelationId("session-input"));
       setTerminalInput((current) => ({ ...current, [sessionId]: "" }));
+      clearError();
     } catch (invokeError) {
       setError(String(invokeError));
     }
   }
 
-  if (error) {
-    return <div className="app-shell error-state">{error}</div>;
+  async function handleCreateProject() {
+    const correlationId = newCorrelationId("project-create");
+    setLoading("create-project", true);
+    try {
+      const detail = await createProject(
+        {
+          name: projectCreateForm.name,
+          slug: projectCreateForm.slug || undefined,
+          default_account_id: projectCreateForm.default_account_id || null,
+        },
+        correlationId,
+      );
+      applyProjectDetail(detail);
+      setWorkItemsByProject((current) => ({ ...current, [detail.id]: [] }));
+      setDocumentsByProject((current) => ({ ...current, [detail.id]: [] }));
+      setProjectCreateForm({ name: "", slug: "", default_account_id: "" });
+      setShowProjectCreate(false);
+      await openProject(detail.id);
+      clearError();
+    } catch (invokeError) {
+      setError(String(invokeError));
+    } finally {
+      setLoading("create-project", false);
+    }
+  }
+
+  async function handleUpdateProject(projectId: string, input: { name: string; slug: string; default_account_id: string }) {
+    const correlationId = newCorrelationId("project-update");
+    setLoading(`save-project:${projectId}`, true);
+    try {
+      const detail = await updateProject(
+        projectId,
+        {
+          name: input.name,
+          slug: input.slug,
+          default_account_id: input.default_account_id || null,
+        },
+        correlationId,
+      );
+      applyProjectDetail(detail);
+      clearError();
+    } catch (invokeError) {
+      setError(String(invokeError));
+    } finally {
+      setLoading(`save-project:${projectId}`, false);
+    }
+  }
+
+  async function handleCreateWorkItem() {
+    if (!selectedProjectId) {
+      setError("Select a project before creating a work item.");
+      return;
+    }
+    const correlationId = newCorrelationId("work-item-create");
+    setLoading("create-work-item", true);
+    try {
+      const detail = await createWorkItem(
+        {
+          project_id: selectedProjectId,
+          parent_id: workItemCreateForm.parent_id || null,
+          title: workItemCreateForm.title,
+          description: workItemCreateForm.description,
+          acceptance_criteria: workItemCreateForm.acceptance_criteria || null,
+          work_item_type: workItemCreateForm.work_item_type,
+          status: workItemCreateForm.status,
+          priority: workItemCreateForm.priority || null,
+        },
+        correlationId,
+      );
+      applyWorkItemDetail(detail);
+      setWorkItemCreateForm({
+        title: "",
+        description: "",
+        acceptance_criteria: "",
+        work_item_type: "task",
+        status: "backlog",
+        priority: "",
+        parent_id: "",
+      });
+      await openWorkItem(detail.id, detail.project_id);
+      clearError();
+    } catch (invokeError) {
+      setError(String(invokeError));
+    } finally {
+      setLoading("create-work-item", false);
+    }
+  }
+
+  async function handleUpdateWorkItem(
+    workItemId: string,
+    input: {
+      title: string;
+      description: string;
+      acceptance_criteria?: string | null;
+      work_item_type: string;
+      status: string;
+      priority?: string | null;
+    },
+  ) {
+    const correlationId = newCorrelationId("work-item-update");
+    setLoading(`save-work-item:${workItemId}`, true);
+    try {
+      const detail = await updateWorkItem(workItemId, input, correlationId);
+      applyWorkItemDetail(detail);
+      clearError();
+    } catch (invokeError) {
+      setError(String(invokeError));
+    } finally {
+      setLoading(`save-work-item:${workItemId}`, false);
+    }
+  }
+
+  async function handleCreateDocument() {
+    if (!selectedProjectId) {
+      setError("Select a project before creating a document.");
+      return;
+    }
+    const correlationId = newCorrelationId("document-create");
+    setLoading("create-document", true);
+    try {
+      const detail = await createDocument(
+        {
+          project_id: selectedProjectId,
+          work_item_id: documentCreateForm.work_item_id || null,
+          doc_type: documentCreateForm.doc_type,
+          title: documentCreateForm.title,
+          slug: documentCreateForm.slug || undefined,
+          status: documentCreateForm.status,
+          content_markdown: documentCreateForm.content_markdown,
+        },
+        correlationId,
+      );
+      applyDocumentDetail(detail);
+      setDocumentCreateForm({
+        title: "",
+        slug: "",
+        doc_type: "note",
+        status: "draft",
+        work_item_id: "",
+        content_markdown: "",
+      });
+      await openDocument(detail.id, detail.project_id);
+      clearError();
+    } catch (invokeError) {
+      setError(String(invokeError));
+    } finally {
+      setLoading("create-document", false);
+    }
+  }
+
+  async function handleUpdateDocument(
+    documentId: string,
+    input: {
+      work_item_id?: string | null;
+      doc_type: string;
+      title: string;
+      slug?: string;
+      status: string;
+      content_markdown: string;
+    },
+  ) {
+    const correlationId = newCorrelationId("document-update");
+    setLoading(`save-document:${documentId}`, true);
+    try {
+      const detail = await updateDocument(documentId, input, correlationId);
+      applyDocumentDetail(detail);
+      clearError();
+    } catch (invokeError) {
+      setError(String(invokeError));
+    } finally {
+      setLoading(`save-document:${documentId}`, false);
+    }
+  }
+
+  async function handleDismissProposal(workItemId: string, proposalId: string) {
+    const correlationId = newCorrelationId("proposal-dismiss");
+    setLoading(`proposal-action:${proposalId}`, true);
+    try {
+      const detail = await updateWorkflowReconciliationProposal(proposalId, { status: "dismissed" }, correlationId);
+      applyProposal(workItemId, detail);
+      clearError();
+    } catch (invokeError) {
+      setError(String(invokeError));
+    } finally {
+      setLoading(`proposal-action:${proposalId}`, false);
+    }
+  }
+
+  async function handleApplyProposal(proposal: WorkflowReconciliationProposalSummary) {
+    const correlationId = newCorrelationId("proposal-apply");
+    setLoading(`proposal-action:${proposal.id}`, true);
+    try {
+      const payload = proposal.proposed_change_payload;
+      if (proposal.target_entity_type === "work_item") {
+        const workItemId = proposal.target_entity_id ?? proposal.work_item_id;
+        if (!workItemId) {
+          throw new Error(`Proposal ${proposal.id} does not specify a target work item.`);
+        }
+        const detail = await updateWorkItem(workItemId, payload, correlationId);
+        applyWorkItemDetail(detail);
+        applyProposal(
+          proposal.work_item_id ?? workItemId,
+          await updateWorkflowReconciliationProposal(proposal.id, { status: "applied" }, correlationId),
+        );
+      } else if (proposal.target_entity_type === "document") {
+        const documentId = proposal.target_entity_id;
+        if (!documentId) {
+          throw new Error(`Proposal ${proposal.id} does not specify a target document.`);
+        }
+        const detail = await updateDocument(documentId, payload, correlationId);
+        applyDocumentDetail(detail);
+        applyProposal(
+          proposal.work_item_id ?? detail.work_item_id ?? documentId,
+          await updateWorkflowReconciliationProposal(proposal.id, { status: "applied" }, correlationId),
+        );
+      } else if (proposal.target_entity_type === "project") {
+        const projectId = proposal.target_entity_id;
+        if (!projectId) {
+          throw new Error(`Proposal ${proposal.id} does not specify a target project.`);
+        }
+        const detail = await updateProject(projectId, payload, correlationId);
+        applyProjectDetail(detail);
+        applyProposal(
+          proposal.work_item_id ?? projectId,
+          await updateWorkflowReconciliationProposal(proposal.id, { status: "applied" }, correlationId),
+        );
+      } else {
+        throw new Error(
+          `Proposal ${proposal.id} targets ${proposal.target_entity_type}, which is outside the first write-capable slice.`,
+        );
+      }
+      clearError();
+    } catch (invokeError) {
+      setError(String(invokeError));
+    } finally {
+      setLoading(`proposal-action:${proposal.id}`, false);
+    }
   }
 
   if (!bootstrap) {
-    return <div className="app-shell loading-state">Connecting to the supervisor…</div>;
+    return <div className="app-shell loading-state">{error ?? "Connecting to the supervisor…"}</div>;
   }
 
   return (
@@ -654,40 +973,23 @@ export default function App() {
           <h1>Supervisor workspace</h1>
         </div>
         <div className="status-strip">
-          <span className={`status-chip ${connectionLabel(connectionEvent)}`}>
-            {connectionLabel(connectionEvent)}
-          </span>
+          <span className={`status-chip ${connectionLabel(connectionEvent)}`}>{connectionLabel(connectionEvent)}</span>
           <span className="status-chip neutral">{bootstrap.health.live_session_count} live</span>
-          <span className="status-chip neutral">
-            usage {bootstrap.accounts.length > 0 ? "unavailable" : "hidden"}
-          </span>
+          <span className="status-chip neutral">usage {bootstrap.accounts.length > 0 ? "unavailable" : "hidden"}</span>
           {bootstrap.hello.diagnostics_enabled ? (
             <button
               className="status-chip neutral"
               onClick={() => {
                 const correlationId = newCorrelationId("bundle");
                 const activeSessionId =
-                  activeResource?.resource_type === "session_terminal"
-                    ? activeResource.session_id
-                    : null;
+                  activeResource?.resource_type === "session_terminal" ? activeResource.session_id : null;
                 void exportDiagnosticsBundle(
                   activeSessionId,
                   activeSessionId ? `session-${activeSessionId}` : "shell",
                   snapshotClientDiagnostics(),
                   correlationId,
                 )
-                  .then((result) => {
-                    setDiagnosticsBundle(result);
-                    recordClientEvent(
-                      makeClientEvent("shell", "diagnostics.bundle_exported", {
-                        correlation_id: correlationId,
-                        session_id: activeSessionId ?? undefined,
-                        payload: {
-                          bundle_path: result.bundle_path,
-                        },
-                      }),
-                    );
-                  })
+                  .then((result) => setDiagnosticsBundle(result))
                   .catch((invokeError) => setError(String(invokeError)));
               }}
             >
@@ -700,16 +1002,10 @@ export default function App() {
       <div className="shell-grid">
         <aside className="sidebar">
           <div className="sidebar-tabs sidebar-tabs-wide">
-            <button
-              className={leftPanel === "projects" ? "active" : ""}
-              onClick={() => setLeftPanel("projects")}
-            >
+            <button className={leftPanel === "projects" ? "active" : ""} onClick={() => setLeftPanel("projects")}>
               Projects
             </button>
-            <button
-              className={leftPanel === "sessions" ? "active" : ""}
-              onClick={() => setLeftPanel("sessions")}
-            >
+            <button className={leftPanel === "sessions" ? "active" : ""} onClick={() => setLeftPanel("sessions")}>
               Sessions
             </button>
             <button className={leftPanel === "work" ? "active" : ""} onClick={() => setLeftPanel("work")}>
@@ -722,6 +1018,59 @@ export default function App() {
 
           {leftPanel === "projects" ? (
             <div className="panel-list">
+              <section className="card editor-card compact-editor">
+                <div className="section-header">
+                  <h3>New project</h3>
+                  <button className="secondary-button" onClick={() => setShowProjectCreate((current) => !current)}>
+                    {showProjectCreate ? "Hide" : "Create"}
+                  </button>
+                </div>
+                {showProjectCreate ? (
+                  <>
+                    <label className="field">
+                      <span>Name</span>
+                      <input
+                        value={projectCreateForm.name}
+                        onChange={(event) =>
+                          setProjectCreateForm((current) => ({ ...current, name: event.target.value }))
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Slug</span>
+                      <input
+                        value={projectCreateForm.slug}
+                        onChange={(event) =>
+                          setProjectCreateForm((current) => ({ ...current, slug: event.target.value }))
+                        }
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Default account</span>
+                      <select
+                        value={projectCreateForm.default_account_id}
+                        onChange={(event) =>
+                          setProjectCreateForm((current) => ({
+                            ...current,
+                            default_account_id: event.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">None</option>
+                        {bootstrap.accounts.map((account) => (
+                          <option key={account.id} value={account.id}>
+                            {account.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button onClick={() => void handleCreateProject()} disabled={Boolean(loadingKeys["create-project"])}>
+                      {loadingKeys["create-project"] ? "Creating…" : "Create project"}
+                    </button>
+                  </>
+                ) : null}
+              </section>
+
               {bootstrap.projects.map((project) => (
                 <button
                   key={project.id}
@@ -740,11 +1089,7 @@ export default function App() {
           {leftPanel === "sessions" ? (
             <div className="panel-list">
               {filteredSessions.map((session) => (
-                <button
-                  key={session.id}
-                  className="list-card"
-                  onClick={() => void openSession(session.id)}
-                >
+                <button key={session.id} className="list-card" onClick={() => void openSession(session.id)}>
                   <span className="list-title">{session.title ?? session.current_mode}</span>
                   <span className="list-meta">
                     <span className={`indicator ${sessionTone(session)}`} />
@@ -758,6 +1103,114 @@ export default function App() {
 
           {leftPanel === "work" ? (
             <div className="panel-list">
+              <section className="card editor-card compact-editor">
+                <div className="section-header">
+                  <h3>New work item</h3>
+                  <span className="status-chip neutral">{selectedProject ? selectedProject.slug : "no project"}</span>
+                </div>
+                <label className="field">
+                  <span>Title</span>
+                  <input
+                    value={workItemCreateForm.title}
+                    onChange={(event) =>
+                      setWorkItemCreateForm((current) => ({ ...current, title: event.target.value }))
+                    }
+                  />
+                </label>
+                <label className="field">
+                  <span>Description</span>
+                  <textarea
+                    value={workItemCreateForm.description}
+                    onChange={(event) =>
+                      setWorkItemCreateForm((current) => ({ ...current, description: event.target.value }))
+                    }
+                  />
+                </label>
+                <div className="field-row">
+                  <label className="field">
+                    <span>Parent</span>
+                    <select
+                      value={workItemCreateForm.parent_id}
+                      onChange={(event) =>
+                        setWorkItemCreateForm((current) => ({ ...current, parent_id: event.target.value }))
+                      }
+                    >
+                      <option value="">None</option>
+                      {currentWorkItems.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.callsign}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Type</span>
+                    <select
+                      value={workItemCreateForm.work_item_type}
+                      onChange={(event) =>
+                        setWorkItemCreateForm((current) => ({
+                          ...current,
+                          work_item_type: event.target.value,
+                        }))
+                      }
+                    >
+                      {WORK_ITEM_TYPES.map((value) => (
+                        <option key={value} value={value}>
+                          {value}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <div className="field-row">
+                  <label className="field">
+                    <span>Status</span>
+                    <select
+                      value={workItemCreateForm.status}
+                      onChange={(event) =>
+                        setWorkItemCreateForm((current) => ({ ...current, status: event.target.value }))
+                      }
+                    >
+                      {WORK_ITEM_STATUSES.map((value) => (
+                        <option key={value} value={value}>
+                          {value}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Priority</span>
+                    <select
+                      value={workItemCreateForm.priority}
+                      onChange={(event) =>
+                        setWorkItemCreateForm((current) => ({ ...current, priority: event.target.value }))
+                      }
+                    >
+                      {PRIORITIES.map((value) => (
+                        <option key={value || "none"} value={value}>
+                          {value || "none"}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <label className="field">
+                  <span>Acceptance criteria</span>
+                  <textarea
+                    value={workItemCreateForm.acceptance_criteria}
+                    onChange={(event) =>
+                      setWorkItemCreateForm((current) => ({
+                        ...current,
+                        acceptance_criteria: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <button onClick={() => void handleCreateWorkItem()} disabled={Boolean(loadingKeys["create-work-item"])}>
+                  {loadingKeys["create-work-item"] ? "Creating…" : "Create work item"}
+                </button>
+              </section>
+
               {selectedProjectId && loadingKeys[`project:${selectedProjectId}`] ? (
                 <div className="empty-panel">Loading work items…</div>
               ) : currentWorkItems.length > 0 ? (
@@ -784,6 +1237,91 @@ export default function App() {
 
           {leftPanel === "docs" ? (
             <div className="panel-list">
+              <section className="card editor-card compact-editor">
+                <div className="section-header">
+                  <h3>New document</h3>
+                  <span className="status-chip neutral">{selectedProject ? selectedProject.slug : "no project"}</span>
+                </div>
+                <label className="field">
+                  <span>Title</span>
+                  <input
+                    value={documentCreateForm.title}
+                    onChange={(event) =>
+                      setDocumentCreateForm((current) => ({ ...current, title: event.target.value }))
+                    }
+                  />
+                </label>
+                <div className="field-row">
+                  <label className="field">
+                    <span>Slug</span>
+                    <input
+                      value={documentCreateForm.slug}
+                      onChange={(event) =>
+                        setDocumentCreateForm((current) => ({ ...current, slug: event.target.value }))
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Type</span>
+                    <input
+                      value={documentCreateForm.doc_type}
+                      onChange={(event) =>
+                        setDocumentCreateForm((current) => ({ ...current, doc_type: event.target.value }))
+                      }
+                    />
+                  </label>
+                </div>
+                <div className="field-row">
+                  <label className="field">
+                    <span>Status</span>
+                    <select
+                      value={documentCreateForm.status}
+                      onChange={(event) =>
+                        setDocumentCreateForm((current) => ({ ...current, status: event.target.value }))
+                      }
+                    >
+                      {DOCUMENT_STATUSES.map((value) => (
+                        <option key={value} value={value}>
+                          {value}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Linked work item</span>
+                    <select
+                      value={documentCreateForm.work_item_id}
+                      onChange={(event) =>
+                        setDocumentCreateForm((current) => ({ ...current, work_item_id: event.target.value }))
+                      }
+                    >
+                      <option value="">None</option>
+                      {currentWorkItems.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.callsign}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <label className="field">
+                  <span>Markdown</span>
+                  <textarea
+                    className="markdown-editor compact-markdown-editor"
+                    value={documentCreateForm.content_markdown}
+                    onChange={(event) =>
+                      setDocumentCreateForm((current) => ({
+                        ...current,
+                        content_markdown: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <button onClick={() => void handleCreateDocument()} disabled={Boolean(loadingKeys["create-document"])}>
+                  {loadingKeys["create-document"] ? "Creating…" : "Create document"}
+                </button>
+              </section>
+
               {selectedProjectId && loadingKeys[`project:${selectedProjectId}`] ? (
                 <div className="empty-panel">Loading documents…</div>
               ) : currentDocuments.length > 0 ? (
@@ -821,6 +1359,15 @@ export default function App() {
             </div>
           </div>
 
+          {error ? (
+            <div className="error-banner">
+              <span>{error}</span>
+              <button className="secondary-button" onClick={() => setError(null)}>
+                Dismiss
+              </button>
+            </div>
+          ) : null}
+
           <div className="tab-strip">
             {openResources.map((resource) => (
               <button
@@ -833,8 +1380,8 @@ export default function App() {
                   sessions,
                   workItemDetails,
                   documentDetails,
-                  bootstrap.projects.find((project) =>
-                    resource.resource_type === "project_home" && project.id === resource.project_id,
+                  bootstrap.projects.find(
+                    (project) => resource.resource_type === "project_home" && project.id === resource.project_id,
                   )?.name,
                 )}
                 <span
@@ -856,10 +1403,13 @@ export default function App() {
             ) : activeResource.resource_type === "project_home" ? (
               <ProjectHome
                 project={bootstrap.projects.find((project) => project.id === activeResource.project_id) ?? null}
+                accounts={bootstrap.accounts}
                 sessions={sessions.filter((entry) => entry.project_id === activeResource.project_id)}
                 workItems={workItemsByProject[activeResource.project_id] ?? []}
                 documents={documentsByProject[activeResource.project_id] ?? []}
                 loading={Boolean(loadingKeys[`project:${activeResource.project_id}`])}
+                saving={Boolean(loadingKeys[`save-project:${activeResource.project_id}`])}
+                onSaveProject={(input) => void handleUpdateProject(activeResource.project_id, input)}
                 onOpenSession={openSession}
                 onOpenWorkItem={openWorkItem}
                 onOpenDocument={openDocument}
@@ -874,26 +1424,8 @@ export default function App() {
                   setTerminalInput((current) => ({ ...current, [activeResource.session_id]: value }))
                 }
                 onSubmitInput={() => void submitTerminalInput(activeResource.session_id)}
-                onInterrupt={() => {
-                  const correlationId = newCorrelationId("session-interrupt");
-                  recordClientEvent(
-                    makeClientEvent("session", "session.interrupt_requested", {
-                      correlation_id: correlationId,
-                      session_id: activeResource.session_id,
-                    }),
-                  );
-                  void interruptSession(activeResource.session_id, correlationId);
-                }}
-                onTerminate={() => {
-                  const correlationId = newCorrelationId("session-terminate");
-                  recordClientEvent(
-                    makeClientEvent("session", "session.terminate_requested", {
-                      correlation_id: correlationId,
-                      session_id: activeResource.session_id,
-                    }),
-                  );
-                  void terminateSession(activeResource.session_id, correlationId);
-                }}
+                onInterrupt={() => void interruptSession(activeResource.session_id, newCorrelationId("session-interrupt"))}
+                onTerminate={() => void terminateSession(activeResource.session_id, newCorrelationId("session-terminate"))}
               />
             ) : activeResource.resource_type === "work_item_detail" ? (
               <WorkItemPane
@@ -902,22 +1434,35 @@ export default function App() {
                   (document) => document.work_item_id === activeResource.work_item_id,
                 )}
                 relatedSessions={sessions.filter((session) => session.work_item_id === activeResource.work_item_id)}
-                loading={Boolean(loadingKeys[`work-item:${activeResource.work_item_id}`])}
+                proposals={reconciliationByWorkItem[activeResource.work_item_id] ?? []}
+                loading={
+                  Boolean(loadingKeys[`work-item:${activeResource.work_item_id}`]) ||
+                  Boolean(loadingKeys[`proposal:${activeResource.work_item_id}`])
+                }
+                saving={Boolean(loadingKeys[`save-work-item:${activeResource.work_item_id}`])}
                 onOpenDocument={openDocument}
                 onOpenSession={openSession}
+                onSave={(input) => void handleUpdateWorkItem(activeResource.work_item_id, input)}
+                onApplyProposal={(proposalId) => {
+                  const proposal = (reconciliationByWorkItem[activeResource.work_item_id] ?? []).find(
+                    (item) => item.id === proposalId,
+                  );
+                  if (proposal) {
+                    void handleApplyProposal(proposal);
+                  }
+                }}
+                onDismissProposal={(proposalId) =>
+                  void handleDismissProposal(activeResource.work_item_id, proposalId)
+                }
               />
             ) : (
               <DocumentPane
                 detail={documentDetails[activeResource.document_id] ?? null}
                 loading={Boolean(loadingKeys[`document:${activeResource.document_id}`])}
-                linkedWorkItem={
-                  documentDetails[activeResource.document_id]?.work_item_id
-                    ? (workItemsByProject[activeResource.project_id] ?? []).find(
-                        (item) => item.id === documentDetails[activeResource.document_id]?.work_item_id,
-                      ) ?? null
-                    : null
-                }
+                workItems={workItemsByProject[activeResource.project_id] ?? []}
+                saving={Boolean(loadingKeys[`save-document:${activeResource.document_id}`])}
                 onOpenWorkItem={openWorkItem}
+                onSave={(input) => void handleUpdateDocument(activeResource.document_id, input)}
               />
             )}
           </section>
@@ -929,23 +1474,42 @@ export default function App() {
 
 function ProjectHome({
   project,
+  accounts,
   sessions,
   workItems,
   documents,
   loading,
+  saving,
+  onSaveProject,
   onOpenSession,
   onOpenWorkItem,
   onOpenDocument,
 }: {
   project: ShellBootstrap["projects"][number] | null;
+  accounts: AccountSummary[];
   sessions: SessionSummary[];
   workItems: WorkItemSummary[];
   documents: DocumentSummary[];
   loading: boolean;
+  saving: boolean;
+  onSaveProject: (input: { name: string; slug: string; default_account_id: string }) => void;
   onOpenSession: (sessionId: string) => void;
   onOpenWorkItem: (workItemId: string, projectId: string) => void;
   onOpenDocument: (documentId: string, projectId: string) => void;
 }) {
+  const [form, setForm] = useState({ name: "", slug: "", default_account_id: "" });
+
+  useEffect(() => {
+    if (!project) {
+      return;
+    }
+    setForm({
+      name: project.name,
+      slug: project.slug,
+      default_account_id: project.default_account_id ?? "",
+    });
+  }, [project]);
+
   if (!project) {
     return <div className="empty-pane">Pick a project to start.</div>;
   }
@@ -959,13 +1523,42 @@ function ProjectHome({
       </div>
 
       <div className="project-grid">
+        <section className="card editor-card">
+          <div className="section-header">
+            <h3>Project settings</h3>
+            <button className="secondary-button" onClick={() => onSaveProject(form)} disabled={saving}>
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </div>
+          <label className="field">
+            <span>Name</span>
+            <input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
+          </label>
+          <label className="field">
+            <span>Slug</span>
+            <input value={form.slug} onChange={(event) => setForm((current) => ({ ...current, slug: event.target.value }))} />
+          </label>
+          <label className="field">
+            <span>Default account</span>
+            <select
+              value={form.default_account_id}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, default_account_id: event.target.value }))
+              }
+            >
+              <option value="">None</option>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </section>
+
         <section className="card">
           <h3>Roots</h3>
           <p>{project.root_count} configured project roots.</p>
-        </section>
-        <section className="card">
-          <h3>Live sessions</h3>
-          <p>{project.live_session_count} active runtime sessions.</p>
         </section>
         <section className="card">
           <h3>Workbench</h3>
@@ -1059,7 +1652,7 @@ function SessionPane({
       </div>
 
       <pre className="terminal-surface">{output || "Attached. Waiting for output…"}</pre>
-      
+
       {!session.live && !attachment ? (
         <div className="card compact-card">
           This session is not live. The shell keeps the tab as a read surface, but attach and input are disabled.
