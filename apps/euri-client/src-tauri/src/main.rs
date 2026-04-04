@@ -2,8 +2,11 @@
 
 use std::collections::HashMap;
 use std::env;
+use std::fs::{self, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Write};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
@@ -65,6 +68,7 @@ struct FrontendEvent {
 struct DiagnosticsState {
     enabled: bool,
     bridge_events: Arc<Mutex<Vec<Value>>>,
+    log_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Serialize)]
@@ -128,6 +132,16 @@ impl DiagnosticsState {
         Self {
             enabled,
             bridge_events: Arc::new(Mutex::new(Vec::new())),
+            log_path: if enabled {
+                AppPaths::discover().ok().map(|paths| {
+                    paths
+                        .logs_dir
+                        .join("diagnostics")
+                        .join("client-bridge-events.jsonl")
+                })
+            } else {
+                None
+            },
         }
     }
 
@@ -162,6 +176,12 @@ impl DiagnosticsState {
         if guard.len() > 500 {
             let extra = guard.len() - 500;
             guard.drain(0..extra);
+        }
+        if let Some(path) = &self.log_path {
+            let _ = append_jsonl(
+                path,
+                guard.last().expect("diagnostic event was just pushed"),
+            );
         }
     }
 
@@ -728,6 +748,11 @@ fn export_diagnostics_bundle(
 }
 
 fn main() {
+    if let Err(error) = debug_dev_server_preflight() {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
+
     tauri::Builder::default()
         .manage(Arc::new(SupervisorManager::new()))
         .invoke_handler(tauri::generate_handler![
@@ -1072,4 +1097,70 @@ fn unix_time_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .expect("system time must be after unix epoch")
         .as_millis() as u64
+}
+
+fn append_jsonl(path: &PathBuf, value: &Value) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create diagnostics directory {}",
+                parent.display()
+            )
+        })?;
+    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("failed to open diagnostics log {}", path.display()))?;
+    serde_json::to_writer(&mut file, value)?;
+    file.write_all(b"\n")
+        .with_context(|| format!("failed to append diagnostics log {}", path.display()))?;
+    file.flush()
+        .with_context(|| format!("failed to flush diagnostics log {}", path.display()))?;
+    Ok(())
+}
+
+fn debug_dev_server_preflight() -> Result<()> {
+    if !cfg!(debug_assertions) {
+        return Ok(());
+    }
+
+    let endpoint = "localhost:1420";
+    if tcp_endpoint_reachable(endpoint) {
+        return Ok(());
+    }
+
+    let paths = AppPaths::discover()?;
+    let log_path = paths
+        .logs_dir
+        .join("diagnostics")
+        .join("client-bridge-events.jsonl");
+    let event = json!({
+        "timestamp_unix_ms": unix_time_ms(),
+        "subsystem": "tauri_bridge",
+        "event": "startup.dev_server_unreachable",
+        "correlation_id": null,
+        "request_id": null,
+        "payload": {
+            "endpoint": endpoint,
+            "hint": "start the client with `cargo tauri dev` or start the Vite dev server on port 1420 before running the debug binary"
+        }
+    });
+    let _ = append_jsonl(&log_path, &event);
+
+    Err(anyhow!(
+        "Tauri debug startup requires the frontend dev server at http://{endpoint}. Start the client with `cargo tauri dev` or run the Vite dev server on port 1420 before launching `euri-client`."
+    ))
+}
+
+fn tcp_endpoint_reachable(endpoint: &str) -> bool {
+    endpoint
+        .to_socket_addrs()
+        .map(|addresses| {
+            addresses.map(SocketAddr::from).any(|address| {
+                TcpStream::connect_timeout(&address, Duration::from_millis(250)).is_ok()
+            })
+        })
+        .unwrap_or(false)
 }
