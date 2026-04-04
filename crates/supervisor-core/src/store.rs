@@ -6,7 +6,9 @@ use serde::Serialize;
 
 use crate::bootstrap::AppPaths;
 use crate::models::{
-    NewSessionRecord, ProjectDetail, ProjectRootSummary, ProjectSummary, SessionArtifactRecord,
+    AccountDetail, AccountSummary, AccountUpdateRecord, NewAccountRecord, NewProjectRecord,
+    NewProjectRootRecord, NewSessionRecord, ProjectDetail, ProjectRootSummary,
+    ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord, SessionArtifactRecord,
     SessionListFilter, SessionSummary,
 };
 use crate::schema::{migrate_app_db, migrate_knowledge_db};
@@ -75,6 +77,34 @@ impl DatabaseSet {
 
     pub fn paths(&self) -> &AppPaths {
         &self.paths
+    }
+
+    pub fn next_project_sort_order(&self) -> Result<i64> {
+        let connection = open_connection(&self.paths.app_db)?;
+        next_sort_order(
+            &connection,
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM projects",
+        )
+    }
+
+    pub fn project_slug_exists(
+        &self,
+        slug: &str,
+        exclude_project_id: Option<&str>,
+    ) -> Result<bool> {
+        let connection = open_connection(&self.paths.app_db)?;
+        match exclude_project_id {
+            Some(project_id) => exists(
+                &connection,
+                "SELECT 1 FROM projects WHERE slug = ?1 AND id <> ?2",
+                params![slug, project_id],
+            ),
+            None => exists(
+                &connection,
+                "SELECT 1 FROM projects WHERE slug = ?1",
+                params![slug],
+            ),
+        }
     }
 
     pub fn list_projects(&self) -> Result<Vec<ProjectSummary>> {
@@ -153,6 +183,369 @@ impl DatabaseSet {
 
         project.roots = self.list_project_roots(project_id)?;
         Ok(Some(project))
+    }
+
+    pub fn insert_project(&self, record: &NewProjectRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "INSERT INTO projects (
+                id,
+                name,
+                slug,
+                sort_order,
+                default_account_id,
+                settings_json,
+                created_at,
+                updated_at,
+                archived_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)",
+            params![
+                record.id,
+                record.name,
+                record.slug,
+                record.sort_order,
+                record.default_account_id,
+                record.settings_json,
+                record.created_at,
+                record.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_project(&self, record: &ProjectUpdateRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let updated = connection.execute(
+            "UPDATE projects
+             SET name = ?2,
+                 slug = ?3,
+                 sort_order = ?4,
+                 default_account_id = ?5,
+                 settings_json = ?6,
+                 updated_at = ?7
+             WHERE id = ?1",
+            params![
+                record.id,
+                record.name,
+                record.slug,
+                record.sort_order,
+                record.default_account_id,
+                record.settings_json,
+                record.updated_at,
+            ],
+        )?;
+
+        if updated == 0 {
+            return Err(anyhow!("project {} was not found", record.id));
+        }
+
+        Ok(())
+    }
+
+    pub fn list_project_roots(&self, project_id: &str) -> Result<Vec<ProjectRootSummary>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let mut statement = connection.prepare(
+            "SELECT
+                id,
+                project_id,
+                label,
+                path,
+                git_root_path,
+                remote_url,
+                root_kind,
+                sort_order,
+                created_at,
+                updated_at,
+                archived_at
+             FROM project_roots
+             WHERE project_id = ?1
+             ORDER BY sort_order ASC, created_at ASC",
+        )?;
+
+        let rows = statement.query_map([project_id], map_project_root_summary)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn get_project_root(&self, project_root_id: &str) -> Result<Option<ProjectRootSummary>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection
+            .query_row(
+                "SELECT
+                    id,
+                    project_id,
+                    label,
+                    path,
+                    git_root_path,
+                    remote_url,
+                    root_kind,
+                    sort_order,
+                    created_at,
+                    updated_at,
+                    archived_at
+                 FROM project_roots
+                 WHERE id = ?1",
+                [project_root_id],
+                map_project_root_summary,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn next_project_root_sort_order(&self, project_id: &str) -> Result<i64> {
+        let connection = open_connection(&self.paths.app_db)?;
+        Ok(connection.query_row(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1
+             FROM project_roots
+             WHERE project_id = ?1",
+            [project_id],
+            |row| row.get(0),
+        )?)
+    }
+
+    pub fn project_root_path_exists(
+        &self,
+        project_id: &str,
+        path: &str,
+        exclude_project_root_id: Option<&str>,
+    ) -> Result<bool> {
+        let connection = open_connection(&self.paths.app_db)?;
+        match exclude_project_root_id {
+            Some(project_root_id) => exists(
+                &connection,
+                "SELECT 1 FROM project_roots WHERE project_id = ?1 AND path = ?2 AND id <> ?3",
+                params![project_id, path, project_root_id],
+            ),
+            None => exists(
+                &connection,
+                "SELECT 1 FROM project_roots WHERE project_id = ?1 AND path = ?2",
+                params![project_id, path],
+            ),
+        }
+    }
+
+    pub fn insert_project_root(&self, record: &NewProjectRootRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "INSERT INTO project_roots (
+                id,
+                project_id,
+                label,
+                path,
+                git_root_path,
+                remote_url,
+                root_kind,
+                sort_order,
+                created_at,
+                updated_at,
+                archived_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL)",
+            params![
+                record.id,
+                record.project_id,
+                record.label,
+                record.path,
+                record.git_root_path,
+                record.remote_url,
+                record.root_kind,
+                record.sort_order,
+                record.created_at,
+                record.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_project_root(&self, record: &ProjectRootUpdateRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let updated = connection.execute(
+            "UPDATE project_roots
+             SET label = ?2,
+                 path = ?3,
+                 git_root_path = ?4,
+                 remote_url = ?5,
+                 root_kind = ?6,
+                 sort_order = ?7,
+                 updated_at = ?8
+             WHERE id = ?1",
+            params![
+                record.id,
+                record.label,
+                record.path,
+                record.git_root_path,
+                record.remote_url,
+                record.root_kind,
+                record.sort_order,
+                record.updated_at,
+            ],
+        )?;
+
+        if updated == 0 {
+            return Err(anyhow!("project root {} was not found", record.id));
+        }
+
+        Ok(())
+    }
+
+    pub fn archive_project_root(&self, project_root_id: &str, now: i64) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let updated = connection.execute(
+            "UPDATE project_roots
+             SET archived_at = COALESCE(archived_at, ?2),
+                 updated_at = ?2
+             WHERE id = ?1",
+            params![project_root_id, now],
+        )?;
+
+        if updated == 0 {
+            return Err(anyhow!("project root {} was not found", project_root_id));
+        }
+
+        Ok(())
+    }
+
+    pub fn list_accounts(&self) -> Result<Vec<AccountSummary>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let mut statement = connection.prepare(
+            "SELECT
+                id,
+                agent_kind,
+                label,
+                binary_path,
+                config_root,
+                env_preset_ref,
+                is_default,
+                status,
+                created_at,
+                updated_at
+             FROM accounts
+             ORDER BY is_default DESC, agent_kind ASC, label COLLATE NOCASE ASC, created_at ASC",
+        )?;
+
+        let rows = statement.query_map([], map_account_summary)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn get_account(&self, account_id: &str) -> Result<Option<AccountDetail>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let summary = connection
+            .query_row(
+                "SELECT
+                    id,
+                    agent_kind,
+                    label,
+                    binary_path,
+                    config_root,
+                    env_preset_ref,
+                    is_default,
+                    status,
+                    created_at,
+                    updated_at
+                 FROM accounts
+                 WHERE id = ?1",
+                [account_id],
+                map_account_summary,
+            )
+            .optional()?;
+
+        Ok(summary.map(|summary| AccountDetail { summary }))
+    }
+
+    pub fn insert_account(&self, record: &NewAccountRecord) -> Result<()> {
+        let mut connection = open_connection(&self.paths.app_db)?;
+        let tx = connection.transaction()?;
+
+        if record.is_default {
+            tx.execute(
+                "UPDATE accounts SET is_default = 0 WHERE agent_kind = ?1",
+                params![record.agent_kind],
+            )?;
+        }
+
+        tx.execute(
+            "INSERT INTO accounts (
+                id,
+                agent_kind,
+                label,
+                binary_path,
+                config_root,
+                env_preset_ref,
+                is_default,
+                status,
+                created_at,
+                updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                record.id,
+                record.agent_kind,
+                record.label,
+                record.binary_path,
+                record.config_root,
+                record.env_preset_ref,
+                bool_to_sqlite(record.is_default),
+                record.status,
+                record.created_at,
+                record.updated_at,
+            ],
+        )?;
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn update_account(&self, record: &AccountUpdateRecord) -> Result<()> {
+        let mut connection = open_connection(&self.paths.app_db)?;
+        let tx = connection.transaction()?;
+
+        if record.is_default {
+            tx.execute(
+                "UPDATE accounts
+                 SET is_default = 0
+                 WHERE agent_kind = ?1 AND id <> ?2",
+                params![record.agent_kind, record.id],
+            )?;
+        }
+
+        let updated = tx.execute(
+            "UPDATE accounts
+             SET agent_kind = ?2,
+                 label = ?3,
+                 binary_path = ?4,
+                 config_root = ?5,
+                 env_preset_ref = ?6,
+                 is_default = ?7,
+                 status = ?8,
+                 updated_at = ?9
+             WHERE id = ?1",
+            params![
+                record.id,
+                record.agent_kind,
+                record.label,
+                record.binary_path,
+                record.config_root,
+                record.env_preset_ref,
+                bool_to_sqlite(record.is_default),
+                record.status,
+                record.updated_at,
+            ],
+        )?;
+
+        if updated == 0 {
+            return Err(anyhow!("account {} was not found", record.id));
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn env_preset_exists(&self, env_preset_id: &str) -> Result<bool> {
+        let connection = open_connection(&self.paths.app_db)?;
+        exists(
+            &connection,
+            "SELECT 1 FROM env_presets WHERE id = ?1",
+            [env_preset_id],
+        )
     }
 
     pub fn list_sessions(&self, filter: &SessionListFilter) -> Result<Vec<SessionSummary>> {
@@ -561,46 +954,6 @@ impl DatabaseSet {
             project_id
         ))
     }
-
-    fn list_project_roots(&self, project_id: &str) -> Result<Vec<ProjectRootSummary>> {
-        let connection = open_connection(&self.paths.app_db)?;
-        let mut statement = connection.prepare(
-            "SELECT
-                id,
-                project_id,
-                label,
-                path,
-                git_root_path,
-                remote_url,
-                root_kind,
-                sort_order,
-                created_at,
-                updated_at,
-                archived_at
-             FROM project_roots
-             WHERE project_id = ?1
-             ORDER BY sort_order ASC, created_at ASC",
-        )?;
-
-        let rows = statement.query_map([project_id], |row| {
-            Ok(ProjectRootSummary {
-                id: row.get(0)?,
-                project_id: row.get(1)?,
-                label: row.get(2)?,
-                path: row.get(3)?,
-                git_root_path: row.get(4)?,
-                remote_url: row.get(5)?,
-                root_kind: row.get(6)?,
-                sort_order: row.get(7)?,
-                created_at: row.get(8)?,
-                updated_at: row.get(9)?,
-                archived_at: row.get(10)?,
-            })
-        })?;
-
-        rows.collect::<rusqlite::Result<Vec<_>>>()
-            .map_err(Into::into)
-    }
 }
 
 fn open_connection(path: &Path) -> Result<Connection> {
@@ -665,6 +1018,41 @@ where
         .optional()?
         .is_some();
     Ok(found)
+}
+
+fn next_sort_order(connection: &Connection, sql: &str) -> Result<i64> {
+    Ok(connection.query_row(sql, [], |row| row.get(0))?)
+}
+
+fn map_project_root_summary(row: &Row<'_>) -> rusqlite::Result<ProjectRootSummary> {
+    Ok(ProjectRootSummary {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        label: row.get(2)?,
+        path: row.get(3)?,
+        git_root_path: row.get(4)?,
+        remote_url: row.get(5)?,
+        root_kind: row.get(6)?,
+        sort_order: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
+        archived_at: row.get(10)?,
+    })
+}
+
+fn map_account_summary(row: &Row<'_>) -> rusqlite::Result<AccountSummary> {
+    Ok(AccountSummary {
+        id: row.get(0)?,
+        agent_kind: row.get(1)?,
+        label: row.get(2)?,
+        binary_path: row.get(3)?,
+        config_root: row.get(4)?,
+        env_preset_ref: row.get(5)?,
+        is_default: row.get::<_, i64>(6)? != 0,
+        status: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
+    })
 }
 
 fn map_session_summary(row: &Row<'_>) -> rusqlite::Result<SessionSummary> {

@@ -4,13 +4,17 @@ use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use supervisor_core::{CreateSessionRequest, SessionListFilter, Supervisor};
+use supervisor_core::{
+    CreateAccountRequest, CreateProjectRequest, CreateProjectRootRequest, CreateSessionRequest,
+    RemoveProjectRootRequest, SessionListFilter, Supervisor, UpdateAccountRequest,
+    UpdateProjectRequest, UpdateProjectRootRequest,
+};
 
 use crate::protocol::{
-    ErrorBody, EventEnvelope, HelloResult, Method, ProjectGetParams, RequestEnvelope,
-    ResponseEnvelope, SessionAttachParams, SessionControlParams, SessionDetachParams,
-    SessionGetParams, SessionInputParams, SessionResizeParams, SubscriptionCloseParams,
-    SubscriptionOpenParams,
+    AccountGetParams, ErrorBody, EventEnvelope, HelloResult, Method, ProjectGetParams,
+    ProjectRootListParams, RequestEnvelope, ResponseEnvelope, SessionAttachParams,
+    SessionControlParams, SessionDetachParams, SessionGetParams, SessionInputParams,
+    SessionResizeParams, SubscriptionCloseParams, SubscriptionOpenParams,
 };
 
 const PROTOCOL_VERSION: &str = "1";
@@ -134,6 +138,65 @@ impl SupervisorRpc {
                         anyhow::anyhow!("project {} was not found", params.project_id)
                     })?;
                 Ok(serde_json::to_value(project)?)
+            }
+            Method::ProjectCreate => {
+                let request: CreateProjectRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.create_project(request)?,
+                )?)
+            }
+            Method::ProjectUpdate => {
+                let request: UpdateProjectRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.update_project(request)?,
+                )?)
+            }
+            Method::ProjectRootList => {
+                let params: ProjectRootListParams = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.list_project_roots(&params.project_id)?,
+                )?)
+            }
+            Method::ProjectRootCreate => {
+                let request: CreateProjectRootRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.create_project_root(request)?,
+                )?)
+            }
+            Method::ProjectRootUpdate => {
+                let request: UpdateProjectRootRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.update_project_root(request)?,
+                )?)
+            }
+            Method::ProjectRootRemove => {
+                let request: RemoveProjectRootRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.remove_project_root(request)?,
+                )?)
+            }
+            Method::AccountList => Ok(serde_json::to_value(self.supervisor.list_accounts()?)?),
+            Method::AccountGet => {
+                let params: AccountGetParams = serde_json::from_value(params)?;
+                let account = self
+                    .supervisor
+                    .get_account(&params.account_id)?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("account {} was not found", params.account_id)
+                    })?;
+                Ok(serde_json::to_value(account)?)
+            }
+            Method::AccountCreate => {
+                let request: CreateAccountRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.create_account(request)?,
+                )?)
+            }
+            Method::AccountUpdate => {
+                let request: UpdateAccountRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.update_account(request)?,
+                )?)
             }
             Method::SessionList => {
                 let filter: SessionListFilter = serde_json::from_value(params)?;
@@ -295,6 +358,16 @@ impl SupervisorRpc {
                 Method::SystemBootstrapState.as_str(),
                 Method::ProjectList.as_str(),
                 Method::ProjectGet.as_str(),
+                Method::ProjectCreate.as_str(),
+                Method::ProjectUpdate.as_str(),
+                Method::ProjectRootList.as_str(),
+                Method::ProjectRootCreate.as_str(),
+                Method::ProjectRootUpdate.as_str(),
+                Method::ProjectRootRemove.as_str(),
+                Method::AccountList.as_str(),
+                Method::AccountGet.as_str(),
+                Method::AccountCreate.as_str(),
+                Method::AccountUpdate.as_str(),
                 Method::SessionList.as_str(),
                 Method::SessionGet.as_str(),
                 Method::SessionCreate.as_str(),
@@ -345,6 +418,10 @@ fn classify_error(error: anyhow::Error) -> ErrorBody {
     let code = if message.contains("was not found") {
         if message.contains("project ") {
             "project_not_found"
+        } else if message.contains("account ") || message.contains("env preset ") {
+            "account_not_found"
+        } else if message.contains("project root ") {
+            "project_root_not_found"
         } else if message.contains("session ") {
             "session_not_found"
         } else if message.contains("attachment ") {
@@ -358,6 +435,13 @@ fn classify_error(error: anyhow::Error) -> ErrorBody {
         "session_not_live"
     } else if message.contains("invalid terminal dimensions") {
         "invalid_terminal_dimensions"
+    } else if message.contains("must not be empty")
+        || message.contains("must be an absolute path")
+        || message.contains("must be one of:")
+        || message.contains("already has a root at")
+        || message.contains("project slug")
+    {
+        "invalid_request"
     } else if message.contains("does not belong to project")
         || message.contains("require session_id")
     {

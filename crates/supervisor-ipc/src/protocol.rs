@@ -8,6 +8,16 @@ pub enum Method {
     SystemBootstrapState,
     ProjectList,
     ProjectGet,
+    ProjectCreate,
+    ProjectUpdate,
+    ProjectRootList,
+    ProjectRootCreate,
+    ProjectRootUpdate,
+    ProjectRootRemove,
+    AccountList,
+    AccountGet,
+    AccountCreate,
+    AccountUpdate,
     SessionList,
     SessionGet,
     SessionCreate,
@@ -29,6 +39,16 @@ impl Method {
             Self::SystemBootstrapState => "system.bootstrap_state",
             Self::ProjectList => "project.list",
             Self::ProjectGet => "project.get",
+            Self::ProjectCreate => "project.create",
+            Self::ProjectUpdate => "project.update",
+            Self::ProjectRootList => "project_root.list",
+            Self::ProjectRootCreate => "project_root.create",
+            Self::ProjectRootUpdate => "project_root.update",
+            Self::ProjectRootRemove => "project_root.remove",
+            Self::AccountList => "account.list",
+            Self::AccountGet => "account.get",
+            Self::AccountCreate => "account.create",
+            Self::AccountUpdate => "account.update",
             Self::SessionList => "session.list",
             Self::SessionGet => "session.get",
             Self::SessionCreate => "session.create",
@@ -54,6 +74,16 @@ impl TryFrom<&str> for Method {
             "system.bootstrap_state" => Ok(Self::SystemBootstrapState),
             "project.list" => Ok(Self::ProjectList),
             "project.get" => Ok(Self::ProjectGet),
+            "project.create" => Ok(Self::ProjectCreate),
+            "project.update" => Ok(Self::ProjectUpdate),
+            "project_root.list" => Ok(Self::ProjectRootList),
+            "project_root.create" => Ok(Self::ProjectRootCreate),
+            "project_root.update" => Ok(Self::ProjectRootUpdate),
+            "project_root.remove" => Ok(Self::ProjectRootRemove),
+            "account.list" => Ok(Self::AccountList),
+            "account.get" => Ok(Self::AccountGet),
+            "account.create" => Ok(Self::AccountCreate),
+            "account.update" => Ok(Self::AccountUpdate),
             "session.list" => Ok(Self::SessionList),
             "session.get" => Ok(Self::SessionGet),
             "session.create" => Ok(Self::SessionCreate),
@@ -123,6 +153,16 @@ pub struct HelloResult {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProjectGetParams {
     pub project_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProjectRootListParams {
+    pub project_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AccountGetParams {
+    pub account_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

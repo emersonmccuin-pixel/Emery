@@ -4,8 +4,11 @@ use anyhow::Result;
 
 use crate::bootstrap::AppPaths;
 use crate::models::{
-    CreateSessionRequest, ProjectDetail, ProjectSummary, SessionAttachResponse,
-    SessionDetachResponse, SessionDetail, SessionListFilter, SessionOutputEvent, SessionSummary,
+    AccountDetail, AccountSummary, CreateAccountRequest, CreateProjectRequest,
+    CreateProjectRootRequest, CreateSessionRequest, ProjectDetail, ProjectRootSummary,
+    ProjectSummary, RemoveProjectRootRequest, SessionAttachResponse, SessionDetachResponse,
+    SessionDetail, SessionListFilter, SessionOutputEvent, SessionSummary, UpdateAccountRequest,
+    UpdateProjectRequest, UpdateProjectRootRequest,
 };
 use crate::runtime::SessionRegistry;
 use crate::service::SupervisorService;
@@ -61,6 +64,55 @@ impl Supervisor {
 
     pub fn get_project(&self, project_id: &str) -> Result<Option<ProjectDetail>> {
         self.service.get_project(project_id)
+    }
+
+    pub fn create_project(&self, request: CreateProjectRequest) -> Result<ProjectDetail> {
+        self.service.create_project(request)
+    }
+
+    pub fn update_project(&self, request: UpdateProjectRequest) -> Result<ProjectDetail> {
+        self.service.update_project(request)
+    }
+
+    pub fn list_project_roots(&self, project_id: &str) -> Result<Vec<ProjectRootSummary>> {
+        self.service.list_project_roots(project_id)
+    }
+
+    pub fn create_project_root(
+        &self,
+        request: CreateProjectRootRequest,
+    ) -> Result<ProjectRootSummary> {
+        self.service.create_project_root(request)
+    }
+
+    pub fn update_project_root(
+        &self,
+        request: UpdateProjectRootRequest,
+    ) -> Result<ProjectRootSummary> {
+        self.service.update_project_root(request)
+    }
+
+    pub fn remove_project_root(
+        &self,
+        request: RemoveProjectRootRequest,
+    ) -> Result<ProjectRootSummary> {
+        self.service.remove_project_root(request)
+    }
+
+    pub fn list_accounts(&self) -> Result<Vec<AccountSummary>> {
+        self.service.list_accounts()
+    }
+
+    pub fn get_account(&self, account_id: &str) -> Result<Option<AccountDetail>> {
+        self.service.get_account(account_id)
+    }
+
+    pub fn create_account(&self, request: CreateAccountRequest) -> Result<AccountDetail> {
+        self.service.create_account(request)
+    }
+
+    pub fn update_account(&self, request: UpdateAccountRequest) -> Result<AccountDetail> {
+        self.service.update_account(request)
     }
 
     pub fn list_sessions(&self, filter: SessionListFilter) -> Result<Vec<SessionSummary>> {

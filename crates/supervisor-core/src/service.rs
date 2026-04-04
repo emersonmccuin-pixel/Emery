@@ -1,14 +1,18 @@
 use std::fs::{self, OpenOptions};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 use serde_json::json;
 use uuid::Uuid;
 
 use crate::models::{
-    CreateSessionRequest, NewSessionRecord, ProjectDetail, ProjectSummary, SessionArtifactRecord,
-    SessionAttachResponse, SessionDetachResponse, SessionDetail, SessionListFilter,
-    SessionOutputEvent, SessionSummary,
+    AccountDetail, AccountSummary, AccountUpdateRecord, CreateAccountRequest, CreateProjectRequest,
+    CreateProjectRootRequest, CreateSessionRequest, NewAccountRecord, NewProjectRecord,
+    NewProjectRootRecord, NewSessionRecord, ProjectDetail, ProjectRootSummary,
+    ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord, RemoveProjectRootRequest,
+    SessionArtifactRecord, SessionAttachResponse, SessionDetachResponse, SessionDetail,
+    SessionListFilter, SessionOutputEvent, SessionSummary, UpdateAccountRequest,
+    UpdateProjectRequest, UpdateProjectRootRequest,
 };
 use crate::runtime::{SessionLaunchRequest, SessionRegistry, SessionRuntimeRegistration};
 use crate::store::DatabaseSet;
@@ -33,6 +37,297 @@ impl SupervisorService {
 
     pub fn get_project(&self, project_id: &str) -> Result<Option<ProjectDetail>> {
         self.databases.get_project(project_id)
+    }
+
+    pub fn create_project(&self, request: CreateProjectRequest) -> Result<ProjectDetail> {
+        let name = required_trimmed("project name", &request.name)?;
+        let default_account_id = optional_trimmed(request.default_account_id);
+        if let Some(account_id) = default_account_id.as_deref() {
+            self.ensure_account_exists(account_id)?;
+        }
+
+        let slug = self.resolve_project_slug(request.slug.as_deref(), &name, None)?;
+        let sort_order = match request.sort_order {
+            Some(sort_order) => sort_order,
+            None => self.databases.next_project_sort_order()?,
+        };
+        let now = unix_time_seconds();
+        let project_id = format!("proj_{}", Uuid::new_v4().simple());
+
+        let record = NewProjectRecord {
+            id: project_id.clone(),
+            name,
+            slug,
+            sort_order,
+            default_account_id,
+            settings_json: optional_trimmed(request.settings_json),
+            created_at: now,
+            updated_at: now,
+        };
+
+        self.databases.insert_project(&record)?;
+        self.get_project(&project_id)?
+            .ok_or_else(|| anyhow!("project {} was not found", project_id))
+    }
+
+    pub fn update_project(&self, request: UpdateProjectRequest) -> Result<ProjectDetail> {
+        let existing = self
+            .databases
+            .get_project(&request.project_id)?
+            .ok_or_else(|| anyhow!("project {} was not found", request.project_id))?;
+
+        let name = match request.name.as_deref() {
+            Some(name) => required_trimmed("project name", name)?,
+            None => existing.name.clone(),
+        };
+        let slug = match request.slug.as_deref() {
+            Some(slug) => self.resolve_project_slug(Some(slug), &name, Some(&existing.id))?,
+            None => existing.slug.clone(),
+        };
+        let default_account_id = match request.default_account_id {
+            Some(value) => {
+                let normalized = optional_trimmed(Some(value));
+                if let Some(account_id) = normalized.as_deref() {
+                    self.ensure_account_exists(account_id)?;
+                }
+                normalized
+            }
+            None => existing.default_account_id.clone(),
+        };
+        let settings_json = match request.settings_json {
+            Some(value) => optional_trimmed(Some(value)),
+            None => existing.settings_json.clone(),
+        };
+
+        let record = ProjectUpdateRecord {
+            id: existing.id.clone(),
+            name,
+            slug,
+            sort_order: request.sort_order.unwrap_or(existing.sort_order),
+            default_account_id,
+            settings_json,
+            updated_at: unix_time_seconds(),
+        };
+
+        self.databases.update_project(&record)?;
+        self.get_project(&existing.id)?
+            .ok_or_else(|| anyhow!("project {} was not found", existing.id))
+    }
+
+    pub fn list_project_roots(&self, project_id: &str) -> Result<Vec<ProjectRootSummary>> {
+        self.ensure_project_exists(project_id)?;
+        self.databases.list_project_roots(project_id)
+    }
+
+    pub fn create_project_root(
+        &self,
+        request: CreateProjectRootRequest,
+    ) -> Result<ProjectRootSummary> {
+        self.ensure_project_exists(&request.project_id)?;
+
+        let label = required_trimmed("project root label", &request.label)?;
+        let path = absolute_path_string("project root path", &request.path)?;
+        let git_root_path = optional_absolute_path("git root path", request.git_root_path)?;
+        let root_kind = validate_root_kind(&request.root_kind)?;
+
+        if self
+            .databases
+            .project_root_path_exists(&request.project_id, &path, None)?
+        {
+            return Err(anyhow!(
+                "project {} already has a root at {}",
+                request.project_id,
+                path
+            ));
+        }
+
+        let sort_order = match request.sort_order {
+            Some(sort_order) => sort_order,
+            None => self
+                .databases
+                .next_project_root_sort_order(&request.project_id)?,
+        };
+        let now = unix_time_seconds();
+        let project_root_id = format!("root_{}", Uuid::new_v4().simple());
+
+        let record = NewProjectRootRecord {
+            id: project_root_id.clone(),
+            project_id: request.project_id,
+            label,
+            path,
+            git_root_path,
+            remote_url: optional_trimmed(request.remote_url),
+            root_kind,
+            sort_order,
+            created_at: now,
+            updated_at: now,
+        };
+
+        self.databases.insert_project_root(&record)?;
+        self.databases
+            .get_project_root(&project_root_id)?
+            .ok_or_else(|| anyhow!("project root {} was not found", project_root_id))
+    }
+
+    pub fn update_project_root(
+        &self,
+        request: UpdateProjectRootRequest,
+    ) -> Result<ProjectRootSummary> {
+        let existing = self
+            .databases
+            .get_project_root(&request.project_root_id)?
+            .ok_or_else(|| anyhow!("project root {} was not found", request.project_root_id))?;
+
+        let label = match request.label.as_deref() {
+            Some(label) => required_trimmed("project root label", label)?,
+            None => existing.label.clone(),
+        };
+        let path = match request.path.as_deref() {
+            Some(path) => absolute_path_string("project root path", path)?,
+            None => existing.path.clone(),
+        };
+        let git_root_path = match request.git_root_path {
+            Some(path) => optional_absolute_path("git root path", Some(path))?,
+            None => existing.git_root_path.clone(),
+        };
+        let remote_url = match request.remote_url {
+            Some(url) => optional_trimmed(Some(url)),
+            None => existing.remote_url.clone(),
+        };
+        let root_kind = match request.root_kind.as_deref() {
+            Some(root_kind) => validate_root_kind(root_kind)?,
+            None => existing.root_kind.clone(),
+        };
+
+        if self.databases.project_root_path_exists(
+            &existing.project_id,
+            &path,
+            Some(&existing.id),
+        )? {
+            return Err(anyhow!(
+                "project {} already has a root at {}",
+                existing.project_id,
+                path
+            ));
+        }
+
+        let record = ProjectRootUpdateRecord {
+            id: existing.id.clone(),
+            label,
+            path,
+            git_root_path,
+            remote_url,
+            root_kind,
+            sort_order: request.sort_order.unwrap_or(existing.sort_order),
+            updated_at: unix_time_seconds(),
+        };
+
+        self.databases.update_project_root(&record)?;
+        self.databases
+            .get_project_root(&existing.id)?
+            .ok_or_else(|| anyhow!("project root {} was not found", existing.id))
+    }
+
+    pub fn remove_project_root(
+        &self,
+        request: RemoveProjectRootRequest,
+    ) -> Result<ProjectRootSummary> {
+        let existing = self
+            .databases
+            .get_project_root(&request.project_root_id)?
+            .ok_or_else(|| anyhow!("project root {} was not found", request.project_root_id))?;
+
+        self.databases
+            .archive_project_root(&existing.id, unix_time_seconds())?;
+        self.databases
+            .get_project_root(&existing.id)?
+            .ok_or_else(|| anyhow!("project root {} was not found", existing.id))
+    }
+
+    pub fn list_accounts(&self) -> Result<Vec<AccountSummary>> {
+        self.databases.list_accounts()
+    }
+
+    pub fn get_account(&self, account_id: &str) -> Result<Option<AccountDetail>> {
+        self.databases.get_account(account_id)
+    }
+
+    pub fn create_account(&self, request: CreateAccountRequest) -> Result<AccountDetail> {
+        let agent_kind = validate_agent_kind(&request.agent_kind)?;
+        let label = required_trimmed("account label", &request.label)?;
+        let env_preset_ref = optional_trimmed(request.env_preset_ref);
+        if let Some(env_preset_id) = env_preset_ref.as_deref() {
+            self.ensure_env_preset_exists(env_preset_id)?;
+        }
+
+        let now = unix_time_seconds();
+        let account_id = format!("acct_{}", Uuid::new_v4().simple());
+        let record = NewAccountRecord {
+            id: account_id.clone(),
+            agent_kind,
+            label,
+            binary_path: optional_trimmed(request.binary_path),
+            config_root: optional_trimmed(request.config_root),
+            env_preset_ref,
+            is_default: request.is_default.unwrap_or(false),
+            status: validate_account_status(request.status.as_deref().unwrap_or("ready"))?,
+            created_at: now,
+            updated_at: now,
+        };
+
+        self.databases.insert_account(&record)?;
+        self.get_account(&account_id)?
+            .ok_or_else(|| anyhow!("account {} was not found", account_id))
+    }
+
+    pub fn update_account(&self, request: UpdateAccountRequest) -> Result<AccountDetail> {
+        let existing = self
+            .databases
+            .get_account(&request.account_id)?
+            .ok_or_else(|| anyhow!("account {} was not found", request.account_id))?;
+
+        let agent_kind = match request.agent_kind.as_deref() {
+            Some(agent_kind) => validate_agent_kind(agent_kind)?,
+            None => existing.summary.agent_kind.clone(),
+        };
+        let env_preset_ref = match request.env_preset_ref {
+            Some(env_preset_id) => {
+                let normalized = optional_trimmed(Some(env_preset_id));
+                if let Some(env_preset_id) = normalized.as_deref() {
+                    self.ensure_env_preset_exists(env_preset_id)?;
+                }
+                normalized
+            }
+            None => existing.summary.env_preset_ref.clone(),
+        };
+
+        let record = AccountUpdateRecord {
+            id: existing.summary.id.clone(),
+            agent_kind,
+            label: match request.label.as_deref() {
+                Some(label) => required_trimmed("account label", label)?,
+                None => existing.summary.label.clone(),
+            },
+            binary_path: match request.binary_path {
+                Some(path) => optional_trimmed(Some(path)),
+                None => existing.summary.binary_path.clone(),
+            },
+            config_root: match request.config_root {
+                Some(path) => optional_trimmed(Some(path)),
+                None => existing.summary.config_root.clone(),
+            },
+            env_preset_ref,
+            is_default: request.is_default.unwrap_or(existing.summary.is_default),
+            status: match request.status.as_deref() {
+                Some(status) => validate_account_status(status)?,
+                None => existing.summary.status.clone(),
+            },
+            updated_at: unix_time_seconds(),
+        };
+
+        self.databases.update_account(&record)?;
+        self.get_account(&existing.summary.id)?
+            .ok_or_else(|| anyhow!("account {} was not found", existing.summary.id))
     }
 
     pub fn list_sessions(&self, filter: SessionListFilter) -> Result<Vec<SessionSummary>> {
@@ -213,13 +508,8 @@ impl SupervisorService {
     }
 
     fn validate_create_request(&self, request: &CreateSessionRequest) -> Result<()> {
-        if self.get_project(&request.project_id)?.is_none() {
-            return Err(anyhow!("project {} was not found", request.project_id));
-        }
-
-        if !self.databases.account_exists(&request.account_id)? {
-            return Err(anyhow!("account {} was not found", request.account_id));
-        }
+        self.ensure_project_exists(&request.project_id)?;
+        self.ensure_account_exists(&request.account_id)?;
 
         if let Some(project_root_id) = request.project_root_id.as_deref() {
             self.databases
@@ -232,6 +522,68 @@ impl SupervisorService {
         }
 
         Ok(())
+    }
+
+    fn ensure_project_exists(&self, project_id: &str) -> Result<()> {
+        if self.get_project(project_id)?.is_none() {
+            return Err(anyhow!("project {} was not found", project_id));
+        }
+        Ok(())
+    }
+
+    fn ensure_account_exists(&self, account_id: &str) -> Result<()> {
+        if !self.databases.account_exists(account_id)? {
+            return Err(anyhow!("account {} was not found", account_id));
+        }
+        Ok(())
+    }
+
+    fn ensure_env_preset_exists(&self, env_preset_id: &str) -> Result<()> {
+        if !self.databases.env_preset_exists(env_preset_id)? {
+            return Err(anyhow!("env preset {} was not found", env_preset_id));
+        }
+        Ok(())
+    }
+
+    fn resolve_project_slug(
+        &self,
+        requested_slug: Option<&str>,
+        name: &str,
+        exclude_project_id: Option<&str>,
+    ) -> Result<String> {
+        let base_slug = match requested_slug {
+            Some(slug) => normalize_slug(slug)?,
+            None => slugify_name(name),
+        };
+
+        if requested_slug.is_some() {
+            if self
+                .databases
+                .project_slug_exists(&base_slug, exclude_project_id)?
+            {
+                return Err(anyhow!("project slug {} is already in use", base_slug));
+            }
+            return Ok(base_slug);
+        }
+
+        if !self
+            .databases
+            .project_slug_exists(&base_slug, exclude_project_id)?
+        {
+            return Ok(base_slug);
+        }
+
+        for suffix in 2..=10_000 {
+            let candidate = format!("{base_slug}-{suffix}");
+            if !self
+                .databases
+                .project_slug_exists(&candidate, exclude_project_id)?
+            {
+                return Ok(candidate);
+            }
+        }
+
+        Err(anyhow!("unable to allocate a unique project slug"))
     }
 
     fn with_runtime_flags(&self, sessions: Vec<SessionSummary>) -> Result<Vec<SessionSummary>> {
@@ -366,6 +718,96 @@ fn unix_time_seconds() -> i64 {
         .duration_since(UNIX_EPOCH)
         .expect("system time must be after unix epoch")
         .as_secs() as i64
+}
+
+fn required_trimmed(field_name: &str, value: &str) -> Result<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("{field_name} must not be empty"));
+    }
+    Ok(trimmed.to_string())
+}
+
+fn optional_trimmed(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+fn absolute_path_string(field_name: &str, value: &str) -> Result<String> {
+    let trimmed = required_trimmed(field_name, value)?;
+    let path = Path::new(&trimmed);
+    if !path.is_absolute() {
+        return Err(anyhow!("{field_name} must be an absolute path"));
+    }
+    Ok(trimmed)
+}
+
+fn optional_absolute_path(field_name: &str, value: Option<String>) -> Result<Option<String>> {
+    match optional_trimmed(value) {
+        Some(path) => absolute_path_string(field_name, &path).map(Some),
+        None => Ok(None),
+    }
+}
+
+fn validate_root_kind(value: &str) -> Result<String> {
+    let normalized = required_trimmed("root kind", value)?.to_lowercase();
+    match normalized.as_str() {
+        "repo" | "folder" | "artifact-space" => Ok(normalized),
+        _ => Err(anyhow!(
+            "root kind must be one of: repo, folder, artifact-space"
+        )),
+    }
+}
+
+fn validate_agent_kind(value: &str) -> Result<String> {
+    let normalized = required_trimmed("agent kind", value)?.to_lowercase();
+    match normalized.as_str() {
+        "claude" | "codex" => Ok(normalized),
+        _ => Err(anyhow!("agent kind must be one of: claude, codex")),
+    }
+}
+
+fn validate_account_status(value: &str) -> Result<String> {
+    let normalized = required_trimmed("account status", value)?.to_lowercase();
+    match normalized.as_str() {
+        "ready" | "missing_binary" | "invalid_config" | "disabled" => Ok(normalized),
+        _ => Err(anyhow!(
+            "account status must be one of: ready, missing_binary, invalid_config, disabled"
+        )),
+    }
+}
+
+fn normalize_slug(value: &str) -> Result<String> {
+    let slug = slugify_name(value);
+    if slug.is_empty() {
+        return Err(anyhow!(
+            "project slug must contain at least one alphanumeric character"
+        ));
+    }
+    Ok(slug)
+}
+
+fn slugify_name(value: &str) -> String {
+    let mut slug = String::new();
+    let mut last_was_dash = false;
+
+    for ch in value.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            last_was_dash = false;
+        } else if !last_was_dash {
+            slug.push('-');
+            last_was_dash = true;
+        }
+    }
+
+    slug.trim_matches('-').to_string()
 }
 
 #[derive(Debug, Clone)]

@@ -44,6 +44,171 @@ pub struct ProjectRootSummary {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct AccountSummary {
+    pub id: String,
+    pub agent_kind: String,
+    pub label: String,
+    pub binary_path: Option<String>,
+    pub config_root: Option<String>,
+    pub env_preset_ref: Option<String>,
+    pub is_default: bool,
+    pub status: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AccountDetail {
+    #[serde(flatten)]
+    pub summary: AccountSummary,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateProjectRequest {
+    pub name: String,
+    pub slug: Option<String>,
+    pub sort_order: Option<i64>,
+    pub default_account_id: Option<String>,
+    pub settings_json: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateProjectRequest {
+    pub project_id: String,
+    pub name: Option<String>,
+    pub slug: Option<String>,
+    pub sort_order: Option<i64>,
+    pub default_account_id: Option<String>,
+    pub settings_json: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateProjectRootRequest {
+    pub project_id: String,
+    pub label: String,
+    pub path: String,
+    pub git_root_path: Option<String>,
+    pub remote_url: Option<String>,
+    pub root_kind: String,
+    pub sort_order: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateProjectRootRequest {
+    pub project_root_id: String,
+    pub label: Option<String>,
+    pub path: Option<String>,
+    pub git_root_path: Option<String>,
+    pub remote_url: Option<String>,
+    pub root_kind: Option<String>,
+    pub sort_order: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RemoveProjectRootRequest {
+    pub project_root_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateAccountRequest {
+    pub agent_kind: String,
+    pub label: String,
+    pub binary_path: Option<String>,
+    pub config_root: Option<String>,
+    pub env_preset_ref: Option<String>,
+    pub is_default: Option<bool>,
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateAccountRequest {
+    pub account_id: String,
+    pub agent_kind: Option<String>,
+    pub label: Option<String>,
+    pub binary_path: Option<String>,
+    pub config_root: Option<String>,
+    pub env_preset_ref: Option<String>,
+    pub is_default: Option<bool>,
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewProjectRecord {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+    pub sort_order: i64,
+    pub default_account_id: Option<String>,
+    pub settings_json: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectUpdateRecord {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+    pub sort_order: i64,
+    pub default_account_id: Option<String>,
+    pub settings_json: Option<String>,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewProjectRootRecord {
+    pub id: String,
+    pub project_id: String,
+    pub label: String,
+    pub path: String,
+    pub git_root_path: Option<String>,
+    pub remote_url: Option<String>,
+    pub root_kind: String,
+    pub sort_order: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectRootUpdateRecord {
+    pub id: String,
+    pub label: String,
+    pub path: String,
+    pub git_root_path: Option<String>,
+    pub remote_url: Option<String>,
+    pub root_kind: String,
+    pub sort_order: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewAccountRecord {
+    pub id: String,
+    pub agent_kind: String,
+    pub label: String,
+    pub binary_path: Option<String>,
+    pub config_root: Option<String>,
+    pub env_preset_ref: Option<String>,
+    pub is_default: bool,
+    pub status: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct AccountUpdateRecord {
+    pub id: String,
+    pub agent_kind: String,
+    pub label: String,
+    pub binary_path: Option<String>,
+    pub config_root: Option<String>,
+    pub env_preset_ref: Option<String>,
+    pub is_default: bool,
+    pub status: String,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SessionSummary {
     pub id: String,
     pub session_spec_id: String,
