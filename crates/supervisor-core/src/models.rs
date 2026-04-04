@@ -118,6 +118,55 @@ pub struct SessionSpecDetail {
     pub summary: SessionSpecSummary,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkItemSummary {
+    pub id: String,
+    pub project_id: String,
+    pub parent_id: Option<String>,
+    pub root_work_item_id: Option<String>,
+    pub callsign: String,
+    pub child_sequence: Option<i64>,
+    pub title: String,
+    pub description: String,
+    pub acceptance_criteria: Option<String>,
+    pub work_item_type: String,
+    pub status: String,
+    pub priority: Option<String>,
+    pub created_by: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub closed_at: Option<i64>,
+    pub child_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkItemDetail {
+    #[serde(flatten)]
+    pub summary: WorkItemSummary,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DocumentSummary {
+    pub id: String,
+    pub project_id: String,
+    pub work_item_id: Option<String>,
+    pub session_id: Option<String>,
+    pub doc_type: String,
+    pub title: String,
+    pub slug: String,
+    pub status: String,
+    pub content_markdown: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub archived_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DocumentDetail {
+    #[serde(flatten)]
+    pub summary: DocumentSummary,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateProjectRequest {
     pub name: String,
@@ -275,6 +324,75 @@ pub struct UpdateSessionSpecRequest {
     pub context_bundle_ref: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct WorkItemListFilter {
+    pub project_id: Option<String>,
+    pub parent_id: Option<String>,
+    pub root_work_item_id: Option<String>,
+    pub status: Option<String>,
+    pub work_item_type: Option<String>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateWorkItemRequest {
+    pub project_id: String,
+    pub parent_id: Option<String>,
+    pub title: String,
+    pub description: String,
+    pub acceptance_criteria: Option<String>,
+    pub work_item_type: String,
+    pub status: Option<String>,
+    pub priority: Option<String>,
+    pub created_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateWorkItemRequest {
+    pub work_item_id: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub acceptance_criteria: Option<String>,
+    pub work_item_type: Option<String>,
+    pub status: Option<String>,
+    pub priority: Option<String>,
+    pub created_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct DocumentListFilter {
+    pub project_id: Option<String>,
+    pub work_item_id: Option<String>,
+    pub session_id: Option<String>,
+    pub doc_type: Option<String>,
+    pub status: Option<String>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateDocumentRequest {
+    pub project_id: String,
+    pub work_item_id: Option<String>,
+    pub session_id: Option<String>,
+    pub doc_type: String,
+    pub title: String,
+    pub slug: Option<String>,
+    pub status: Option<String>,
+    pub content_markdown: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateDocumentRequest {
+    pub document_id: String,
+    pub work_item_id: Option<String>,
+    pub session_id: Option<String>,
+    pub doc_type: Option<String>,
+    pub title: Option<String>,
+    pub slug: Option<String>,
+    pub status: Option<String>,
+    pub content_markdown: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct NewProjectRecord {
     pub id: String,
@@ -429,6 +547,70 @@ pub struct SessionSpecUpdateRecord {
     pub initial_terminal_rows: i64,
     pub context_bundle_ref: Option<String>,
     pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewWorkItemRecord {
+    pub id: String,
+    pub project_id: String,
+    pub parent_id: Option<String>,
+    pub root_work_item_id: Option<String>,
+    pub callsign: String,
+    pub child_sequence: Option<i64>,
+    pub title: String,
+    pub description: String,
+    pub acceptance_criteria: Option<String>,
+    pub work_item_type: String,
+    pub status: String,
+    pub priority: Option<String>,
+    pub created_by: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub closed_at: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkItemUpdateRecord {
+    pub id: String,
+    pub title: String,
+    pub description: String,
+    pub acceptance_criteria: Option<String>,
+    pub work_item_type: String,
+    pub status: String,
+    pub priority: Option<String>,
+    pub created_by: Option<String>,
+    pub updated_at: i64,
+    pub closed_at: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewDocumentRecord {
+    pub id: String,
+    pub project_id: String,
+    pub work_item_id: Option<String>,
+    pub session_id: Option<String>,
+    pub doc_type: String,
+    pub title: String,
+    pub slug: String,
+    pub status: String,
+    pub content_markdown: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub archived_at: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DocumentUpdateRecord {
+    pub id: String,
+    pub work_item_id: Option<String>,
+    pub session_id: Option<String>,
+    pub doc_type: String,
+    pub title: String,
+    pub slug: String,
+    pub status: String,
+    pub content_markdown: String,
+    pub updated_at: i64,
+    pub archived_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]

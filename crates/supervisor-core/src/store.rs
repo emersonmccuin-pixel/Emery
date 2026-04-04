@@ -6,11 +6,13 @@ use serde::Serialize;
 
 use crate::bootstrap::AppPaths;
 use crate::models::{
-    AccountDetail, AccountSummary, AccountUpdateRecord, NewAccountRecord, NewProjectRecord,
-    NewProjectRootRecord, NewSessionRecord, NewSessionSpecRecord, NewWorktreeRecord, ProjectDetail,
-    ProjectRootSummary, ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord,
-    SessionArtifactRecord, SessionListFilter, SessionSpecDetail, SessionSpecListFilter,
-    SessionSpecSummary, SessionSpecUpdateRecord, SessionSummary, WorktreeDetail,
+    AccountDetail, AccountSummary, AccountUpdateRecord, DocumentDetail, DocumentListFilter,
+    DocumentSummary, DocumentUpdateRecord, NewAccountRecord, NewDocumentRecord, NewProjectRecord,
+    NewProjectRootRecord, NewSessionRecord, NewSessionSpecRecord, NewWorkItemRecord,
+    NewWorktreeRecord, ProjectDetail, ProjectRootSummary, ProjectRootUpdateRecord, ProjectSummary,
+    ProjectUpdateRecord, SessionArtifactRecord, SessionListFilter, SessionSpecDetail,
+    SessionSpecListFilter, SessionSpecSummary, SessionSpecUpdateRecord, SessionSummary,
+    WorkItemDetail, WorkItemListFilter, WorkItemSummary, WorkItemUpdateRecord, WorktreeDetail,
     WorktreeListFilter, WorktreeSummary, WorktreeUpdateRecord,
 };
 use crate::schema::{migrate_app_db, migrate_knowledge_db};
@@ -975,6 +977,462 @@ impl DatabaseSet {
         Ok(())
     }
 
+    pub fn list_work_items(&self, filter: &WorkItemListFilter) -> Result<Vec<WorkItemSummary>> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let mut sql = String::from(
+            "SELECT
+                w.id,
+                w.project_id,
+                w.parent_id,
+                w.root_work_item_id,
+                w.callsign,
+                w.child_sequence,
+                w.title,
+                w.description,
+                w.acceptance_criteria,
+                w.work_item_type,
+                w.status,
+                w.priority,
+                w.created_by,
+                w.created_at,
+                w.updated_at,
+                w.closed_at,
+                COUNT(DISTINCT c.id) AS child_count
+             FROM work_items w
+             LEFT JOIN work_items c
+               ON c.parent_id = w.id
+             WHERE 1 = 1",
+        );
+        let mut values = Vec::new();
+
+        if let Some(project_id) = filter.project_id.as_deref() {
+            sql.push_str(" AND w.project_id = ?");
+            values.push(project_id.to_string());
+        }
+
+        if let Some(parent_id) = filter.parent_id.as_deref() {
+            sql.push_str(" AND w.parent_id = ?");
+            values.push(parent_id.to_string());
+        }
+
+        if let Some(root_work_item_id) = filter.root_work_item_id.as_deref() {
+            sql.push_str(" AND w.root_work_item_id = ?");
+            values.push(root_work_item_id.to_string());
+        }
+
+        if let Some(status) = filter.status.as_deref() {
+            sql.push_str(" AND w.status = ?");
+            values.push(status.to_string());
+        }
+
+        if let Some(work_item_type) = filter.work_item_type.as_deref() {
+            sql.push_str(" AND w.work_item_type = ?");
+            values.push(work_item_type.to_string());
+        }
+
+        sql.push_str(
+            " GROUP BY
+                w.id,
+                w.project_id,
+                w.parent_id,
+                w.root_work_item_id,
+                w.callsign,
+                w.child_sequence,
+                w.title,
+                w.description,
+                w.acceptance_criteria,
+                w.work_item_type,
+                w.status,
+                w.priority,
+                w.created_by,
+                w.created_at,
+                w.updated_at,
+                w.closed_at
+              ORDER BY w.created_at ASC, w.callsign ASC",
+        );
+
+        if let Some(limit) = filter.limit {
+            sql.push_str(" LIMIT ?");
+            values.push((limit as i64).to_string());
+        }
+
+        let mut statement = connection.prepare(&sql)?;
+        let rows = statement.query_map(params_from_iter(values.iter()), map_work_item_summary)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn get_work_item(&self, work_item_id: &str) -> Result<Option<WorkItemDetail>> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let mut statement = connection.prepare(
+            "SELECT
+                w.id,
+                w.project_id,
+                w.parent_id,
+                w.root_work_item_id,
+                w.callsign,
+                w.child_sequence,
+                w.title,
+                w.description,
+                w.acceptance_criteria,
+                w.work_item_type,
+                w.status,
+                w.priority,
+                w.created_by,
+                w.created_at,
+                w.updated_at,
+                w.closed_at,
+                COUNT(DISTINCT c.id) AS child_count
+             FROM work_items w
+             LEFT JOIN work_items c
+               ON c.parent_id = w.id
+             WHERE w.id = ?1
+             GROUP BY
+                w.id,
+                w.project_id,
+                w.parent_id,
+                w.root_work_item_id,
+                w.callsign,
+                w.child_sequence,
+                w.title,
+                w.description,
+                w.acceptance_criteria,
+                w.work_item_type,
+                w.status,
+                w.priority,
+                w.created_by,
+                w.created_at,
+                w.updated_at,
+                w.closed_at",
+        )?;
+
+        statement
+            .query_row([work_item_id], |row| {
+                Ok(WorkItemDetail {
+                    summary: map_work_item_summary(row)?,
+                })
+            })
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn insert_work_item(&self, record: &NewWorkItemRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        connection.execute(
+            "INSERT INTO work_items (
+                id,
+                project_id,
+                parent_id,
+                root_work_item_id,
+                callsign,
+                child_sequence,
+                title,
+                description,
+                acceptance_criteria,
+                work_item_type,
+                status,
+                priority,
+                created_by,
+                created_at,
+                updated_at,
+                closed_at
+             ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
+             )",
+            params![
+                record.id,
+                record.project_id,
+                record.parent_id,
+                record.root_work_item_id,
+                record.callsign,
+                record.child_sequence,
+                record.title,
+                record.description,
+                record.acceptance_criteria,
+                record.work_item_type,
+                record.status,
+                record.priority,
+                record.created_by,
+                record.created_at,
+                record.updated_at,
+                record.closed_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_work_item(&self, record: &WorkItemUpdateRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let updated = connection.execute(
+            "UPDATE work_items
+             SET title = ?2,
+                 description = ?3,
+                 acceptance_criteria = ?4,
+                 work_item_type = ?5,
+                 status = ?6,
+                 priority = ?7,
+                 created_by = ?8,
+                 updated_at = ?9,
+                 closed_at = ?10
+             WHERE id = ?1",
+            params![
+                record.id,
+                record.title,
+                record.description,
+                record.acceptance_criteria,
+                record.work_item_type,
+                record.status,
+                record.priority,
+                record.created_by,
+                record.updated_at,
+                record.closed_at,
+            ],
+        )?;
+
+        if updated == 0 {
+            return Err(anyhow!("work item {} was not found", record.id));
+        }
+
+        Ok(())
+    }
+
+    pub fn work_item_exists(&self, work_item_id: &str) -> Result<bool> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        exists(
+            &connection,
+            "SELECT 1 FROM work_items WHERE id = ?1",
+            [work_item_id],
+        )
+    }
+
+    pub fn ensure_work_item_belongs_to_project(
+        &self,
+        work_item_id: &str,
+        project_id: &str,
+    ) -> Result<()> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        if exists(
+            &connection,
+            "SELECT 1 FROM work_items WHERE id = ?1 AND project_id = ?2",
+            params![work_item_id, project_id],
+        )? {
+            return Ok(());
+        }
+
+        Err(anyhow!(
+            "work item {} does not belong to project {}",
+            work_item_id,
+            project_id
+        ))
+    }
+
+    pub fn next_work_item_child_sequence(&self, parent_id: &str) -> Result<i64> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        Ok(connection.query_row(
+            "SELECT COALESCE(MAX(child_sequence), 0) + 1
+             FROM work_items
+             WHERE parent_id = ?1",
+            [parent_id],
+            |row| row.get(0),
+        )?)
+    }
+
+    pub fn list_root_work_item_callsigns(&self, project_id: &str) -> Result<Vec<String>> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let mut statement = connection.prepare(
+            "SELECT callsign
+             FROM work_items
+             WHERE project_id = ?1
+               AND parent_id IS NULL
+             ORDER BY created_at ASC, callsign ASC",
+        )?;
+        let rows = statement.query_map([project_id], |row| row.get(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn list_documents(&self, filter: &DocumentListFilter) -> Result<Vec<DocumentSummary>> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let mut sql = String::from(
+            "SELECT
+                id,
+                project_id,
+                work_item_id,
+                session_id,
+                doc_type,
+                title,
+                slug,
+                status,
+                content_markdown,
+                created_at,
+                updated_at,
+                archived_at
+             FROM documents
+             WHERE 1 = 1",
+        );
+        let mut values = Vec::new();
+
+        if let Some(project_id) = filter.project_id.as_deref() {
+            sql.push_str(" AND project_id = ?");
+            values.push(project_id.to_string());
+        }
+
+        if let Some(work_item_id) = filter.work_item_id.as_deref() {
+            sql.push_str(" AND work_item_id = ?");
+            values.push(work_item_id.to_string());
+        }
+
+        if let Some(session_id) = filter.session_id.as_deref() {
+            sql.push_str(" AND session_id = ?");
+            values.push(session_id.to_string());
+        }
+
+        if let Some(doc_type) = filter.doc_type.as_deref() {
+            sql.push_str(" AND doc_type = ?");
+            values.push(doc_type.to_string());
+        }
+
+        if let Some(status) = filter.status.as_deref() {
+            sql.push_str(" AND status = ?");
+            values.push(status.to_string());
+        }
+
+        sql.push_str(" ORDER BY updated_at DESC, created_at DESC");
+
+        if let Some(limit) = filter.limit {
+            sql.push_str(" LIMIT ?");
+            values.push((limit as i64).to_string());
+        }
+
+        let mut statement = connection.prepare(&sql)?;
+        let rows = statement.query_map(params_from_iter(values.iter()), map_document_summary)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn get_document(&self, document_id: &str) -> Result<Option<DocumentDetail>> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        connection
+            .query_row(
+                "SELECT
+                    id,
+                    project_id,
+                    work_item_id,
+                    session_id,
+                    doc_type,
+                    title,
+                    slug,
+                    status,
+                    content_markdown,
+                    created_at,
+                    updated_at,
+                    archived_at
+                 FROM documents
+                 WHERE id = ?1",
+                [document_id],
+                |row| {
+                    Ok(DocumentDetail {
+                        summary: map_document_summary(row)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn insert_document(&self, record: &NewDocumentRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        connection.execute(
+            "INSERT INTO documents (
+                id,
+                project_id,
+                work_item_id,
+                session_id,
+                doc_type,
+                title,
+                slug,
+                status,
+                content_markdown,
+                created_at,
+                updated_at,
+                archived_at
+             ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12
+             )",
+            params![
+                record.id,
+                record.project_id,
+                record.work_item_id,
+                record.session_id,
+                record.doc_type,
+                record.title,
+                record.slug,
+                record.status,
+                record.content_markdown,
+                record.created_at,
+                record.updated_at,
+                record.archived_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_document(&self, record: &DocumentUpdateRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let updated = connection.execute(
+            "UPDATE documents
+             SET work_item_id = ?2,
+                 session_id = ?3,
+                 doc_type = ?4,
+                 title = ?5,
+                 slug = ?6,
+                 status = ?7,
+                 content_markdown = ?8,
+                 updated_at = ?9,
+                 archived_at = ?10
+             WHERE id = ?1",
+            params![
+                record.id,
+                record.work_item_id,
+                record.session_id,
+                record.doc_type,
+                record.title,
+                record.slug,
+                record.status,
+                record.content_markdown,
+                record.updated_at,
+                record.archived_at,
+            ],
+        )?;
+
+        if updated == 0 {
+            return Err(anyhow!("document {} was not found", record.id));
+        }
+
+        Ok(())
+    }
+
+    pub fn document_slug_exists(
+        &self,
+        project_id: &str,
+        slug: &str,
+        exclude_document_id: Option<&str>,
+    ) -> Result<bool> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        match exclude_document_id {
+            Some(document_id) => exists(
+                &connection,
+                "SELECT 1 FROM documents WHERE project_id = ?1 AND slug = ?2 AND id <> ?3",
+                params![project_id, slug, document_id],
+            ),
+            None => exists(
+                &connection,
+                "SELECT 1 FROM documents WHERE project_id = ?1 AND slug = ?2",
+                params![project_id, slug],
+            ),
+        }
+    }
+
     pub fn list_sessions(&self, filter: &SessionListFilter) -> Result<Vec<SessionSummary>> {
         let connection = open_connection(&self.paths.app_db)?;
         let mut sql = String::from(
@@ -1620,6 +2078,45 @@ fn map_session_summary(row: &Row<'_>) -> rusqlite::Result<SessionSummary> {
         updated_at: row.get(23)?,
         archived_at: row.get(24)?,
         live: false,
+    })
+}
+
+fn map_work_item_summary(row: &Row<'_>) -> rusqlite::Result<WorkItemSummary> {
+    Ok(WorkItemSummary {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        parent_id: row.get(2)?,
+        root_work_item_id: row.get(3)?,
+        callsign: row.get(4)?,
+        child_sequence: row.get(5)?,
+        title: row.get(6)?,
+        description: row.get(7)?,
+        acceptance_criteria: row.get(8)?,
+        work_item_type: row.get(9)?,
+        status: row.get(10)?,
+        priority: row.get(11)?,
+        created_by: row.get(12)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
+        closed_at: row.get(15)?,
+        child_count: row.get(16)?,
+    })
+}
+
+fn map_document_summary(row: &Row<'_>) -> rusqlite::Result<DocumentSummary> {
+    Ok(DocumentSummary {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        work_item_id: row.get(2)?,
+        session_id: row.get(3)?,
+        doc_type: row.get(4)?,
+        title: row.get(5)?,
+        slug: row.get(6)?,
+        status: row.get(7)?,
+        content_markdown: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+        archived_at: row.get(11)?,
     })
 }
 

@@ -26,6 +26,14 @@ pub enum Method {
     SessionSpecGet,
     SessionSpecCreate,
     SessionSpecUpdate,
+    WorkItemList,
+    WorkItemGet,
+    WorkItemCreate,
+    WorkItemUpdate,
+    DocumentList,
+    DocumentGet,
+    DocumentCreate,
+    DocumentUpdate,
     SessionList,
     SessionGet,
     SessionCreate,
@@ -65,6 +73,14 @@ impl Method {
             Self::SessionSpecGet => "session_spec.get",
             Self::SessionSpecCreate => "session_spec.create",
             Self::SessionSpecUpdate => "session_spec.update",
+            Self::WorkItemList => "work_item.list",
+            Self::WorkItemGet => "work_item.get",
+            Self::WorkItemCreate => "work_item.create",
+            Self::WorkItemUpdate => "work_item.update",
+            Self::DocumentList => "document.list",
+            Self::DocumentGet => "document.get",
+            Self::DocumentCreate => "document.create",
+            Self::DocumentUpdate => "document.update",
             Self::SessionList => "session.list",
             Self::SessionGet => "session.get",
             Self::SessionCreate => "session.create",
@@ -108,6 +124,14 @@ impl TryFrom<&str> for Method {
             "session_spec.get" => Ok(Self::SessionSpecGet),
             "session_spec.create" => Ok(Self::SessionSpecCreate),
             "session_spec.update" => Ok(Self::SessionSpecUpdate),
+            "work_item.list" => Ok(Self::WorkItemList),
+            "work_item.get" => Ok(Self::WorkItemGet),
+            "work_item.create" => Ok(Self::WorkItemCreate),
+            "work_item.update" => Ok(Self::WorkItemUpdate),
+            "document.list" => Ok(Self::DocumentList),
+            "document.get" => Ok(Self::DocumentGet),
+            "document.create" => Ok(Self::DocumentCreate),
+            "document.update" => Ok(Self::DocumentUpdate),
             "session.list" => Ok(Self::SessionList),
             "session.get" => Ok(Self::SessionGet),
             "session.create" => Ok(Self::SessionCreate),
@@ -202,6 +226,16 @@ pub struct SessionSpecGetParams {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SessionGetParams {
     pub session_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkItemGetParams {
+    pub work_item_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DocumentGetParams {
+    pub document_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

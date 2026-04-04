@@ -6,17 +6,20 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::models::{
-    AccountDetail, AccountSummary, AccountUpdateRecord, CreateAccountRequest, CreateProjectRequest,
-    CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
-    CreateWorktreeRequest, NewAccountRecord, NewProjectRecord, NewProjectRootRecord,
-    NewSessionRecord, NewSessionSpecRecord, NewWorktreeRecord, ProjectDetail, ProjectRootSummary,
+    AccountDetail, AccountSummary, AccountUpdateRecord, CreateAccountRequest,
+    CreateDocumentRequest, CreateProjectRequest, CreateProjectRootRequest, CreateSessionRequest,
+    CreateSessionSpecRequest, CreateWorkItemRequest, CreateWorktreeRequest, DocumentDetail,
+    DocumentListFilter, DocumentSummary, DocumentUpdateRecord, NewAccountRecord, NewDocumentRecord,
+    NewProjectRecord, NewProjectRootRecord, NewSessionRecord, NewSessionSpecRecord,
+    NewWorkItemRecord, NewWorktreeRecord, ProjectDetail, ProjectRootSummary,
     ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord, RemoveProjectRootRequest,
     SessionArtifactRecord, SessionAttachResponse, SessionDetachResponse, SessionDetail,
     SessionListFilter, SessionOutputEvent, SessionSpecDetail, SessionSpecListFilter,
     SessionSpecSummary, SessionSpecUpdateRecord, SessionSummary, UpdateAccountRequest,
-    UpdateProjectRequest, UpdateProjectRootRequest, UpdateSessionSpecRequest,
-    UpdateWorktreeRequest, WorktreeDetail, WorktreeListFilter, WorktreeSummary,
-    WorktreeUpdateRecord,
+    UpdateDocumentRequest, UpdateProjectRequest, UpdateProjectRootRequest,
+    UpdateSessionSpecRequest, UpdateWorkItemRequest, UpdateWorktreeRequest, WorkItemDetail,
+    WorkItemListFilter, WorkItemSummary, WorkItemUpdateRecord, WorktreeDetail, WorktreeListFilter,
+    WorktreeSummary, WorktreeUpdateRecord,
 };
 use crate::runtime::{SessionLaunchRequest, SessionRegistry, SessionRuntimeRegistration};
 use crate::store::DatabaseSet;
@@ -524,6 +527,229 @@ impl SupervisorService {
             .ok_or_else(|| anyhow!("session spec {} was not found", session_spec_id))
     }
 
+    pub fn list_work_items(&self, filter: WorkItemListFilter) -> Result<Vec<WorkItemSummary>> {
+        if let Some(project_id) = filter.project_id.as_deref() {
+            self.ensure_project_exists(project_id)?;
+        }
+
+        if let Some(parent_id) = filter.parent_id.as_deref() {
+            self.ensure_work_item_exists(parent_id)?;
+        }
+
+        if let Some(root_work_item_id) = filter.root_work_item_id.as_deref() {
+            self.ensure_work_item_exists(root_work_item_id)?;
+        }
+
+        self.databases.list_work_items(&filter)
+    }
+
+    pub fn get_work_item(&self, work_item_id: &str) -> Result<Option<WorkItemDetail>> {
+        self.databases.get_work_item(work_item_id)
+    }
+
+    pub fn create_work_item(&self, request: CreateWorkItemRequest) -> Result<WorkItemDetail> {
+        self.ensure_project_exists(&request.project_id)?;
+
+        let now = unix_time_seconds();
+        let parent = self.resolve_work_item_parent(&request.project_id, request.parent_id)?;
+        let callsign = self.allocate_work_item_callsign(&request.project_id, parent.as_ref())?;
+        let status = validate_work_item_status(request.status.as_deref().unwrap_or("backlog"))?;
+        let record = NewWorkItemRecord {
+            id: format!("wi_{}", Uuid::new_v4().simple()),
+            project_id: request.project_id,
+            parent_id: parent.as_ref().map(|item| item.id.clone()),
+            root_work_item_id: parent.as_ref().map(|item| {
+                item.root_work_item_id
+                    .clone()
+                    .unwrap_or_else(|| item.id.clone())
+            }),
+            child_sequence: parent.as_ref().map(|item| item.next_child_sequence),
+            callsign,
+            title: required_trimmed("work item title", &request.title)?,
+            description: required_trimmed("work item description", &request.description)?,
+            acceptance_criteria: optional_trimmed(request.acceptance_criteria),
+            work_item_type: validate_work_item_type(&request.work_item_type)?,
+            status: status.clone(),
+            priority: optional_priority(request.priority)?,
+            created_by: optional_trimmed(request.created_by),
+            created_at: now,
+            updated_at: now,
+            closed_at: closed_at_for_work_item_status(&status, None, now),
+        };
+
+        self.databases.insert_work_item(&record)?;
+        self.get_work_item(&record.id)?
+            .ok_or_else(|| anyhow!("work item {} was not found", record.id))
+    }
+
+    pub fn update_work_item(&self, request: UpdateWorkItemRequest) -> Result<WorkItemDetail> {
+        let existing = self
+            .databases
+            .get_work_item(&request.work_item_id)?
+            .ok_or_else(|| anyhow!("work item {} was not found", request.work_item_id))?;
+
+        let status = match request.status.as_deref() {
+            Some(status) => validate_work_item_status(status)?,
+            None => existing.summary.status.clone(),
+        };
+        let now = unix_time_seconds();
+        let record = WorkItemUpdateRecord {
+            id: existing.summary.id.clone(),
+            title: match request.title.as_deref() {
+                Some(title) => required_trimmed("work item title", title)?,
+                None => existing.summary.title.clone(),
+            },
+            description: match request.description.as_deref() {
+                Some(description) => required_trimmed("work item description", description)?,
+                None => existing.summary.description.clone(),
+            },
+            acceptance_criteria: match request.acceptance_criteria {
+                Some(value) => optional_trimmed(Some(value)),
+                None => existing.summary.acceptance_criteria.clone(),
+            },
+            work_item_type: match request.work_item_type.as_deref() {
+                Some(work_item_type) => validate_work_item_type(work_item_type)?,
+                None => existing.summary.work_item_type.clone(),
+            },
+            status: status.clone(),
+            priority: match request.priority {
+                Some(priority) => optional_priority(Some(priority))?,
+                None => existing.summary.priority.clone(),
+            },
+            created_by: match request.created_by {
+                Some(created_by) => optional_trimmed(Some(created_by)),
+                None => existing.summary.created_by.clone(),
+            },
+            updated_at: now,
+            closed_at: closed_at_for_work_item_status(&status, existing.summary.closed_at, now),
+        };
+
+        self.databases.update_work_item(&record)?;
+        self.get_work_item(&existing.summary.id)?
+            .ok_or_else(|| anyhow!("work item {} was not found", existing.summary.id))
+    }
+
+    pub fn list_documents(&self, filter: DocumentListFilter) -> Result<Vec<DocumentSummary>> {
+        if let Some(project_id) = filter.project_id.as_deref() {
+            self.ensure_project_exists(project_id)?;
+        }
+
+        if let Some(work_item_id) = filter.work_item_id.as_deref() {
+            self.ensure_work_item_exists(work_item_id)?;
+        }
+
+        if let Some(session_id) = filter.session_id.as_deref() {
+            self.ensure_session_exists(session_id)?;
+        }
+
+        self.databases.list_documents(&filter)
+    }
+
+    pub fn get_document(&self, document_id: &str) -> Result<Option<DocumentDetail>> {
+        self.databases.get_document(document_id)
+    }
+
+    pub fn create_document(&self, request: CreateDocumentRequest) -> Result<DocumentDetail> {
+        self.ensure_project_exists(&request.project_id)?;
+        self.validate_document_refs(
+            &request.project_id,
+            request.work_item_id.as_deref(),
+            request.session_id.as_deref(),
+        )?;
+
+        let title = required_trimmed("document title", &request.title)?;
+        let slug =
+            self.resolve_document_slug(&request.project_id, request.slug.as_deref(), &title, None)?;
+        let status = validate_document_status(request.status.as_deref().unwrap_or("draft"))?;
+        let now = unix_time_seconds();
+        let document_id = format!("doc_{}", Uuid::new_v4().simple());
+
+        let record = NewDocumentRecord {
+            id: document_id.clone(),
+            project_id: request.project_id,
+            work_item_id: optional_trimmed(request.work_item_id),
+            session_id: optional_trimmed(request.session_id),
+            doc_type: validate_document_type(&request.doc_type)?,
+            title,
+            slug,
+            status: status.clone(),
+            content_markdown: required_document_content(&request.content_markdown)?,
+            created_at: now,
+            updated_at: now,
+            archived_at: archived_at_for_document_status(&status, None, now),
+        };
+
+        self.databases.insert_document(&record)?;
+        self.get_document(&document_id)?
+            .ok_or_else(|| anyhow!("document {} was not found", document_id))
+    }
+
+    pub fn update_document(&self, request: UpdateDocumentRequest) -> Result<DocumentDetail> {
+        let existing = self
+            .databases
+            .get_document(&request.document_id)?
+            .ok_or_else(|| anyhow!("document {} was not found", request.document_id))?;
+
+        let work_item_id = match request.work_item_id {
+            Some(work_item_id) => optional_trimmed(Some(work_item_id)),
+            None => existing.summary.work_item_id.clone(),
+        };
+        let session_id = match request.session_id {
+            Some(session_id) => optional_trimmed(Some(session_id)),
+            None => existing.summary.session_id.clone(),
+        };
+        self.validate_document_refs(
+            &existing.summary.project_id,
+            work_item_id.as_deref(),
+            session_id.as_deref(),
+        )?;
+
+        let title = match request.title.as_deref() {
+            Some(title) => required_trimmed("document title", title)?,
+            None => existing.summary.title.clone(),
+        };
+        let slug = match request.slug.as_deref() {
+            Some(slug) => self.resolve_document_slug(
+                &existing.summary.project_id,
+                Some(slug),
+                &title,
+                Some(&existing.summary.id),
+            )?,
+            None => existing.summary.slug.clone(),
+        };
+        let status = match request.status.as_deref() {
+            Some(status) => validate_document_status(status)?,
+            None => existing.summary.status.clone(),
+        };
+        let now = unix_time_seconds();
+        let record = DocumentUpdateRecord {
+            id: existing.summary.id.clone(),
+            work_item_id,
+            session_id,
+            doc_type: match request.doc_type.as_deref() {
+                Some(doc_type) => validate_document_type(doc_type)?,
+                None => existing.summary.doc_type.clone(),
+            },
+            title,
+            slug,
+            status: status.clone(),
+            content_markdown: match request.content_markdown.as_deref() {
+                Some(content_markdown) => required_document_content(content_markdown)?,
+                None => existing.summary.content_markdown.clone(),
+            },
+            updated_at: now,
+            archived_at: archived_at_for_document_status(
+                &status,
+                existing.summary.archived_at,
+                now,
+            ),
+        };
+
+        self.databases.update_document(&record)?;
+        self.get_document(&existing.summary.id)?
+            .ok_or_else(|| anyhow!("document {} was not found", existing.summary.id))
+    }
+
     pub fn list_sessions(&self, filter: SessionListFilter) -> Result<Vec<SessionSummary>> {
         let sessions = self.databases.list_sessions(&filter)?;
         self.with_runtime_flags(sessions)
@@ -739,13 +965,18 @@ impl SupervisorService {
             draft.project_root_id,
             draft.worktree_id,
         )?;
+        let work_item_id = optional_trimmed(draft.work_item_id);
+        if let Some(work_item_id) = work_item_id.as_deref() {
+            self.databases
+                .ensure_work_item_belongs_to_project(work_item_id, &draft.project_id)?;
+        }
 
         Ok(NewSessionSpecRecord {
             id: existing_id.unwrap_or_else(|| format!("spec_{}", Uuid::new_v4().simple())),
             project_id: draft.project_id,
             project_root_id,
             worktree_id,
-            work_item_id: optional_trimmed(draft.work_item_id),
+            work_item_id,
             account_id: draft.account_id,
             agent_kind,
             cwd,
@@ -870,6 +1101,152 @@ impl SupervisorService {
         Ok((normalized_root_id, None))
     }
 
+    fn resolve_work_item_parent(
+        &self,
+        project_id: &str,
+        parent_id: Option<String>,
+    ) -> Result<Option<ResolvedWorkItemParent>> {
+        let Some(parent_id) = optional_trimmed(parent_id) else {
+            return Ok(None);
+        };
+
+        let parent = self
+            .databases
+            .get_work_item(&parent_id)?
+            .ok_or_else(|| anyhow!("work item {} was not found", parent_id))?;
+        if parent.summary.project_id != project_id {
+            return Err(anyhow!(
+                "work item {} does not belong to project {}",
+                parent_id,
+                project_id
+            ));
+        }
+
+        let next_child_sequence = self.databases.next_work_item_child_sequence(&parent_id)?;
+        Ok(Some(ResolvedWorkItemParent {
+            id: parent.summary.id,
+            root_work_item_id: parent.summary.root_work_item_id,
+            callsign: parent.summary.callsign,
+            next_child_sequence,
+        }))
+    }
+
+    fn allocate_work_item_callsign(
+        &self,
+        project_id: &str,
+        parent: Option<&ResolvedWorkItemParent>,
+    ) -> Result<String> {
+        if let Some(parent) = parent {
+            return Ok(format!(
+                "{}.{:03}",
+                parent.callsign, parent.next_child_sequence
+            ));
+        }
+
+        let project = self
+            .get_project(project_id)?
+            .ok_or_else(|| anyhow!("project {} was not found", project_id))?;
+        let prefix = project.slug.to_ascii_uppercase();
+        let next_sequence = self.next_root_work_item_sequence(project_id, &prefix)?;
+        Ok(format!("{prefix}-{next_sequence}"))
+    }
+
+    fn next_root_work_item_sequence(&self, project_id: &str, prefix: &str) -> Result<i64> {
+        let mut max_sequence = 0_i64;
+        let prefix_with_dash = format!("{prefix}-");
+        for callsign in self.databases.list_root_work_item_callsigns(project_id)? {
+            let Some(number) = callsign.strip_prefix(&prefix_with_dash) else {
+                continue;
+            };
+            if !number.chars().all(|ch| ch.is_ascii_digit()) {
+                continue;
+            }
+            let value = number.parse::<i64>().map_err(|error| {
+                anyhow!(
+                    "failed to parse work item callsign sequence from {}: {}",
+                    callsign,
+                    error
+                )
+            })?;
+            max_sequence = max_sequence.max(value);
+        }
+
+        Ok(max_sequence + 1)
+    }
+
+    fn validate_document_refs(
+        &self,
+        project_id: &str,
+        work_item_id: Option<&str>,
+        session_id: Option<&str>,
+    ) -> Result<()> {
+        if let Some(work_item_id) = work_item_id {
+            self.databases
+                .ensure_work_item_belongs_to_project(work_item_id, project_id)?;
+        }
+
+        if let Some(session_id) = session_id {
+            let session = self
+                .get_session(session_id)?
+                .ok_or_else(|| anyhow!("session {} was not found", session_id))?;
+            if session.summary.project_id != project_id {
+                return Err(anyhow!(
+                    "session {} does not belong to project {}",
+                    session_id,
+                    project_id
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn resolve_document_slug(
+        &self,
+        project_id: &str,
+        requested_slug: Option<&str>,
+        title: &str,
+        exclude_document_id: Option<&str>,
+    ) -> Result<String> {
+        let base_slug = match requested_slug {
+            Some(slug) => normalize_slug(slug)?,
+            None => slugify_name(title),
+        };
+
+        if requested_slug.is_some() {
+            if self
+                .databases
+                .document_slug_exists(project_id, &base_slug, exclude_document_id)?
+            {
+                return Err(anyhow!(
+                    "document slug {} is already in use for project {}",
+                    base_slug,
+                    project_id
+                ));
+            }
+            return Ok(base_slug);
+        }
+
+        if !self
+            .databases
+            .document_slug_exists(project_id, &base_slug, exclude_document_id)?
+        {
+            return Ok(base_slug);
+        }
+
+        for suffix in 2..=10_000 {
+            let candidate = format!("{base_slug}-{suffix}");
+            if !self
+                .databases
+                .document_slug_exists(project_id, &candidate, exclude_document_id)?
+            {
+                return Ok(candidate);
+            }
+        }
+
+        Err(anyhow!("unable to allocate a unique document slug"))
+    }
+
     fn ensure_project_exists(&self, project_id: &str) -> Result<()> {
         if self.get_project(project_id)?.is_none() {
             return Err(anyhow!("project {} was not found", project_id));
@@ -894,6 +1271,13 @@ impl SupervisorService {
     fn ensure_worktree_exists(&self, worktree_id: &str) -> Result<()> {
         if self.databases.get_worktree(worktree_id)?.is_none() {
             return Err(anyhow!("worktree {} was not found", worktree_id));
+        }
+        Ok(())
+    }
+
+    fn ensure_work_item_exists(&self, work_item_id: &str) -> Result<()> {
+        if self.databases.get_work_item(work_item_id)?.is_none() {
+            return Err(anyhow!("work item {} was not found", work_item_id));
         }
         Ok(())
     }
@@ -1160,6 +1544,75 @@ fn validate_worktree_status(value: &str) -> Result<String> {
     }
 }
 
+fn validate_work_item_type(value: &str) -> Result<String> {
+    let normalized = required_trimmed("work item type", value)?.to_lowercase();
+    match normalized.as_str() {
+        "epic" | "task" | "bug" | "feature" | "research" | "support" => Ok(normalized),
+        _ => Err(anyhow!(
+            "work item type must be one of: epic, task, bug, feature, research, support"
+        )),
+    }
+}
+
+fn validate_work_item_status(value: &str) -> Result<String> {
+    let normalized = required_trimmed("work item status", value)?.to_lowercase();
+    match normalized.as_str() {
+        "backlog" | "planned" | "in_progress" | "blocked" | "done" | "archived" => Ok(normalized),
+        _ => Err(anyhow!(
+            "work item status must be one of: backlog, planned, in_progress, blocked, done, archived"
+        )),
+    }
+}
+
+fn validate_priority(value: &str) -> Result<String> {
+    let normalized = required_trimmed("priority", value)?.to_lowercase();
+    match normalized.as_str() {
+        "low" | "medium" | "high" | "urgent" => Ok(normalized),
+        _ => Err(anyhow!(
+            "priority must be one of: low, medium, high, urgent"
+        )),
+    }
+}
+
+fn optional_priority(value: Option<String>) -> Result<Option<String>> {
+    match optional_trimmed(value) {
+        Some(priority) => validate_priority(&priority).map(Some),
+        None => Ok(None),
+    }
+}
+
+fn validate_document_type(value: &str) -> Result<String> {
+    let normalized = required_trimmed("document type", value)?.to_lowercase();
+    if normalized
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_')
+    {
+        return Ok(normalized);
+    }
+
+    Err(anyhow!(
+        "document type must use lowercase letters, numbers, '-' or '_'"
+    ))
+}
+
+fn validate_document_status(value: &str) -> Result<String> {
+    let normalized = required_trimmed("document status", value)?.to_lowercase();
+    match normalized.as_str() {
+        "draft" | "active" | "archived" => Ok(normalized),
+        _ => Err(anyhow!(
+            "document status must be one of: draft, active, archived"
+        )),
+    }
+}
+
+fn required_document_content(value: &str) -> Result<String> {
+    let normalized = value.trim();
+    if normalized.is_empty() {
+        return Err(anyhow!("document content must not be empty"));
+    }
+    Ok(value.to_string())
+}
+
 fn validate_session_mode(value: &str) -> Result<String> {
     let normalized = required_trimmed("session mode", value)?.to_lowercase();
     match normalized.as_str() {
@@ -1203,6 +1656,20 @@ fn closed_at_for_worktree_status(status: &str, requested: Option<i64>, now: i64)
     }
 }
 
+fn closed_at_for_work_item_status(status: &str, requested: Option<i64>, now: i64) -> Option<i64> {
+    match status {
+        "done" | "archived" => Some(requested.unwrap_or(now)),
+        _ => None,
+    }
+}
+
+fn archived_at_for_document_status(status: &str, requested: Option<i64>, now: i64) -> Option<i64> {
+    match status {
+        "archived" => Some(requested.unwrap_or(now)),
+        _ => None,
+    }
+}
+
 fn normalize_slug(value: &str) -> Result<String> {
     let slug = slugify_name(value);
     if slug.is_empty() {
@@ -1237,6 +1704,14 @@ struct SessionArtifactBootstrap {
     raw_log_path: PathBuf,
     raw_log_artifact_id: String,
     artifacts: Vec<SessionArtifactRecord>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedWorkItemParent {
+    id: String,
+    root_work_item_id: Option<String>,
+    callsign: String,
+    next_child_sequence: i64,
 }
 
 impl SessionArtifactBootstrap {

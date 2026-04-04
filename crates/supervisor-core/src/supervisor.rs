@@ -4,13 +4,15 @@ use anyhow::Result;
 
 use crate::bootstrap::AppPaths;
 use crate::models::{
-    AccountDetail, AccountSummary, CreateAccountRequest, CreateProjectRequest,
-    CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
-    CreateWorktreeRequest, ProjectDetail, ProjectRootSummary, ProjectSummary,
-    RemoveProjectRootRequest, SessionAttachResponse, SessionDetachResponse, SessionDetail,
-    SessionListFilter, SessionOutputEvent, SessionSpecDetail, SessionSpecListFilter,
-    SessionSpecSummary, SessionSummary, UpdateAccountRequest, UpdateProjectRequest,
-    UpdateProjectRootRequest, UpdateSessionSpecRequest, UpdateWorktreeRequest, WorktreeDetail,
+    AccountDetail, AccountSummary, CreateAccountRequest, CreateDocumentRequest,
+    CreateProjectRequest, CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
+    CreateWorkItemRequest, CreateWorktreeRequest, DocumentDetail, DocumentListFilter,
+    DocumentSummary, ProjectDetail, ProjectRootSummary, ProjectSummary, RemoveProjectRootRequest,
+    SessionAttachResponse, SessionDetachResponse, SessionDetail, SessionListFilter,
+    SessionOutputEvent, SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary,
+    SessionSummary, UpdateAccountRequest, UpdateDocumentRequest, UpdateProjectRequest,
+    UpdateProjectRootRequest, UpdateSessionSpecRequest, UpdateWorkItemRequest,
+    UpdateWorktreeRequest, WorkItemDetail, WorkItemListFilter, WorkItemSummary, WorktreeDetail,
     WorktreeListFilter, WorktreeSummary,
 };
 use crate::runtime::SessionRegistry;
@@ -157,6 +159,38 @@ impl Supervisor {
         request: UpdateSessionSpecRequest,
     ) -> Result<SessionSpecDetail> {
         self.service.update_session_spec(request)
+    }
+
+    pub fn list_work_items(&self, filter: WorkItemListFilter) -> Result<Vec<WorkItemSummary>> {
+        self.service.list_work_items(filter)
+    }
+
+    pub fn get_work_item(&self, work_item_id: &str) -> Result<Option<WorkItemDetail>> {
+        self.service.get_work_item(work_item_id)
+    }
+
+    pub fn create_work_item(&self, request: CreateWorkItemRequest) -> Result<WorkItemDetail> {
+        self.service.create_work_item(request)
+    }
+
+    pub fn update_work_item(&self, request: UpdateWorkItemRequest) -> Result<WorkItemDetail> {
+        self.service.update_work_item(request)
+    }
+
+    pub fn list_documents(&self, filter: DocumentListFilter) -> Result<Vec<DocumentSummary>> {
+        self.service.list_documents(filter)
+    }
+
+    pub fn get_document(&self, document_id: &str) -> Result<Option<DocumentDetail>> {
+        self.service.get_document(document_id)
+    }
+
+    pub fn create_document(&self, request: CreateDocumentRequest) -> Result<DocumentDetail> {
+        self.service.create_document(request)
+    }
+
+    pub fn update_document(&self, request: UpdateDocumentRequest) -> Result<DocumentDetail> {
+        self.service.update_document(request)
     }
 
     pub fn list_sessions(&self, filter: SessionListFilter) -> Result<Vec<SessionSummary>> {

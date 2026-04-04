@@ -5,18 +5,20 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use supervisor_core::{
-    CreateAccountRequest, CreateProjectRequest, CreateProjectRootRequest, CreateSessionRequest,
-    CreateSessionSpecRequest, CreateWorktreeRequest, RemoveProjectRootRequest, SessionListFilter,
-    SessionSpecListFilter, Supervisor, UpdateAccountRequest, UpdateProjectRequest,
-    UpdateProjectRootRequest, UpdateSessionSpecRequest, UpdateWorktreeRequest, WorktreeListFilter,
+    CreateAccountRequest, CreateDocumentRequest, CreateProjectRequest, CreateProjectRootRequest,
+    CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest, CreateWorktreeRequest,
+    DocumentListFilter, RemoveProjectRootRequest, SessionListFilter, SessionSpecListFilter,
+    Supervisor, UpdateAccountRequest, UpdateDocumentRequest, UpdateProjectRequest,
+    UpdateProjectRootRequest, UpdateSessionSpecRequest, UpdateWorkItemRequest,
+    UpdateWorktreeRequest, WorkItemListFilter, WorktreeListFilter,
 };
 
 use crate::protocol::{
-    AccountGetParams, ErrorBody, EventEnvelope, HelloResult, Method, ProjectGetParams,
-    ProjectRootListParams, RequestEnvelope, ResponseEnvelope, SessionAttachParams,
-    SessionControlParams, SessionDetachParams, SessionGetParams, SessionInputParams,
-    SessionResizeParams, SessionSpecGetParams, SubscriptionCloseParams, SubscriptionOpenParams,
-    WorktreeGetParams,
+    AccountGetParams, DocumentGetParams, ErrorBody, EventEnvelope, HelloResult, Method,
+    ProjectGetParams, ProjectRootListParams, RequestEnvelope, ResponseEnvelope,
+    SessionAttachParams, SessionControlParams, SessionDetachParams, SessionGetParams,
+    SessionInputParams, SessionResizeParams, SessionSpecGetParams, SubscriptionCloseParams,
+    SubscriptionOpenParams, WorkItemGetParams, WorktreeGetParams,
 };
 
 const PROTOCOL_VERSION: &str = "1";
@@ -256,6 +258,62 @@ impl SupervisorRpc {
                     self.supervisor.update_session_spec(request)?,
                 )?)
             }
+            Method::WorkItemList => {
+                let filter: WorkItemListFilter = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.list_work_items(filter)?,
+                )?)
+            }
+            Method::WorkItemGet => {
+                let params: WorkItemGetParams = serde_json::from_value(params)?;
+                let work_item = self
+                    .supervisor
+                    .get_work_item(&params.work_item_id)?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("work item {} was not found", params.work_item_id)
+                    })?;
+                Ok(serde_json::to_value(work_item)?)
+            }
+            Method::WorkItemCreate => {
+                let request: CreateWorkItemRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.create_work_item(request)?,
+                )?)
+            }
+            Method::WorkItemUpdate => {
+                let request: UpdateWorkItemRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.update_work_item(request)?,
+                )?)
+            }
+            Method::DocumentList => {
+                let filter: DocumentListFilter = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.list_documents(filter)?,
+                )?)
+            }
+            Method::DocumentGet => {
+                let params: DocumentGetParams = serde_json::from_value(params)?;
+                let document = self
+                    .supervisor
+                    .get_document(&params.document_id)?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("document {} was not found", params.document_id)
+                    })?;
+                Ok(serde_json::to_value(document)?)
+            }
+            Method::DocumentCreate => {
+                let request: CreateDocumentRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.create_document(request)?,
+                )?)
+            }
+            Method::DocumentUpdate => {
+                let request: UpdateDocumentRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.update_document(request)?,
+                )?)
+            }
             Method::SessionList => {
                 let filter: SessionListFilter = serde_json::from_value(params)?;
                 Ok(serde_json::to_value(
@@ -434,6 +492,14 @@ impl SupervisorRpc {
                 Method::SessionSpecGet.as_str(),
                 Method::SessionSpecCreate.as_str(),
                 Method::SessionSpecUpdate.as_str(),
+                Method::WorkItemList.as_str(),
+                Method::WorkItemGet.as_str(),
+                Method::WorkItemCreate.as_str(),
+                Method::WorkItemUpdate.as_str(),
+                Method::DocumentList.as_str(),
+                Method::DocumentGet.as_str(),
+                Method::DocumentCreate.as_str(),
+                Method::DocumentUpdate.as_str(),
                 Method::SessionList.as_str(),
                 Method::SessionGet.as_str(),
                 Method::SessionCreate.as_str(),
@@ -490,6 +556,10 @@ fn classify_error(error: anyhow::Error) -> ErrorBody {
             "project_root_not_found"
         } else if message.contains("worktree ") {
             "worktree_not_found"
+        } else if message.contains("work item ") {
+            "work_item_not_found"
+        } else if message.contains("document ") {
+            "document_not_found"
         } else if message.contains("session spec ") {
             "session_spec_not_found"
         } else if message.contains("session ") {
@@ -509,10 +579,12 @@ fn classify_error(error: anyhow::Error) -> ErrorBody {
         || message.contains("must be an absolute path")
         || message.contains("must be one of:")
         || message.contains("must be greater than zero")
+        || message.contains("must use lowercase letters")
         || message.contains("already has a root at")
         || message.contains("worktree path")
         || message.contains("already has an active live session")
         || message.contains("project slug")
+        || message.contains("document slug")
     {
         "invalid_request"
     } else if message.contains("does not belong to project")
