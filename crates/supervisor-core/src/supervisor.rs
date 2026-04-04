@@ -4,8 +4,8 @@ use anyhow::Result;
 
 use crate::bootstrap::AppPaths;
 use crate::models::{
-    CreateSessionRequest, ProjectDetail, ProjectSummary, SessionDetail, SessionListFilter,
-    SessionSummary,
+    CreateSessionRequest, ProjectDetail, ProjectSummary, SessionAttachResponse,
+    SessionDetachResponse, SessionDetail, SessionListFilter, SessionOutputEvent, SessionSummary,
 };
 use crate::runtime::SessionRegistry;
 use crate::service::SupervisorService;
@@ -89,6 +89,36 @@ impl Supervisor {
 
     pub fn terminate_session(&self, session_id: &str) -> Result<()> {
         self.service.terminate_session(session_id)
+    }
+
+    pub fn attach_session(&self, session_id: &str) -> Result<SessionAttachResponse> {
+        self.service.attach_session(session_id)
+    }
+
+    pub fn detach_session(
+        &self,
+        session_id: &str,
+        attachment_id: &str,
+    ) -> Result<SessionDetachResponse> {
+        self.service.detach_session(session_id, attachment_id)
+    }
+
+    pub fn subscribe_session_output(
+        &self,
+        session_id: &str,
+        after_sequence: Option<u64>,
+    ) -> Result<(String, std::sync::mpsc::Receiver<SessionOutputEvent>)> {
+        self.service
+            .subscribe_session_output(session_id, after_sequence)
+    }
+
+    pub fn unsubscribe_session_output(
+        &self,
+        session_id: &str,
+        subscription_id: &str,
+    ) -> Result<()> {
+        self.service
+            .unsubscribe_session_output(session_id, subscription_id)
     }
 }
 

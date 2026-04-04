@@ -8,8 +8,9 @@ mod supervisor;
 
 pub use bootstrap::AppPaths;
 pub use models::{
-    CreateSessionRequest, ProjectDetail, ProjectRootSummary, ProjectSummary, SessionDetail,
-    SessionListFilter, SessionRuntimeView, SessionSummary,
+    CreateSessionRequest, EncodedTerminalChunk, ProjectDetail, ProjectRootSummary, ProjectSummary,
+    ReplaySnapshot, SessionAttachResponse, SessionDetachResponse, SessionDetail, SessionListFilter,
+    SessionOutputEvent, SessionRuntimeView, SessionSummary,
 };
 pub use runtime::SessionRegistry;
 pub use service::SupervisorService;

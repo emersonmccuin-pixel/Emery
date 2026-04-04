@@ -93,6 +93,48 @@ pub struct SessionRuntimeView {
     pub replay_byte_count: usize,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct EncodedTerminalChunk {
+    pub sequence: u64,
+    pub timestamp: i64,
+    pub encoding: &'static str,
+    pub data: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReplaySnapshot {
+    pub oldest_sequence: Option<u64>,
+    pub latest_sequence: u64,
+    pub truncated_before_sequence: Option<u64>,
+    pub chunks: Vec<EncodedTerminalChunk>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionAttachResponse {
+    pub attachment_id: String,
+    pub session: SessionDetail,
+    pub terminal_cols: i64,
+    pub terminal_rows: i64,
+    pub replay: ReplaySnapshot,
+    pub output_cursor: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionDetachResponse {
+    pub session_id: String,
+    pub attachment_id: String,
+    pub remaining_attached_clients: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionOutputEvent {
+    pub session_id: String,
+    pub sequence: u64,
+    pub timestamp: i64,
+    pub encoding: &'static str,
+    pub data: String,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct SessionListFilter {
     pub project_id: Option<String>,

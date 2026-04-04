@@ -1,16 +1,17 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use anyhow::{Result, anyhow};
-use portable_pty::{
-    Child, ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system,
-};
+use base64::Engine as _;
+use portable_pty::{Child, ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use uuid::Uuid;
 
-use crate::models::SessionRuntimeView;
+use crate::models::{EncodedTerminalChunk, ReplaySnapshot, SessionOutputEvent, SessionRuntimeView};
 use crate::store::DatabaseSet;
 
 const DEFAULT_REPLAY_LIMIT_BYTES: usize = 128 * 1024;
@@ -39,10 +40,20 @@ pub struct SessionLaunchRequest {
     pub initial_terminal_rows: i64,
 }
 
+#[derive(Debug, Clone)]
+pub struct SessionAttachmentSnapshot {
+    pub attachment_id: String,
+    pub terminal_cols: i64,
+    pub terminal_rows: i64,
+    pub replay: ReplaySnapshot,
+    pub output_cursor: u64,
+}
+
 #[derive(Debug)]
 struct RuntimeSessionState {
     runtime_state: String,
     attached_clients: usize,
+    attachments: HashSet<String>,
     started_at: Option<i64>,
     created_at: i64,
     updated_at: i64,
@@ -50,6 +61,7 @@ struct RuntimeSessionState {
     raw_log_path: PathBuf,
     replay: ReplayBuffer,
     raw_log: RawLogWriter,
+    subscribers: HashMap<String, Sender<SessionOutputEvent>>,
     controller: Option<Arc<SessionProcessController>>,
     requested_stop: Option<RequestedStop>,
 }
@@ -94,6 +106,7 @@ impl SessionRegistry {
             RuntimeSessionState {
                 runtime_state: "starting".to_string(),
                 attached_clients: 0,
+                attachments: HashSet::new(),
                 started_at: None,
                 created_at: registration.created_at,
                 updated_at: registration.created_at,
@@ -101,6 +114,7 @@ impl SessionRegistry {
                 raw_log_path: registration.raw_log_path,
                 replay: ReplayBuffer::new(DEFAULT_REPLAY_LIMIT_BYTES),
                 raw_log,
+                subscribers: HashMap::new(),
                 controller: None,
                 requested_stop: None,
             },
@@ -130,10 +144,9 @@ impl SessionRegistry {
             command.arg(arg);
         }
 
-        let mut child = pty_pair
-            .slave
-            .spawn_command(command)
-            .map_err(|error| anyhow!("failed to spawn child for {}: {error}", request.session_id))?;
+        let mut child = pty_pair.slave.spawn_command(command).map_err(|error| {
+            anyhow!("failed to spawn child for {}: {error}", request.session_id)
+        })?;
         let reader = pty_pair.master.try_clone_reader().map_err(|error| {
             anyhow!(
                 "failed to clone PTY reader for {}: {error}",
@@ -173,8 +186,12 @@ impl SessionRegistry {
         let output_databases = databases.clone();
         let output_session_id = request.session_id.clone();
         thread::spawn(move || {
-            if let Err(error) = pump_output(output_registry, output_databases, &output_session_id, reader)
-            {
+            if let Err(error) = pump_output(
+                output_registry,
+                output_databases,
+                &output_session_id,
+                reader,
+            ) {
                 eprintln!("session {output_session_id} output pump failed: {error:#}");
             }
         });
@@ -197,6 +214,9 @@ impl SessionRegistry {
         state.runtime_state = "failed".to_string();
         state.updated_at = failed_at;
         state.controller = None;
+        state.subscribers.clear();
+        state.attachments.clear();
+        state.attached_clients = 0;
         state.requested_stop = None;
         Ok(())
     }
@@ -213,7 +233,24 @@ impl SessionRegistry {
             .get_mut(session_id)
             .ok_or_else(|| anyhow!("session {session_id} was not registered"))?;
         state.raw_log.append(chunk)?;
+
         let sequence = state.replay.append(timestamp, chunk);
+        let event = encode_output_event(session_id, sequence, timestamp, chunk);
+        let stale_subscribers = state
+            .subscribers
+            .iter()
+            .filter_map(|(subscription_id, sender)| {
+                if sender.send(event.clone()).is_err() {
+                    Some(subscription_id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        for subscription_id in stale_subscribers {
+            state.subscribers.remove(&subscription_id);
+        }
+
         state.updated_at = timestamp;
         Ok(sequence)
     }
@@ -272,6 +309,98 @@ impl SessionRegistry {
         databases.mark_session_stopping(session_id, now)?;
         let controller = self.live_controller(session_id)?;
         controller.terminate()
+    }
+
+    pub fn attach_session(
+        &self,
+        session_id: &str,
+        attached_at: i64,
+    ) -> Result<SessionAttachmentSnapshot> {
+        let mut guard = self.lock()?;
+        let state = guard
+            .get_mut(session_id)
+            .ok_or_else(|| anyhow!("session {session_id} was not registered"))?;
+        if !is_live_runtime_state(&state.runtime_state) || state.controller.is_none() {
+            return Err(anyhow!("session {session_id} is not live"));
+        }
+
+        let attachment_id = format!("att_{}", Uuid::new_v4().simple());
+        state.attachments.insert(attachment_id.clone());
+        state.attached_clients = state.attachments.len();
+        state.updated_at = attached_at;
+
+        let (terminal_cols, terminal_rows) = state
+            .controller
+            .as_ref()
+            .ok_or_else(|| anyhow!("session {session_id} has no active process controller"))?
+            .size()?;
+
+        Ok(SessionAttachmentSnapshot {
+            attachment_id,
+            terminal_cols,
+            terminal_rows,
+            replay: state.replay.snapshot(),
+            output_cursor: state.replay.latest_sequence(),
+        })
+    }
+
+    pub fn detach_session(&self, session_id: &str, attachment_id: &str) -> Result<usize> {
+        let mut guard = self.lock()?;
+        let state = guard
+            .get_mut(session_id)
+            .ok_or_else(|| anyhow!("session {session_id} was not registered"))?;
+        if !state.attachments.remove(attachment_id) {
+            return Err(anyhow!(
+                "attachment {attachment_id} was not found for session {session_id}"
+            ));
+        }
+        state.attached_clients = state.attachments.len();
+        state.updated_at = unix_time_seconds();
+        Ok(state.attached_clients)
+    }
+
+    pub fn subscribe_output(
+        &self,
+        session_id: &str,
+        after_sequence: Option<u64>,
+    ) -> Result<(String, Receiver<SessionOutputEvent>)> {
+        let mut guard = self.lock()?;
+        let state = guard
+            .get_mut(session_id)
+            .ok_or_else(|| anyhow!("session {session_id} was not registered"))?;
+        if !is_live_runtime_state(&state.runtime_state) || state.controller.is_none() {
+            return Err(anyhow!("session {session_id} is not live"));
+        }
+
+        let after_sequence = after_sequence.unwrap_or_default();
+        let (sender, receiver) = mpsc::channel();
+        for chunk in state.replay.chunks_after(after_sequence) {
+            sender
+                .send(encode_output_event(
+                    session_id,
+                    chunk.sequence,
+                    chunk.timestamp,
+                    &chunk.payload,
+                ))
+                .map_err(|_| anyhow!("failed to seed output subscription"))?;
+        }
+
+        let subscription_id = format!("sub_{}", Uuid::new_v4().simple());
+        state.subscribers.insert(subscription_id.clone(), sender);
+        Ok((subscription_id, receiver))
+    }
+
+    pub fn unsubscribe_output(&self, session_id: &str, subscription_id: &str) -> Result<()> {
+        let mut guard = self.lock()?;
+        let state = guard
+            .get_mut(session_id)
+            .ok_or_else(|| anyhow!("session {session_id} was not registered"))?;
+        if state.subscribers.remove(subscription_id).is_none() {
+            return Err(anyhow!(
+                "subscription {subscription_id} was not found for session {session_id}"
+            ));
+        }
+        Ok(())
     }
 
     pub fn runtime_for(&self, session_id: &str) -> Result<Option<SessionRuntimeView>> {
@@ -334,6 +463,9 @@ impl SessionRegistry {
             .ok_or_else(|| anyhow!("session {session_id} was not registered"))?;
         let requested_stop = state.requested_stop.take();
         state.controller = None;
+        state.subscribers.clear();
+        state.attachments.clear();
+        state.attached_clients = 0;
         state.updated_at = finished_at;
 
         let (runtime_state, status) = match requested_stop {
@@ -409,7 +541,9 @@ fn wait_for_exit(
                         &state.status,
                         finished_at,
                     ) {
-                        eprintln!("failed to persist exit state for session {session_id}: {error:#}");
+                        eprintln!(
+                            "failed to persist exit state for session {session_id}: {error:#}"
+                        );
                     }
                 }
                 Err(error) => {
@@ -424,13 +558,12 @@ fn wait_for_exit(
                     "failed to mark runtime failure for session {session_id}: {registry_error:#}"
                 );
             }
-            if let Err(db_error) = databases.mark_session_finished(
-                session_id,
-                "failed",
-                "failed",
-                finished_at,
-            ) {
-                eprintln!("failed to persist failed exit state for session {session_id}: {db_error:#}");
+            if let Err(db_error) =
+                databases.mark_session_finished(session_id, "failed", "failed", finished_at)
+            {
+                eprintln!(
+                    "failed to persist failed exit state for session {session_id}: {db_error:#}"
+                );
             }
             eprintln!("session {session_id} wait failed: {error}");
         }
@@ -489,6 +622,14 @@ impl SessionProcessController {
         guard.kill()?;
         Ok(())
     }
+
+    fn size(&self) -> Result<(i64, i64)> {
+        let guard = self
+            .size
+            .lock()
+            .map_err(|_| anyhow!("session PTY size lock poisoned"))?;
+        Ok((i64::from(guard.cols), i64::from(guard.rows)))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -504,9 +645,10 @@ struct ReplayBufferState {
     next_sequence: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ReplayChunk {
     sequence: u64,
+    timestamp: i64,
     payload: Vec<u8>,
 }
 
@@ -522,13 +664,14 @@ impl ReplayBuffer {
         }
     }
 
-    fn append(&self, _timestamp: i64, chunk: &[u8]) -> u64 {
+    fn append(&self, timestamp: i64, chunk: &[u8]) -> u64 {
         let mut guard = self.inner.lock().expect("replay buffer lock poisoned");
         let sequence = guard.next_sequence;
         guard.next_sequence += 1;
         guard.total_bytes += chunk.len();
         guard.chunks.push_back(ReplayChunk {
             sequence,
+            timestamp,
             payload: chunk.to_vec(),
         });
 
@@ -555,6 +698,38 @@ impl ReplayBuffer {
         let guard = self.inner.lock().expect("replay buffer lock poisoned");
         guard.total_bytes
     }
+
+    fn snapshot(&self) -> ReplaySnapshot {
+        let guard = self.inner.lock().expect("replay buffer lock poisoned");
+        let chunks = guard
+            .chunks
+            .iter()
+            .map(|chunk| encode_terminal_chunk(chunk.sequence, chunk.timestamp, &chunk.payload))
+            .collect::<Vec<_>>();
+        let oldest_sequence = guard.chunks.front().map(|chunk| chunk.sequence);
+        let latest_sequence = guard
+            .chunks
+            .back()
+            .map(|chunk| chunk.sequence)
+            .unwrap_or_default();
+
+        ReplaySnapshot {
+            oldest_sequence,
+            latest_sequence,
+            truncated_before_sequence: oldest_sequence.and_then(|sequence| sequence.checked_sub(1)),
+            chunks,
+        }
+    }
+
+    fn chunks_after(&self, after_sequence: u64) -> Vec<ReplayChunk> {
+        let guard = self.inner.lock().expect("replay buffer lock poisoned");
+        guard
+            .chunks
+            .iter()
+            .filter(|chunk| chunk.sequence > after_sequence)
+            .cloned()
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -578,5 +753,29 @@ impl RawLogWriter {
         guard.write_all(chunk)?;
         guard.flush()?;
         Ok(())
+    }
+}
+
+fn encode_output_event(
+    session_id: &str,
+    sequence: u64,
+    timestamp: i64,
+    payload: &[u8],
+) -> SessionOutputEvent {
+    SessionOutputEvent {
+        session_id: session_id.to_string(),
+        sequence,
+        timestamp,
+        encoding: "base64",
+        data: base64::engine::general_purpose::STANDARD.encode(payload),
+    }
+}
+
+fn encode_terminal_chunk(sequence: u64, timestamp: i64, payload: &[u8]) -> EncodedTerminalChunk {
+    EncodedTerminalChunk {
+        sequence,
+        timestamp,
+        encoding: "base64",
+        data: base64::engine::general_purpose::STANDARD.encode(payload),
     }
 }

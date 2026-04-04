@@ -478,6 +478,18 @@ impl DatabaseSet {
         Ok(())
     }
 
+    pub fn record_session_attached(&self, session_id: &str, timestamp: i64) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "UPDATE sessions
+             SET last_attached_at = ?2,
+                 updated_at = ?2
+             WHERE id = ?1",
+            params![session_id, timestamp],
+        )?;
+        Ok(())
+    }
+
     pub fn mark_session_finished(
         &self,
         session_id: &str,

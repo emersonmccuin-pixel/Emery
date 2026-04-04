@@ -7,7 +7,8 @@ use uuid::Uuid;
 
 use crate::models::{
     CreateSessionRequest, NewSessionRecord, ProjectDetail, ProjectSummary, SessionArtifactRecord,
-    SessionDetail, SessionListFilter, SessionSummary,
+    SessionAttachResponse, SessionDetachResponse, SessionDetail, SessionListFilter,
+    SessionOutputEvent, SessionSummary,
 };
 use crate::runtime::{SessionLaunchRequest, SessionRegistry, SessionRuntimeRegistration};
 use crate::store::DatabaseSet;
@@ -159,8 +160,56 @@ impl SupervisorService {
     }
 
     pub fn terminate_session(&self, session_id: &str) -> Result<()> {
+        self.registry.terminate_session(session_id, &self.databases)
+    }
+
+    pub fn attach_session(&self, session_id: &str) -> Result<SessionAttachResponse> {
+        let attached_at = unix_time_seconds();
+        let snapshot = self.registry.attach_session(session_id, attached_at)?;
+        self.databases
+            .record_session_attached(session_id, attached_at)?;
+        let session = self
+            .get_session(session_id)?
+            .ok_or_else(|| anyhow!("session {session_id} was not found"))?;
+
+        Ok(SessionAttachResponse {
+            attachment_id: snapshot.attachment_id,
+            session,
+            terminal_cols: snapshot.terminal_cols,
+            terminal_rows: snapshot.terminal_rows,
+            replay: snapshot.replay,
+            output_cursor: snapshot.output_cursor,
+        })
+    }
+
+    pub fn detach_session(
+        &self,
+        session_id: &str,
+        attachment_id: &str,
+    ) -> Result<SessionDetachResponse> {
+        let remaining_attached_clients = self.registry.detach_session(session_id, attachment_id)?;
+        Ok(SessionDetachResponse {
+            session_id: session_id.to_string(),
+            attachment_id: attachment_id.to_string(),
+            remaining_attached_clients,
+        })
+    }
+
+    pub fn subscribe_session_output(
+        &self,
+        session_id: &str,
+        after_sequence: Option<u64>,
+    ) -> Result<(String, std::sync::mpsc::Receiver<SessionOutputEvent>)> {
+        self.registry.subscribe_output(session_id, after_sequence)
+    }
+
+    pub fn unsubscribe_session_output(
+        &self,
+        session_id: &str,
+        subscription_id: &str,
+    ) -> Result<()> {
         self.registry
-            .terminate_session(session_id, &self.databases)
+            .unsubscribe_output(session_id, subscription_id)
     }
 
     fn validate_create_request(&self, request: &CreateSessionRequest) -> Result<()> {
