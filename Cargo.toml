@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "apps/euri-supervisor",
+    "apps/euri-client/src-tauri",
     "crates/supervisor-core",
     "crates/supervisor-ipc",
 ]
@@ -19,5 +20,6 @@ portable-pty = "0.9.0"
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
+tauri = "2.10.3"
 thiserror = "2.0.17"
 uuid = { version = "1.18.1", features = ["v4", "serde"] }

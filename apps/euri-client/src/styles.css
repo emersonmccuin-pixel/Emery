@@ -1,0 +1,347 @@
+:root {
+  color: #f2ede1;
+  background:
+    radial-gradient(circle at top left, rgba(210, 129, 55, 0.18), transparent 30%),
+    radial-gradient(circle at bottom right, rgba(81, 133, 143, 0.16), transparent 25%),
+    #14110f;
+  font-family:
+    "IBM Plex Sans",
+    "Segoe UI",
+    sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+}
+
+button,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  cursor: pointer;
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 18px;
+}
+
+.topbar,
+.sidebar,
+.workspace-summary,
+.workspace-pane,
+.card,
+.hero-panel {
+  border: 1px solid rgba(242, 237, 225, 0.08);
+  background: rgba(27, 23, 20, 0.78);
+  backdrop-filter: blur(18px);
+}
+
+.topbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 22px;
+  border-radius: 22px;
+}
+
+.brand-block h1,
+.session-header h2,
+.hero-panel h2 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.eyebrow {
+  color: #d8a25a;
+  font-size: 0.76rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.status-strip,
+.session-status-cluster,
+.summary-stats,
+.session-meta,
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.status-chip {
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  text-transform: lowercase;
+}
+
+.status-chip.connected,
+.status-chip.live,
+.indicator.live {
+  background: rgba(69, 150, 110, 0.22);
+  color: #8ff3bb;
+}
+
+.status-chip.pending,
+.indicator.pending {
+  background: rgba(214, 160, 76, 0.2);
+  color: #ffd085;
+}
+
+.status-chip.warning,
+.indicator.warning {
+  background: rgba(228, 145, 71, 0.18);
+  color: #ffc28f;
+}
+
+.status-chip.danger,
+.indicator.danger {
+  background: rgba(199, 92, 85, 0.22);
+  color: #ffb6ab;
+}
+
+.status-chip.disconnected,
+.status-chip.reconnecting,
+.status-chip.muted,
+.status-chip.neutral,
+.indicator.muted {
+  background: rgba(153, 153, 153, 0.14);
+  color: #d8d3ca;
+}
+
+.shell-grid {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 18px;
+  margin-top: 18px;
+  min-height: calc(100vh - 136px);
+}
+
+.sidebar {
+  border-radius: 20px;
+  padding: 16px;
+}
+
+.sidebar-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.sidebar-tabs button,
+.action-row button,
+.tab,
+.list-card,
+.session-link {
+  border-radius: 14px;
+}
+
+.sidebar-tabs button,
+.action-row button {
+  padding: 0.7rem 0.9rem;
+  background: rgba(242, 237, 225, 0.08);
+  color: inherit;
+}
+
+.sidebar-tabs button.active,
+.action-row button:hover,
+.session-link:hover {
+  background: rgba(216, 162, 90, 0.18);
+}
+
+.panel-list {
+  display: grid;
+  gap: 10px;
+}
+
+.list-card {
+  display: grid;
+  gap: 4px;
+  padding: 0.9rem;
+  background: rgba(242, 237, 225, 0.05);
+  color: inherit;
+  text-align: left;
+}
+
+.list-card.selected,
+.list-card:hover,
+.tab.active {
+  outline: 1px solid rgba(216, 162, 90, 0.45);
+  background: rgba(216, 162, 90, 0.14);
+}
+
+.list-title {
+  font-weight: 600;
+}
+
+.list-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #c3bcaf;
+  font-size: 0.86rem;
+}
+
+.indicator {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+}
+
+.workspace {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  gap: 14px;
+}
+
+.workspace-summary {
+  border-radius: 20px;
+  padding: 16px 18px;
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.tab-strip {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0.7rem 0.9rem;
+  background: rgba(242, 237, 225, 0.06);
+  color: inherit;
+  white-space: nowrap;
+}
+
+.tab-close {
+  color: #c3bcaf;
+}
+
+.workspace-pane {
+  border-radius: 24px;
+  padding: 18px;
+  min-height: 0;
+}
+
+.project-home,
+.session-pane {
+  display: grid;
+  gap: 16px;
+  height: 100%;
+}
+
+.hero-panel,
+.card {
+  border-radius: 20px;
+  padding: 18px;
+}
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.session-card-list {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.session-link {
+  padding: 0.7rem 0.9rem;
+  text-align: left;
+  background: rgba(242, 237, 225, 0.06);
+  color: inherit;
+}
+
+.session-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.terminal-surface {
+  margin: 0;
+  border-radius: 18px;
+  padding: 16px;
+  min-height: 340px;
+  overflow: auto;
+  background: #0f0d0c;
+  color: #dfd8ca;
+  font-family:
+    "IBM Plex Mono",
+    "Cascadia Code",
+    monospace;
+  font-size: 0.88rem;
+}
+
+.terminal-controls {
+  display: grid;
+  gap: 12px;
+}
+
+.terminal-controls textarea {
+  width: 100%;
+  min-height: 92px;
+  padding: 12px;
+  border: 1px solid rgba(242, 237, 225, 0.1);
+  border-radius: 16px;
+  background: rgba(16, 14, 13, 0.9);
+  color: inherit;
+  resize: vertical;
+}
+
+.action-row .danger {
+  background: rgba(199, 92, 85, 0.18);
+}
+
+.empty-pane,
+.loading-state,
+.error-state {
+  display: grid;
+  place-items: center;
+  min-height: 40vh;
+  color: #d8d3ca;
+}
+
+@media (max-width: 960px) {
+  .shell-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .project-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar,
+  .workspace-summary,
+  .session-header {
+    grid-auto-flow: row;
+    align-items: start;
+  }
+}

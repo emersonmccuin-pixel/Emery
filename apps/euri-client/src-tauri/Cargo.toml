@@ -1,0 +1,21 @@
+[package]
+name = "euri-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2.5.1" }
+
+[dependencies]
+anyhow.workspace = true
+interprocess.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri.workspace = true
+supervisor-core = { path = "../../../crates/supervisor-core" }
+supervisor-ipc = { path = "../../../crates/supervisor-ipc" }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
