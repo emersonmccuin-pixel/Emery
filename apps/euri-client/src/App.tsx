@@ -5,6 +5,7 @@ import {
   bootstrapShell,
   connectionLabel,
   detachSession,
+  exportDiagnosticsBundle,
   getDocument,
   getWorkItem,
   interruptSession,
@@ -15,8 +16,17 @@ import {
   terminateSession,
   watchLiveSessions,
 } from "./lib";
+import {
+  configureDiagnostics,
+  diagnosticsEnabled,
+  makeClientEvent,
+  newCorrelationId,
+  recordClientEvent,
+  snapshotClientDiagnostics,
+} from "./diagnostics";
 import type {
   ConnectionStatusEvent,
+  DiagnosticsBundleResult,
   DocumentDetail,
   DocumentSummary,
   SessionAttachResponse,
@@ -109,6 +119,7 @@ export default function App() {
   const [workItemDetails, setWorkItemDetails] = useState<Record<string, WorkItemDetail>>({});
   const [documentDetails, setDocumentDetails] = useState<Record<string, DocumentDetail>>({});
   const [connectionEvent, setConnectionEvent] = useState<ConnectionStatusEvent | null>(null);
+  const [diagnosticsBundle, setDiagnosticsBundle] = useState<DiagnosticsBundleResult | null>(null);
   const [loadingKeys, setLoadingKeys] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const restoreApplied = useRef(false);
@@ -123,14 +134,29 @@ export default function App() {
       return;
     }
 
+    const correlationId = newCorrelationId("project-load");
     setLoading(`project:${projectId}`, true);
     try {
       const [workItems, documents] = await Promise.all([
-        workItemsByProject[projectId] ? Promise.resolve(workItemsByProject[projectId]) : listWorkItems(projectId),
-        documentsByProject[projectId] ? Promise.resolve(documentsByProject[projectId]) : listDocuments(projectId),
+        workItemsByProject[projectId]
+          ? Promise.resolve(workItemsByProject[projectId])
+          : listWorkItems(projectId, correlationId),
+        documentsByProject[projectId]
+          ? Promise.resolve(documentsByProject[projectId])
+          : listDocuments(projectId, undefined, correlationId),
       ]);
       setWorkItemsByProject((current) => ({ ...current, [projectId]: workItems }));
       setDocumentsByProject((current) => ({ ...current, [projectId]: documents }));
+      recordClientEvent(
+        makeClientEvent("shell", "project.reads_loaded", {
+          correlation_id: correlationId,
+          project_id: projectId,
+          payload: {
+            work_item_count: workItems.length,
+            document_count: documents.length,
+          },
+        }),
+      );
     } catch (invokeError) {
       setError(String(invokeError));
     } finally {
@@ -143,10 +169,18 @@ export default function App() {
       return;
     }
 
+    const correlationId = newCorrelationId("work-item");
     setLoading(`work-item:${workItemId}`, true);
     try {
-      const detail = await getWorkItem(workItemId);
+      const detail = await getWorkItem(workItemId, correlationId);
       setWorkItemDetails((current) => ({ ...current, [workItemId]: detail }));
+      recordClientEvent(
+        makeClientEvent("workbench", "work_item.loaded", {
+          correlation_id: correlationId,
+          project_id: detail.project_id,
+          work_item_id: workItemId,
+        }),
+      );
     } catch (invokeError) {
       setError(String(invokeError));
     } finally {
@@ -159,10 +193,21 @@ export default function App() {
       return;
     }
 
+    const correlationId = newCorrelationId("document");
     setLoading(`document:${documentId}`, true);
     try {
-      const detail = await getDocument(documentId);
+      const detail = await getDocument(documentId, correlationId);
       setDocumentDetails((current) => ({ ...current, [documentId]: detail }));
+      recordClientEvent(
+        makeClientEvent("workbench", "document.loaded", {
+          correlation_id: correlationId,
+          project_id: detail.project_id,
+          work_item_id: detail.work_item_id ?? undefined,
+          payload: {
+            document_id: documentId,
+          },
+        }),
+      );
     } catch (invokeError) {
       setError(String(invokeError));
     } finally {
@@ -176,13 +221,25 @@ export default function App() {
 
     async function start() {
       try {
-        const payload = await bootstrapShell();
+        const correlationId = newCorrelationId("bootstrap");
+        const payload = await bootstrapShell(correlationId);
         if (cancelled) {
           return;
         }
 
+        configureDiagnostics(payload.hello.diagnostics_enabled);
         setBootstrap(payload);
         setSessions(payload.sessions);
+        recordClientEvent(
+          makeClientEvent("shell", "bootstrap.completed", {
+            correlation_id: correlationId,
+            payload: {
+              diagnostics_enabled: payload.hello.diagnostics_enabled,
+              project_count: payload.projects.length,
+              session_count: payload.sessions.length,
+            },
+          }),
+        );
         const restored = payload.workspace?.payload;
         if (restored && !restoreApplied.current) {
           restoreApplied.current = true;
@@ -205,7 +262,10 @@ export default function App() {
           }
         }
 
-        await watchLiveSessions(payload.sessions.filter((entry) => entry.live).map((entry) => entry.id));
+        await watchLiveSessions(
+          payload.sessions.filter((entry) => entry.live).map((entry) => entry.id),
+          correlationId,
+        );
       } catch (invokeError) {
         setError(String(invokeError));
       }
@@ -216,6 +276,14 @@ export default function App() {
     const listeners = Promise.all([
       listen<ConnectionStatusEvent>("supervisor://connection", (event) => {
         setConnectionEvent(event.payload);
+        recordClientEvent(
+          makeClientEvent("shell", "connection.status_changed", {
+            payload: {
+              state: event.payload.state,
+              detail: event.payload.detail,
+            },
+          }),
+        );
       }),
       listen<{ event: string; payload: SessionOutputEvent | SessionStateChangedEvent }>(
         "supervisor://event",
@@ -231,6 +299,17 @@ export default function App() {
 
           if (event.payload.event === "session.state_changed") {
             const payload = event.payload.payload as SessionStateChangedEvent;
+            recordClientEvent(
+              makeClientEvent("session", "session.state_changed", {
+                session_id: payload.session_id,
+                payload: {
+                  runtime_state: payload.runtime_state,
+                  activity_state: payload.activity_state,
+                  live: payload.live,
+                  attached_clients: payload.attached_clients,
+                },
+              }),
+            );
             setSessions((current) =>
               current.map((entry) =>
                 entry.id === payload.session_id
@@ -316,6 +395,7 @@ export default function App() {
     persistTimeout.current = window.setTimeout(() => {
       void saveWorkspace(
         buildWorkspacePayload(selectedProjectId, leftPanel, openResources, activeResourceId),
+        newCorrelationId("workspace-save"),
       ).catch((invokeError) => setError(String(invokeError)));
     }, 250);
   }, [activeResourceId, bootstrap, leftPanel, openResources, selectedProjectId]);
@@ -360,6 +440,12 @@ export default function App() {
   const currentDocuments = selectedProjectId ? documentsByProject[selectedProjectId] ?? [] : [];
 
   async function openProject(projectId: string) {
+    recordClientEvent(
+      makeClientEvent("shell", "project.opened", {
+        correlation_id: newCorrelationId("project-open"),
+        project_id: projectId,
+      }),
+    );
     setSelectedProjectId(projectId);
     void loadProjectReads(projectId);
     const resourceId = `project_home:${projectId}`;
@@ -379,6 +465,15 @@ export default function App() {
       return;
     }
 
+    const correlationId = newCorrelationId("session-open");
+    recordClientEvent(
+      makeClientEvent("session", "session.open_requested", {
+        correlation_id: correlationId,
+        session_id: sessionId,
+        project_id: existingSession.project_id,
+        work_item_id: existingSession.work_item_id ?? undefined,
+      }),
+    );
     const resourceId = `session_terminal:${sessionId}`;
     if (!openResources.some((resource) => resource.resource_id === resourceId)) {
       setOpenResources((current) => [
@@ -393,19 +488,46 @@ export default function App() {
     }
 
     try {
-      const response = await attachSession(sessionId);
+      const response = await attachSession(sessionId, correlationId);
       setAttachedSessions((current) => ({ ...current, [sessionId]: response }));
       setTerminalOutput((current) => ({
         ...current,
         [sessionId]: response.replay.chunks.map((chunk) => decodeBase64Utf8(chunk.data)).join(""),
       }));
-      await watchLiveSessions([sessionId]);
+      await watchLiveSessions([sessionId], correlationId);
+      recordClientEvent(
+        makeClientEvent("session", "session.attach_succeeded", {
+          correlation_id: correlationId,
+          session_id: sessionId,
+          project_id: response.session.project_id,
+          work_item_id: response.session.work_item_id ?? undefined,
+          payload: {
+            output_cursor: response.output_cursor,
+          },
+        }),
+      );
     } catch (invokeError) {
+      recordClientEvent(
+        makeClientEvent("session", "session.attach_failed", {
+          correlation_id: correlationId,
+          session_id: sessionId,
+          payload: {
+            error: String(invokeError),
+          },
+        }),
+      );
       setError(String(invokeError));
     }
   }
 
   async function openWorkItem(workItemId: string, projectId: string) {
+    recordClientEvent(
+      makeClientEvent("workbench", "work_item.open_requested", {
+        correlation_id: newCorrelationId("work-item-open"),
+        project_id: projectId,
+        work_item_id: workItemId,
+      }),
+    );
     void loadProjectReads(projectId);
     void ensureWorkItemDetail(workItemId);
     const resourceId = `work_item_detail:${workItemId}`;
@@ -424,6 +546,15 @@ export default function App() {
   }
 
   async function openDocument(documentId: string, projectId: string) {
+    recordClientEvent(
+      makeClientEvent("workbench", "document.open_requested", {
+        correlation_id: newCorrelationId("document-open"),
+        project_id: projectId,
+        payload: {
+          document_id: documentId,
+        },
+      }),
+    );
     void loadProjectReads(projectId);
     void ensureDocumentDetail(documentId);
     const resourceId = `document_detail:${documentId}`;
@@ -452,7 +583,14 @@ export default function App() {
       const attachment = attachedSessions[resource.session_id];
       if (attachment) {
         try {
-          await detachSession(resource.session_id, attachment.attachment_id);
+          const correlationId = newCorrelationId("session-close");
+          await detachSession(resource.session_id, attachment.attachment_id, correlationId);
+          recordClientEvent(
+            makeClientEvent("session", "session.detach_requested", {
+              correlation_id: correlationId,
+              session_id: resource.session_id,
+            }),
+          );
         } catch (invokeError) {
           setError(String(invokeError));
         }
@@ -482,8 +620,18 @@ export default function App() {
       return;
     }
 
+    const correlationId = newCorrelationId("session-input");
     try {
-      await sendSessionInput(sessionId, value.endsWith("\n") ? value : `${value}\n`);
+      await sendSessionInput(sessionId, value.endsWith("\n") ? value : `${value}\n`, correlationId);
+      recordClientEvent(
+        makeClientEvent("session", "session.input_submitted", {
+          correlation_id: correlationId,
+          session_id: sessionId,
+          payload: {
+            byte_count: value.length,
+          },
+        }),
+      );
       setTerminalInput((current) => ({ ...current, [sessionId]: "" }));
     } catch (invokeError) {
       setError(String(invokeError));
@@ -513,6 +661,39 @@ export default function App() {
           <span className="status-chip neutral">
             usage {bootstrap.accounts.length > 0 ? "unavailable" : "hidden"}
           </span>
+          {bootstrap.hello.diagnostics_enabled ? (
+            <button
+              className="status-chip neutral"
+              onClick={() => {
+                const correlationId = newCorrelationId("bundle");
+                const activeSessionId =
+                  activeResource?.resource_type === "session_terminal"
+                    ? activeResource.session_id
+                    : null;
+                void exportDiagnosticsBundle(
+                  activeSessionId,
+                  activeSessionId ? `session-${activeSessionId}` : "shell",
+                  snapshotClientDiagnostics(),
+                  correlationId,
+                )
+                  .then((result) => {
+                    setDiagnosticsBundle(result);
+                    recordClientEvent(
+                      makeClientEvent("shell", "diagnostics.bundle_exported", {
+                        correlation_id: correlationId,
+                        session_id: activeSessionId ?? undefined,
+                        payload: {
+                          bundle_path: result.bundle_path,
+                        },
+                      }),
+                    );
+                  })
+                  .catch((invokeError) => setError(String(invokeError)));
+              }}
+            >
+              Export debug bundle
+            </button>
+          ) : null}
         </div>
       </header>
 
@@ -629,6 +810,9 @@ export default function App() {
             <div>
               <div className="eyebrow">Selected project</div>
               <strong>{selectedProject?.name ?? "No project selected"}</strong>
+              {diagnosticsEnabled() && diagnosticsBundle?.bundle_path ? (
+                <div className="eyebrow">{diagnosticsBundle.bundle_path}</div>
+              ) : null}
             </div>
             <div className="summary-stats">
               <span>{bootstrap.bootstrap.project_count} projects</span>
@@ -690,8 +874,26 @@ export default function App() {
                   setTerminalInput((current) => ({ ...current, [activeResource.session_id]: value }))
                 }
                 onSubmitInput={() => void submitTerminalInput(activeResource.session_id)}
-                onInterrupt={() => void interruptSession(activeResource.session_id)}
-                onTerminate={() => void terminateSession(activeResource.session_id)}
+                onInterrupt={() => {
+                  const correlationId = newCorrelationId("session-interrupt");
+                  recordClientEvent(
+                    makeClientEvent("session", "session.interrupt_requested", {
+                      correlation_id: correlationId,
+                      session_id: activeResource.session_id,
+                    }),
+                  );
+                  void interruptSession(activeResource.session_id, correlationId);
+                }}
+                onTerminate={() => {
+                  const correlationId = newCorrelationId("session-terminate");
+                  recordClientEvent(
+                    makeClientEvent("session", "session.terminate_requested", {
+                      correlation_id: correlationId,
+                      session_id: activeResource.session_id,
+                    }),
+                  );
+                  void terminateSession(activeResource.session_id, correlationId);
+                }}
               />
             ) : activeResource.resource_type === "work_item_detail" ? (
               <WorkItemPane

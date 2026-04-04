@@ -55,6 +55,7 @@ export type HelloResult = {
   capabilities: string[];
   app_data_root: string;
   ipc_endpoint: string;
+  diagnostics_enabled: boolean;
 };
 
 export type SessionRuntimeView = {
@@ -238,4 +239,8 @@ export type ShellBootstrap = {
 export type ConnectionStatusEvent = {
   state: "connected" | "disconnected" | "reconnecting";
   detail?: string;
+};
+
+export type DiagnosticsBundleResult = {
+  bundle_path: string;
 };

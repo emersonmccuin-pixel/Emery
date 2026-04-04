@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::collections::HashMap;
+use std::env;
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
@@ -8,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
 use interprocess::TryClone;
@@ -23,10 +24,12 @@ use tauri::{AppHandle, Emitter, State};
 const CLIENT_VERSION: &str = "0.1.0";
 const WORKSPACE_SCOPE: &str = "tauri_client_shell";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(8);
+const DIAGNOSTICS_ENV: &str = "EURI_DEV_DIAGNOSTICS";
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct SupervisorManager {
     worker: Mutex<Option<WorkerHandle>>,
+    diagnostics: DiagnosticsState,
 }
 
 #[derive(Debug)]
@@ -56,6 +59,12 @@ struct ConnectionStatusEvent {
 struct FrontendEvent {
     event: String,
     payload: Value,
+}
+
+#[derive(Debug, Clone)]
+struct DiagnosticsState {
+    enabled: bool,
+    bridge_events: Arc<Mutex<Vec<Value>>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -97,6 +106,74 @@ struct IncomingErrorBody {
 }
 
 impl SupervisorManager {
+    fn new() -> Self {
+        Self {
+            worker: Mutex::new(None),
+            diagnostics: DiagnosticsState::from_env(),
+        }
+    }
+}
+
+impl DiagnosticsState {
+    fn from_env() -> Self {
+        let enabled = env::var(DIAGNOSTICS_ENV)
+            .ok()
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+            .unwrap_or(false);
+        Self {
+            enabled,
+            bridge_events: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    fn record(
+        &self,
+        event: &str,
+        correlation_id: Option<&str>,
+        request_id: Option<&str>,
+        payload: Value,
+    ) {
+        if !self.enabled {
+            return;
+        }
+
+        let entry = json!({
+            "timestamp_unix_ms": unix_time_ms(),
+            "subsystem": "tauri_bridge",
+            "event": event,
+            "correlation_id": correlation_id,
+            "request_id": request_id,
+            "payload": payload,
+        });
+
+        let Ok(mut guard) = self.bridge_events.lock() else {
+            return;
+        };
+        guard.push(entry);
+        if guard.len() > 500 {
+            let extra = guard.len() - 500;
+            guard.drain(0..extra);
+        }
+    }
+
+    fn snapshot(&self) -> Vec<Value> {
+        self.bridge_events
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default()
+    }
+}
+
+impl SupervisorManager {
     fn ensure_worker(
         &self,
         app: &AppHandle,
@@ -106,12 +183,18 @@ impl SupervisorManager {
             .lock()
             .map_err(|_| anyhow!("supervisor manager lock poisoned"))?;
         if guard.is_none() {
-            *guard = Some(connect_worker(app)?);
+            *guard = Some(connect_worker(app, self.diagnostics.clone())?);
         }
         Ok(guard)
     }
 
-    fn request_value(&self, app: &AppHandle, method: &str, params: Value) -> Result<Value> {
+    fn request_value(
+        &self,
+        app: &AppHandle,
+        method: &str,
+        params: Value,
+        correlation_id: Option<String>,
+    ) -> Result<Value> {
         let mut guard = self.ensure_worker(app)?;
         let handle = guard
             .as_mut()
@@ -123,9 +206,21 @@ impl SupervisorManager {
         let envelope = RequestEnvelope {
             message_type: "request".to_string(),
             request_id,
+            correlation_id,
             method: method.to_string(),
             params,
         };
+        let request_id = envelope.request_id.clone();
+        let request_method = envelope.method.clone();
+        let request_correlation = envelope.correlation_id.clone();
+        self.diagnostics.record(
+            "rpc.request_dispatched",
+            request_correlation.as_deref(),
+            Some(&request_id),
+            json!({
+                "method": request_method.clone(),
+            }),
+        );
         let (response_tx, response_rx) = mpsc::channel();
         handle
             .control_tx
@@ -137,13 +232,50 @@ impl SupervisorManager {
         drop(guard);
 
         match response_rx.recv_timeout(Duration::from_secs(10)) {
-            Ok(Ok(value)) => Ok(value),
-            Ok(Err(error)) => Err(anyhow!(error)),
-            Err(_) => Err(anyhow!("supervisor response timed out")),
+            Ok(Ok(value)) => {
+                self.diagnostics.record(
+                    "rpc.response_received",
+                    request_correlation.as_deref(),
+                    Some(&request_id),
+                    json!({
+                        "method": request_method.clone(),
+                        "ok": true,
+                    }),
+                );
+                Ok(value)
+            }
+            Ok(Err(error)) => {
+                self.diagnostics.record(
+                    "rpc.response_failed",
+                    request_correlation.as_deref(),
+                    Some(&request_id),
+                    json!({
+                        "method": request_method.clone(),
+                        "error": error,
+                    }),
+                );
+                Err(anyhow!(error))
+            }
+            Err(_) => {
+                self.diagnostics.record(
+                    "rpc.response_timeout",
+                    request_correlation.as_deref(),
+                    Some(&request_id),
+                    json!({
+                        "method": request_method,
+                    }),
+                );
+                Err(anyhow!("supervisor response timed out"))
+            }
         }
     }
 
-    fn watch_live_sessions(&self, app: &AppHandle, session_ids: &[String]) -> Result<()> {
+    fn watch_live_sessions(
+        &self,
+        app: &AppHandle,
+        session_ids: &[String],
+        correlation_id: Option<String>,
+    ) -> Result<()> {
         let pending_session_ids = {
             let guard = self.ensure_worker(app)?;
             let handle = guard
@@ -169,6 +301,7 @@ impl SupervisorManager {
                     "topic": "session.state_changed",
                     "session_id": session_id
                 }),
+                correlation_id.clone(),
             )?;
             let subscription_id = value
                 .get("subscription_id")
@@ -188,13 +321,19 @@ impl SupervisorManager {
         Ok(())
     }
 
-    fn attach_session(&self, app: &AppHandle, session_id: &str) -> Result<Value> {
+    fn attach_session(
+        &self,
+        app: &AppHandle,
+        session_id: &str,
+        correlation_id: Option<String>,
+    ) -> Result<Value> {
         let response = self.request_value(
             app,
             "session.attach",
             json!({
                 "session_id": session_id
             }),
+            correlation_id.clone(),
         )?;
 
         let should_open_output = {
@@ -222,6 +361,7 @@ impl SupervisorManager {
                     "session_id": session_id,
                     "after_sequence": output_cursor
                 }),
+                correlation_id.clone(),
             )?;
             let subscription_id = sub_value
                 .get("subscription_id")
@@ -238,11 +378,17 @@ impl SupervisorManager {
                 .insert(session_id.to_string(), subscription_id.to_string());
         }
 
-        self.watch_live_sessions(app, &[session_id.to_string()])?;
+        self.watch_live_sessions(app, &[session_id.to_string()], correlation_id)?;
         Ok(response)
     }
 
-    fn detach_session(&self, app: &AppHandle, session_id: &str, attachment_id: &str) -> Result<()> {
+    fn detach_session(
+        &self,
+        app: &AppHandle,
+        session_id: &str,
+        attachment_id: &str,
+        correlation_id: Option<String>,
+    ) -> Result<()> {
         self.request_value(
             app,
             "session.detach",
@@ -250,6 +396,7 @@ impl SupervisorManager {
                 "session_id": session_id,
                 "attachment_id": attachment_id
             }),
+            correlation_id.clone(),
         )?;
 
         let subscription_id = {
@@ -271,6 +418,7 @@ impl SupervisorManager {
                 json!({
                     "subscription_id": subscription_id
                 }),
+                correlation_id.clone(),
             );
         }
         Ok(())
@@ -281,9 +429,10 @@ impl SupervisorManager {
 fn bootstrap_shell(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
+    correlation_id: Option<String>,
 ) -> Result<ShellBootstrap, String> {
     let hello = manager
-        .request_value(&app, "system.hello", json!({}))
+        .request_value(&app, "system.hello", json!({}), correlation_id.clone())
         .map_err(error_string)?;
     let min_supported = hello
         .get("min_supported_client_version")
@@ -297,19 +446,24 @@ fn bootstrap_shell(
     }
 
     let health = manager
-        .request_value(&app, "system.health", json!({}))
+        .request_value(&app, "system.health", json!({}), correlation_id.clone())
         .map_err(error_string)?;
     let bootstrap = manager
-        .request_value(&app, "system.bootstrap_state", json!({}))
+        .request_value(
+            &app,
+            "system.bootstrap_state",
+            json!({}),
+            correlation_id.clone(),
+        )
         .map_err(error_string)?;
     let projects = manager
-        .request_value(&app, "project.list", json!({}))
+        .request_value(&app, "project.list", json!({}), correlation_id.clone())
         .map_err(error_string)?;
     let accounts = manager
-        .request_value(&app, "account.list", json!({}))
+        .request_value(&app, "account.list", json!({}), correlation_id.clone())
         .map_err(error_string)?;
     let sessions = manager
-        .request_value(&app, "session.list", json!({}))
+        .request_value(&app, "session.list", json!({}), correlation_id.clone())
         .map_err(error_string)?;
     let workspace = manager
         .request_value(
@@ -318,6 +472,7 @@ fn bootstrap_shell(
             json!({
                 "scope": WORKSPACE_SCOPE
             }),
+            correlation_id.clone(),
         )
         .ok();
 
@@ -330,7 +485,7 @@ fn bootstrap_shell(
         .map(ToString::to_string)
         .collect::<Vec<_>>();
     manager
-        .watch_live_sessions(&app, &live_session_ids)
+        .watch_live_sessions(&app, &live_session_ids, correlation_id)
         .map_err(error_string)?;
 
     Ok(ShellBootstrap {
@@ -349,9 +504,10 @@ fn watch_live_sessions(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
     session_ids: Vec<String>,
+    correlation_id: Option<String>,
 ) -> Result<(), String> {
     manager
-        .watch_live_sessions(&app, &session_ids)
+        .watch_live_sessions(&app, &session_ids, correlation_id)
         .map_err(error_string)
 }
 
@@ -360,9 +516,10 @@ fn attach_session(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
     session_id: String,
+    correlation_id: Option<String>,
 ) -> Result<Value, String> {
     manager
-        .attach_session(&app, &session_id)
+        .attach_session(&app, &session_id, correlation_id)
         .map_err(error_string)
 }
 
@@ -372,9 +529,10 @@ fn detach_session(
     manager: State<'_, Arc<SupervisorManager>>,
     session_id: String,
     attachment_id: String,
+    correlation_id: Option<String>,
 ) -> Result<(), String> {
     manager
-        .detach_session(&app, &session_id, &attachment_id)
+        .detach_session(&app, &session_id, &attachment_id, correlation_id)
         .map_err(error_string)
 }
 
@@ -384,6 +542,7 @@ fn send_session_input(
     manager: State<'_, Arc<SupervisorManager>>,
     session_id: String,
     input: String,
+    correlation_id: Option<String>,
 ) -> Result<(), String> {
     manager
         .request_value(
@@ -393,6 +552,7 @@ fn send_session_input(
                 "session_id": session_id,
                 "input": input
             }),
+            correlation_id,
         )
         .map(|_| ())
         .map_err(error_string)
@@ -403,6 +563,7 @@ fn interrupt_session(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
     session_id: String,
+    correlation_id: Option<String>,
 ) -> Result<(), String> {
     manager
         .request_value(
@@ -411,6 +572,7 @@ fn interrupt_session(
             json!({
                 "session_id": session_id
             }),
+            correlation_id,
         )
         .map(|_| ())
         .map_err(error_string)
@@ -421,6 +583,7 @@ fn terminate_session(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
     session_id: String,
+    correlation_id: Option<String>,
 ) -> Result<(), String> {
     manager
         .request_value(
@@ -429,6 +592,7 @@ fn terminate_session(
             json!({
                 "session_id": session_id
             }),
+            correlation_id,
         )
         .map(|_| ())
         .map_err(error_string)
@@ -439,6 +603,7 @@ fn save_workspace_state(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
     payload: Value,
+    correlation_id: Option<String>,
 ) -> Result<(), String> {
     manager
         .request_value(
@@ -448,6 +613,7 @@ fn save_workspace_state(
                 "scope": WORKSPACE_SCOPE,
                 "payload": payload
             }),
+            correlation_id,
         )
         .map(|_| ())
         .map_err(error_string)
@@ -458,6 +624,7 @@ fn list_work_items(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
     project_id: String,
+    correlation_id: Option<String>,
 ) -> Result<Value, String> {
     manager
         .request_value(
@@ -466,6 +633,7 @@ fn list_work_items(
             json!({
                 "project_id": project_id
             }),
+            correlation_id,
         )
         .map_err(error_string)
 }
@@ -475,6 +643,7 @@ fn get_work_item(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
     work_item_id: String,
+    correlation_id: Option<String>,
 ) -> Result<Value, String> {
     manager
         .request_value(
@@ -483,6 +652,7 @@ fn get_work_item(
             json!({
                 "work_item_id": work_item_id
             }),
+            correlation_id,
         )
         .map_err(error_string)
 }
@@ -493,6 +663,7 @@ fn list_documents(
     manager: State<'_, Arc<SupervisorManager>>,
     project_id: String,
     work_item_id: Option<String>,
+    correlation_id: Option<String>,
 ) -> Result<Value, String> {
     manager
         .request_value(
@@ -502,6 +673,7 @@ fn list_documents(
                 "project_id": project_id,
                 "work_item_id": work_item_id
             }),
+            correlation_id,
         )
         .map_err(error_string)
 }
@@ -511,6 +683,7 @@ fn get_document(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
     document_id: String,
+    correlation_id: Option<String>,
 ) -> Result<Value, String> {
     manager
         .request_value(
@@ -519,13 +692,44 @@ fn get_document(
             json!({
                 "document_id": document_id
             }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn export_diagnostics_bundle(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    session_id: Option<String>,
+    incident_label: Option<String>,
+    frontend_events: Vec<Value>,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    if !manager.diagnostics.enabled() {
+        return Err("development diagnostics are disabled".to_string());
+    }
+
+    manager
+        .request_value(
+            &app,
+            "diagnostics.export_bundle",
+            json!({
+                "session_id": session_id,
+                "incident_label": incident_label,
+                "client_context": {
+                    "bridge_events": manager.diagnostics.snapshot(),
+                    "frontend_events": frontend_events,
+                }
+            }),
+            correlation_id,
         )
         .map_err(error_string)
 }
 
 fn main() {
     tauri::Builder::default()
-        .manage(Arc::new(SupervisorManager::default()))
+        .manage(Arc::new(SupervisorManager::new()))
         .invoke_handler(tauri::generate_handler![
             bootstrap_shell,
             watch_live_sessions,
@@ -538,16 +742,23 @@ fn main() {
             list_work_items,
             get_work_item,
             list_documents,
-            get_document
+            get_document,
+            export_diagnostics_bundle
         ])
         .run(tauri::generate_context!())
         .expect("failed to run EURI client");
 }
 
-fn connect_worker(app: &AppHandle) -> Result<WorkerHandle> {
+fn connect_worker(app: &AppHandle, diagnostics: DiagnosticsState) -> Result<WorkerHandle> {
     let paths = AppPaths::discover()?;
     let endpoint = endpoint_name(paths.root.display().to_string().as_str());
     emit_connection(app, "reconnecting", Some("connecting to supervisor"))?;
+    diagnostics.record(
+        "connection.reconnecting",
+        None,
+        None,
+        json!({ "endpoint": endpoint }),
+    );
 
     let (stream, child) = connect_or_spawn(&endpoint)?;
     let writer_stream = stream
@@ -561,6 +772,7 @@ fn connect_worker(app: &AppHandle) -> Result<WorkerHandle> {
     ));
     let app_for_reader = app.clone();
     let pending_for_reader = Arc::clone(&pending);
+    let diagnostics_for_reader = diagnostics.clone();
 
     thread::spawn(move || {
         let mut reader = BufReader::new(reader_stream);
@@ -574,11 +786,26 @@ fn connect_worker(app: &AppHandle) -> Result<WorkerHandle> {
                         "disconnected",
                         Some("supervisor pipe closed"),
                     );
+                    diagnostics_for_reader.record(
+                        "connection.disconnected",
+                        None,
+                        None,
+                        json!({ "detail": "supervisor pipe closed" }),
+                    );
                     fail_pending_requests(&pending_for_reader, "supervisor connection closed");
                     break;
                 }
                 Ok(_) => match parse_incoming_message(line.trim_end()) {
                     Ok(IncomingMessage::Response(response)) => {
+                        diagnostics_for_reader.record(
+                            "rpc.message_response",
+                            None,
+                            Some(&response.request_id),
+                            json!({
+                                "ok": response.ok,
+                                "has_error": response.error.is_some(),
+                            }),
+                        );
                         if let Some(sender) = pending_for_reader
                             .lock()
                             .ok()
@@ -593,6 +820,14 @@ fn connect_worker(app: &AppHandle) -> Result<WorkerHandle> {
                         }
                     }
                     Ok(IncomingMessage::Event(event)) => {
+                        diagnostics_for_reader.record(
+                            "rpc.message_event",
+                            None,
+                            None,
+                            json!({
+                                "event": event.event,
+                            }),
+                        );
                         let _ = app_for_reader.emit(
                             "supervisor://event",
                             FrontendEvent {
@@ -602,6 +837,12 @@ fn connect_worker(app: &AppHandle) -> Result<WorkerHandle> {
                         );
                     }
                     Err(error) => {
+                        diagnostics_for_reader.record(
+                            "connection.disconnected",
+                            None,
+                            None,
+                            json!({ "detail": error.to_string() }),
+                        );
                         let _ = emit_connection(
                             &app_for_reader,
                             "disconnected",
@@ -612,6 +853,12 @@ fn connect_worker(app: &AppHandle) -> Result<WorkerHandle> {
                     }
                 },
                 Err(error) => {
+                    diagnostics_for_reader.record(
+                        "connection.disconnected",
+                        None,
+                        None,
+                        json!({ "detail": error.to_string() }),
+                    );
                     let _ = emit_connection(
                         &app_for_reader,
                         "disconnected",
@@ -662,6 +909,12 @@ fn connect_worker(app: &AppHandle) -> Result<WorkerHandle> {
     });
 
     emit_connection(app, "connected", Some("supervisor connected"))?;
+    diagnostics.record(
+        "connection.connected",
+        None,
+        None,
+        json!({ "endpoint": endpoint }),
+    );
     Ok(WorkerHandle {
         control_tx,
         next_request_id: AtomicU64::new(1),
@@ -812,4 +1065,11 @@ fn format_response_error(error: Option<IncomingErrorBody>) -> String {
 
 fn error_string(error: anyhow::Error) -> String {
     error.to_string()
+}
+
+fn unix_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time must be after unix epoch")
+        .as_millis() as u64
 }
