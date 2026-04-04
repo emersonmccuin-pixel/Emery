@@ -5,10 +5,13 @@ use anyhow::Result;
 use crate::bootstrap::AppPaths;
 use crate::models::{
     AccountDetail, AccountSummary, CreateAccountRequest, CreateProjectRequest,
-    CreateProjectRootRequest, CreateSessionRequest, ProjectDetail, ProjectRootSummary,
-    ProjectSummary, RemoveProjectRootRequest, SessionAttachResponse, SessionDetachResponse,
-    SessionDetail, SessionListFilter, SessionOutputEvent, SessionSummary, UpdateAccountRequest,
-    UpdateProjectRequest, UpdateProjectRootRequest,
+    CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
+    CreateWorktreeRequest, ProjectDetail, ProjectRootSummary, ProjectSummary,
+    RemoveProjectRootRequest, SessionAttachResponse, SessionDetachResponse, SessionDetail,
+    SessionListFilter, SessionOutputEvent, SessionSpecDetail, SessionSpecListFilter,
+    SessionSpecSummary, SessionSummary, UpdateAccountRequest, UpdateProjectRequest,
+    UpdateProjectRootRequest, UpdateSessionSpecRequest, UpdateWorktreeRequest, WorktreeDetail,
+    WorktreeListFilter, WorktreeSummary,
 };
 use crate::runtime::SessionRegistry;
 use crate::service::SupervisorService;
@@ -113,6 +116,47 @@ impl Supervisor {
 
     pub fn update_account(&self, request: UpdateAccountRequest) -> Result<AccountDetail> {
         self.service.update_account(request)
+    }
+
+    pub fn list_worktrees(&self, filter: WorktreeListFilter) -> Result<Vec<WorktreeSummary>> {
+        self.service.list_worktrees(filter)
+    }
+
+    pub fn get_worktree(&self, worktree_id: &str) -> Result<Option<WorktreeDetail>> {
+        self.service.get_worktree(worktree_id)
+    }
+
+    pub fn create_worktree(&self, request: CreateWorktreeRequest) -> Result<WorktreeDetail> {
+        self.service.create_worktree(request)
+    }
+
+    pub fn update_worktree(&self, request: UpdateWorktreeRequest) -> Result<WorktreeDetail> {
+        self.service.update_worktree(request)
+    }
+
+    pub fn list_session_specs(
+        &self,
+        filter: SessionSpecListFilter,
+    ) -> Result<Vec<SessionSpecSummary>> {
+        self.service.list_session_specs(filter)
+    }
+
+    pub fn get_session_spec(&self, session_spec_id: &str) -> Result<Option<SessionSpecDetail>> {
+        self.service.get_session_spec(session_spec_id)
+    }
+
+    pub fn create_session_spec(
+        &self,
+        request: CreateSessionSpecRequest,
+    ) -> Result<SessionSpecDetail> {
+        self.service.create_session_spec(request)
+    }
+
+    pub fn update_session_spec(
+        &self,
+        request: UpdateSessionSpecRequest,
+    ) -> Result<SessionSpecDetail> {
+        self.service.update_session_spec(request)
     }
 
     pub fn list_sessions(&self, filter: SessionListFilter) -> Result<Vec<SessionSummary>> {

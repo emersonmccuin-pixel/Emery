@@ -63,6 +63,61 @@ pub struct AccountDetail {
     pub summary: AccountSummary,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct WorktreeSummary {
+    pub id: String,
+    pub project_id: String,
+    pub project_root_id: String,
+    pub branch_name: String,
+    pub head_commit: Option<String>,
+    pub base_ref: Option<String>,
+    pub path: String,
+    pub status: String,
+    pub created_by_session_id: Option<String>,
+    pub last_used_at: Option<i64>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub closed_at: Option<i64>,
+    pub active_session_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorktreeDetail {
+    #[serde(flatten)]
+    pub summary: WorktreeSummary,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionSpecSummary {
+    pub id: String,
+    pub project_id: String,
+    pub project_root_id: Option<String>,
+    pub worktree_id: Option<String>,
+    pub work_item_id: Option<String>,
+    pub account_id: String,
+    pub agent_kind: String,
+    pub cwd: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub env_preset_ref: Option<String>,
+    pub origin_mode: String,
+    pub current_mode: String,
+    pub title: Option<String>,
+    pub title_policy: String,
+    pub restore_policy: String,
+    pub initial_terminal_cols: i64,
+    pub initial_terminal_rows: i64,
+    pub context_bundle_ref: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionSpecDetail {
+    #[serde(flatten)]
+    pub summary: SessionSpecSummary,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateProjectRequest {
     pub name: String,
@@ -130,6 +185,94 @@ pub struct UpdateAccountRequest {
     pub env_preset_ref: Option<String>,
     pub is_default: Option<bool>,
     pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct WorktreeListFilter {
+    pub project_id: Option<String>,
+    pub project_root_id: Option<String>,
+    pub status: Option<String>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateWorktreeRequest {
+    pub project_id: String,
+    pub project_root_id: String,
+    pub branch_name: String,
+    pub head_commit: Option<String>,
+    pub base_ref: Option<String>,
+    pub path: String,
+    pub status: Option<String>,
+    pub created_by_session_id: Option<String>,
+    pub last_used_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateWorktreeRequest {
+    pub worktree_id: String,
+    pub project_root_id: Option<String>,
+    pub branch_name: Option<String>,
+    pub head_commit: Option<String>,
+    pub base_ref: Option<String>,
+    pub path: Option<String>,
+    pub status: Option<String>,
+    pub created_by_session_id: Option<String>,
+    pub last_used_at: Option<i64>,
+    pub closed_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SessionSpecListFilter {
+    pub project_id: Option<String>,
+    pub account_id: Option<String>,
+    pub worktree_id: Option<String>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateSessionSpecRequest {
+    pub project_id: String,
+    pub project_root_id: Option<String>,
+    pub worktree_id: Option<String>,
+    pub work_item_id: Option<String>,
+    pub account_id: String,
+    pub agent_kind: String,
+    pub cwd: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    pub env_preset_ref: Option<String>,
+    pub origin_mode: String,
+    pub current_mode: Option<String>,
+    pub title: Option<String>,
+    pub title_policy: Option<String>,
+    pub restore_policy: Option<String>,
+    pub initial_terminal_cols: Option<i64>,
+    pub initial_terminal_rows: Option<i64>,
+    pub context_bundle_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateSessionSpecRequest {
+    pub session_spec_id: String,
+    pub project_root_id: Option<String>,
+    pub worktree_id: Option<String>,
+    pub work_item_id: Option<String>,
+    pub account_id: Option<String>,
+    pub agent_kind: Option<String>,
+    pub cwd: Option<String>,
+    pub command: Option<String>,
+    pub args: Option<Vec<String>>,
+    pub env_preset_ref: Option<String>,
+    pub origin_mode: Option<String>,
+    pub current_mode: Option<String>,
+    pub title: Option<String>,
+    pub title_policy: Option<String>,
+    pub restore_policy: Option<String>,
+    pub initial_terminal_cols: Option<i64>,
+    pub initial_terminal_rows: Option<i64>,
+    pub context_bundle_ref: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -205,6 +348,86 @@ pub struct AccountUpdateRecord {
     pub env_preset_ref: Option<String>,
     pub is_default: bool,
     pub status: String,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewWorktreeRecord {
+    pub id: String,
+    pub project_id: String,
+    pub project_root_id: String,
+    pub branch_name: String,
+    pub head_commit: Option<String>,
+    pub base_ref: Option<String>,
+    pub path: String,
+    pub status: String,
+    pub created_by_session_id: Option<String>,
+    pub last_used_at: Option<i64>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub closed_at: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorktreeUpdateRecord {
+    pub id: String,
+    pub project_root_id: String,
+    pub branch_name: String,
+    pub head_commit: Option<String>,
+    pub base_ref: Option<String>,
+    pub path: String,
+    pub status: String,
+    pub created_by_session_id: Option<String>,
+    pub last_used_at: Option<i64>,
+    pub updated_at: i64,
+    pub closed_at: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewSessionSpecRecord {
+    pub id: String,
+    pub project_id: String,
+    pub project_root_id: Option<String>,
+    pub worktree_id: Option<String>,
+    pub work_item_id: Option<String>,
+    pub account_id: String,
+    pub agent_kind: String,
+    pub cwd: String,
+    pub command: String,
+    pub args_json: String,
+    pub env_preset_ref: Option<String>,
+    pub origin_mode: String,
+    pub current_mode: String,
+    pub title: Option<String>,
+    pub title_policy: String,
+    pub restore_policy: String,
+    pub initial_terminal_cols: i64,
+    pub initial_terminal_rows: i64,
+    pub context_bundle_ref: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionSpecUpdateRecord {
+    pub id: String,
+    pub project_root_id: Option<String>,
+    pub worktree_id: Option<String>,
+    pub work_item_id: Option<String>,
+    pub account_id: String,
+    pub agent_kind: String,
+    pub cwd: String,
+    pub command: String,
+    pub args_json: String,
+    pub env_preset_ref: Option<String>,
+    pub origin_mode: String,
+    pub current_mode: String,
+    pub title: Option<String>,
+    pub title_policy: String,
+    pub restore_policy: String,
+    pub initial_terminal_cols: i64,
+    pub initial_terminal_rows: i64,
+    pub context_bundle_ref: Option<String>,
     pub updated_at: i64,
 }
 
@@ -351,13 +574,6 @@ pub struct NewSessionRecord {
     pub cwd: String,
     pub transcript_primary_artifact_id: Option<String>,
     pub raw_log_artifact_id: Option<String>,
-    pub command: String,
-    pub args_json: String,
-    pub env_preset_ref: Option<String>,
-    pub title_policy: String,
-    pub restore_policy: String,
-    pub initial_terminal_cols: i64,
-    pub initial_terminal_rows: i64,
     pub started_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,

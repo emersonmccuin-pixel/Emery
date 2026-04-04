@@ -1,15 +1,17 @@
 use std::path::Path;
 
 use anyhow::{Result, anyhow};
-use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
+use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter, types::Type};
 use serde::Serialize;
 
 use crate::bootstrap::AppPaths;
 use crate::models::{
     AccountDetail, AccountSummary, AccountUpdateRecord, NewAccountRecord, NewProjectRecord,
-    NewProjectRootRecord, NewSessionRecord, ProjectDetail, ProjectRootSummary,
-    ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord, SessionArtifactRecord,
-    SessionListFilter, SessionSummary,
+    NewProjectRootRecord, NewSessionRecord, NewSessionSpecRecord, NewWorktreeRecord, ProjectDetail,
+    ProjectRootSummary, ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord,
+    SessionArtifactRecord, SessionListFilter, SessionSpecDetail, SessionSpecListFilter,
+    SessionSpecSummary, SessionSpecUpdateRecord, SessionSummary, WorktreeDetail,
+    WorktreeListFilter, WorktreeSummary, WorktreeUpdateRecord,
 };
 use crate::schema::{migrate_app_db, migrate_knowledge_db};
 
@@ -548,6 +550,431 @@ impl DatabaseSet {
         )
     }
 
+    pub fn list_worktrees(&self, filter: &WorktreeListFilter) -> Result<Vec<WorktreeSummary>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let mut sql = String::from(
+            "SELECT
+                w.id,
+                w.project_id,
+                w.project_root_id,
+                w.branch_name,
+                w.head_commit,
+                w.base_ref,
+                w.path,
+                w.status,
+                w.created_by_session_id,
+                w.last_used_at,
+                w.created_at,
+                w.updated_at,
+                w.closed_at,
+                COUNT(DISTINCT s.id) AS active_session_count
+             FROM worktrees w
+             LEFT JOIN sessions s
+               ON s.worktree_id = w.id
+              AND s.status = 'active'
+              AND s.runtime_state IN ('starting', 'running', 'stopping')
+             WHERE 1 = 1",
+        );
+        let mut values = Vec::new();
+
+        if let Some(project_id) = filter.project_id.as_deref() {
+            sql.push_str(" AND w.project_id = ?");
+            values.push(project_id.to_string());
+        }
+
+        if let Some(project_root_id) = filter.project_root_id.as_deref() {
+            sql.push_str(" AND w.project_root_id = ?");
+            values.push(project_root_id.to_string());
+        }
+
+        if let Some(status) = filter.status.as_deref() {
+            sql.push_str(" AND w.status = ?");
+            values.push(status.to_string());
+        }
+
+        sql.push_str(
+            " GROUP BY
+                w.id,
+                w.project_id,
+                w.project_root_id,
+                w.branch_name,
+                w.head_commit,
+                w.base_ref,
+                w.path,
+                w.status,
+                w.created_by_session_id,
+                w.last_used_at,
+                w.created_at,
+                w.updated_at,
+                w.closed_at
+              ORDER BY w.updated_at DESC, w.created_at DESC",
+        );
+
+        if let Some(limit) = filter.limit {
+            sql.push_str(" LIMIT ?");
+            values.push((limit as i64).to_string());
+        }
+
+        let mut statement = connection.prepare(&sql)?;
+        let rows = statement.query_map(params_from_iter(values.iter()), map_worktree_summary)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn get_worktree(&self, worktree_id: &str) -> Result<Option<WorktreeDetail>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let mut statement = connection.prepare(
+            "SELECT
+                w.id,
+                w.project_id,
+                w.project_root_id,
+                w.branch_name,
+                w.head_commit,
+                w.base_ref,
+                w.path,
+                w.status,
+                w.created_by_session_id,
+                w.last_used_at,
+                w.created_at,
+                w.updated_at,
+                w.closed_at,
+                COUNT(DISTINCT s.id) AS active_session_count
+             FROM worktrees w
+             LEFT JOIN sessions s
+               ON s.worktree_id = w.id
+              AND s.status = 'active'
+              AND s.runtime_state IN ('starting', 'running', 'stopping')
+             WHERE w.id = ?1
+             GROUP BY
+                w.id,
+                w.project_id,
+                w.project_root_id,
+                w.branch_name,
+                w.head_commit,
+                w.base_ref,
+                w.path,
+                w.status,
+                w.created_by_session_id,
+                w.last_used_at,
+                w.created_at,
+                w.updated_at,
+                w.closed_at",
+        )?;
+
+        statement
+            .query_row([worktree_id], |row| {
+                Ok(WorktreeDetail {
+                    summary: map_worktree_summary(row)?,
+                })
+            })
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn worktree_path_exists(
+        &self,
+        path: &str,
+        exclude_worktree_id: Option<&str>,
+    ) -> Result<bool> {
+        let connection = open_connection(&self.paths.app_db)?;
+        match exclude_worktree_id {
+            Some(worktree_id) => exists(
+                &connection,
+                "SELECT 1 FROM worktrees WHERE path = ?1 AND id <> ?2",
+                params![path, worktree_id],
+            ),
+            None => exists(
+                &connection,
+                "SELECT 1 FROM worktrees WHERE path = ?1",
+                params![path],
+            ),
+        }
+    }
+
+    pub fn insert_worktree(&self, record: &NewWorktreeRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "INSERT INTO worktrees (
+                id,
+                project_id,
+                project_root_id,
+                branch_name,
+                head_commit,
+                base_ref,
+                path,
+                status,
+                created_by_session_id,
+                last_used_at,
+                created_at,
+                updated_at,
+                closed_at
+             ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13
+             )",
+            params![
+                record.id,
+                record.project_id,
+                record.project_root_id,
+                record.branch_name,
+                record.head_commit,
+                record.base_ref,
+                record.path,
+                record.status,
+                record.created_by_session_id,
+                record.last_used_at,
+                record.created_at,
+                record.updated_at,
+                record.closed_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_worktree(&self, record: &WorktreeUpdateRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let updated = connection.execute(
+            "UPDATE worktrees
+             SET project_root_id = ?2,
+                 branch_name = ?3,
+                 head_commit = ?4,
+                 base_ref = ?5,
+                 path = ?6,
+                 status = ?7,
+                 created_by_session_id = ?8,
+                 last_used_at = ?9,
+                 updated_at = ?10,
+                 closed_at = ?11
+             WHERE id = ?1",
+            params![
+                record.id,
+                record.project_root_id,
+                record.branch_name,
+                record.head_commit,
+                record.base_ref,
+                record.path,
+                record.status,
+                record.created_by_session_id,
+                record.last_used_at,
+                record.updated_at,
+                record.closed_at,
+            ],
+        )?;
+
+        if updated == 0 {
+            return Err(anyhow!("worktree {} was not found", record.id));
+        }
+
+        Ok(())
+    }
+
+    pub fn list_session_specs(
+        &self,
+        filter: &SessionSpecListFilter,
+    ) -> Result<Vec<SessionSpecSummary>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let mut sql = String::from(
+            "SELECT
+                id,
+                project_id,
+                project_root_id,
+                worktree_id,
+                work_item_id,
+                account_id,
+                agent_kind,
+                cwd,
+                command,
+                args_json,
+                env_preset_ref,
+                origin_mode,
+                current_mode,
+                title,
+                title_policy,
+                restore_policy,
+                initial_terminal_cols,
+                initial_terminal_rows,
+                context_bundle_artifact_id,
+                created_at,
+                updated_at
+             FROM session_specs
+             WHERE 1 = 1",
+        );
+        let mut values = Vec::new();
+
+        if let Some(project_id) = filter.project_id.as_deref() {
+            sql.push_str(" AND project_id = ?");
+            values.push(project_id.to_string());
+        }
+
+        if let Some(account_id) = filter.account_id.as_deref() {
+            sql.push_str(" AND account_id = ?");
+            values.push(account_id.to_string());
+        }
+
+        if let Some(worktree_id) = filter.worktree_id.as_deref() {
+            sql.push_str(" AND worktree_id = ?");
+            values.push(worktree_id.to_string());
+        }
+
+        sql.push_str(" ORDER BY updated_at DESC, created_at DESC");
+        if let Some(limit) = filter.limit {
+            sql.push_str(" LIMIT ?");
+            values.push((limit as i64).to_string());
+        }
+
+        let mut statement = connection.prepare(&sql)?;
+        let rows =
+            statement.query_map(params_from_iter(values.iter()), map_session_spec_summary)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn get_session_spec(&self, session_spec_id: &str) -> Result<Option<SessionSpecDetail>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection
+            .query_row(
+                "SELECT
+                    id,
+                    project_id,
+                    project_root_id,
+                    worktree_id,
+                    work_item_id,
+                    account_id,
+                    agent_kind,
+                    cwd,
+                    command,
+                    args_json,
+                    env_preset_ref,
+                    origin_mode,
+                    current_mode,
+                    title,
+                    title_policy,
+                    restore_policy,
+                    initial_terminal_cols,
+                    initial_terminal_rows,
+                    context_bundle_artifact_id,
+                    created_at,
+                    updated_at
+                 FROM session_specs
+                 WHERE id = ?1",
+                [session_spec_id],
+                |row| {
+                    Ok(SessionSpecDetail {
+                        summary: map_session_spec_summary(row)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn insert_session_spec(&self, record: &NewSessionSpecRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "INSERT INTO session_specs (
+                id,
+                project_id,
+                project_root_id,
+                worktree_id,
+                work_item_id,
+                account_id,
+                agent_kind,
+                cwd,
+                command,
+                args_json,
+                env_preset_ref,
+                origin_mode,
+                current_mode,
+                title,
+                title_policy,
+                restore_policy,
+                initial_terminal_cols,
+                initial_terminal_rows,
+                context_bundle_artifact_id,
+                created_at,
+                updated_at
+             ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21
+             )",
+            params![
+                record.id,
+                record.project_id,
+                record.project_root_id,
+                record.worktree_id,
+                record.work_item_id,
+                record.account_id,
+                record.agent_kind,
+                record.cwd,
+                record.command,
+                record.args_json,
+                record.env_preset_ref,
+                record.origin_mode,
+                record.current_mode,
+                record.title,
+                record.title_policy,
+                record.restore_policy,
+                record.initial_terminal_cols,
+                record.initial_terminal_rows,
+                record.context_bundle_ref,
+                record.created_at,
+                record.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_session_spec(&self, record: &SessionSpecUpdateRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let updated = connection.execute(
+            "UPDATE session_specs
+             SET project_root_id = ?2,
+                 worktree_id = ?3,
+                 work_item_id = ?4,
+                 account_id = ?5,
+                 agent_kind = ?6,
+                 cwd = ?7,
+                 command = ?8,
+                 args_json = ?9,
+                 env_preset_ref = ?10,
+                 origin_mode = ?11,
+                 current_mode = ?12,
+                 title = ?13,
+                 title_policy = ?14,
+                 restore_policy = ?15,
+                 initial_terminal_cols = ?16,
+                 initial_terminal_rows = ?17,
+                 context_bundle_artifact_id = ?18,
+                 updated_at = ?19
+             WHERE id = ?1",
+            params![
+                record.id,
+                record.project_root_id,
+                record.worktree_id,
+                record.work_item_id,
+                record.account_id,
+                record.agent_kind,
+                record.cwd,
+                record.command,
+                record.args_json,
+                record.env_preset_ref,
+                record.origin_mode,
+                record.current_mode,
+                record.title,
+                record.title_policy,
+                record.restore_policy,
+                record.initial_terminal_cols,
+                record.initial_terminal_rows,
+                record.context_bundle_ref,
+                record.updated_at,
+            ],
+        )?;
+
+        if updated == 0 {
+            return Err(anyhow!("session spec {} was not found", record.id));
+        }
+
+        Ok(())
+    }
+
     pub fn list_sessions(&self, filter: &SessionListFilter) -> Result<Vec<SessionSummary>> {
         let connection = open_connection(&self.paths.app_db)?;
         let mut sql = String::from(
@@ -668,6 +1095,7 @@ impl DatabaseSet {
 
     pub fn insert_session(
         &self,
+        spec_record: &NewSessionSpecRecord,
         record: &NewSessionRecord,
         artifacts: &[SessionArtifactRecord],
     ) -> Result<()> {
@@ -688,6 +1116,8 @@ impl DatabaseSet {
                 args_json,
                 env_preset_ref,
                 origin_mode,
+                current_mode,
+                title,
                 title_policy,
                 restore_policy,
                 initial_terminal_cols,
@@ -696,27 +1126,30 @@ impl DatabaseSet {
                 created_at,
                 updated_at
              ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, NULL, ?17, ?18
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21
              )",
             params![
-                record.session_spec_id,
-                record.project_id,
-                record.project_root_id,
-                record.worktree_id,
-                record.work_item_id,
-                record.account_id,
-                record.agent_kind,
-                record.cwd,
-                record.command,
-                record.args_json,
-                record.env_preset_ref,
-                record.origin_mode,
-                record.title_policy,
-                record.restore_policy,
-                record.initial_terminal_cols,
-                record.initial_terminal_rows,
-                record.created_at,
-                record.updated_at,
+                spec_record.id,
+                spec_record.project_id,
+                spec_record.project_root_id,
+                spec_record.worktree_id,
+                spec_record.work_item_id,
+                spec_record.account_id,
+                spec_record.agent_kind,
+                spec_record.cwd,
+                spec_record.command,
+                spec_record.args_json,
+                spec_record.env_preset_ref,
+                spec_record.origin_mode,
+                spec_record.current_mode,
+                spec_record.title,
+                spec_record.title_policy,
+                spec_record.restore_policy,
+                spec_record.initial_terminal_cols,
+                spec_record.initial_terminal_rows,
+                spec_record.context_bundle_ref,
+                spec_record.created_at,
+                spec_record.updated_at,
             ],
         )?;
 
@@ -913,6 +1346,44 @@ impl DatabaseSet {
         )
     }
 
+    pub fn session_exists(&self, session_id: &str) -> Result<bool> {
+        let connection = open_connection(&self.paths.app_db)?;
+        exists(
+            &connection,
+            "SELECT 1 FROM sessions WHERE id = ?1",
+            [session_id],
+        )
+    }
+
+    pub fn has_active_session_for_worktree(
+        &self,
+        worktree_id: &str,
+        exclude_session_id: Option<&str>,
+    ) -> Result<bool> {
+        let connection = open_connection(&self.paths.app_db)?;
+        match exclude_session_id {
+            Some(session_id) => exists(
+                &connection,
+                "SELECT 1
+                 FROM sessions
+                 WHERE worktree_id = ?1
+                   AND id <> ?2
+                   AND status = 'active'
+                   AND runtime_state IN ('starting', 'running', 'stopping')",
+                params![worktree_id, session_id],
+            ),
+            None => exists(
+                &connection,
+                "SELECT 1
+                 FROM sessions
+                 WHERE worktree_id = ?1
+                   AND status = 'active'
+                   AND runtime_state IN ('starting', 'running', 'stopping')",
+                params![worktree_id],
+            ),
+        }
+    }
+
     pub fn ensure_project_root_belongs_to_project(
         &self,
         project_root_id: &str,
@@ -952,6 +1423,27 @@ impl DatabaseSet {
             "worktree {} does not belong to project {}",
             worktree_id,
             project_id
+        ))
+    }
+
+    pub fn ensure_worktree_belongs_to_project_root(
+        &self,
+        worktree_id: &str,
+        project_root_id: &str,
+    ) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        if exists(
+            &connection,
+            "SELECT 1 FROM worktrees WHERE id = ?1 AND project_root_id = ?2",
+            params![worktree_id, project_root_id],
+        )? {
+            return Ok(());
+        }
+
+        Err(anyhow!(
+            "worktree {} does not belong to project root {}",
+            worktree_id,
+            project_root_id
         ))
     }
 }
@@ -1055,6 +1547,51 @@ fn map_account_summary(row: &Row<'_>) -> rusqlite::Result<AccountSummary> {
     })
 }
 
+fn map_worktree_summary(row: &Row<'_>) -> rusqlite::Result<WorktreeSummary> {
+    Ok(WorktreeSummary {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        project_root_id: row.get(2)?,
+        branch_name: row.get(3)?,
+        head_commit: row.get(4)?,
+        base_ref: row.get(5)?,
+        path: row.get(6)?,
+        status: row.get(7)?,
+        created_by_session_id: row.get(8)?,
+        last_used_at: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
+        closed_at: row.get(12)?,
+        active_session_count: row.get(13)?,
+    })
+}
+
+fn map_session_spec_summary(row: &Row<'_>) -> rusqlite::Result<SessionSpecSummary> {
+    Ok(SessionSpecSummary {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        project_root_id: row.get(2)?,
+        worktree_id: row.get(3)?,
+        work_item_id: row.get(4)?,
+        account_id: row.get(5)?,
+        agent_kind: row.get(6)?,
+        cwd: row.get(7)?,
+        command: row.get(8)?,
+        args: parse_args_json(row.get_ref(9)?.as_str()?)?,
+        env_preset_ref: row.get(10)?,
+        origin_mode: row.get(11)?,
+        current_mode: row.get(12)?,
+        title: row.get(13)?,
+        title_policy: row.get(14)?,
+        restore_policy: row.get(15)?,
+        initial_terminal_cols: row.get(16)?,
+        initial_terminal_rows: row.get(17)?,
+        context_bundle_ref: row.get(18)?,
+        created_at: row.get(19)?,
+        updated_at: row.get(20)?,
+    })
+}
+
 fn map_session_summary(row: &Row<'_>) -> rusqlite::Result<SessionSummary> {
     Ok(SessionSummary {
         id: row.get(0)?,
@@ -1084,4 +1621,9 @@ fn map_session_summary(row: &Row<'_>) -> rusqlite::Result<SessionSummary> {
         archived_at: row.get(24)?,
         live: false,
     })
+}
+
+fn parse_args_json(value: &str) -> rusqlite::Result<Vec<String>> {
+    serde_json::from_str(value)
+        .map_err(|error| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(error)))
 }

@@ -5,8 +5,8 @@ mod server;
 pub use protocol::{
     ErrorBody, EventEnvelope, HelloResult, Method, ProjectGetParams, RequestEnvelope,
     ResponseEnvelope, SessionAttachParams, SessionControlParams, SessionDetachParams,
-    SessionGetParams, SessionInputParams, SessionResizeParams, SubscriptionCloseParams,
-    SubscriptionOpenParams,
+    SessionGetParams, SessionInputParams, SessionResizeParams, SessionSpecGetParams,
+    SubscriptionCloseParams, SubscriptionOpenParams, WorktreeGetParams,
 };
 pub use rpc::SupervisorRpc;
 pub use server::LocalIpcServer;

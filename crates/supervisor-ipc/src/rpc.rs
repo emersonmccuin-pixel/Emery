@@ -6,15 +6,17 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use supervisor_core::{
     CreateAccountRequest, CreateProjectRequest, CreateProjectRootRequest, CreateSessionRequest,
-    RemoveProjectRootRequest, SessionListFilter, Supervisor, UpdateAccountRequest,
-    UpdateProjectRequest, UpdateProjectRootRequest,
+    CreateSessionSpecRequest, CreateWorktreeRequest, RemoveProjectRootRequest, SessionListFilter,
+    SessionSpecListFilter, Supervisor, UpdateAccountRequest, UpdateProjectRequest,
+    UpdateProjectRootRequest, UpdateSessionSpecRequest, UpdateWorktreeRequest, WorktreeListFilter,
 };
 
 use crate::protocol::{
     AccountGetParams, ErrorBody, EventEnvelope, HelloResult, Method, ProjectGetParams,
     ProjectRootListParams, RequestEnvelope, ResponseEnvelope, SessionAttachParams,
     SessionControlParams, SessionDetachParams, SessionGetParams, SessionInputParams,
-    SessionResizeParams, SubscriptionCloseParams, SubscriptionOpenParams,
+    SessionResizeParams, SessionSpecGetParams, SubscriptionCloseParams, SubscriptionOpenParams,
+    WorktreeGetParams,
 };
 
 const PROTOCOL_VERSION: &str = "1";
@@ -198,6 +200,62 @@ impl SupervisorRpc {
                     self.supervisor.update_account(request)?,
                 )?)
             }
+            Method::WorktreeList => {
+                let filter: WorktreeListFilter = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.list_worktrees(filter)?,
+                )?)
+            }
+            Method::WorktreeGet => {
+                let params: WorktreeGetParams = serde_json::from_value(params)?;
+                let worktree = self
+                    .supervisor
+                    .get_worktree(&params.worktree_id)?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("worktree {} was not found", params.worktree_id)
+                    })?;
+                Ok(serde_json::to_value(worktree)?)
+            }
+            Method::WorktreeCreate => {
+                let request: CreateWorktreeRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.create_worktree(request)?,
+                )?)
+            }
+            Method::WorktreeUpdate => {
+                let request: UpdateWorktreeRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.update_worktree(request)?,
+                )?)
+            }
+            Method::SessionSpecList => {
+                let filter: SessionSpecListFilter = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.list_session_specs(filter)?,
+                )?)
+            }
+            Method::SessionSpecGet => {
+                let params: SessionSpecGetParams = serde_json::from_value(params)?;
+                let spec = self
+                    .supervisor
+                    .get_session_spec(&params.session_spec_id)?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("session spec {} was not found", params.session_spec_id)
+                    })?;
+                Ok(serde_json::to_value(spec)?)
+            }
+            Method::SessionSpecCreate => {
+                let request: CreateSessionSpecRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.create_session_spec(request)?,
+                )?)
+            }
+            Method::SessionSpecUpdate => {
+                let request: UpdateSessionSpecRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.update_session_spec(request)?,
+                )?)
+            }
             Method::SessionList => {
                 let filter: SessionListFilter = serde_json::from_value(params)?;
                 Ok(serde_json::to_value(
@@ -368,6 +426,14 @@ impl SupervisorRpc {
                 Method::AccountGet.as_str(),
                 Method::AccountCreate.as_str(),
                 Method::AccountUpdate.as_str(),
+                Method::WorktreeList.as_str(),
+                Method::WorktreeGet.as_str(),
+                Method::WorktreeCreate.as_str(),
+                Method::WorktreeUpdate.as_str(),
+                Method::SessionSpecList.as_str(),
+                Method::SessionSpecGet.as_str(),
+                Method::SessionSpecCreate.as_str(),
+                Method::SessionSpecUpdate.as_str(),
                 Method::SessionList.as_str(),
                 Method::SessionGet.as_str(),
                 Method::SessionCreate.as_str(),
@@ -422,6 +488,10 @@ fn classify_error(error: anyhow::Error) -> ErrorBody {
             "account_not_found"
         } else if message.contains("project root ") {
             "project_root_not_found"
+        } else if message.contains("worktree ") {
+            "worktree_not_found"
+        } else if message.contains("session spec ") {
+            "session_spec_not_found"
         } else if message.contains("session ") {
             "session_not_found"
         } else if message.contains("attachment ") {
@@ -438,11 +508,15 @@ fn classify_error(error: anyhow::Error) -> ErrorBody {
     } else if message.contains("must not be empty")
         || message.contains("must be an absolute path")
         || message.contains("must be one of:")
+        || message.contains("must be greater than zero")
         || message.contains("already has a root at")
+        || message.contains("worktree path")
+        || message.contains("already has an active live session")
         || message.contains("project slug")
     {
         "invalid_request"
     } else if message.contains("does not belong to project")
+        || message.contains("does not belong to project root")
         || message.contains("require session_id")
     {
         "invalid_request"

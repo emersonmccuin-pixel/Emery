@@ -7,12 +7,16 @@ use uuid::Uuid;
 
 use crate::models::{
     AccountDetail, AccountSummary, AccountUpdateRecord, CreateAccountRequest, CreateProjectRequest,
-    CreateProjectRootRequest, CreateSessionRequest, NewAccountRecord, NewProjectRecord,
-    NewProjectRootRecord, NewSessionRecord, ProjectDetail, ProjectRootSummary,
+    CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
+    CreateWorktreeRequest, NewAccountRecord, NewProjectRecord, NewProjectRootRecord,
+    NewSessionRecord, NewSessionSpecRecord, NewWorktreeRecord, ProjectDetail, ProjectRootSummary,
     ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord, RemoveProjectRootRequest,
     SessionArtifactRecord, SessionAttachResponse, SessionDetachResponse, SessionDetail,
-    SessionListFilter, SessionOutputEvent, SessionSummary, UpdateAccountRequest,
-    UpdateProjectRequest, UpdateProjectRootRequest,
+    SessionListFilter, SessionOutputEvent, SessionSpecDetail, SessionSpecListFilter,
+    SessionSpecSummary, SessionSpecUpdateRecord, SessionSummary, UpdateAccountRequest,
+    UpdateProjectRequest, UpdateProjectRootRequest, UpdateSessionSpecRequest,
+    UpdateWorktreeRequest, WorktreeDetail, WorktreeListFilter, WorktreeSummary,
+    WorktreeUpdateRecord,
 };
 use crate::runtime::{SessionLaunchRequest, SessionRegistry, SessionRuntimeRegistration};
 use crate::store::DatabaseSet;
@@ -330,6 +334,196 @@ impl SupervisorService {
             .ok_or_else(|| anyhow!("account {} was not found", existing.summary.id))
     }
 
+    pub fn list_worktrees(&self, filter: WorktreeListFilter) -> Result<Vec<WorktreeSummary>> {
+        if let Some(project_id) = filter.project_id.as_deref() {
+            self.ensure_project_exists(project_id)?;
+        }
+
+        if let Some(project_root_id) = filter.project_root_id.as_deref() {
+            self.ensure_project_root_exists(project_root_id)?;
+        }
+
+        self.databases.list_worktrees(&filter)
+    }
+
+    pub fn get_worktree(&self, worktree_id: &str) -> Result<Option<WorktreeDetail>> {
+        self.databases.get_worktree(worktree_id)
+    }
+
+    pub fn create_worktree(&self, request: CreateWorktreeRequest) -> Result<WorktreeDetail> {
+        self.ensure_project_exists(&request.project_id)?;
+        self.databases.ensure_project_root_belongs_to_project(
+            &request.project_root_id,
+            &request.project_id,
+        )?;
+
+        let branch_name = required_trimmed("worktree branch name", &request.branch_name)?;
+        let path = absolute_path_string("worktree path", &request.path)?;
+        if self.databases.worktree_path_exists(&path, None)? {
+            return Err(anyhow!("worktree path {} is already in use", path));
+        }
+
+        let created_by_session_id = optional_trimmed(request.created_by_session_id);
+        if let Some(session_id) = created_by_session_id.as_deref() {
+            self.ensure_session_exists(session_id)?;
+        }
+
+        let status = validate_worktree_status(request.status.as_deref().unwrap_or("active"))?;
+        let closed_at = closed_at_for_worktree_status(status.as_str(), None, unix_time_seconds());
+        let now = unix_time_seconds();
+        let worktree_id = format!("wt_{}", Uuid::new_v4().simple());
+
+        let record = NewWorktreeRecord {
+            id: worktree_id.clone(),
+            project_id: request.project_id,
+            project_root_id: request.project_root_id,
+            branch_name,
+            head_commit: optional_trimmed(request.head_commit),
+            base_ref: optional_trimmed(request.base_ref),
+            path,
+            status,
+            created_by_session_id,
+            last_used_at: request.last_used_at,
+            created_at: now,
+            updated_at: now,
+            closed_at,
+        };
+
+        self.databases.insert_worktree(&record)?;
+        self.get_worktree(&worktree_id)?
+            .ok_or_else(|| anyhow!("worktree {} was not found", worktree_id))
+    }
+
+    pub fn update_worktree(&self, request: UpdateWorktreeRequest) -> Result<WorktreeDetail> {
+        let existing = self
+            .databases
+            .get_worktree(&request.worktree_id)?
+            .ok_or_else(|| anyhow!("worktree {} was not found", request.worktree_id))?;
+
+        let project_root_id = request
+            .project_root_id
+            .as_deref()
+            .map(str::to_string)
+            .unwrap_or_else(|| existing.summary.project_root_id.clone());
+        self.databases.ensure_project_root_belongs_to_project(
+            &project_root_id,
+            &existing.summary.project_id,
+        )?;
+
+        let branch_name = match request.branch_name.as_deref() {
+            Some(branch_name) => required_trimmed("worktree branch name", branch_name)?,
+            None => existing.summary.branch_name.clone(),
+        };
+        let path = match request.path.as_deref() {
+            Some(path) => absolute_path_string("worktree path", path)?,
+            None => existing.summary.path.clone(),
+        };
+
+        if self
+            .databases
+            .worktree_path_exists(&path, Some(&existing.summary.id))?
+        {
+            return Err(anyhow!("worktree path {} is already in use", path));
+        }
+
+        let created_by_session_id = match request.created_by_session_id {
+            Some(session_id) => {
+                let normalized = optional_trimmed(Some(session_id));
+                if let Some(session_id) = normalized.as_deref() {
+                    self.ensure_session_exists(session_id)?;
+                }
+                normalized
+            }
+            None => existing.summary.created_by_session_id.clone(),
+        };
+
+        let status = match request.status.as_deref() {
+            Some(status) => validate_worktree_status(status)?,
+            None => existing.summary.status.clone(),
+        };
+        let now = unix_time_seconds();
+        let closed_at = closed_at_for_worktree_status(
+            status.as_str(),
+            request.closed_at.or(existing.summary.closed_at),
+            now,
+        );
+
+        let record = WorktreeUpdateRecord {
+            id: existing.summary.id.clone(),
+            project_root_id,
+            branch_name,
+            head_commit: match request.head_commit {
+                Some(head_commit) => optional_trimmed(Some(head_commit)),
+                None => existing.summary.head_commit.clone(),
+            },
+            base_ref: match request.base_ref {
+                Some(base_ref) => optional_trimmed(Some(base_ref)),
+                None => existing.summary.base_ref.clone(),
+            },
+            path,
+            status,
+            created_by_session_id,
+            last_used_at: request.last_used_at.or(existing.summary.last_used_at),
+            updated_at: now,
+            closed_at,
+        };
+
+        self.databases.update_worktree(&record)?;
+        self.get_worktree(&existing.summary.id)?
+            .ok_or_else(|| anyhow!("worktree {} was not found", existing.summary.id))
+    }
+
+    pub fn list_session_specs(
+        &self,
+        filter: SessionSpecListFilter,
+    ) -> Result<Vec<SessionSpecSummary>> {
+        if let Some(project_id) = filter.project_id.as_deref() {
+            self.ensure_project_exists(project_id)?;
+        }
+
+        if let Some(account_id) = filter.account_id.as_deref() {
+            self.ensure_account_exists(account_id)?;
+        }
+
+        if let Some(worktree_id) = filter.worktree_id.as_deref() {
+            self.ensure_worktree_exists(worktree_id)?;
+        }
+
+        self.databases.list_session_specs(&filter)
+    }
+
+    pub fn get_session_spec(&self, session_spec_id: &str) -> Result<Option<SessionSpecDetail>> {
+        self.databases.get_session_spec(session_spec_id)
+    }
+
+    pub fn create_session_spec(
+        &self,
+        request: CreateSessionSpecRequest,
+    ) -> Result<SessionSpecDetail> {
+        let now = unix_time_seconds();
+        let spec = self.build_session_spec_record(None, request.into(), now)?;
+        let session_spec_id = spec.id.clone();
+        self.databases.insert_session_spec(&spec)?;
+        self.get_session_spec(&session_spec_id)?
+            .ok_or_else(|| anyhow!("session spec {} was not found", session_spec_id))
+    }
+
+    pub fn update_session_spec(
+        &self,
+        request: UpdateSessionSpecRequest,
+    ) -> Result<SessionSpecDetail> {
+        let existing = self
+            .databases
+            .get_session_spec(&request.session_spec_id)?
+            .ok_or_else(|| anyhow!("session spec {} was not found", request.session_spec_id))?;
+        let now = unix_time_seconds();
+        let record = self.build_session_spec_update_record(existing.summary, request, now)?;
+        let session_spec_id = record.id.clone();
+        self.databases.update_session_spec(&record)?;
+        self.get_session_spec(&session_spec_id)?
+            .ok_or_else(|| anyhow!("session spec {} was not found", session_spec_id))
+    }
+
     pub fn list_sessions(&self, filter: SessionListFilter) -> Result<Vec<SessionSummary>> {
         let sessions = self.databases.list_sessions(&filter)?;
         self.with_runtime_flags(sessions)
@@ -345,13 +539,22 @@ impl SupervisorService {
     }
 
     pub fn create_session(&self, request: CreateSessionRequest) -> Result<SessionDetail> {
-        self.validate_create_request(&request)?;
-
         let now = unix_time_seconds();
         let session_id = format!("ses_{}", Uuid::new_v4().simple());
-        let session_spec_id = format!("spec_{}", Uuid::new_v4().simple());
+        let spec_record = self.build_session_spec_record(None, request.into(), now)?;
+        if let Some(worktree_id) = spec_record.worktree_id.as_deref() {
+            if self
+                .databases
+                .has_active_session_for_worktree(worktree_id, None)?
+            {
+                return Err(anyhow!(
+                    "worktree {} already has an active live session",
+                    worktree_id
+                ));
+            }
+        }
         let pty_owner_key = format!("pty_{}", Uuid::new_v4().simple());
-        let title_source = if request.title.is_some() {
+        let title_source = if spec_record.title.is_some() {
             "manual"
         } else {
             "auto"
@@ -369,41 +572,32 @@ impl SupervisorService {
 
         let record = NewSessionRecord {
             id: session_id.clone(),
-            session_spec_id,
-            project_id: request.project_id,
-            project_root_id: request.project_root_id,
-            worktree_id: request.worktree_id,
-            work_item_id: request.work_item_id,
-            account_id: request.account_id,
-            agent_kind: request.agent_kind,
-            origin_mode: request.origin_mode.clone(),
-            current_mode: request.current_mode.unwrap_or(request.origin_mode),
-            title: request.title,
+            session_spec_id: spec_record.id.clone(),
+            project_id: spec_record.project_id.clone(),
+            project_root_id: spec_record.project_root_id.clone(),
+            worktree_id: spec_record.worktree_id.clone(),
+            work_item_id: spec_record.work_item_id.clone(),
+            account_id: spec_record.account_id.clone(),
+            agent_kind: spec_record.agent_kind.clone(),
+            origin_mode: spec_record.origin_mode.clone(),
+            current_mode: spec_record.current_mode.clone(),
+            title: spec_record.title.clone(),
             title_source: title_source.to_string(),
             runtime_state: "starting".to_string(),
             status: "active".to_string(),
             activity_state: "idle".to_string(),
             pty_owner_key: pty_owner_key.clone(),
-            cwd: request.cwd,
+            cwd: spec_record.cwd.clone(),
             transcript_primary_artifact_id: None,
             raw_log_artifact_id: Some(artifact_bootstrap.raw_log_artifact_id.clone()),
-            command: request.command,
-            args_json: serde_json::to_string(&request.args)?,
-            env_preset_ref: request.env_preset_ref,
-            title_policy: request.title_policy.unwrap_or_else(|| "auto".to_string()),
-            restore_policy: request
-                .restore_policy
-                .unwrap_or_else(|| "reattach".to_string()),
-            initial_terminal_cols: request.initial_terminal_cols.unwrap_or(120),
-            initial_terminal_rows: request.initial_terminal_rows.unwrap_or(40),
             started_at: None,
             created_at: now,
             updated_at: now,
         };
 
-        let insert_result = self
-            .databases
-            .insert_session(&record, &artifact_bootstrap.artifacts);
+        let insert_result =
+            self.databases
+                .insert_session(&spec_record, &record, &artifact_bootstrap.artifacts);
         if let Err(error) = insert_result {
             let _ = self.registry.remove_session(&session_id);
             return Err(error);
@@ -411,11 +605,11 @@ impl SupervisorService {
 
         let launch = SessionLaunchRequest {
             session_id: session_id.clone(),
-            command: record.command.clone(),
-            args: request.args,
+            command: spec_record.command.clone(),
+            args: serde_json::from_str(&spec_record.args_json)?,
             cwd: PathBuf::from(&record.cwd),
-            initial_terminal_cols: record.initial_terminal_cols,
-            initial_terminal_rows: record.initial_terminal_rows,
+            initial_terminal_cols: spec_record.initial_terminal_cols,
+            initial_terminal_rows: spec_record.initial_terminal_rows,
         };
 
         if let Err(error) = self.registry.launch_session(self.databases.clone(), launch) {
@@ -507,21 +701,173 @@ impl SupervisorService {
             .unsubscribe_output(session_id, subscription_id)
     }
 
-    fn validate_create_request(&self, request: &CreateSessionRequest) -> Result<()> {
-        self.ensure_project_exists(&request.project_id)?;
-        self.ensure_account_exists(&request.account_id)?;
+    fn build_session_spec_record(
+        &self,
+        existing_id: Option<String>,
+        draft: SessionSpecDraft,
+        now: i64,
+    ) -> Result<NewSessionSpecRecord> {
+        self.ensure_project_exists(&draft.project_id)?;
+        self.ensure_account_exists(&draft.account_id)?;
 
-        if let Some(project_root_id) = request.project_root_id.as_deref() {
-            self.databases
-                .ensure_project_root_belongs_to_project(project_root_id, &request.project_id)?;
+        let env_preset_ref = optional_trimmed(draft.env_preset_ref);
+        if let Some(env_preset_id) = env_preset_ref.as_deref() {
+            self.ensure_env_preset_exists(env_preset_id)?;
         }
 
-        if let Some(worktree_id) = request.worktree_id.as_deref() {
-            self.databases
-                .ensure_worktree_belongs_to_project(worktree_id, &request.project_id)?;
+        let agent_kind = validate_agent_kind(&draft.agent_kind)?;
+        let cwd = absolute_path_string("session cwd", &draft.cwd)?;
+        let command = required_trimmed("session command", &draft.command)?;
+        let origin_mode = validate_session_mode(&draft.origin_mode)?;
+        let current_mode = match draft.current_mode.as_deref() {
+            Some(mode) => validate_session_mode(mode)?,
+            None => origin_mode.clone(),
+        };
+        let title_policy = validate_title_policy(draft.title_policy.as_deref().unwrap_or("auto"))?;
+        let restore_policy =
+            validate_restore_policy(draft.restore_policy.as_deref().unwrap_or("reattach"))?;
+        let initial_terminal_cols = validate_terminal_dimension(
+            "initial terminal cols",
+            draft.initial_terminal_cols.unwrap_or(120),
+        )?;
+        let initial_terminal_rows = validate_terminal_dimension(
+            "initial terminal rows",
+            draft.initial_terminal_rows.unwrap_or(40),
+        )?;
+        let (project_root_id, worktree_id) = self.resolve_session_workspace_refs(
+            &draft.project_id,
+            draft.project_root_id,
+            draft.worktree_id,
+        )?;
+
+        Ok(NewSessionSpecRecord {
+            id: existing_id.unwrap_or_else(|| format!("spec_{}", Uuid::new_v4().simple())),
+            project_id: draft.project_id,
+            project_root_id,
+            worktree_id,
+            work_item_id: optional_trimmed(draft.work_item_id),
+            account_id: draft.account_id,
+            agent_kind,
+            cwd,
+            command,
+            args_json: serde_json::to_string(&draft.args)?,
+            env_preset_ref,
+            origin_mode,
+            current_mode,
+            title: optional_trimmed(draft.title),
+            title_policy,
+            restore_policy,
+            initial_terminal_cols,
+            initial_terminal_rows,
+            context_bundle_ref: optional_trimmed(draft.context_bundle_ref),
+            created_at: now,
+            updated_at: now,
+        })
+    }
+
+    fn build_session_spec_update_record(
+        &self,
+        existing: SessionSpecSummary,
+        request: UpdateSessionSpecRequest,
+        now: i64,
+    ) -> Result<SessionSpecUpdateRecord> {
+        let draft = SessionSpecDraft {
+            project_id: existing.project_id.clone(),
+            project_root_id: request.project_root_id.or(existing.project_root_id),
+            worktree_id: request.worktree_id.or(existing.worktree_id),
+            work_item_id: request.work_item_id.or(existing.work_item_id),
+            account_id: request.account_id.unwrap_or(existing.account_id),
+            agent_kind: request.agent_kind.unwrap_or(existing.agent_kind),
+            cwd: request.cwd.unwrap_or(existing.cwd),
+            command: request.command.unwrap_or(existing.command),
+            args: request.args.unwrap_or(existing.args),
+            env_preset_ref: request.env_preset_ref.or(existing.env_preset_ref),
+            origin_mode: request.origin_mode.unwrap_or(existing.origin_mode),
+            current_mode: request.current_mode.or(Some(existing.current_mode)),
+            title: request.title.or(existing.title),
+            title_policy: request.title_policy.or(Some(existing.title_policy)),
+            restore_policy: request.restore_policy.or(Some(existing.restore_policy)),
+            initial_terminal_cols: Some(
+                request
+                    .initial_terminal_cols
+                    .unwrap_or(existing.initial_terminal_cols),
+            ),
+            initial_terminal_rows: Some(
+                request
+                    .initial_terminal_rows
+                    .unwrap_or(existing.initial_terminal_rows),
+            ),
+            context_bundle_ref: request.context_bundle_ref.or(existing.context_bundle_ref),
+        };
+        let record = self.build_session_spec_record(Some(existing.id.clone()), draft, now)?;
+
+        Ok(SessionSpecUpdateRecord {
+            id: record.id,
+            project_root_id: record.project_root_id,
+            worktree_id: record.worktree_id,
+            work_item_id: record.work_item_id,
+            account_id: record.account_id,
+            agent_kind: record.agent_kind,
+            cwd: record.cwd,
+            command: record.command,
+            args_json: record.args_json,
+            env_preset_ref: record.env_preset_ref,
+            origin_mode: record.origin_mode,
+            current_mode: record.current_mode,
+            title: record.title,
+            title_policy: record.title_policy,
+            restore_policy: record.restore_policy,
+            initial_terminal_cols: record.initial_terminal_cols,
+            initial_terminal_rows: record.initial_terminal_rows,
+            context_bundle_ref: record.context_bundle_ref,
+            updated_at: record.updated_at,
+        })
+    }
+
+    fn resolve_session_workspace_refs(
+        &self,
+        project_id: &str,
+        project_root_id: Option<String>,
+        worktree_id: Option<String>,
+    ) -> Result<(Option<String>, Option<String>)> {
+        let normalized_root_id = optional_trimmed(project_root_id);
+        let normalized_worktree_id = optional_trimmed(worktree_id);
+
+        if let Some(worktree_id) = normalized_worktree_id.as_deref() {
+            let worktree = self
+                .databases
+                .get_worktree(worktree_id)?
+                .ok_or_else(|| anyhow!("worktree {} was not found", worktree_id))?;
+            if worktree.summary.project_id != project_id {
+                return Err(anyhow!(
+                    "worktree {} does not belong to project {}",
+                    worktree_id,
+                    project_id
+                ));
+            }
+
+            if let Some(project_root_id) = normalized_root_id.as_deref() {
+                if project_root_id != worktree.summary.project_root_id {
+                    return Err(anyhow!(
+                        "worktree {} does not belong to project root {}",
+                        worktree_id,
+                        project_root_id
+                    ));
+                }
+            }
+
+            return Ok((
+                Some(worktree.summary.project_root_id),
+                Some(worktree_id.to_string()),
+            ));
         }
 
-        Ok(())
+        if let Some(project_root_id) = normalized_root_id.as_deref() {
+            self.databases
+                .ensure_project_root_belongs_to_project(project_root_id, project_id)?;
+        }
+
+        Ok((normalized_root_id, None))
     }
 
     fn ensure_project_exists(&self, project_id: &str) -> Result<()> {
@@ -531,9 +877,30 @@ impl SupervisorService {
         Ok(())
     }
 
+    fn ensure_project_root_exists(&self, project_root_id: &str) -> Result<()> {
+        if self.databases.get_project_root(project_root_id)?.is_none() {
+            return Err(anyhow!("project root {} was not found", project_root_id));
+        }
+        Ok(())
+    }
+
     fn ensure_account_exists(&self, account_id: &str) -> Result<()> {
         if !self.databases.account_exists(account_id)? {
             return Err(anyhow!("account {} was not found", account_id));
+        }
+        Ok(())
+    }
+
+    fn ensure_worktree_exists(&self, worktree_id: &str) -> Result<()> {
+        if self.databases.get_worktree(worktree_id)?.is_none() {
+            return Err(anyhow!("worktree {} was not found", worktree_id));
+        }
+        Ok(())
+    }
+
+    fn ensure_session_exists(&self, session_id: &str) -> Result<()> {
+        if !self.databases.session_exists(session_id)? {
+            return Err(anyhow!("session {} was not found", session_id));
         }
         Ok(())
     }
@@ -783,6 +1150,59 @@ fn validate_account_status(value: &str) -> Result<String> {
     }
 }
 
+fn validate_worktree_status(value: &str) -> Result<String> {
+    let normalized = required_trimmed("worktree status", value)?.to_lowercase();
+    match normalized.as_str() {
+        "active" | "merged" | "archived" | "closed" => Ok(normalized),
+        _ => Err(anyhow!(
+            "worktree status must be one of: active, merged, archived, closed"
+        )),
+    }
+}
+
+fn validate_session_mode(value: &str) -> Result<String> {
+    let normalized = required_trimmed("session mode", value)?.to_lowercase();
+    match normalized.as_str() {
+        "ad_hoc" | "planning" | "research" | "execution" | "follow_up" => Ok(normalized),
+        _ => Err(anyhow!(
+            "session mode must be one of: ad_hoc, planning, research, execution, follow_up"
+        )),
+    }
+}
+
+fn validate_title_policy(value: &str) -> Result<String> {
+    let normalized = required_trimmed("title policy", value)?.to_lowercase();
+    match normalized.as_str() {
+        "auto" | "manual" => Ok(normalized),
+        _ => Err(anyhow!("title policy must be one of: auto, manual")),
+    }
+}
+
+fn validate_restore_policy(value: &str) -> Result<String> {
+    let normalized = required_trimmed("restore policy", value)?.to_lowercase();
+    match normalized.as_str() {
+        "reattach" | "manual" | "never" => Ok(normalized),
+        _ => Err(anyhow!(
+            "restore policy must be one of: reattach, manual, never"
+        )),
+    }
+}
+
+fn validate_terminal_dimension(field_name: &str, value: i64) -> Result<i64> {
+    if value <= 0 {
+        return Err(anyhow!("{field_name} must be greater than zero"));
+    }
+
+    Ok(value)
+}
+
+fn closed_at_for_worktree_status(status: &str, requested: Option<i64>, now: i64) -> Option<i64> {
+    match status {
+        "merged" | "archived" | "closed" => Some(requested.unwrap_or(now)),
+        _ => None,
+    }
+}
+
 fn normalize_slug(value: &str) -> Result<String> {
     let slug = slugify_name(value);
     if slug.is_empty() {
@@ -828,5 +1248,77 @@ impl SessionArtifactBootstrap {
             .ok_or_else(|| anyhow!("raw terminal log artifact was not prepared"))?;
         self.raw_log_artifact_id = raw_log_artifact.id.clone();
         Ok(self)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SessionSpecDraft {
+    project_id: String,
+    project_root_id: Option<String>,
+    worktree_id: Option<String>,
+    work_item_id: Option<String>,
+    account_id: String,
+    agent_kind: String,
+    cwd: String,
+    command: String,
+    args: Vec<String>,
+    env_preset_ref: Option<String>,
+    origin_mode: String,
+    current_mode: Option<String>,
+    title: Option<String>,
+    title_policy: Option<String>,
+    restore_policy: Option<String>,
+    initial_terminal_cols: Option<i64>,
+    initial_terminal_rows: Option<i64>,
+    context_bundle_ref: Option<String>,
+}
+
+impl From<CreateSessionRequest> for SessionSpecDraft {
+    fn from(value: CreateSessionRequest) -> Self {
+        Self {
+            project_id: value.project_id,
+            project_root_id: value.project_root_id,
+            worktree_id: value.worktree_id,
+            work_item_id: value.work_item_id,
+            account_id: value.account_id,
+            agent_kind: value.agent_kind,
+            cwd: value.cwd,
+            command: value.command,
+            args: value.args,
+            env_preset_ref: value.env_preset_ref,
+            origin_mode: value.origin_mode,
+            current_mode: value.current_mode,
+            title: value.title,
+            title_policy: value.title_policy,
+            restore_policy: value.restore_policy,
+            initial_terminal_cols: value.initial_terminal_cols,
+            initial_terminal_rows: value.initial_terminal_rows,
+            context_bundle_ref: None,
+        }
+    }
+}
+
+impl From<CreateSessionSpecRequest> for SessionSpecDraft {
+    fn from(value: CreateSessionSpecRequest) -> Self {
+        Self {
+            project_id: value.project_id,
+            project_root_id: value.project_root_id,
+            worktree_id: value.worktree_id,
+            work_item_id: value.work_item_id,
+            account_id: value.account_id,
+            agent_kind: value.agent_kind,
+            cwd: value.cwd,
+            command: value.command,
+            args: value.args,
+            env_preset_ref: value.env_preset_ref,
+            origin_mode: value.origin_mode,
+            current_mode: value.current_mode,
+            title: value.title,
+            title_policy: value.title_policy,
+            restore_policy: value.restore_policy,
+            initial_terminal_cols: value.initial_terminal_cols,
+            initial_terminal_rows: value.initial_terminal_rows,
+            context_bundle_ref: value.context_bundle_ref,
+        }
     }
 }

@@ -18,6 +18,14 @@ pub enum Method {
     AccountGet,
     AccountCreate,
     AccountUpdate,
+    WorktreeList,
+    WorktreeGet,
+    WorktreeCreate,
+    WorktreeUpdate,
+    SessionSpecList,
+    SessionSpecGet,
+    SessionSpecCreate,
+    SessionSpecUpdate,
     SessionList,
     SessionGet,
     SessionCreate,
@@ -49,6 +57,14 @@ impl Method {
             Self::AccountGet => "account.get",
             Self::AccountCreate => "account.create",
             Self::AccountUpdate => "account.update",
+            Self::WorktreeList => "worktree.list",
+            Self::WorktreeGet => "worktree.get",
+            Self::WorktreeCreate => "worktree.create",
+            Self::WorktreeUpdate => "worktree.update",
+            Self::SessionSpecList => "session_spec.list",
+            Self::SessionSpecGet => "session_spec.get",
+            Self::SessionSpecCreate => "session_spec.create",
+            Self::SessionSpecUpdate => "session_spec.update",
             Self::SessionList => "session.list",
             Self::SessionGet => "session.get",
             Self::SessionCreate => "session.create",
@@ -84,6 +100,14 @@ impl TryFrom<&str> for Method {
             "account.get" => Ok(Self::AccountGet),
             "account.create" => Ok(Self::AccountCreate),
             "account.update" => Ok(Self::AccountUpdate),
+            "worktree.list" => Ok(Self::WorktreeList),
+            "worktree.get" => Ok(Self::WorktreeGet),
+            "worktree.create" => Ok(Self::WorktreeCreate),
+            "worktree.update" => Ok(Self::WorktreeUpdate),
+            "session_spec.list" => Ok(Self::SessionSpecList),
+            "session_spec.get" => Ok(Self::SessionSpecGet),
+            "session_spec.create" => Ok(Self::SessionSpecCreate),
+            "session_spec.update" => Ok(Self::SessionSpecUpdate),
             "session.list" => Ok(Self::SessionList),
             "session.get" => Ok(Self::SessionGet),
             "session.create" => Ok(Self::SessionCreate),
@@ -163,6 +187,16 @@ pub struct ProjectRootListParams {
 #[derive(Debug, Clone, Deserialize)]
 pub struct AccountGetParams {
     pub account_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorktreeGetParams {
+    pub worktree_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionSpecGetParams {
+    pub session_spec_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
