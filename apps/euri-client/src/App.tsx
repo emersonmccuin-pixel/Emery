@@ -1,5 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { FitAddon } from "@xterm/addon-fit";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { Terminal } from "@xterm/xterm";
+import "@xterm/xterm/css/xterm.css";
 import {
   attachSession,
   bootstrapShell,
@@ -13,6 +16,7 @@ import {
   detachSession,
   exportDiagnosticsBundle,
   getProject,
+  getSession,
   getDocument,
   getWorkItem,
   interruptSession,
@@ -21,6 +25,7 @@ import {
   listWorkflowReconciliationProposals,
   listWorkItems,
   saveWorkspace,
+  resizeSession,
   sendSessionInput,
   terminateSession,
   updateDocument,
@@ -103,7 +108,6 @@ function decodeBase64Utf8(base64: string): string {
   return new TextDecoder().decode(bytes);
 }
 
-
 const CURSOR_POSITION_QUERY = "\u001b[6n";
 const DEFAULT_CURSOR_POSITION_RESPONSE = "\u001b[1;1R";
 
@@ -153,6 +157,162 @@ function processTerminalCompatibility(
     pendingFragment: "",
     cursorPositionQueries,
   };
+}
+
+function DirectTerminal({
+  sessionId,
+  output,
+  live,
+  onInput,
+  onResize,
+}: {
+  sessionId: string;
+  output: string;
+  live: boolean;
+  onInput: (input: string) => void;
+  onResize: (cols: number, rows: number) => void;
+}) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const terminalRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const renderedOutputRef = useRef("");
+  const resizeTimeoutRef = useRef<number | null>(null);
+  const lastGeometryRef = useRef<{ cols: number; rows: number } | null>(null);
+  const handleInput = useEffectEvent((input: string) => {
+    onInput(input);
+  });
+  const handleResize = useEffectEvent((cols: number, rows: number) => {
+    onResize(cols, rows);
+  });
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) {
+      return;
+    }
+
+    const terminal = new Terminal({
+      allowTransparency: true,
+      convertEol: false,
+      cursorBlink: true,
+      fontFamily: '"IBM Plex Mono", "Cascadia Code", monospace',
+      fontSize: 14,
+      scrollback: 5000,
+      theme: {
+        background: "#0f0d0c",
+        foreground: "#dfd8ca",
+        cursor: "#f3df95",
+        selectionBackground: "rgba(243, 223, 149, 0.22)",
+      },
+    });
+    const fitAddon = new FitAddon();
+    terminal.loadAddon(fitAddon);
+    terminal.open(host);
+    terminalRef.current = terminal;
+    fitAddonRef.current = fitAddon;
+    renderedOutputRef.current = "";
+
+    const flushResize = () => {
+      if (!terminalRef.current || !fitAddonRef.current) {
+        return;
+      }
+      fitAddonRef.current.fit();
+      const nextGeometry = {
+        cols: terminalRef.current.cols,
+        rows: terminalRef.current.rows,
+      };
+      if (
+        nextGeometry.cols <= 0 ||
+        nextGeometry.rows <= 0 ||
+        (lastGeometryRef.current &&
+          lastGeometryRef.current.cols === nextGeometry.cols &&
+          lastGeometryRef.current.rows === nextGeometry.rows)
+      ) {
+        return;
+      }
+      lastGeometryRef.current = nextGeometry;
+      handleResize(nextGeometry.cols, nextGeometry.rows);
+    };
+
+    const scheduleResize = () => {
+      if (resizeTimeoutRef.current) {
+        window.clearTimeout(resizeTimeoutRef.current);
+      }
+      resizeTimeoutRef.current = window.setTimeout(() => {
+        resizeTimeoutRef.current = null;
+        flushResize();
+      }, 60);
+    };
+
+    const resizeObserver = new ResizeObserver(() => {
+      scheduleResize();
+    });
+    resizeObserver.observe(host);
+
+    const dataSubscription = terminal.onData((data) => {
+      if (live) {
+        handleInput(data);
+      }
+    });
+
+    const focusTerminal = () => terminal.focus();
+    host.addEventListener("click", focusTerminal);
+    scheduleResize();
+    terminal.focus();
+
+    return () => {
+      if (resizeTimeoutRef.current) {
+        window.clearTimeout(resizeTimeoutRef.current);
+        resizeTimeoutRef.current = null;
+      }
+      resizeObserver.disconnect();
+      dataSubscription.dispose();
+      host.removeEventListener("click", focusTerminal);
+      terminal.dispose();
+      terminalRef.current = null;
+      fitAddonRef.current = null;
+      renderedOutputRef.current = "";
+      lastGeometryRef.current = null;
+    };
+  }, [handleInput, handleResize, live, sessionId]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      return;
+    }
+    const previous = renderedOutputRef.current;
+    if (output === previous) {
+      return;
+    }
+    if (!output) {
+      terminal.reset();
+      renderedOutputRef.current = "";
+      return;
+    }
+
+    if (output.startsWith(previous)) {
+      terminal.write(output.slice(previous.length));
+    } else {
+      terminal.reset();
+      terminal.write(output);
+    }
+    renderedOutputRef.current = output;
+  }, [output]);
+
+  useEffect(() => {
+    if (live) {
+      terminalRef.current?.focus();
+    }
+  }, [live]);
+
+  return (
+    <div
+      ref={hostRef}
+      className={`terminal-surface ${live ? "live" : "readonly"}`}
+      aria-label={`Terminal for session ${sessionId}`}
+    />
+  );
 }
 
 function sessionTone(session: Pick<SessionSummary, "runtime_state" | "activity_state" | "needs_input_reason">) {
@@ -275,6 +435,11 @@ function applySessionToList(
   return upsertById(items, nextSession, compareSessions);
 }
 
+function sessionSummaryFromDetail(detail: SessionDetail): SessionSummary {
+  const { runtime: _runtime, ...summary } = detail;
+  return summary;
+}
+
 export default function App() {
   const [bootstrap, setBootstrap] = useState<ShellBootstrap | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -327,6 +492,7 @@ export default function App() {
   const restoreApplied = useRef(false);
   const persistTimeout = useRef<number | null>(null);
   const terminalCompatibilityPending = useRef<Record<string, string>>({});
+  const shouldReattachOpenSessions = useRef(false);
 
   function setLoading(key: string, value: boolean) {
     setLoadingKeys((current) => ({ ...current, [key]: value }));
@@ -335,7 +501,6 @@ export default function App() {
   function clearError() {
     setError(null);
   }
-
 
   function respondToCursorPositionQuery(sessionId: string, count: number, source: "replay" | "live") {
     if (count <= 0) {
@@ -452,7 +617,153 @@ export default function App() {
   }
 
   function applySessionDetail(detail: SessionDetail) {
-    setSessions((current) => applySessionToList(current, detail));
+    setSessions((current) => applySessionToList(current, sessionSummaryFromDetail(detail)));
+    setAttachedSessions((current) => {
+      const existing = current[detail.id];
+      if (!existing) {
+        return current;
+      }
+      if (!detail.live) {
+        const next = { ...current };
+        delete next[detail.id];
+        return next;
+      }
+      return {
+        ...current,
+        [detail.id]: {
+          ...existing,
+          session: detail,
+        },
+      };
+    });
+    if (!detail.live) {
+      setTerminalInput((current) => {
+        if (!(detail.id in current)) {
+          return current;
+        }
+        return {
+          ...current,
+          [detail.id]: "",
+        };
+      });
+    }
+  }
+
+  function applySessionStateChange(payload: SessionStateChangedEvent) {
+    setSessions((current) =>
+      current.map((entry) =>
+        entry.id === payload.session_id
+          ? {
+              ...entry,
+              runtime_state: payload.runtime_state,
+              status: payload.status,
+              activity_state: payload.activity_state,
+              needs_input_reason: payload.needs_input_reason,
+              last_output_at: payload.last_output_at,
+              last_attached_at: payload.last_attached_at,
+              updated_at: payload.updated_at,
+              live: payload.live,
+            }
+          : entry,
+      ),
+    );
+    setAttachedSessions((current) => {
+      const existing = current[payload.session_id];
+      if (!existing) {
+        return current;
+      }
+      if (!payload.live) {
+        const next = { ...current };
+        delete next[payload.session_id];
+        return next;
+      }
+      return {
+        ...current,
+        [payload.session_id]: {
+          ...existing,
+          session: {
+            ...existing.session,
+            runtime_state: payload.runtime_state,
+            status: payload.status,
+            activity_state: payload.activity_state,
+            needs_input_reason: payload.needs_input_reason,
+            last_output_at: payload.last_output_at,
+            last_attached_at: payload.last_attached_at,
+            updated_at: payload.updated_at,
+            live: payload.live,
+            runtime: existing.session.runtime
+              ? {
+                  ...existing.session.runtime,
+                  runtime_state: payload.runtime_state,
+                  attached_clients: payload.attached_clients,
+                  updated_at: payload.updated_at,
+                }
+              : null,
+          },
+        },
+      };
+    });
+    if (!payload.live) {
+      setTerminalInput((current) => {
+        if (!(payload.session_id in current)) {
+          return current;
+        }
+        return {
+          ...current,
+          [payload.session_id]: "",
+        };
+      });
+    }
+  }
+
+  async function reconcileSessionState(sessionId: string) {
+    try {
+      const detail = await getSession(sessionId, newCorrelationId("session-reconcile"));
+      applySessionDetail(detail);
+      clearError();
+    } catch {
+    }
+  }
+
+  async function handleSessionAction<T>(sessionId: string, action: () => Promise<T>) {
+    const session = sessions.find((entry) => entry.id === sessionId) ?? null;
+    if (!session?.live) {
+      void reconcileSessionState(sessionId);
+      return null;
+    }
+
+    try {
+      const result = await action();
+      clearError();
+      return result;
+    } catch (invokeError) {
+      const message = String(invokeError);
+      if (message.includes("session_not_live")) {
+        await reconcileSessionState(sessionId);
+        return null;
+      }
+      setError(message);
+      return null;
+    }
+  }
+
+  async function attachLiveSession(sessionId: string, correlationId: string, force = false) {
+    const existingSession = sessions.find((entry) => entry.id === sessionId) ?? null;
+    if (!existingSession?.live) {
+      return;
+    }
+    if (!force && attachedSessions[sessionId]) {
+      return;
+    }
+
+    const response = await attachSession(sessionId, correlationId);
+    setAttachedSessions((current) => ({ ...current, [sessionId]: response }));
+    applySessionDetail(response.session);
+    replaceTerminalReplay(
+      sessionId,
+      response.replay.chunks.map((chunk) => decodeBase64Utf8(chunk.data)),
+    );
+    await watchLiveSessions([sessionId], correlationId);
   }
 
   function applyPlanningAssignment(projectId: string, assignment: PlanningAssignmentSummary) {
@@ -649,6 +960,9 @@ export default function App() {
     const listeners = Promise.all([
       listen<ConnectionStatusEvent>("supervisor://connection", (event) => {
         setConnectionEvent(event.payload);
+        if (event.payload.state === "reconnecting" || event.payload.state === "disconnected") {
+          shouldReattachOpenSessions.current = true;
+        }
         recordClientEvent(
           makeClientEvent("shell", "connection.status_changed", {
             payload: {
@@ -669,59 +983,7 @@ export default function App() {
 
           if (event.payload.event === "session.state_changed") {
             const payload = event.payload.payload as SessionStateChangedEvent;
-            setSessions((current) =>
-              current.map((entry) =>
-                entry.id === payload.session_id
-                  ? {
-                      ...entry,
-                      runtime_state: payload.runtime_state,
-                      status: payload.status,
-                      activity_state: payload.activity_state,
-                      needs_input_reason: payload.needs_input_reason,
-                      last_output_at: payload.last_output_at,
-                      last_attached_at: payload.last_attached_at,
-                      updated_at: payload.updated_at,
-                      live: payload.live,
-                    }
-                  : entry,
-              ),
-            );
-            setAttachedSessions((current) => {
-              const existing = current[payload.session_id];
-              if (!existing) {
-                return current;
-              }
-              if (!payload.live) {
-                const next = { ...current };
-                delete next[payload.session_id];
-                return next;
-              }
-              return {
-                ...current,
-                [payload.session_id]: {
-                  ...existing,
-                  session: {
-                    ...existing.session,
-                    runtime_state: payload.runtime_state,
-                    status: payload.status,
-                    activity_state: payload.activity_state,
-                    needs_input_reason: payload.needs_input_reason,
-                    last_output_at: payload.last_output_at,
-                    last_attached_at: payload.last_attached_at,
-                    updated_at: payload.updated_at,
-                    live: payload.live,
-                    runtime: existing.session.runtime
-                      ? {
-                          ...existing.session.runtime,
-                          attached_clients: payload.attached_clients,
-                          updated_at: payload.updated_at,
-                          runtime_state: payload.runtime_state,
-                        }
-                      : null,
-                  },
-                },
-              };
-            });
+            applySessionStateChange(payload);
           }
         },
       ),
@@ -779,6 +1041,27 @@ export default function App() {
     }
   }, [attachedSessions, bootstrap, openResources]);
 
+  useEffect(() => {
+    if (
+      !bootstrap ||
+      connectionEvent?.state !== "connected" ||
+      !shouldReattachOpenSessions.current
+    ) {
+      return;
+    }
+
+    shouldReattachOpenSessions.current = false;
+    const sessionResources = openResources.filter(
+      (resource): resource is Extract<WorkspaceResource, { resource_type: "session_terminal" }> =>
+        resource.resource_type === "session_terminal",
+    );
+    for (const resource of sessionResources) {
+      void attachLiveSession(resource.session_id, newCorrelationId("session-reattach"), true).catch(
+        (invokeError) => setError(String(invokeError)),
+      );
+    }
+  }, [bootstrap, connectionEvent, openResources, sessions]);
+
   const activeResource = openResources.find((resource) => resource.resource_id === activeResourceId) ?? null;
 
   useEffect(() => {
@@ -802,6 +1085,17 @@ export default function App() {
     () => sessions.filter((entry) => !selectedProjectId || entry.project_id === selectedProjectId),
     [selectedProjectId, sessions],
   );
+  const liveSessionCount = useMemo(() => sessions.filter((session) => session.live).length, [sessions]);
+  const liveSessionsByProject = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const session of sessions) {
+      if (!session.live) {
+        continue;
+      }
+      counts[session.project_id] = (counts[session.project_id] ?? 0) + 1;
+    }
+    return counts;
+  }, [sessions]);
   const dayCadenceKey = useMemo(() => currentDayCadenceKey(), []);
   const weekCadenceKey = useMemo(() => currentWeekCadenceKey(), []);
   const currentPlanningAssignments = selectedProjectId
@@ -863,16 +1157,15 @@ export default function App() {
     }
 
     try {
-      const response = await attachSession(sessionId, correlationId);
-      setAttachedSessions((current) => ({ ...current, [sessionId]: response }));
-      replaceTerminalReplay(
-        sessionId,
-        response.replay.chunks.map((chunk) => decodeBase64Utf8(chunk.data)),
-      );
-      await watchLiveSessions([sessionId], correlationId);
+      await attachLiveSession(sessionId, correlationId);
       clearError();
     } catch (invokeError) {
-      setError(String(invokeError));
+      const message = String(invokeError);
+      if (message.includes("session_not_live")) {
+        await reconcileSessionState(sessionId);
+      } else {
+        setError(message);
+      }
     }
   }
 
@@ -950,20 +1243,19 @@ export default function App() {
   }
 
   async function handleInterruptSession(sessionId: string) {
-    try {
-      await interruptSession(sessionId, newCorrelationId("session-interrupt"));
-      clearError();
-    } catch (invokeError) {
-      setError(String(invokeError));
-    }
+    await handleSessionAction(sessionId, () =>
+      interruptSession(sessionId, newCorrelationId("session-interrupt")),
+    );
   }
 
   async function handleTerminateSession(sessionId: string) {
-    try {
-      await terminateSession(sessionId, newCorrelationId("session-terminate"));
-      clearError();
-    } catch (invokeError) {
-      setError(String(invokeError));
+    const result = await handleSessionAction(sessionId, () =>
+      terminateSession(sessionId, newCorrelationId("session-terminate")),
+    );
+    if (result !== null) {
+      window.setTimeout(() => {
+        void reconcileSessionState(sessionId);
+      }, 250);
     }
   }
 
@@ -973,13 +1265,28 @@ export default function App() {
       return;
     }
 
-    try {
-      await sendSessionInput(sessionId, value.endsWith("\n") ? value : `${value}\n`, newCorrelationId("session-input"));
+    const result = await handleSessionAction(sessionId, () =>
+      sendSessionInput(
+        sessionId,
+        value.endsWith("\n") ? value : `${value}\n`,
+        newCorrelationId("session-input"),
+      ),
+    );
+    if (result !== null) {
       setTerminalInput((current) => ({ ...current, [sessionId]: "" }));
-      clearError();
-    } catch (invokeError) {
-      setError(String(invokeError));
     }
+  }
+
+  function forwardTerminalInput(sessionId: string, input: string) {
+    void handleSessionAction(sessionId, () =>
+      sendSessionInput(sessionId, input, newCorrelationId("session-input-direct")),
+    );
+  }
+
+  function syncTerminalSize(sessionId: string, cols: number, rows: number) {
+    void handleSessionAction(sessionId, () =>
+      resizeSession(sessionId, cols, rows, newCorrelationId("session-resize")),
+    );
   }
 
   async function handleCreateProject() {
@@ -1199,12 +1506,7 @@ export default function App() {
       }
       setActiveResourceId(resourceId);
       if (detail.live) {
-        const response = await attachSession(detail.id, correlationId);
-        setAttachedSessions((current) => ({ ...current, [detail.id]: response }));
-        replaceTerminalReplay(
-          detail.id,
-          response.replay.chunks.map((chunk) => decodeBase64Utf8(chunk.data)),
-        );
+        await attachLiveSession(detail.id, correlationId, true);
       }
       clearError();
     } catch (invokeError) {
@@ -1354,7 +1656,7 @@ export default function App() {
         </div>
         <div className="status-strip">
           <span className={`status-chip ${connectionLabel(connectionEvent)}`}>{connectionLabel(connectionEvent)}</span>
-          <span className="status-chip neutral">{bootstrap.health.live_session_count} live</span>
+          <span className="status-chip neutral">{liveSessionCount} live</span>
           <span className="status-chip neutral">usage {bootstrap.accounts.length > 0 ? "unavailable" : "hidden"}</span>
           {bootstrap.hello.diagnostics_enabled ? (
             <button
@@ -1459,7 +1761,7 @@ export default function App() {
                 >
                   <span className="list-title">{project.name}</span>
                   <span className="list-meta">
-                    {project.root_count} roots · {project.live_session_count} live sessions
+                    {project.root_count} roots · {liveSessionsByProject[project.id] ?? 0} live sessions
                   </span>
                 </button>
               ))}
@@ -1834,6 +2136,7 @@ export default function App() {
             ) : activeResource.resource_type === "session_terminal" ? (
               <SessionPane
                 session={sessions.find((entry) => entry.id === activeResource.session_id) ?? null}
+                sessionId={activeResource.session_id}
                 attachment={attachedSessions[activeResource.session_id] ?? null}
                 output={terminalOutput[activeResource.session_id] ?? ""}
                 input={terminalInput[activeResource.session_id] ?? ""}
@@ -1841,6 +2144,8 @@ export default function App() {
                   setTerminalInput((current) => ({ ...current, [activeResource.session_id]: value }))
                 }
                 onSubmitInput={() => void submitTerminalInput(activeResource.session_id)}
+                onDirectInput={(value) => forwardTerminalInput(activeResource.session_id, value)}
+                onResize={(cols, rows) => syncTerminalSize(activeResource.session_id, cols, rows)}
                 onInterrupt={() => void handleInterruptSession(activeResource.session_id)}
                 onTerminate={() => void handleTerminateSession(activeResource.session_id)}
               />
@@ -2042,20 +2347,26 @@ function ProjectHome({
 
 function SessionPane({
   session,
+  sessionId,
   attachment,
   output,
   input,
   onInputChange,
   onSubmitInput,
+  onDirectInput,
+  onResize,
   onInterrupt,
   onTerminate,
 }: {
   session: SessionSummary | null;
+  sessionId: string;
   attachment: SessionAttachResponse | null;
   output: string;
   input: string;
   onInputChange: (value: string) => void;
   onSubmitInput: () => void;
+  onDirectInput: (value: string) => void;
+  onResize: (cols: number, rows: number) => void;
   onInterrupt: () => void;
   onTerminate: () => void;
 }) {
@@ -2069,7 +2380,7 @@ function SessionPane({
     <div className="session-pane">
       <div className="session-header">
         <div>
-          <div className="eyebrow">Attached session</div>
+          <div className="eyebrow">{session.live ? "Attached session" : "Ended session"}</div>
           <h2>{session.title ?? session.current_mode}</h2>
           <p>
             {session.agent_kind} · {session.cwd}
@@ -2090,7 +2401,19 @@ function SessionPane({
         <span>attached {attachment?.session.runtime?.attached_clients ?? 0}</span>
       </div>
 
-      <pre className="terminal-surface">{output || "Attached. Waiting for output…"}</pre>
+      <div className="terminal-hint">
+        {session.live
+          ? "Click inside the terminal surface to type directly into the attached session."
+          : "This terminal is read-only because the session has ended."}
+      </div>
+
+      <DirectTerminal
+        sessionId={sessionId}
+        output={output || "Attached. Waiting for output...\r\n"}
+        live={session.live}
+        onInput={onDirectInput}
+        onResize={onResize}
+      />
 
       {!session.live && !attachment ? (
         <div className="card compact-card">
@@ -2102,7 +2425,7 @@ function SessionPane({
         <textarea
           value={input}
           onChange={(event) => onInputChange(event.target.value)}
-          placeholder="Send input to the attached session"
+          placeholder="Fallback line send for the attached session"
           disabled={!session.live}
         />
         <div className="action-row">

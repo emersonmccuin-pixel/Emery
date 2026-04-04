@@ -579,6 +579,30 @@ fn send_session_input(
 }
 
 #[tauri::command]
+fn resize_session(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    session_id: String,
+    cols: i64,
+    rows: i64,
+    correlation_id: Option<String>,
+) -> Result<(), String> {
+    manager
+        .request_value(
+            &app,
+            "session.resize",
+            json!({
+                "session_id": session_id,
+                "cols": cols,
+                "rows": rows
+            }),
+            correlation_id,
+        )
+        .map(|_| ())
+        .map_err(error_string)
+}
+
+#[tauri::command]
 fn interrupt_session(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
@@ -671,6 +695,25 @@ fn get_project(
             "project.get",
             json!({
                 "project_id": project_id
+            }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn get_session(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    session_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "session.get",
+            json!({
+                "session_id": session_id
             }),
             correlation_id,
         )
@@ -979,10 +1022,12 @@ fn main() {
             attach_session,
             detach_session,
             send_session_input,
+            resize_session,
             interrupt_session,
             terminate_session,
             save_workspace_state,
             get_project,
+            get_session,
             create_project,
             update_project,
             list_work_items,

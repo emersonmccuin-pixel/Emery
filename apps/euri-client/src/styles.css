@@ -472,17 +472,37 @@ button {
 }
 
 .terminal-surface {
-  margin: 0;
   border-radius: 18px;
-  padding: 16px;
   min-height: 340px;
-  overflow: auto;
+  overflow: hidden;
   background: #0f0d0c;
   color: #dfd8ca;
   font-family:
     "IBM Plex Mono",
     "Cascadia Code",
     monospace;
+  font-size: 0.88rem;
+  border: 1px solid rgba(243, 223, 149, 0.1);
+}
+
+.terminal-surface.live {
+  box-shadow: inset 0 0 0 1px rgba(243, 223, 149, 0.05);
+}
+
+.terminal-surface.readonly {
+  opacity: 0.82;
+}
+
+.terminal-surface .xterm {
+  padding: 16px;
+}
+
+.terminal-surface .xterm-viewport {
+  border-radius: 18px;
+}
+
+.terminal-hint {
+  color: #c7bfaf;
   font-size: 0.88rem;
 }
 

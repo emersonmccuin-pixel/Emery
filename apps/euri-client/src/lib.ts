@@ -28,6 +28,13 @@ export async function attachSession(
   return invoke("attach_session", { sessionId, correlationId });
 }
 
+export async function getSession(
+  sessionId: string,
+  correlationId?: string,
+): Promise<SessionDetail> {
+  return invoke("get_session", { sessionId, correlationId });
+}
+
 export async function detachSession(
   sessionId: string,
   attachmentId: string,
@@ -42,6 +49,15 @@ export async function sendSessionInput(
   correlationId?: string,
 ): Promise<void> {
   await invoke("send_session_input", { sessionId, input, correlationId });
+}
+
+export async function resizeSession(
+  sessionId: string,
+  cols: number,
+  rows: number,
+  correlationId?: string,
+): Promise<void> {
+  await invoke("resize_session", { sessionId, cols, rows, correlationId });
 }
 
 export async function interruptSession(sessionId: string, correlationId?: string): Promise<void> {
