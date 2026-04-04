@@ -103,6 +103,58 @@ function decodeBase64Utf8(base64: string): string {
   return new TextDecoder().decode(bytes);
 }
 
+
+const CURSOR_POSITION_QUERY = "\u001b[6n";
+const DEFAULT_CURSOR_POSITION_RESPONSE = "\u001b[1;1R";
+
+type TerminalCompatibilityResult = {
+  visibleText: string;
+  pendingFragment: string;
+  cursorPositionQueries: number;
+};
+
+function processTerminalCompatibility(
+  chunk: string,
+  pendingFragment: string,
+): TerminalCompatibilityResult {
+  const combined = `${pendingFragment}${chunk}`;
+  let visibleText = "";
+  let index = 0;
+  let cursorPositionQueries = 0;
+
+  while (index < combined.length) {
+    if (!combined.startsWith("\u001b", index)) {
+      visibleText += combined[index];
+      index += 1;
+      continue;
+    }
+
+    const remaining = combined.slice(index);
+    if (remaining.startsWith(CURSOR_POSITION_QUERY)) {
+      cursorPositionQueries += 1;
+      index += CURSOR_POSITION_QUERY.length;
+      continue;
+    }
+
+    if (CURSOR_POSITION_QUERY.startsWith(remaining)) {
+      return {
+        visibleText,
+        pendingFragment: remaining,
+        cursorPositionQueries,
+      };
+    }
+
+    visibleText += combined[index];
+    index += 1;
+  }
+
+  return {
+    visibleText,
+    pendingFragment: "",
+    cursorPositionQueries,
+  };
+}
+
 function sessionTone(session: Pick<SessionSummary, "runtime_state" | "activity_state" | "needs_input_reason">) {
   if (session.runtime_state === "failed" || session.runtime_state === "interrupted") {
     return "danger";
@@ -274,6 +326,7 @@ export default function App() {
   });
   const restoreApplied = useRef(false);
   const persistTimeout = useRef<number | null>(null);
+  const terminalCompatibilityPending = useRef<Record<string, string>>({});
 
   function setLoading(key: string, value: boolean) {
     setLoadingKeys((current) => ({ ...current, [key]: value }));
@@ -281,6 +334,79 @@ export default function App() {
 
   function clearError() {
     setError(null);
+  }
+
+
+  function respondToCursorPositionQuery(sessionId: string, count: number, source: "replay" | "live") {
+    if (count <= 0) {
+      return;
+    }
+
+    recordClientEvent(
+      makeClientEvent("terminal", "cursor_position_query_detected", {
+        session_id: sessionId,
+        payload: {
+          count,
+          source,
+          response: JSON.stringify(DEFAULT_CURSOR_POSITION_RESPONSE),
+        },
+      }),
+    );
+
+    for (let index = 0; index < count; index += 1) {
+      const correlationId = newCorrelationId("terminal-cpr");
+      void sendSessionInput(sessionId, DEFAULT_CURSOR_POSITION_RESPONSE, correlationId)
+        .then(() => {
+          recordClientEvent(
+            makeClientEvent("terminal", "cursor_position_query_answered", {
+              correlation_id: correlationId,
+              session_id: sessionId,
+              payload: {
+                source,
+              },
+            }),
+          );
+        })
+        .catch((invokeError) => {
+          recordClientEvent(
+            makeClientEvent("terminal", "cursor_position_query_response_failed", {
+              correlation_id: correlationId,
+              session_id: sessionId,
+              payload: {
+                source,
+                error: String(invokeError),
+              },
+            }),
+          );
+        });
+    }
+  }
+
+  function appendTerminalChunk(sessionId: string, chunk: string, source: "replay" | "live") {
+    const compatibility = processTerminalCompatibility(
+      chunk,
+      terminalCompatibilityPending.current[sessionId] ?? "",
+    );
+    terminalCompatibilityPending.current[sessionId] = compatibility.pendingFragment;
+    respondToCursorPositionQuery(sessionId, compatibility.cursorPositionQueries, source);
+    if (!compatibility.visibleText) {
+      return;
+    }
+    setTerminalOutput((current) => ({
+      ...current,
+      [sessionId]: `${current[sessionId] ?? ""}${compatibility.visibleText}`,
+    }));
+  }
+
+  function replaceTerminalReplay(sessionId: string, chunks: string[]) {
+    terminalCompatibilityPending.current[sessionId] = "";
+    setTerminalOutput((current) => ({
+      ...current,
+      [sessionId]: "",
+    }));
+    for (const chunk of chunks) {
+      appendTerminalChunk(sessionId, chunk, "replay");
+    }
   }
 
   function applyProjectDetail(detail: ProjectDetail) {
@@ -537,10 +663,7 @@ export default function App() {
         (event) => {
           if (event.payload.event === "session.output") {
             const payload = event.payload.payload as SessionOutputEvent;
-            setTerminalOutput((current) => ({
-              ...current,
-              [payload.session_id]: `${current[payload.session_id] ?? ""}${decodeBase64Utf8(payload.data)}`,
-            }));
+            appendTerminalChunk(payload.session_id, decodeBase64Utf8(payload.data), "live");
             return;
           }
 
@@ -742,10 +865,10 @@ export default function App() {
     try {
       const response = await attachSession(sessionId, correlationId);
       setAttachedSessions((current) => ({ ...current, [sessionId]: response }));
-      setTerminalOutput((current) => ({
-        ...current,
-        [sessionId]: response.replay.chunks.map((chunk) => decodeBase64Utf8(chunk.data)).join(""),
-      }));
+      replaceTerminalReplay(
+        sessionId,
+        response.replay.chunks.map((chunk) => decodeBase64Utf8(chunk.data)),
+      );
       await watchLiveSessions([sessionId], correlationId);
       clearError();
     } catch (invokeError) {
@@ -1078,10 +1201,10 @@ export default function App() {
       if (detail.live) {
         const response = await attachSession(detail.id, correlationId);
         setAttachedSessions((current) => ({ ...current, [detail.id]: response }));
-        setTerminalOutput((current) => ({
-          ...current,
-          [detail.id]: response.replay.chunks.map((chunk) => decodeBase64Utf8(chunk.data)).join(""),
-        }));
+        replaceTerminalReplay(
+          detail.id,
+          response.replay.chunks.map((chunk) => decodeBase64Utf8(chunk.data)),
+        );
       }
       clearError();
     } catch (invokeError) {
