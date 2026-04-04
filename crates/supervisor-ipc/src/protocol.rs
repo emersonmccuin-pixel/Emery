@@ -42,6 +42,8 @@ pub enum Method {
     WorkflowReconciliationProposalGet,
     WorkflowReconciliationProposalCreate,
     WorkflowReconciliationProposalUpdate,
+    WorkspaceStateGet,
+    WorkspaceStateUpdate,
     SessionList,
     SessionGet,
     SessionCreate,
@@ -97,6 +99,8 @@ impl Method {
             Self::WorkflowReconciliationProposalGet => "workflow_reconciliation_proposal.get",
             Self::WorkflowReconciliationProposalCreate => "workflow_reconciliation_proposal.create",
             Self::WorkflowReconciliationProposalUpdate => "workflow_reconciliation_proposal.update",
+            Self::WorkspaceStateGet => "workspace_state.get",
+            Self::WorkspaceStateUpdate => "workspace_state.update",
             Self::SessionList => "session.list",
             Self::SessionGet => "session.get",
             Self::SessionCreate => "session.create",
@@ -160,6 +164,8 @@ impl TryFrom<&str> for Method {
             "workflow_reconciliation_proposal.update" => {
                 Ok(Self::WorkflowReconciliationProposalUpdate)
             }
+            "workspace_state.get" => Ok(Self::WorkspaceStateGet),
+            "workspace_state.update" => Ok(Self::WorkspaceStateUpdate),
             "session.list" => Ok(Self::SessionList),
             "session.get" => Ok(Self::SessionGet),
             "session.create" => Ok(Self::SessionCreate),
@@ -269,6 +275,11 @@ pub struct DocumentGetParams {
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkflowReconciliationProposalGetParams {
     pub workflow_reconciliation_proposal_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkspaceStateGetParams {
+    pub scope: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

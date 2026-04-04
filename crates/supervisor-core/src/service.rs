@@ -11,22 +11,23 @@ use crate::models::{
     CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
     CreateWorkItemRequest, CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
     DeletePlanningAssignmentRequest, DocumentDetail, DocumentListFilter, DocumentSummary,
-    DocumentUpdateRecord, NewAccountRecord, NewDocumentRecord, NewPlanningAssignmentRecord,
-    NewProjectRecord, NewProjectRootRecord, NewSessionRecord, NewSessionSpecRecord,
-    NewWorkItemRecord, NewWorkflowReconciliationProposalRecord, NewWorktreeRecord,
-    PlanningAssignmentDetail, PlanningAssignmentListFilter, PlanningAssignmentSummary,
-    PlanningAssignmentUpdateRecord, ProjectDetail, ProjectRootSummary, ProjectRootUpdateRecord,
-    ProjectSummary, ProjectUpdateRecord, RemoveProjectRootRequest, SessionArtifactRecord,
-    SessionAttachResponse, SessionDetachResponse, SessionDetail, SessionListFilter,
-    SessionOutputEvent, SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary,
-    SessionSpecUpdateRecord, SessionSummary, UpdateAccountRequest, UpdateDocumentRequest,
-    UpdatePlanningAssignmentRequest, UpdateProjectRequest, UpdateProjectRootRequest,
-    UpdateSessionSpecRequest, UpdateWorkItemRequest, UpdateWorkflowReconciliationProposalRequest,
-    UpdateWorktreeRequest, WorkItemDetail, WorkItemListFilter, WorkItemSummary,
-    WorkItemUpdateRecord, WorkflowReconciliationProposalDetail,
+    DocumentUpdateRecord, GetWorkspaceStateRequest, NewAccountRecord, NewDocumentRecord,
+    NewPlanningAssignmentRecord, NewProjectRecord, NewProjectRootRecord, NewSessionRecord,
+    NewSessionSpecRecord, NewWorkItemRecord, NewWorkflowReconciliationProposalRecord,
+    NewWorktreeRecord, PlanningAssignmentDetail, PlanningAssignmentListFilter,
+    PlanningAssignmentSummary, PlanningAssignmentUpdateRecord, ProjectDetail, ProjectRootSummary,
+    ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord, RemoveProjectRootRequest,
+    SessionArtifactRecord, SessionAttachResponse, SessionDetachResponse, SessionDetail,
+    SessionListFilter, SessionOutputEvent, SessionSpecDetail, SessionSpecListFilter,
+    SessionSpecSummary, SessionSpecUpdateRecord, SessionStateChangedEvent, SessionSummary,
+    UpdateAccountRequest, UpdateDocumentRequest, UpdatePlanningAssignmentRequest,
+    UpdateProjectRequest, UpdateProjectRootRequest, UpdateSessionSpecRequest,
+    UpdateWorkItemRequest, UpdateWorkflowReconciliationProposalRequest,
+    UpdateWorkspaceStateRequest, UpdateWorktreeRequest, WorkItemDetail, WorkItemListFilter,
+    WorkItemSummary, WorkItemUpdateRecord, WorkflowReconciliationProposalDetail,
     WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
-    WorkflowReconciliationProposalUpdateRecord, WorktreeDetail, WorktreeListFilter,
-    WorktreeSummary, WorktreeUpdateRecord,
+    WorkflowReconciliationProposalUpdateRecord, WorkspaceStateRecord, WorktreeDetail,
+    WorktreeListFilter, WorktreeSummary, WorktreeUpdateRecord,
 };
 use crate::runtime::{SessionLaunchRequest, SessionRegistry, SessionRuntimeRegistration};
 use crate::store::DatabaseSet;
@@ -1137,6 +1138,33 @@ impl SupervisorService {
         self.with_runtime_flags(sessions)
     }
 
+    pub fn get_workspace_state(
+        &self,
+        request: GetWorkspaceStateRequest,
+    ) -> Result<Option<WorkspaceStateRecord>> {
+        let scope = validate_workspace_state_scope(&request.scope)?;
+        self.databases.get_workspace_state(&scope)
+    }
+
+    pub fn update_workspace_state(
+        &self,
+        request: UpdateWorkspaceStateRequest,
+    ) -> Result<WorkspaceStateRecord> {
+        let scope = validate_workspace_state_scope(&request.scope)?;
+        validate_workspace_state_payload(&request.payload)?;
+        let saved_at = unix_time_seconds();
+        let record_id = format!("ws_{}", Uuid::new_v4().simple());
+        let normalized = UpdateWorkspaceStateRequest {
+            scope,
+            payload: request.payload,
+        };
+        self.databases
+            .save_workspace_state(&normalized, &record_id, saved_at)?;
+        self.databases
+            .get_workspace_state(&normalized.scope)?
+            .ok_or_else(|| anyhow!("workspace_state {} was not found", normalized.scope))
+    }
+
     pub fn get_session(&self, session_id: &str) -> Result<Option<SessionDetail>> {
         let Some(summary) = self.databases.get_session(session_id)? else {
             return Ok(None);
@@ -1193,7 +1221,7 @@ impl SupervisorService {
             title_source: title_source.to_string(),
             runtime_state: "starting".to_string(),
             status: "active".to_string(),
-            activity_state: "idle".to_string(),
+            activity_state: "starting".to_string(),
             pty_owner_key: pty_owner_key.clone(),
             cwd: spec_record.cwd.clone(),
             transcript_primary_artifact_id: None,
@@ -1245,7 +1273,10 @@ impl SupervisorService {
     }
 
     pub fn forward_input(&self, session_id: &str, input: &[u8]) -> Result<()> {
-        self.registry.forward_input(session_id, input)
+        let now = unix_time_seconds();
+        self.registry.forward_input(session_id, input)?;
+        self.databases.record_session_input(session_id, now)?;
+        self.registry.note_input(session_id, now)
     }
 
     pub fn resize_session(&self, session_id: &str, cols: i64, rows: i64) -> Result<()> {
@@ -1253,7 +1284,9 @@ impl SupervisorService {
     }
 
     pub fn interrupt_session(&self, session_id: &str) -> Result<()> {
-        self.registry.interrupt_session(session_id)
+        let now = unix_time_seconds();
+        self.registry.interrupt_session(session_id)?;
+        self.databases.mark_session_stopping(session_id, now)
     }
 
     pub fn terminate_session(&self, session_id: &str) -> Result<()> {
@@ -1307,6 +1340,22 @@ impl SupervisorService {
     ) -> Result<()> {
         self.registry
             .unsubscribe_output(session_id, subscription_id)
+    }
+
+    pub fn subscribe_session_state_changed(
+        &self,
+        session_id: &str,
+    ) -> Result<(String, std::sync::mpsc::Receiver<SessionStateChangedEvent>)> {
+        self.registry.subscribe_state_changes(session_id)
+    }
+
+    pub fn unsubscribe_session_state_changed(
+        &self,
+        session_id: &str,
+        subscription_id: &str,
+    ) -> Result<()> {
+        self.registry
+            .unsubscribe_state_changes(session_id, subscription_id)
     }
 
     fn build_session_spec_record(
@@ -2288,6 +2337,18 @@ fn validate_terminal_dimension(field_name: &str, value: i64) -> Result<i64> {
     }
 
     Ok(value)
+}
+
+fn validate_workspace_state_scope(value: &str) -> Result<String> {
+    required_trimmed("workspace_state scope", value)
+}
+
+fn validate_workspace_state_payload(value: &Value) -> Result<()> {
+    if value.is_object() {
+        return Ok(());
+    }
+
+    Err(anyhow!("workspace_state payload must be a JSON object"))
 }
 
 fn closed_at_for_worktree_status(status: &str, requested: Option<i64>, now: i64) -> Option<i64> {

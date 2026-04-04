@@ -15,11 +15,12 @@ use crate::models::{
     PlanningAssignmentSummary, PlanningAssignmentUpdateRecord, ProjectDetail, ProjectRootSummary,
     ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord, SessionArtifactRecord,
     SessionListFilter, SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary,
-    SessionSpecUpdateRecord, SessionSummary, WorkItemDetail, WorkItemListFilter, WorkItemSummary,
-    WorkItemUpdateRecord, WorkflowReconciliationProposalDetail,
-    WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
-    WorkflowReconciliationProposalUpdateRecord, WorktreeDetail, WorktreeListFilter,
-    WorktreeSummary, WorktreeUpdateRecord,
+    SessionSpecUpdateRecord, SessionSummary, UpdateWorkspaceStateRequest, WorkItemDetail,
+    WorkItemListFilter, WorkItemSummary, WorkItemUpdateRecord,
+    WorkflowReconciliationProposalDetail, WorkflowReconciliationProposalListFilter,
+    WorkflowReconciliationProposalSummary, WorkflowReconciliationProposalUpdateRecord,
+    WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary,
+    WorktreeUpdateRecord,
 };
 use crate::schema::{migrate_app_db, migrate_knowledge_db};
 
@@ -2146,6 +2147,8 @@ impl DatabaseSet {
             "UPDATE sessions
              SET runtime_state = 'running',
                  status = 'active',
+                 activity_state = 'working',
+                 needs_input_reason = NULL,
                  started_at = COALESCE(started_at, ?2),
                  updated_at = ?2
              WHERE id = ?1",
@@ -2160,6 +2163,8 @@ impl DatabaseSet {
             "UPDATE sessions
              SET runtime_state = 'stopping',
                  status = 'active',
+                 activity_state = 'idle',
+                 needs_input_reason = NULL,
                  updated_at = ?2
              WHERE id = ?1",
             params![session_id, updated_at],
@@ -2174,6 +2179,7 @@ impl DatabaseSet {
              SET runtime_state = 'failed',
                  status = 'failed',
                  activity_state = 'idle',
+                 needs_input_reason = NULL,
                  ended_at = COALESCE(ended_at, ?2),
                  updated_at = ?2
              WHERE id = ?1",
@@ -2187,6 +2193,21 @@ impl DatabaseSet {
         connection.execute(
             "UPDATE sessions
              SET last_output_at = ?2,
+                 activity_state = 'working',
+                 needs_input_reason = NULL,
+                 updated_at = ?2
+             WHERE id = ?1",
+            params![session_id, timestamp],
+        )?;
+        Ok(())
+    }
+
+    pub fn record_session_input(&self, session_id: &str, timestamp: i64) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "UPDATE sessions
+             SET activity_state = 'working',
+                 needs_input_reason = NULL,
                  updated_at = ?2
              WHERE id = ?1",
             params![session_id, timestamp],
@@ -2219,11 +2240,73 @@ impl DatabaseSet {
              SET runtime_state = ?2,
                  status = ?3,
                  activity_state = 'idle',
+                 needs_input_reason = NULL,
                  ended_at = COALESCE(ended_at, ?4),
                  updated_at = ?4
              WHERE id = ?1",
             params![session_id, runtime_state, status, ended_at],
         )?;
+        Ok(())
+    }
+
+    pub fn update_session_activity(
+        &self,
+        session_id: &str,
+        activity_state: &str,
+        needs_input_reason: Option<&str>,
+        updated_at: i64,
+    ) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "UPDATE sessions
+             SET activity_state = ?2,
+                 needs_input_reason = ?3,
+                 updated_at = ?4
+             WHERE id = ?1",
+            params![session_id, activity_state, needs_input_reason, updated_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_workspace_state(&self, scope: &str) -> Result<Option<WorkspaceStateRecord>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection
+            .query_row(
+                "SELECT id, scope, payload_json, saved_at
+                 FROM workspace_state
+                 WHERE scope = ?1
+                 ORDER BY saved_at DESC, rowid DESC
+                 LIMIT 1",
+                [scope],
+                map_workspace_state_record,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn save_workspace_state(
+        &self,
+        request: &UpdateWorkspaceStateRequest,
+        id: &str,
+        saved_at: i64,
+    ) -> Result<()> {
+        let mut connection = open_connection(&self.paths.app_db)?;
+        let tx = connection.transaction()?;
+        tx.execute(
+            "DELETE FROM workspace_state WHERE scope = ?1",
+            params![request.scope],
+        )?;
+        tx.execute(
+            "INSERT INTO workspace_state (id, scope, payload_json, saved_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                id,
+                request.scope,
+                serde_json::to_string(&request.payload)?,
+                saved_at
+            ],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -2582,6 +2665,15 @@ fn map_workflow_reconciliation_proposal_summary(
         created_at: row.get(10)?,
         updated_at: row.get(11)?,
         resolved_at: row.get(12)?,
+    })
+}
+
+fn map_workspace_state_record(row: &Row<'_>) -> rusqlite::Result<WorkspaceStateRecord> {
+    Ok(WorkspaceStateRecord {
+        id: row.get(0)?,
+        scope: row.get(1)?,
+        payload: parse_json_value(row.get_ref(2)?.as_str()?)?,
+        saved_at: row.get(3)?,
     })
 }
 

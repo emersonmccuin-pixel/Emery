@@ -9,16 +9,18 @@ use crate::models::{
     CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest,
     CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
     DeletePlanningAssignmentRequest, DocumentDetail, DocumentListFilter, DocumentSummary,
-    PlanningAssignmentDetail, PlanningAssignmentListFilter, PlanningAssignmentSummary,
-    ProjectDetail, ProjectRootSummary, ProjectSummary, RemoveProjectRootRequest,
-    SessionAttachResponse, SessionDetachResponse, SessionDetail, SessionListFilter,
-    SessionOutputEvent, SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary,
-    SessionSummary, UpdateAccountRequest, UpdateDocumentRequest, UpdatePlanningAssignmentRequest,
-    UpdateProjectRequest, UpdateProjectRootRequest, UpdateSessionSpecRequest,
-    UpdateWorkItemRequest, UpdateWorkflowReconciliationProposalRequest, UpdateWorktreeRequest,
-    WorkItemDetail, WorkItemListFilter, WorkItemSummary, WorkflowReconciliationProposalDetail,
-    WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
-    WorktreeDetail, WorktreeListFilter, WorktreeSummary,
+    GetWorkspaceStateRequest, PlanningAssignmentDetail, PlanningAssignmentListFilter,
+    PlanningAssignmentSummary, ProjectDetail, ProjectRootSummary, ProjectSummary,
+    RemoveProjectRootRequest, SessionAttachResponse, SessionDetachResponse, SessionDetail,
+    SessionListFilter, SessionOutputEvent, SessionSpecDetail, SessionSpecListFilter,
+    SessionSpecSummary, SessionStateChangedEvent, SessionSummary, UpdateAccountRequest,
+    UpdateDocumentRequest, UpdatePlanningAssignmentRequest, UpdateProjectRequest,
+    UpdateProjectRootRequest, UpdateSessionSpecRequest, UpdateWorkItemRequest,
+    UpdateWorkflowReconciliationProposalRequest, UpdateWorkspaceStateRequest,
+    UpdateWorktreeRequest, WorkItemDetail, WorkItemListFilter, WorkItemSummary,
+    WorkflowReconciliationProposalDetail, WorkflowReconciliationProposalListFilter,
+    WorkflowReconciliationProposalSummary, WorkspaceStateRecord, WorktreeDetail,
+    WorktreeListFilter, WorktreeSummary,
 };
 use crate::runtime::SessionRegistry;
 use crate::service::SupervisorService;
@@ -261,6 +263,20 @@ impl Supervisor {
         self.service.list_sessions(filter)
     }
 
+    pub fn get_workspace_state(
+        &self,
+        request: GetWorkspaceStateRequest,
+    ) -> Result<Option<WorkspaceStateRecord>> {
+        self.service.get_workspace_state(request)
+    }
+
+    pub fn update_workspace_state(
+        &self,
+        request: UpdateWorkspaceStateRequest,
+    ) -> Result<WorkspaceStateRecord> {
+        self.service.update_workspace_state(request)
+    }
+
     pub fn get_session(&self, session_id: &str) -> Result<Option<SessionDetail>> {
         self.service.get_session(session_id)
     }
@@ -313,6 +329,22 @@ impl Supervisor {
     ) -> Result<()> {
         self.service
             .unsubscribe_session_output(session_id, subscription_id)
+    }
+
+    pub fn subscribe_session_state_changed(
+        &self,
+        session_id: &str,
+    ) -> Result<(String, std::sync::mpsc::Receiver<SessionStateChangedEvent>)> {
+        self.service.subscribe_session_state_changed(session_id)
+    }
+
+    pub fn unsubscribe_session_state_changed(
+        &self,
+        session_id: &str,
+        subscription_id: &str,
+    ) -> Result<()> {
+        self.service
+            .unsubscribe_session_state_changed(session_id, subscription_id)
     }
 }
 

@@ -5,17 +5,22 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use base64::Engine as _;
 use portable_pty::{Child, ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use uuid::Uuid;
 
-use crate::models::{EncodedTerminalChunk, ReplaySnapshot, SessionOutputEvent, SessionRuntimeView};
+use crate::models::{
+    EncodedTerminalChunk, ReplaySnapshot, SessionOutputEvent, SessionRuntimeView,
+    SessionStateChangedEvent,
+};
 use crate::store::DatabaseSet;
 
 const DEFAULT_REPLAY_LIMIT_BYTES: usize = 128 * 1024;
 const OUTPUT_CHUNK_SIZE: usize = 8192;
+const QUIET_INPUT_THRESHOLD_SECS: i64 = 3;
 
 #[derive(Debug, Clone)]
 pub struct SessionRegistry {
@@ -52,18 +57,25 @@ pub struct SessionAttachmentSnapshot {
 #[derive(Debug)]
 struct RuntimeSessionState {
     runtime_state: String,
+    activity_state: String,
+    needs_input_reason: Option<String>,
     attached_clients: usize,
     attachments: HashSet<String>,
     started_at: Option<i64>,
+    last_output_at: Option<i64>,
+    last_attached_at: Option<i64>,
+    last_runtime_activity_at: Option<i64>,
     created_at: i64,
     updated_at: i64,
     artifact_root: PathBuf,
     raw_log_path: PathBuf,
     replay: ReplayBuffer,
     raw_log: RawLogWriter,
-    subscribers: HashMap<String, Sender<SessionOutputEvent>>,
+    output_subscribers: HashMap<String, Sender<SessionOutputEvent>>,
+    state_subscribers: HashMap<String, Sender<SessionStateChangedEvent>>,
     controller: Option<Arc<SessionProcessController>>,
     requested_stop: Option<RequestedStop>,
+    activity_monitor_running: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,18 +117,25 @@ impl SessionRegistry {
             registration.session_id,
             RuntimeSessionState {
                 runtime_state: "starting".to_string(),
+                activity_state: "starting".to_string(),
+                needs_input_reason: None,
                 attached_clients: 0,
                 attachments: HashSet::new(),
                 started_at: None,
+                last_output_at: None,
+                last_attached_at: None,
+                last_runtime_activity_at: None,
                 created_at: registration.created_at,
                 updated_at: registration.created_at,
                 artifact_root: registration.artifact_root,
                 raw_log_path: registration.raw_log_path,
                 replay: ReplayBuffer::new(DEFAULT_REPLAY_LIMIT_BYTES),
                 raw_log,
-                subscribers: HashMap::new(),
+                output_subscribers: HashMap::new(),
+                state_subscribers: HashMap::new(),
                 controller: None,
                 requested_stop: None,
+                activity_monitor_running: false,
             },
         );
         Ok(())
@@ -175,12 +194,17 @@ impl SessionRegistry {
                 .get_mut(&request.session_id)
                 .ok_or_else(|| anyhow!("session {} was not registered", request.session_id))?;
             state.runtime_state = "running".to_string();
+            state.activity_state = "working".to_string();
+            state.needs_input_reason = None;
             state.started_at = Some(started_at);
+            state.last_runtime_activity_at = Some(started_at);
             state.updated_at = started_at;
             state.controller = Some(Arc::clone(&controller));
             state.requested_stop = None;
         }
         databases.mark_session_started(&request.session_id, started_at)?;
+        self.broadcast_state_change(&request.session_id)?;
+        self.ensure_activity_monitor(&request.session_id, databases.clone());
 
         let output_registry = self.clone();
         let output_databases = databases.clone();
@@ -212,9 +236,11 @@ impl SessionRegistry {
             .get_mut(session_id)
             .ok_or_else(|| anyhow!("session {session_id} was not registered"))?;
         state.runtime_state = "failed".to_string();
+        state.activity_state = "idle".to_string();
+        state.needs_input_reason = None;
         state.updated_at = failed_at;
         state.controller = None;
-        state.subscribers.clear();
+        state.output_subscribers.clear();
         state.attachments.clear();
         state.attached_clients = 0;
         state.requested_stop = None;
@@ -237,7 +263,7 @@ impl SessionRegistry {
         let sequence = state.replay.append(timestamp, chunk);
         let event = encode_output_event(session_id, sequence, timestamp, chunk);
         let stale_subscribers = state
-            .subscribers
+            .output_subscribers
             .iter()
             .filter_map(|(subscription_id, sender)| {
                 if sender.send(event.clone()).is_err() {
@@ -248,10 +274,20 @@ impl SessionRegistry {
             })
             .collect::<Vec<_>>();
         for subscription_id in stale_subscribers {
-            state.subscribers.remove(&subscription_id);
+            state.output_subscribers.remove(&subscription_id);
         }
 
+        let should_broadcast =
+            state.activity_state != "working" || state.needs_input_reason.is_some();
+        state.activity_state = "working".to_string();
+        state.needs_input_reason = None;
+        state.last_output_at = Some(timestamp);
+        state.last_runtime_activity_at = Some(timestamp);
         state.updated_at = timestamp;
+        drop(guard);
+        if should_broadcast {
+            self.broadcast_state_change(session_id)?;
+        }
         Ok(sequence)
     }
 
@@ -262,6 +298,24 @@ impl SessionRegistry {
 
         let controller = self.live_controller(session_id)?;
         controller.write_input(input)
+    }
+
+    pub fn note_input(&self, session_id: &str, timestamp: i64) -> Result<()> {
+        let mut guard = self.lock()?;
+        let state = guard
+            .get_mut(session_id)
+            .ok_or_else(|| anyhow!("session {session_id} was not registered"))?;
+        let should_broadcast =
+            state.activity_state != "working" || state.needs_input_reason.is_some();
+        state.activity_state = "working".to_string();
+        state.needs_input_reason = None;
+        state.last_runtime_activity_at = Some(timestamp);
+        state.updated_at = timestamp;
+        drop(guard);
+        if should_broadcast {
+            self.broadcast_state_change(session_id)?;
+        }
+        Ok(())
     }
 
     pub fn resize_session(&self, session_id: &str, cols: i64, rows: i64) -> Result<()> {
@@ -283,12 +337,16 @@ impl SessionRegistry {
             if !is_live_runtime_state(&state.runtime_state) || state.controller.is_none() {
                 return Err(anyhow!("session {session_id} is not live"));
             }
+            state.runtime_state = "stopping".to_string();
+            state.activity_state = "idle".to_string();
+            state.needs_input_reason = None;
             state.requested_stop = Some(RequestedStop::Interrupt);
             state.updated_at = unix_time_seconds();
         }
 
         let controller = self.live_controller(session_id)?;
-        controller.write_input(&[0x03])
+        controller.write_input(&[0x03])?;
+        self.broadcast_state_change(session_id)
     }
 
     pub fn terminate_session(&self, session_id: &str, databases: &DatabaseSet) -> Result<()> {
@@ -301,6 +359,8 @@ impl SessionRegistry {
                 return Err(anyhow!("session {session_id} is not live"));
             }
             state.runtime_state = "stopping".to_string();
+            state.activity_state = "idle".to_string();
+            state.needs_input_reason = None;
             state.requested_stop = Some(RequestedStop::Terminate);
             state.updated_at = unix_time_seconds();
         }
@@ -308,7 +368,8 @@ impl SessionRegistry {
         let now = unix_time_seconds();
         databases.mark_session_stopping(session_id, now)?;
         let controller = self.live_controller(session_id)?;
-        controller.terminate()
+        controller.terminate()?;
+        self.broadcast_state_change(session_id)
     }
 
     pub fn attach_session(
@@ -327,6 +388,7 @@ impl SessionRegistry {
         let attachment_id = format!("att_{}", Uuid::new_v4().simple());
         state.attachments.insert(attachment_id.clone());
         state.attached_clients = state.attachments.len();
+        state.last_attached_at = Some(attached_at);
         state.updated_at = attached_at;
 
         let (terminal_cols, terminal_rows) = state
@@ -334,13 +396,17 @@ impl SessionRegistry {
             .as_ref()
             .ok_or_else(|| anyhow!("session {session_id} has no active process controller"))?
             .size()?;
+        let replay = state.replay.snapshot();
+        let output_cursor = state.replay.latest_sequence();
+        drop(guard);
+        self.broadcast_state_change(session_id)?;
 
         Ok(SessionAttachmentSnapshot {
             attachment_id,
             terminal_cols,
             terminal_rows,
-            replay: state.replay.snapshot(),
-            output_cursor: state.replay.latest_sequence(),
+            replay,
+            output_cursor,
         })
     }
 
@@ -356,7 +422,10 @@ impl SessionRegistry {
         }
         state.attached_clients = state.attachments.len();
         state.updated_at = unix_time_seconds();
-        Ok(state.attached_clients)
+        let attached_clients = state.attached_clients;
+        drop(guard);
+        self.broadcast_state_change(session_id)?;
+        Ok(attached_clients)
     }
 
     pub fn subscribe_output(
@@ -368,7 +437,7 @@ impl SessionRegistry {
         let state = guard
             .get_mut(session_id)
             .ok_or_else(|| anyhow!("session {session_id} was not registered"))?;
-        if !is_live_runtime_state(&state.runtime_state) || state.controller.is_none() {
+        if state.controller.is_none() {
             return Err(anyhow!("session {session_id} is not live"));
         }
 
@@ -386,7 +455,9 @@ impl SessionRegistry {
         }
 
         let subscription_id = format!("sub_{}", Uuid::new_v4().simple());
-        state.subscribers.insert(subscription_id.clone(), sender);
+        state
+            .output_subscribers
+            .insert(subscription_id.clone(), sender);
         Ok((subscription_id, receiver))
     }
 
@@ -395,7 +466,41 @@ impl SessionRegistry {
         let state = guard
             .get_mut(session_id)
             .ok_or_else(|| anyhow!("session {session_id} was not registered"))?;
-        if state.subscribers.remove(subscription_id).is_none() {
+        if state.output_subscribers.remove(subscription_id).is_none() {
+            return Err(anyhow!(
+                "subscription {subscription_id} was not found for session {session_id}"
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn subscribe_state_changes(
+        &self,
+        session_id: &str,
+    ) -> Result<(String, Receiver<SessionStateChangedEvent>)> {
+        let mut guard = self.lock()?;
+        let state = guard
+            .get_mut(session_id)
+            .ok_or_else(|| anyhow!("session {session_id} was not registered"))?;
+        let snapshot = build_state_changed_event(session_id, state);
+        let (sender, receiver) = mpsc::channel();
+        sender
+            .send(snapshot)
+            .map_err(|_| anyhow!("failed to seed session state subscription"))?;
+
+        let subscription_id = format!("sub_{}", Uuid::new_v4().simple());
+        state
+            .state_subscribers
+            .insert(subscription_id.clone(), sender);
+        Ok((subscription_id, receiver))
+    }
+
+    pub fn unsubscribe_state_changes(&self, session_id: &str, subscription_id: &str) -> Result<()> {
+        let mut guard = self.lock()?;
+        let state = guard
+            .get_mut(session_id)
+            .ok_or_else(|| anyhow!("session {session_id} was not registered"))?;
+        if state.state_subscribers.remove(subscription_id).is_none() {
             return Err(anyhow!(
                 "subscription {subscription_id} was not found for session {session_id}"
             ));
@@ -463,7 +568,7 @@ impl SessionRegistry {
             .ok_or_else(|| anyhow!("session {session_id} was not registered"))?;
         let requested_stop = state.requested_stop.take();
         state.controller = None;
-        state.subscribers.clear();
+        state.output_subscribers.clear();
         state.attachments.clear();
         state.attached_clients = 0;
         state.updated_at = finished_at;
@@ -476,10 +581,126 @@ impl SessionRegistry {
         };
 
         state.runtime_state = runtime_state.to_string();
+        state.activity_state = "idle".to_string();
+        state.needs_input_reason = None;
         Ok(CompletedSessionState {
             runtime_state: runtime_state.to_string(),
             status: status.to_string(),
         })
+    }
+
+    fn broadcast_state_change(&self, session_id: &str) -> Result<()> {
+        let mut guard = self.lock()?;
+        let state = guard
+            .get_mut(session_id)
+            .ok_or_else(|| anyhow!("session {session_id} was not registered"))?;
+        let event = build_state_changed_event(session_id, state);
+        let stale_subscribers = state
+            .state_subscribers
+            .iter()
+            .filter_map(|(subscription_id, sender)| {
+                if sender.send(event.clone()).is_err() {
+                    Some(subscription_id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        for subscription_id in stale_subscribers {
+            state.state_subscribers.remove(&subscription_id);
+        }
+        Ok(())
+    }
+
+    fn ensure_activity_monitor(&self, session_id: &str, databases: DatabaseSet) {
+        let should_spawn = {
+            let mut guard = match self.lock() {
+                Ok(guard) => guard,
+                Err(_) => return,
+            };
+            let Some(state) = guard.get_mut(session_id) else {
+                return;
+            };
+            if state.activity_monitor_running {
+                false
+            } else {
+                state.activity_monitor_running = true;
+                true
+            }
+        };
+
+        if !should_spawn {
+            return;
+        }
+
+        let registry = self.clone();
+        let session_id = session_id.to_string();
+        thread::spawn(move || {
+            loop {
+                thread::sleep(Duration::from_secs(1));
+                match registry.promote_waiting_for_input(&databases, &session_id) {
+                    Ok(ActivityMonitorStatus::Continue) => {}
+                    Ok(ActivityMonitorStatus::Exit) => break,
+                    Err(error) => {
+                        eprintln!("session {session_id} activity monitor failed: {error:#}");
+                        break;
+                    }
+                }
+            }
+            let _ = registry.clear_activity_monitor_flag(&session_id);
+        });
+    }
+
+    fn promote_waiting_for_input(
+        &self,
+        databases: &DatabaseSet,
+        session_id: &str,
+    ) -> Result<ActivityMonitorStatus> {
+        let now = unix_time_seconds();
+        let mut guard = self.lock()?;
+        let Some(state) = guard.get_mut(session_id) else {
+            return Ok(ActivityMonitorStatus::Exit);
+        };
+
+        if state.controller.is_none() || !is_live_runtime_state(&state.runtime_state) {
+            return Ok(ActivityMonitorStatus::Exit);
+        }
+
+        let Some(last_runtime_activity_at) = state.last_runtime_activity_at else {
+            return Ok(ActivityMonitorStatus::Continue);
+        };
+
+        if now - last_runtime_activity_at < QUIET_INPUT_THRESHOLD_SECS {
+            return Ok(ActivityMonitorStatus::Continue);
+        }
+
+        if state.activity_state == "waiting_for_input"
+            && state.needs_input_reason.as_deref() == Some("user_input")
+        {
+            return Ok(ActivityMonitorStatus::Continue);
+        }
+
+        state.activity_state = "waiting_for_input".to_string();
+        state.needs_input_reason = Some("user_input".to_string());
+        state.updated_at = now;
+        drop(guard);
+
+        databases.update_session_activity(
+            session_id,
+            "waiting_for_input",
+            Some("user_input"),
+            now,
+        )?;
+        self.broadcast_state_change(session_id)?;
+        Ok(ActivityMonitorStatus::Continue)
+    }
+
+    fn clear_activity_monitor_flag(&self, session_id: &str) -> Result<()> {
+        let mut guard = self.lock()?;
+        if let Some(state) = guard.get_mut(session_id) {
+            state.activity_monitor_running = false;
+        }
+        Ok(())
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, HashMap<String, RuntimeSessionState>>> {
@@ -493,6 +714,12 @@ impl SessionRegistry {
 struct CompletedSessionState {
     runtime_state: String,
     status: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActivityMonitorStatus {
+    Continue,
+    Exit,
 }
 
 fn pump_output(
@@ -545,6 +772,11 @@ fn wait_for_exit(
                             "failed to persist exit state for session {session_id}: {error:#}"
                         );
                     }
+                    if let Err(error) = registry.broadcast_state_change(session_id) {
+                        eprintln!(
+                            "failed to publish exit state for session {session_id}: {error:#}"
+                        );
+                    }
                 }
                 Err(error) => {
                     eprintln!("failed to finalize runtime for session {session_id}: {error:#}");
@@ -565,8 +797,37 @@ fn wait_for_exit(
                     "failed to persist failed exit state for session {session_id}: {db_error:#}"
                 );
             }
+            if let Err(event_error) = registry.broadcast_state_change(session_id) {
+                eprintln!(
+                    "failed to publish failed exit state for session {session_id}: {event_error:#}"
+                );
+            }
             eprintln!("session {session_id} wait failed: {error}");
         }
+    }
+}
+
+fn build_state_changed_event(
+    session_id: &str,
+    state: &RuntimeSessionState,
+) -> SessionStateChangedEvent {
+    SessionStateChangedEvent {
+        session_id: session_id.to_string(),
+        runtime_state: state.runtime_state.clone(),
+        status: match state.runtime_state.as_str() {
+            "starting" | "running" | "stopping" => "active".to_string(),
+            "interrupted" => "interrupted".to_string(),
+            "failed" => "failed".to_string(),
+            _ => "completed".to_string(),
+        },
+        activity_state: state.activity_state.clone(),
+        needs_input_reason: state.needs_input_reason.clone(),
+        attached_clients: state.attached_clients,
+        started_at: state.started_at,
+        last_output_at: state.last_output_at,
+        last_attached_at: state.last_attached_at,
+        updated_at: state.updated_at,
+        live: is_live_runtime_state(&state.runtime_state) && state.controller.is_some(),
     }
 }
 

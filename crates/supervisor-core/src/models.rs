@@ -871,6 +871,40 @@ pub struct SessionOutputEvent {
     pub data: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionStateChangedEvent {
+    pub session_id: String,
+    pub runtime_state: String,
+    pub status: String,
+    pub activity_state: String,
+    pub needs_input_reason: Option<String>,
+    pub attached_clients: usize,
+    pub started_at: Option<i64>,
+    pub last_output_at: Option<i64>,
+    pub last_attached_at: Option<i64>,
+    pub updated_at: i64,
+    pub live: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkspaceStateRecord {
+    pub id: String,
+    pub scope: String,
+    pub payload: Value,
+    pub saved_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct GetWorkspaceStateRequest {
+    pub scope: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateWorkspaceStateRequest {
+    pub scope: String,
+    pub payload: Value,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct SessionListFilter {
     pub project_id: Option<String>,

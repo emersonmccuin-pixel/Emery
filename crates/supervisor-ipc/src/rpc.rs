@@ -12,8 +12,9 @@ use supervisor_core::{
     RemoveProjectRootRequest, SessionListFilter, SessionSpecListFilter, Supervisor,
     UpdateAccountRequest, UpdateDocumentRequest, UpdatePlanningAssignmentRequest,
     UpdateProjectRequest, UpdateProjectRootRequest, UpdateSessionSpecRequest,
-    UpdateWorkItemRequest, UpdateWorkflowReconciliationProposalRequest, UpdateWorktreeRequest,
-    WorkItemListFilter, WorkflowReconciliationProposalListFilter, WorktreeListFilter,
+    UpdateWorkItemRequest, UpdateWorkflowReconciliationProposalRequest,
+    UpdateWorkspaceStateRequest, UpdateWorktreeRequest, WorkItemListFilter,
+    WorkflowReconciliationProposalListFilter, WorktreeListFilter,
 };
 
 use crate::protocol::{
@@ -22,7 +23,7 @@ use crate::protocol::{
     SessionAttachParams, SessionControlParams, SessionDetachParams, SessionGetParams,
     SessionInputParams, SessionResizeParams, SessionSpecGetParams, SubscriptionCloseParams,
     SubscriptionOpenParams, WorkItemGetParams, WorkflowReconciliationProposalGetParams,
-    WorktreeGetParams,
+    WorkspaceStateGetParams, WorktreeGetParams,
 };
 
 const PROTOCOL_VERSION: &str = "1";
@@ -44,6 +45,7 @@ pub struct ConnectionState {
 
 #[derive(Debug, Clone)]
 struct SessionOutputSubscription {
+    topic: &'static str,
     session_id: String,
 }
 
@@ -117,9 +119,16 @@ impl SupervisorRpc {
 
         if let Ok(subscriptions) = connection.subscriptions.lock() {
             for (subscription_id, subscription) in subscriptions.clone() {
-                let _ = self
-                    .supervisor
-                    .unsubscribe_session_output(&subscription.session_id, &subscription_id);
+                let _ = match subscription.topic {
+                    "session.output" => self
+                        .supervisor
+                        .unsubscribe_session_output(&subscription.session_id, &subscription_id),
+                    "session.state_changed" => self.supervisor.unsubscribe_session_state_changed(
+                        &subscription.session_id,
+                        &subscription_id,
+                    ),
+                    _ => Ok(()),
+                };
             }
         }
     }
@@ -382,6 +391,24 @@ impl SupervisorRpc {
                         .update_workflow_reconciliation_proposal(request)?,
                 )?)
             }
+            Method::WorkspaceStateGet => {
+                let params: WorkspaceStateGetParams = serde_json::from_value(params)?;
+                let workspace_state = self
+                    .supervisor
+                    .get_workspace_state(supervisor_core::GetWorkspaceStateRequest {
+                        scope: params.scope.clone(),
+                    })?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("workspace_state {} was not found", params.scope)
+                    })?;
+                Ok(serde_json::to_value(workspace_state)?)
+            }
+            Method::WorkspaceStateUpdate => {
+                let request: UpdateWorkspaceStateRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.update_workspace_state(request)?,
+                )?)
+            }
             Method::SessionList => {
                 let filter: SessionListFilter = serde_json::from_value(params)?;
                 Ok(serde_json::to_value(
@@ -480,6 +507,7 @@ impl SupervisorRpc {
                     .insert(
                         subscription_id.clone(),
                         SessionOutputSubscription {
+                            topic: "session.output",
                             session_id: session_id.clone(),
                         },
                     );
@@ -508,6 +536,49 @@ impl SupervisorRpc {
                     "session_id": session_id
                 }))
             }
+            "session.state_changed" => {
+                let session_id = params.session_id.ok_or_else(|| {
+                    anyhow::anyhow!("session.state_changed subscriptions require session_id")
+                })?;
+                let (subscription_id, receiver) = self
+                    .supervisor
+                    .subscribe_session_state_changed(&session_id)?;
+                connection
+                    .subscriptions
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("connection subscription state lock poisoned"))?
+                    .insert(
+                        subscription_id.clone(),
+                        SessionOutputSubscription {
+                            topic: "session.state_changed",
+                            session_id: session_id.clone(),
+                        },
+                    );
+
+                let event_sender = connection.event_sender.clone();
+                let forward_subscription_id = subscription_id.clone();
+                std::thread::spawn(move || {
+                    while let Ok(event) = receiver.recv() {
+                        if event_sender
+                            .send(EventEnvelope {
+                                message_type: "event",
+                                subscription_id: forward_subscription_id.clone(),
+                                event: "session.state_changed".to_string(),
+                                payload: serde_json::to_value(event).unwrap_or(Value::Null),
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                });
+
+                Ok(json!({
+                    "subscription_id": subscription_id,
+                    "topic": "session.state_changed",
+                    "session_id": session_id
+                }))
+            }
             _ => Err(anyhow::anyhow!(
                 "subscription topic {} is not supported",
                 params.topic
@@ -527,8 +598,15 @@ impl SupervisorRpc {
             .remove(subscription_id)
             .ok_or_else(|| anyhow::anyhow!("subscription {} was not found", subscription_id))?;
 
-        self.supervisor
-            .unsubscribe_session_output(&subscription.session_id, subscription_id)
+        match subscription.topic {
+            "session.output" => self
+                .supervisor
+                .unsubscribe_session_output(&subscription.session_id, subscription_id),
+            "session.state_changed" => self
+                .supervisor
+                .unsubscribe_session_state_changed(&subscription.session_id, subscription_id),
+            _ => Ok(()),
+        }
     }
 
     fn system_hello(&self) -> Result<HelloResult> {
@@ -576,6 +654,8 @@ impl SupervisorRpc {
                 Method::WorkflowReconciliationProposalGet.as_str(),
                 Method::WorkflowReconciliationProposalCreate.as_str(),
                 Method::WorkflowReconciliationProposalUpdate.as_str(),
+                Method::WorkspaceStateGet.as_str(),
+                Method::WorkspaceStateUpdate.as_str(),
                 Method::SessionList.as_str(),
                 Method::SessionGet.as_str(),
                 Method::SessionCreate.as_str(),
@@ -640,6 +720,8 @@ fn classify_error(error: anyhow::Error) -> ErrorBody {
             "planning_assignment_not_found"
         } else if message.contains("workflow reconciliation proposal ") {
             "workflow_reconciliation_proposal_not_found"
+        } else if message.contains("workspace_state ") {
+            "workspace_state_not_found"
         } else if message.contains("session spec ") {
             "session_spec_not_found"
         } else if message.contains("session ") {
@@ -668,6 +750,8 @@ fn classify_error(error: anyhow::Error) -> ErrorBody {
         || message.contains("cadence key")
         || message.contains("cadence type")
         || message.contains("planning assignment for work item")
+        || message.contains("workspace_state scope")
+        || message.contains("workspace_state payload")
         || message.contains("reconciliation target entity type")
         || message.contains("reconciliation proposal type")
         || message.contains("reconciliation status")
