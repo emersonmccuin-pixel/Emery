@@ -443,7 +443,11 @@ impl SessionRegistry {
         let now = unix_time_seconds();
         databases.mark_session_stopping(session_id, now)?;
         let controller = self.live_controller(session_id)?;
-        controller.terminate()?;
+        if let Err(error) = controller.terminate() {
+            if !is_already_exiting_error(&error) {
+                return Err(error);
+            }
+        }
         self.diagnostics.record(
             "runtime",
             "session.terminate_requested",
@@ -1028,6 +1032,13 @@ fn clamp_terminal_dimension(value: i64) -> u16 {
 
 fn is_live_runtime_state(runtime_state: &str) -> bool {
     matches!(runtime_state, "starting" | "running" | "stopping")
+}
+
+fn is_already_exiting_error(error: &anyhow::Error) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("os error 38")
+        || message.contains("end of the file")
+        || message.contains("broken pipe")
 }
 
 fn unix_time_seconds() -> i64 {
