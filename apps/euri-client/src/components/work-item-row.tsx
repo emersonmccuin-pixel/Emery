@@ -56,7 +56,7 @@ export function WorkItemRow({
         className="work-item-dispatch-btn"
         onClick={(e) => { e.stopPropagation(); onDispatch(); }}
       >
-        Dispatch
+        Launch
       </button>
     </div>
   );

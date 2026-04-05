@@ -26,9 +26,10 @@ const ORIGIN_MODE_LABELS: { key: keyof ModelDefaultsByMode; label: string }[] = 
 ];
 
 const MODEL_OPTIONS = [
-  { value: "", label: "Use default" },
+  { value: "", label: "Default" },
   { value: "opus", label: "Opus" },
   { value: "sonnet", label: "Sonnet" },
+  { value: "haiku", label: "Haiku" },
 ];
 
 function parseModelDefaults(json: string | null | undefined): ModelDefaults {

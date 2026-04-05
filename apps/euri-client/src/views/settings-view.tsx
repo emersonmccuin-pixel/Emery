@@ -295,10 +295,17 @@ function AppearanceSection() {
 // --- Agent Defaults Section ---
 
 const SAFETY_MODES = [
+  { value: "", label: "Default", description: "" },
+  { value: "full", label: "Autonomous", description: "Agent reads, writes, and executes without asking" },
+  { value: "permissive", label: "Supervised", description: "Agent asks before destructive operations" },
+  { value: "none", label: "Read Only", description: "Agent can read files but cannot write or execute" },
+];
+
+const MODEL_OPTIONS = [
   { value: "", label: "Default" },
-  { value: "full", label: "Full" },
-  { value: "permissive", label: "Permissive" },
-  { value: "none", label: "None" },
+  { value: "opus", label: "Opus" },
+  { value: "sonnet", label: "Sonnet" },
+  { value: "haiku", label: "Haiku" },
 ];
 
 function AgentDefaultsSection() {
@@ -353,16 +360,20 @@ function AgentDefaultsRow({
       <div className="settings-agent-defaults-account-name">{account.label}</div>
       <div className="settings-field-group">
         <label className="settings-label">Default model</label>
-        <input
-          className="settings-input"
-          type="text"
+        <select
+          className="settings-select"
           value={modelInput}
           onChange={(e) => {
             setModelInput(e.target.value);
             setSaved(false);
           }}
-          placeholder="e.g. claude-opus-4-5"
-        />
+        >
+          {MODEL_OPTIONS.map((m) => (
+            <option key={m.value} value={m.value}>
+              {m.label}
+            </option>
+          ))}
+        </select>
       </div>
       <div className="settings-field-group">
         <label className="settings-label">Safety mode</label>
@@ -380,6 +391,11 @@ function AgentDefaultsRow({
             </option>
           ))}
         </select>
+        {safetyMode && SAFETY_MODES.find((m) => m.value === safetyMode)?.description && (
+          <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", marginTop: "2px" }}>
+            {SAFETY_MODES.find((m) => m.value === safetyMode)!.description}
+          </div>
+        )}
       </div>
       <div className="settings-form-actions">
         <button

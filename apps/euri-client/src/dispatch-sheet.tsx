@@ -76,6 +76,16 @@ function getDefaultStopRules(originMode: string): string[] {
 
 // --- Single dispatch (existing behavior) ---
 
+const SAFETY_MODE_DESCRIPTIONS: Record<string, string> = {
+  full: "Agent reads, writes, and executes without asking",
+  permissive: "Agent asks before destructive operations",
+  none: "Agent can read files but cannot write or execute",
+};
+
+function safetyModeDescription(mode: string): string {
+  return SAFETY_MODE_DESCRIPTIONS[mode] ?? "";
+}
+
 function SingleDispatchSheet({
   workItem,
   project,
@@ -151,19 +161,27 @@ function SingleDispatchSheet({
           </div>
           <div className="dispatch-row">
             <span className="dispatch-label">Safety Mode</span>
-            <select value={safetyMode} onChange={(e) => setSafetyMode(e.target.value)}>
-              <option value="">Default ({resolvedDefault})</option>
-              <option value="full">Full</option>
-              <option value="permissive">Permissive</option>
-              <option value="none">None</option>
-            </select>
+            <div>
+              <select value={safetyMode} onChange={(e) => setSafetyMode(e.target.value)}>
+                <option value="">Default ({resolvedDefault})</option>
+                <option value="full">Autonomous</option>
+                <option value="permissive">Supervised</option>
+                <option value="none">Read Only</option>
+              </select>
+              {(safetyMode || resolvedDefault) && (
+                <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", marginTop: "2px" }}>
+                  {safetyModeDescription(safetyMode || resolvedDefault)}
+                </div>
+              )}
+            </div>
           </div>
           <div className="dispatch-row">
             <span className="dispatch-label">Model</span>
             <select value={model} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setModel(e.target.value)}>
               <option value="">Default ({resolvedDefaultModel})</option>
-              <option value="opus">Opus (best reasoning)</option>
-              <option value="sonnet">Sonnet (fast/cheap)</option>
+              <option value="opus">Opus</option>
+              <option value="sonnet">Sonnet</option>
+              <option value="haiku">Haiku</option>
             </select>
           </div>
           {getDefaultStopRules(originMode).length > 0 && (
@@ -251,7 +269,7 @@ function MultiDispatchSheet({
   return (
     <div className="dispatch-overlay" onClick={onCancel}>
       <div className="dispatch-sheet dispatch-sheet-multi" onClick={(e) => e.stopPropagation()}>
-        <h3>Dispatch {workItems.length} Sessions</h3>
+        <h3>Launch {workItems.length} Sessions</h3>
 
         {conflicts.length > 0 ? (
           <div className="dispatch-conflicts">
@@ -295,19 +313,27 @@ function MultiDispatchSheet({
         <div className="dispatch-details">
           <div className="dispatch-row">
             <span className="dispatch-label">Safety Mode</span>
-            <select value={safetyMode} onChange={(e) => setSafetyMode(e.target.value)}>
-              <option value="">Default ({resolvedDefault})</option>
-              <option value="full">Full</option>
-              <option value="permissive">Permissive</option>
-              <option value="none">None</option>
-            </select>
+            <div>
+              <select value={safetyMode} onChange={(e) => setSafetyMode(e.target.value)}>
+                <option value="">Default ({resolvedDefault})</option>
+                <option value="full">Autonomous</option>
+                <option value="permissive">Supervised</option>
+                <option value="none">Read Only</option>
+              </select>
+              {(safetyMode || resolvedDefault) && (
+                <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", marginTop: "2px" }}>
+                  {safetyModeDescription(safetyMode || resolvedDefault)}
+                </div>
+              )}
+            </div>
           </div>
           <div className="dispatch-row">
             <span className="dispatch-label">Model</span>
             <select value={model} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setModel(e.target.value)}>
               <option value="">Default (execution → sonnet)</option>
-              <option value="opus">Opus (best reasoning)</option>
-              <option value="sonnet">Sonnet (fast/cheap)</option>
+              <option value="opus">Opus</option>
+              <option value="sonnet">Sonnet</option>
+              <option value="haiku">Haiku</option>
             </select>
           </div>
         </div>
@@ -315,7 +341,7 @@ function MultiDispatchSheet({
         <div className="dispatch-actions">
           <button className="secondary-button" onClick={onCancel}>Cancel</button>
           <button className="secondary-button" onClick={handleConfirm}>
-            Dispatch All ({workItems.length} sessions)
+            Launch All ({workItems.length} sessions)
           </button>
         </div>
       </div>

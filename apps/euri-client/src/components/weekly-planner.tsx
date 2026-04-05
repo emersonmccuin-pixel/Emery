@@ -135,7 +135,7 @@ export function WeeklyPlanner({
             {!linkedSession && (
               <button
                 className="weekly-item-dispatch-btn"
-                title="Dispatch"
+                title="Launch"
                 onClick={(e) => {
                   e.stopPropagation();
                   onDispatch(workItem.id);

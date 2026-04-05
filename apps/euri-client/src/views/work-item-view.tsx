@@ -180,7 +180,7 @@ export function WorkItemView({
             className="wi-action-btn wi-action-btn--primary"
             onClick={() => void appStore.handleLaunchSessionFromWorkItem(workItemId)}
           >
-            Dispatch Agent
+            Launch Agent
           </button>
           <button
             className="wi-action-btn wi-action-btn--secondary"
@@ -194,7 +194,7 @@ export function WorkItemView({
               disabled={statusTransitioning}
               onClick={() => void handleStatusTransition("in_progress")}
             >
-              Start
+              Move to Active
             </button>
           ) : workItem.status === "in_progress" ? (
             <button
@@ -202,7 +202,7 @@ export function WorkItemView({
               disabled={statusTransitioning}
               onClick={() => void handleStatusTransition("done")}
             >
-              Done
+              Mark Complete
             </button>
           ) : workItem.status === "done" ? (
             <button
