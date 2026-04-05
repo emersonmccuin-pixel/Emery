@@ -2,6 +2,13 @@ import { useAppStore } from "./store";
 import { connectionLabel, exportDiagnosticsBundle } from "./lib";
 import { newCorrelationId, snapshotClientDiagnostics } from "./diagnostics";
 
+function toggleTheme() {
+  const current = document.documentElement.dataset.theme ?? "vaporwave";
+  const next = current === "vaporwave" ? "neutral-dark" : "vaporwave";
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem("euri.theme", next);
+}
+
 export function Topbar() {
   const connectionEvent = useAppStore((s) => s.connectionEvent);
   const connectionState = useAppStore((s) => s.connectionState);
@@ -40,6 +47,9 @@ export function Topbar() {
             debug
           </button>
         ) : null}
+        <button className="status-chip neutral theme-toggle" onClick={toggleTheme} title="Toggle theme">
+          ◑ theme
+        </button>
       </div>
     </header>
   );
