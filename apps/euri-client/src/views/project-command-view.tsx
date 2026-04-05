@@ -73,21 +73,25 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
           onSetViewMode={(mode) => appStore.setPlanningViewMode(mode)}
           workItems={workItems}
           assignments={assignments}
-        />
-        <WorkItemsSection
-          workItems={filteredWorkItems}
-          selectedIds={selectedWorkItemIds}
-          onToggleSelect={(id) => appStore.toggleWorkItemSelection(id)}
-          onClearSelection={() => appStore.clearWorkItemSelection()}
+          sessions={projectSessions}
           onDispatch={(workItemId) => void appStore.handleLaunchSessionFromWorkItem(workItemId)}
-          onMultiDispatch={() => void appStore.handleMultiDispatch(projectId)}
-          assignments={assignments}
-          dayCadenceKey={dayCadenceKey}
-          weekCadenceKey={weekCadenceKey}
-          onPlan={(workItemId, cadenceType, cadenceKey) =>
-            void appStore.handleTogglePlanningAssignment(workItemId, cadenceType, cadenceKey)
-          }
         />
+        {planningViewMode !== "day" && (
+          <WorkItemsSection
+            workItems={filteredWorkItems}
+            selectedIds={selectedWorkItemIds}
+            onToggleSelect={(id) => appStore.toggleWorkItemSelection(id)}
+            onClearSelection={() => appStore.clearWorkItemSelection()}
+            onDispatch={(workItemId) => void appStore.handleLaunchSessionFromWorkItem(workItemId)}
+            onMultiDispatch={() => void appStore.handleMultiDispatch(projectId)}
+            assignments={assignments}
+            dayCadenceKey={dayCadenceKey}
+            weekCadenceKey={weekCadenceKey}
+            onPlan={(workItemId, cadenceType, cadenceKey) =>
+              void appStore.handleTogglePlanningAssignment(workItemId, cadenceType, cadenceKey)
+            }
+          />
+        )}
         <DocsSection
           documents={documents}
           workItems={workItems}
