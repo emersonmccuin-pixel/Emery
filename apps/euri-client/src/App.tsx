@@ -278,6 +278,7 @@ export default function App() {
       appStore.setSelectedProjectId(navProjectId);
       void appStore.loadProjectReads(navProjectId);
       void appStore.handleLoadMergeQueue(navProjectId);
+      void appStore.handleLoadInboxUnreadCount(navProjectId);
     }
   }, [navProjectId]);
 

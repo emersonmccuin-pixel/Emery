@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAppStore, appStore } from "../store";
+import { navStore } from "../nav-store";
 import type { InboxEntrySummary } from "../lib";
 
 type StatusFilter = "all" | "success" | "needs_review";
@@ -21,6 +22,8 @@ function InboxEntryRow({
   projectId: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const loadingKeys = useAppStore((s) => s.loadingKeys);
+  const actionLoading = loadingKeys[`inbox-update:${entry.id}`] ?? false;
 
   function handleMarkRead() {
     const nowSecs = Math.floor(Date.now() / 1000);
@@ -40,12 +43,26 @@ function InboxEntryRow({
     );
   }
 
+  function handleApprove() {
+    void appStore.handleApproveInboxEntry(entry.id, projectId);
+  }
+
+  function handleDismiss() {
+    void appStore.handleDismissInboxEntry(entry.id, projectId);
+  }
+
+  function handleOpenWorkItem() {
+    if (!entry.work_item_id) return;
+    navStore.goToWorkItem(projectId, entry.work_item_id);
+  }
+
   const isUnread = entry.read_at === null;
+  const isResolved = entry.status === "resolved";
   const statusClass = entry.status === "success"
     ? "inbox-badge-success"
     : entry.status === "needs_review"
     ? "inbox-badge-needs-review"
-    : entry.status === "resolved"
+    : isResolved
     ? "inbox-badge-resolved"
     : "inbox-badge-default";
 
@@ -68,13 +85,37 @@ function InboxEntryRow({
         <span className="inbox-timestamp">{formatTimestamp(entry.created_at)}</span>
         <div className="inbox-actions">
           {isUnread && (
-            <button className="inbox-action-btn" onClick={handleMarkRead} title="Mark as read">
+            <button className="inbox-action-btn" onClick={handleMarkRead} title="Mark as read" disabled={actionLoading}>
               mark read
             </button>
           )}
-          {entry.status !== "resolved" && (
-            <button className="inbox-action-btn" onClick={handleMarkResolved} title="Mark as resolved">
-              resolve
+          {!isResolved && (
+            <>
+              <button
+                className="inbox-action-btn inbox-action-approve"
+                onClick={handleApprove}
+                title="Approve"
+                disabled={actionLoading}
+              >
+                approve
+              </button>
+              <button
+                className="inbox-action-btn inbox-action-dismiss"
+                onClick={handleDismiss}
+                title="Dismiss"
+                disabled={actionLoading}
+              >
+                dismiss
+              </button>
+            </>
+          )}
+          {entry.work_item_id && (
+            <button
+              className="inbox-action-btn inbox-action-link"
+              onClick={handleOpenWorkItem}
+              title="Open work item"
+            >
+              {entry.work_item_callsign ?? "open item"}
             </button>
           )}
         </div>

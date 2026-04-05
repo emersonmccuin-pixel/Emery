@@ -48,7 +48,7 @@ export function Topbar() {
             onClick={handleInboxClick}
             title="Inbox"
           >
-            inbox{unreadCount > 0 ? <span className="inbox-unread-badge">{unreadCount}</span> : null}
+            inbox{unreadCount > 0 ? <span className="inbox-unread-badge">{unreadCount > 99 ? "99+" : unreadCount}</span> : null}
           </button>
         ) : null}
         <span className={`status-chip ${connectionLabel(connectionEvent)}`}>

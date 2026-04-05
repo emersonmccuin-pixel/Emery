@@ -613,6 +613,14 @@ class AppStore {
       } else {
         playErrorChime(); // low tone — something went wrong
       }
+
+      // Refresh inbox unread count — session may have created a new inbox entry
+      const projectId = entry.project_id;
+      if (projectId) {
+        window.setTimeout(() => {
+          void this.handleLoadInboxUnreadCount(projectId);
+        }, 500);
+      }
     }
   }
 
@@ -1492,6 +1500,66 @@ class AppStore {
       this.clearError();
     } catch (invokeError) {
       this.update({ error: String(invokeError) });
+    } finally {
+      this.setLoading(`inbox-update:${inboxEntryId}`, false);
+    }
+  }
+
+  async handleApproveInboxEntry(inboxEntryId: string, projectId: string) {
+    // Optimistic update
+    const entries = this.state.inboxEntriesByProject[projectId] ?? [];
+    const nowSecs = Math.floor(Date.now() / 1000);
+    const optimistic = entries.map((e) =>
+      e.id === inboxEntryId ? { ...e, status: "resolved", resolved_at: nowSecs } : e,
+    );
+    this.update({
+      inboxEntriesByProject: { ...this.state.inboxEntriesByProject, [projectId]: optimistic },
+    });
+
+    this.setLoading(`inbox-update:${inboxEntryId}`, true);
+    try {
+      await updateInboxEntry(inboxEntryId, { status: "resolved", resolved_at: nowSecs });
+      await this.handleLoadInboxEntries(projectId);
+      await this.handleLoadInboxUnreadCount(projectId);
+      this.clearError();
+    } catch (invokeError) {
+      // Rollback optimistic update
+      this.update({
+        inboxEntriesByProject: { ...this.state.inboxEntriesByProject, [projectId]: entries },
+        error: String(invokeError),
+      });
+    } finally {
+      this.setLoading(`inbox-update:${inboxEntryId}`, false);
+    }
+  }
+
+  async handleDismissInboxEntry(inboxEntryId: string, projectId: string) {
+    // Optimistic update
+    const entries = this.state.inboxEntriesByProject[projectId] ?? [];
+    const nowSecs = Math.floor(Date.now() / 1000);
+    const optimistic = entries.map((e) =>
+      e.id === inboxEntryId ? { ...e, status: "resolved", resolved_at: nowSecs, read_at: e.read_at ?? nowSecs } : e,
+    );
+    this.update({
+      inboxEntriesByProject: { ...this.state.inboxEntriesByProject, [projectId]: optimistic },
+    });
+
+    this.setLoading(`inbox-update:${inboxEntryId}`, true);
+    try {
+      await updateInboxEntry(inboxEntryId, {
+        status: "resolved",
+        resolved_at: nowSecs,
+        read_at: nowSecs,
+      });
+      await this.handleLoadInboxEntries(projectId);
+      await this.handleLoadInboxUnreadCount(projectId);
+      this.clearError();
+    } catch (invokeError) {
+      // Rollback optimistic update
+      this.update({
+        inboxEntriesByProject: { ...this.state.inboxEntriesByProject, [projectId]: entries },
+        error: String(invokeError),
+      });
     } finally {
       this.setLoading(`inbox-update:${inboxEntryId}`, false);
     }

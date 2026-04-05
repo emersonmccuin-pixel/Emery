@@ -3883,6 +3883,34 @@ button {
 }
 
 .inbox-action-btn:hover { background: var(--surface-active); }
+.inbox-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.inbox-action-approve {
+  color: var(--color-success);
+  border-color: var(--color-success);
+}
+
+.inbox-action-approve:hover {
+  background: rgba(57, 255, 142, 0.1);
+}
+
+.inbox-action-dismiss {
+  color: var(--color-error);
+  border-color: var(--color-error);
+}
+
+.inbox-action-dismiss:hover {
+  background: rgba(255, 45, 120, 0.1);
+}
+
+.inbox-action-link {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.inbox-action-link:hover {
+  background: var(--color-primary-dim);
+}
 
 .inbox-entry-body {
   padding: var(--space-2) var(--space-3) var(--space-3);
