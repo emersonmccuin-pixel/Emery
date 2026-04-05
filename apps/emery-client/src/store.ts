@@ -252,6 +252,7 @@ export type AppState = {
   connectionState: "connecting" | "connected" | "reconnecting" | "disconnected";
   editingWorkItemId: string | null;
   githubToken: string;
+  knowledgeStoreBackend: "embedded" | "wcp_cloud";
 };
 
 function initialState(): AppState {
@@ -298,6 +299,7 @@ function initialState(): AppState {
     connectionState: "connecting",
     editingWorkItemId: null,
     githubToken: "",
+    knowledgeStoreBackend: "embedded",
   };
 }
 
@@ -1776,6 +1778,19 @@ class AppStore {
     localStorage.setItem("emery.github_token", token);
     localStorage.removeItem("euri.github_token");
     this.update({ githubToken: token });
+  }
+
+  // --- Knowledge store backend ---
+
+  loadKnowledgeStoreBackend() {
+    const raw = localStorage.getItem("emery.knowledge_store_backend") ?? "embedded";
+    const backend = raw === "wcp_cloud" ? "wcp_cloud" : "embedded";
+    this.update({ knowledgeStoreBackend: backend });
+  }
+
+  saveKnowledgeStoreBackend(backend: "embedded" | "wcp_cloud") {
+    localStorage.setItem("emery.knowledge_store_backend", backend);
+    this.update({ knowledgeStoreBackend: backend });
   }
 
 }

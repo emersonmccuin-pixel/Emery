@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { pickFolder } from "../lib";
 
-type SettingsTab = "accounts" | "appearance" | "agent-defaults" | "github" | "resolution";
+type SettingsTab = "accounts" | "appearance" | "agent-defaults" | "github" | "knowledge" | "resolution";
 
 export function SettingsView() {
   const [activeTab, setActiveTab] = useState<SettingsTab>("accounts");
@@ -25,6 +25,7 @@ export function SettingsView() {
     { id: "appearance", label: "Appearance" },
     { id: "agent-defaults", label: "Agent Defaults" },
     { id: "github", label: "GitHub" },
+    { id: "knowledge", label: "Knowledge Store" },
     { id: "resolution", label: "Config Resolution" },
   ];
 
@@ -59,6 +60,7 @@ export function SettingsView() {
             {activeTab === "appearance" && <AppearanceSection />}
             {activeTab === "agent-defaults" && <AgentDefaultsSection />}
             {activeTab === "github" && <GitHubSection />}
+            {activeTab === "knowledge" && <KnowledgeStoreSection />}
             {activeTab === "resolution" && <ConfigResolutionSection />}
           </div>
         </div>
@@ -714,6 +716,90 @@ function GitHubSection() {
           Token configured.
         </div>
       )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// --- Knowledge Store Section ---
+
+function KnowledgeStoreSection() {
+  const knowledgeStoreBackend = useAppStore((s) => s.knowledgeStoreBackend);
+
+  useEffect(() => {
+    appStore.loadKnowledgeStoreBackend();
+  }, []);
+
+  function handleChange(backend: "embedded" | "wcp_cloud") {
+    appStore.saveKnowledgeStoreBackend(backend);
+  }
+
+  return (
+    <Card className="settings-panel">
+      <CardHeader>
+        <CardTitle className="settings-section-title">Knowledge Store</CardTitle>
+        <CardDescription className="settings-section-desc">
+          Choose which knowledge store backend Emery uses for work items, documents, and context.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="settings-field-group">
+          <label className="settings-label">Backend</label>
+          <div className="knowledge-store-options">
+            <label className={`knowledge-store-option${knowledgeStoreBackend === "embedded" ? " selected" : ""}`}>
+              <input
+                type="radio"
+                name="knowledge-store-backend"
+                value="embedded"
+                checked={knowledgeStoreBackend === "embedded"}
+                onChange={() => handleChange("embedded")}
+                className="knowledge-store-radio"
+              />
+              <div className="knowledge-store-option-body">
+                <span className="knowledge-store-option-title">Embedded (Local)</span>
+                <span className="knowledge-store-option-desc">
+                  Use the built-in emery-mcp knowledge base stored on this machine.
+                </span>
+              </div>
+            </label>
+            <label className={`knowledge-store-option${knowledgeStoreBackend === "wcp_cloud" ? " selected" : ""}`}>
+              <input
+                type="radio"
+                name="knowledge-store-backend"
+                value="wcp_cloud"
+                checked={knowledgeStoreBackend === "wcp_cloud"}
+                onChange={() => handleChange("wcp_cloud")}
+                className="knowledge-store-radio"
+              />
+              <div className="knowledge-store-option-body">
+                <span className="knowledge-store-option-title">WCP Cloud</span>
+                <span className="knowledge-store-option-desc">
+                  Use the remote Work Context Protocol hosted knowledge store.
+                </span>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        {knowledgeStoreBackend === "embedded" && (
+          <div className="knowledge-store-info knowledge-store-info--embedded">
+            Using local knowledge store via emery-mcp. All work items and documents are stored on this machine.
+          </div>
+        )}
+        {knowledgeStoreBackend === "wcp_cloud" && (
+          <div className="knowledge-store-info knowledge-store-info--cloud">
+            WCP Cloud selected. Configure your connection at{" "}
+            <a
+              href="https://workcontextprotocol.io"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="knowledge-store-link"
+            >
+              workcontextprotocol.io
+            </a>
+            .
+          </div>
+        )}
       </CardContent>
     </Card>
   );
