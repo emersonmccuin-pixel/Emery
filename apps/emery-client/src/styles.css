@@ -914,17 +914,22 @@ html[data-theme="vaporwave"] .sidebar {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   max-width: 900px;
-  max-height: 85vh;
+  height: 85vh;
   width: 92%;
-  overflow-y: auto;
+  overflow: hidden;
   padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
 }
 
 /* View wrappers for views rendered inside modals */
 .modal-view-settings,
 .modal-view-wide {
-  /* Reset content-frame sizing — the modal container handles width/height */
+  /* Fill the modal container so inner flex layouts get a stable height */
   width: 100%;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* ── Peek / Modal stubs (Phase 2 placeholders) ── */
