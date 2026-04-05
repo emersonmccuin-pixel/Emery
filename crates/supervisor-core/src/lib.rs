@@ -2,6 +2,7 @@ mod bootstrap;
 mod diagnostics;
 mod git;
 mod models;
+mod output_filter;
 mod runtime;
 mod schema;
 mod service;
