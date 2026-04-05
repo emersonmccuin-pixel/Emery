@@ -367,6 +367,8 @@ button {
   flex-direction: column;
   overflow: hidden;
   position: relative;
+  background-color: var(--bg-base, #0a0a0f);
+  color: var(--text-primary, #e0e0e0);
 }
 
 /* Vaporwave sunset gradient — only active in vaporwave theme */
