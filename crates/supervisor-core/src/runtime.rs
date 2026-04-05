@@ -185,6 +185,12 @@ impl SessionRegistry {
         for (k, v) in &request.env {
             command.env(k, v);
         }
+        // Set TERM=dumb if not already provided. This tells Claude Code (and other
+        // terminal-aware programs) not to send terminal capability queries like the
+        // cursor position DSR (\x1b[6n) that would hang with no emulator to respond.
+        if !request.env.contains_key("TERM") {
+            command.env("TERM", "dumb");
+        }
 
         let mut child = pty_pair.slave.spawn_command(command).map_err(|error| {
             anyhow!("failed to spawn child for {}: {error}", request.session_id)
@@ -209,6 +215,18 @@ impl SessionRegistry {
             pid: child.process_id(),
             size: Mutex::new(size),
         });
+
+        // Inject a synthetic cursor position response immediately after spawn.
+        // Claude Code (and some other terminal apps) send \x1b[6n (DSR cursor position
+        // query) on startup and block waiting for the \x1b[row;colR response. With no
+        // real terminal emulator on the master side the query is never answered, causing
+        // the session to hang. Writing this response now unblocks the startup sequence.
+        if let Err(err) = controller.write_input(b"\x1b[1;1R") {
+            eprintln!(
+                "session {} warning: failed to inject PTY cursor position response: {err:#}",
+                request.session_id
+            );
+        }
 
         let started_at = unix_time_seconds();
         {
