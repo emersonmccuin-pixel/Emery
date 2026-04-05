@@ -1130,7 +1130,7 @@ class AppStore {
           initial_terminal_cols: 120,
           initial_terminal_rows: 40,
           auto_worktree: false,
-          safety_mode: "full",
+          safety_mode: "yolo",
           model: "opus",
         },
         correlationId,

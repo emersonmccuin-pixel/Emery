@@ -596,7 +596,7 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
                 setSafetyOverridesSaved(false);
                 setSafetyOverridesError(null);
               }}
-              placeholder={'{\n  "claude": {\n    "safety_mode": "full",\n    "extra_args": []\n  }\n}'}
+              placeholder={'{\n  "claude": {\n    "safety_mode": "yolo",\n    "extra_args": []\n  }\n}'}
               rows={6}
               spellCheck={false}
             />
