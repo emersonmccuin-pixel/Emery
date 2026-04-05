@@ -25,10 +25,44 @@ import type {
 import { appStore, useAppStore } from "./store";
 import { navStore, useNavLayer } from "./nav-store";
 import type { NavigationLayer } from "./nav-store";
+import { toastStore, useToastStore } from "./toast-store";
+import type { Toast } from "./toast-store";
 import { Topbar } from "./topbar";
 import { Breadcrumb } from "./breadcrumb";
 import { LayerRouter } from "./layer-router";
 import { DispatchSheet } from "./dispatch-sheet";
+
+function ToastStack() {
+  const toasts = useToastStore();
+  if (toasts.length === 0) return null;
+  return (
+    <div className="toast-stack">
+      {toasts.map((toast: Toast) => (
+        <div key={toast.id} className={`toast toast-${toast.type}`}>
+          <span className="toast-message">{toast.message}</span>
+          {toast.action && (
+            <button
+              className="toast-action"
+              onClick={() => {
+                toast.action!.onClick();
+                toastStore.removeToast(toast.id);
+              }}
+            >
+              {toast.action.label}
+            </button>
+          )}
+          <button
+            className="toast-dismiss"
+            onClick={() => toastStore.removeToast(toast.id)}
+            title="Dismiss"
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function decodeBase64Utf8(base64: string): string {
   const binary = atob(base64);
@@ -404,6 +438,7 @@ export default function App() {
         <LayerRouter />
       </main>
       <DispatchSheet />
+      <ToastStack />
     </div>
   );
 }

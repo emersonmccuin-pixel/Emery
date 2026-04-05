@@ -43,6 +43,7 @@ import {
 } from "./lib";
 import { sessionStore } from "./session-store";
 import { navStore } from "./nav-store";
+import { toastStore } from "./toast-store";
 import {
   makeClientEvent,
   newCorrelationId,
@@ -625,8 +626,28 @@ class AppStore {
       // DING when an agent finishes its work
       if (payload.runtime_state === "exited") {
         playCompletionDing(); // 🔔 baking timer — agent done
+        toastStore.addToast({
+          type: "success",
+          message: `Session completed: ${entry.title || payload.session_id}`,
+          action: entry.project_id
+            ? {
+                label: "View",
+                onClick: () => navStore.goToAgent(entry.project_id!, payload.session_id),
+              }
+            : undefined,
+        });
       } else {
         playErrorChime(); // low tone — something went wrong
+        toastStore.addToast({
+          type: "error",
+          message: `Session errored: ${entry.title || payload.session_id}`,
+          action: entry.project_id
+            ? {
+                label: "View",
+                onClick: () => navStore.goToAgent(entry.project_id!, payload.session_id),
+              }
+            : undefined,
+        });
       }
 
       // Refresh inbox unread count — session may have created a new inbox entry
@@ -1015,11 +1036,11 @@ class AppStore {
     }
   }
 
-  async handleCreateWorkItem() {
+  async handleCreateWorkItem(): Promise<string | null> {
     const s = this.state;
     if (!s.selectedProjectId) {
       this.update({ error: "Select a project before creating a work item." });
-      return;
+      return null;
     }
     const correlationId = newCorrelationId("work-item-create");
     this.setLoading("create-work-item", true);
@@ -1051,8 +1072,10 @@ class AppStore {
         },
       });
       this.clearError();
+      return detail.id;
     } catch (invokeError) {
       this.update({ error: String(invokeError) });
+      return null;
     } finally {
       this.setLoading("create-work-item", false);
     }
@@ -1259,11 +1282,20 @@ class AppStore {
         dispatchConflicts: [],
       });
 
+      toastStore.addToast({
+        type: "info",
+        message: `${sessions.length} session${sessions.length === 1 ? "" : "s"} launched`,
+      });
+
       await watchLiveSessions(
         sessions.filter((s) => s.live).map((s) => s.id),
         correlationId,
       );
     } catch (err) {
+      toastStore.addToast({
+        type: "error",
+        message: `Dispatch failed: ${String(err)}`,
+      });
       this.update({ error: String(err) });
     }
   }
