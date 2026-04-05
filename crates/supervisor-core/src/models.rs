@@ -1338,6 +1338,99 @@ pub struct UpdateAgentTemplateRequest {
     pub sort_order: Option<i64>,
 }
 
+// ---------------------------------------------------------------------------
+// Vault models
+// ---------------------------------------------------------------------------
+
+/// Metadata for a vault entry.  Never includes the plaintext value.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultEntry {
+    pub id: String,
+    pub scope: String,
+    pub key: String,
+    pub description: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Internal row that includes the encrypted blob (used inside the store/vault service).
+#[derive(Debug, Clone)]
+pub struct VaultEntryRow {
+    pub id: String,
+    pub scope: String,
+    pub key: String,
+    pub encrypted_value: Vec<u8>,
+    pub description: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateVaultEntryRequest {
+    pub scope: String,
+    pub key: String,
+    pub value: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateVaultEntryRequest {
+    pub id: String,
+    pub value: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VaultAuditEntry {
+    pub id: String,
+    pub entry_id: Option<String>,
+    pub action: String,
+    pub actor: String,
+    pub details_json: Option<String>,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VaultLockState {
+    pub unlocked: bool,
+    pub unlocked_at: Option<i64>,
+    pub unlock_expires_at: Option<i64>,
+}
+
+/// Internal record for inserting a new vault entry.
+#[derive(Debug, Clone)]
+pub struct NewVaultEntryRecord {
+    pub id: String,
+    pub scope: String,
+    pub key: String,
+    pub encrypted_value: Vec<u8>,
+    pub description: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Internal record for updating a vault entry.
+#[derive(Debug, Clone)]
+pub struct VaultEntryUpdateRecord {
+    pub id: String,
+    pub encrypted_value: Option<Vec<u8>>,
+    pub description: Option<String>,
+    pub updated_at: i64,
+}
+
+/// Internal record for inserting a vault audit entry.
+#[derive(Debug, Clone)]
+pub struct NewVaultAuditRecord {
+    pub id: String,
+    pub entry_id: Option<String>,
+    pub action: String,
+    pub actor: String,
+    pub details_json: Option<String>,
+    pub created_at: i64,
+}
+
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ArchiveAgentTemplateRequest {
     pub agent_template_id: String,

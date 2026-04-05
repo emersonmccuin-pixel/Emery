@@ -8,6 +8,7 @@ mod schema;
 mod service;
 mod store;
 mod supervisor;
+mod vault;
 
 pub use bootstrap::AppPaths;
 pub use diagnostics::{
@@ -38,8 +39,10 @@ pub use models::{
     WorkItemListFilter, WorkItemSummary, WorkflowReconciliationProposalDetail,
     WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
     WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary,
+    CreateVaultEntryRequest, UpdateVaultEntryRequest, VaultAuditEntry, VaultEntry, VaultLockState,
 };
 pub use runtime::SessionRegistry;
 pub use service::SupervisorService;
 pub use store::{BootstrapState, DatabaseHealth, DatabaseSet, HealthSnapshot};
 pub use supervisor::Supervisor;
+pub use vault::VaultService;

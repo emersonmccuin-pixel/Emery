@@ -24,6 +24,8 @@ use crate::models::{
     WorkflowReconciliationProposalDetail, WorkflowReconciliationProposalListFilter,
     WorkflowReconciliationProposalSummary, WorkflowReconciliationProposalUpdateRecord,
     WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary, WorktreeUpdateRecord,
+    VaultEntry, VaultEntryRow, VaultAuditEntry, NewVaultEntryRecord, VaultEntryUpdateRecord,
+    NewVaultAuditRecord,
 };
 use crate::schema::{migrate_app_db, migrate_knowledge_db};
 
@@ -2930,6 +2932,186 @@ impl DatabaseSet {
             |row| row.get(0),
         )?)
     }
+
+    // ---------------------------------------------------------------------------
+    // Vault store methods
+    // ---------------------------------------------------------------------------
+
+    pub fn insert_vault_entry(&self, record: &NewVaultEntryRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "INSERT INTO vault_entries (id, scope, key, encrypted_value, description, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                record.id,
+                record.scope,
+                record.key,
+                record.encrypted_value,
+                record.description,
+                record.created_at,
+                record.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_vault_entry(&self, id: &str) -> Result<Option<VaultEntryRow>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection
+            .query_row(
+                "SELECT id, scope, key, encrypted_value, description, created_at, updated_at
+                 FROM vault_entries WHERE id = ?1",
+                [id],
+                map_vault_entry_row,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn get_vault_entry_by_scope_key(
+        &self,
+        scope: &str,
+        key: &str,
+    ) -> Result<Option<VaultEntryRow>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection
+            .query_row(
+                "SELECT id, scope, key, encrypted_value, description, created_at, updated_at
+                 FROM vault_entries WHERE scope = ?1 AND key = ?2",
+                params![scope, key],
+                map_vault_entry_row,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    /// List vault entries (metadata only, no encrypted_value).
+    pub fn list_vault_entries(&self, scope: Option<&str>) -> Result<Vec<VaultEntry>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let rows: Vec<VaultEntry> = match scope {
+            Some(s) => {
+                let mut stmt = connection.prepare(
+                    "SELECT id, scope, key, description, created_at, updated_at
+                     FROM vault_entries WHERE scope = ?1
+                     ORDER BY scope, key",
+                )?;
+                stmt.query_map([s], map_vault_entry_summary)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            }
+            None => {
+                let mut stmt = connection.prepare(
+                    "SELECT id, scope, key, description, created_at, updated_at
+                     FROM vault_entries
+                     ORDER BY scope, key",
+                )?;
+                stmt.query_map([], map_vault_entry_summary)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            }
+        };
+        Ok(rows)
+    }
+
+    /// List vault entry rows with encrypted values (used internally by VaultService).
+    pub fn list_vault_entry_rows(&self, scope: Option<&str>) -> Result<Vec<VaultEntryRow>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let rows: Vec<VaultEntryRow> = match scope {
+            Some(s) => {
+                let mut stmt = connection.prepare(
+                    "SELECT id, scope, key, encrypted_value, description, created_at, updated_at
+                     FROM vault_entries WHERE scope = ?1
+                     ORDER BY scope, key",
+                )?;
+                stmt.query_map([s], map_vault_entry_row)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            }
+            None => {
+                let mut stmt = connection.prepare(
+                    "SELECT id, scope, key, encrypted_value, description, created_at, updated_at
+                     FROM vault_entries
+                     ORDER BY scope, key",
+                )?;
+                stmt.query_map([], map_vault_entry_row)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            }
+        };
+        Ok(rows)
+    }
+
+    pub fn update_vault_entry(&self, record: &VaultEntryUpdateRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+
+        let updated = match &record.encrypted_value {
+            Some(enc) => connection.execute(
+                "UPDATE vault_entries
+                 SET encrypted_value = ?2, description = ?3, updated_at = ?4
+                 WHERE id = ?1",
+                params![record.id, enc, record.description, record.updated_at],
+            )?,
+            None => connection.execute(
+                "UPDATE vault_entries
+                 SET description = ?2, updated_at = ?3
+                 WHERE id = ?1",
+                params![record.id, record.description, record.updated_at],
+            )?,
+        };
+
+        if updated == 0 {
+            return Err(anyhow!("vault entry {} was not found", record.id));
+        }
+        Ok(())
+    }
+
+    pub fn delete_vault_entry(&self, id: &str) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute("DELETE FROM vault_entries WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn insert_vault_audit(&self, record: &NewVaultAuditRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "INSERT INTO vault_audit_log (id, entry_id, action, actor, details_json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                record.id,
+                record.entry_id,
+                record.action,
+                record.actor,
+                record.details_json,
+                record.created_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_vault_audit(
+        &self,
+        entry_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<VaultAuditEntry>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let rows: Vec<VaultAuditEntry> = match entry_id {
+            Some(eid) => {
+                let mut stmt = connection.prepare(
+                    "SELECT id, entry_id, action, actor, details_json, created_at
+                     FROM vault_audit_log WHERE entry_id = ?1
+                     ORDER BY created_at DESC LIMIT ?2",
+                )?;
+                stmt.query_map(params![eid, limit as i64], map_vault_audit_entry)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            }
+            None => {
+                let mut stmt = connection.prepare(
+                    "SELECT id, entry_id, action, actor, details_json, created_at
+                     FROM vault_audit_log
+                     ORDER BY created_at DESC LIMIT ?1",
+                )?;
+                stmt.query_map(params![limit as i64], map_vault_audit_entry)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            }
+        };
+        Ok(rows)
+    }
 }
 
 fn open_connection(path: &Path) -> Result<Connection> {
@@ -3298,5 +3480,39 @@ fn map_agent_template_summary(row: &Row<'_>) -> rusqlite::Result<AgentTemplateSu
 fn map_agent_template_detail(row: &Row<'_>) -> rusqlite::Result<AgentTemplateDetail> {
     Ok(AgentTemplateDetail {
         summary: map_agent_template_summary(row)?,
+    })
+}
+
+fn map_vault_entry_row(row: &Row<'_>) -> rusqlite::Result<VaultEntryRow> {
+    Ok(VaultEntryRow {
+        id: row.get(0)?,
+        scope: row.get(1)?,
+        key: row.get(2)?,
+        encrypted_value: row.get(3)?,
+        description: row.get(4)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
+    })
+}
+
+fn map_vault_entry_summary(row: &Row<'_>) -> rusqlite::Result<VaultEntry> {
+    Ok(VaultEntry {
+        id: row.get(0)?,
+        scope: row.get(1)?,
+        key: row.get(2)?,
+        description: row.get(3)?,
+        created_at: row.get(4)?,
+        updated_at: row.get(5)?,
+    })
+}
+
+fn map_vault_audit_entry(row: &Row<'_>) -> rusqlite::Result<VaultAuditEntry> {
+    Ok(VaultAuditEntry {
+        id: row.get(0)?,
+        entry_id: row.get(1)?,
+        action: row.get(2)?,
+        actor: row.get(3)?,
+        details_json: row.get(4)?,
+        created_at: row.get(5)?,
     })
 }
