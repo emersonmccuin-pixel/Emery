@@ -2237,3 +2237,243 @@ button {
   color: rgba(242, 237, 225, 0.3);
   flex-shrink: 0;
 }
+
+/* ── Document view ── */
+
+.document-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 16px 20px;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.document-view--loading,
+.document-view--error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: rgba(242, 237, 225, 0.4);
+  font-size: 0.85rem;
+}
+
+.document-view-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.document-view-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.document-view-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: rgba(242, 237, 225, 0.95);
+  line-height: 1.3;
+}
+
+.document-view-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.doc-status-badge {
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(242, 237, 225, 0.08);
+  color: rgba(242, 237, 225, 0.5);
+  border: 1px solid rgba(242, 237, 225, 0.1);
+  text-transform: lowercase;
+}
+
+.doc-unsaved-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(210, 129, 55, 0.85);
+  flex-shrink: 0;
+}
+
+.doc-view-linked {
+  margin-top: 4px;
+}
+
+.document-view-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.document-mode-toggle {
+  display: flex;
+  gap: 2px;
+  background: rgba(242, 237, 225, 0.05);
+  border: 1px solid rgba(242, 237, 225, 0.08);
+  border-radius: 5px;
+  padding: 2px;
+}
+
+.mode-btn {
+  padding: 3px 12px;
+  border-radius: 3px;
+  font-size: 0.78rem;
+  background: transparent;
+  color: rgba(242, 237, 225, 0.5);
+  transition: background 0.1s, color 0.1s;
+}
+
+.mode-btn--active {
+  background: rgba(242, 237, 225, 0.1);
+  color: rgba(242, 237, 225, 0.9);
+}
+
+.document-view-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.doc-save-status {
+  font-size: 0.75rem;
+  color: rgba(242, 237, 225, 0.4);
+}
+
+.doc-save-status--done {
+  color: rgba(81, 175, 115, 0.8);
+}
+
+.doc-save-btn {
+  padding: 4px 14px;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  background: rgba(210, 129, 55, 0.15);
+  color: rgba(210, 129, 55, 0.9);
+  border: 1px solid rgba(210, 129, 55, 0.25);
+  transition: background 0.1s, opacity 0.1s;
+}
+
+.doc-save-btn:hover:not(:disabled) {
+  background: rgba(210, 129, 55, 0.25);
+}
+
+.doc-save-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.document-view-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.document-editor {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  resize: none;
+  padding: 12px 14px;
+  border-radius: 6px;
+  border: 1px solid rgba(242, 237, 225, 0.08);
+  background: rgba(10, 8, 6, 0.5);
+  color: rgba(242, 237, 225, 0.9);
+  font-family: "IBM Plex Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  outline: none;
+  tab-size: 2;
+}
+
+.document-editor:focus {
+  border-color: rgba(242, 237, 225, 0.15);
+}
+
+.document-preview {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 18px;
+  border-radius: 6px;
+  border: 1px solid rgba(242, 237, 225, 0.08);
+  background: rgba(27, 23, 20, 0.6);
+  font-size: 0.84rem;
+  line-height: 1.7;
+  color: rgba(242, 237, 225, 0.85);
+}
+
+.document-preview h1 {
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin: 0 0 10px;
+  color: rgba(242, 237, 225, 0.95);
+}
+
+.document-preview h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 14px 0 8px;
+  color: rgba(242, 237, 225, 0.9);
+}
+
+.document-preview h3 {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 12px 0 6px;
+  color: rgba(242, 237, 225, 0.85);
+}
+
+.document-preview p {
+  margin: 0 0 6px;
+}
+
+.document-preview li {
+  margin: 2px 0 2px 18px;
+  list-style: disc;
+}
+
+.document-preview pre {
+  background: rgba(10, 8, 6, 0.6);
+  border: 1px solid rgba(242, 237, 225, 0.08);
+  border-radius: 4px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+
+.document-preview code {
+  font-family: "IBM Plex Mono", "Fira Code", monospace;
+  font-size: 0.8rem;
+  background: rgba(242, 237, 225, 0.07);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.document-preview pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.document-preview .md-spacer {
+  height: 8px;
+}
+
+.document-view-footer {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
