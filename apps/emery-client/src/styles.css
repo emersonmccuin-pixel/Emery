@@ -4259,6 +4259,90 @@ html[data-theme="vaporwave"] .sidebar {
   padding: 4px 0;
 }
 
+/* --- Knowledge Store --- */
+
+.knowledge-store-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.knowledge-store-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md, 6px);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  background: transparent;
+}
+
+.knowledge-store-option:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover, rgba(255, 255, 255, 0.03));
+}
+
+.knowledge-store-option.selected {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+}
+
+.knowledge-store-radio {
+  margin-top: 2px;
+  accent-color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.knowledge-store-option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.knowledge-store-option-title {
+  font-size: var(--text-sm, 0.83rem);
+  font-weight: var(--weight-medium, 500);
+  color: var(--text-primary);
+}
+
+.knowledge-store-option-desc {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.knowledge-store-info {
+  font-size: var(--text-sm, 0.83rem);
+  padding: 8px 12px;
+  border-radius: var(--radius-md, 6px);
+  border-left: 3px solid transparent;
+  line-height: 1.5;
+}
+
+.knowledge-store-info--embedded {
+  color: var(--color-success);
+  border-left-color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+}
+
+.knowledge-store-info--cloud {
+  color: var(--text-secondary);
+  border-left-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+}
+
+.knowledge-store-link {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.knowledge-store-link:hover {
+  color: var(--color-primary);
+}
+
 /* --- Project type selector (create form) --- */
 
 .project-create-type-row {
