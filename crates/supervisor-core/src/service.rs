@@ -26,7 +26,7 @@ use crate::models::{
     NewWorkItemRecord, NewWorkflowReconciliationProposalRecord, NewWorktreeRecord,
     PlanningAssignmentDetail, PlanningAssignmentListFilter, PlanningAssignmentSummary,
     PlanningAssignmentUpdateRecord, ProjectDetail, ProjectRootSummary, ProjectRootUpdateRecord,
-    ProjectSummary, ProjectUpdateRecord, ArchiveProjectRequest, RemoveProjectRootRequest,
+    ProjectSummary, ProjectUpdateRecord, RemoveProjectRootRequest,
     SetProjectRootRemoteRequest, SessionArtifactRecord, SessionAttachResponse,
     SessionDetachResponse, SessionDetail, SessionListFilter, SessionSpecDetail,
     SessionSpecListFilter, SessionSpecSummary, SessionSpecUpdateRecord, SessionStateChangedEvent,

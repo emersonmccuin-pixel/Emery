@@ -24,7 +24,7 @@ use crate::models::{
     UpdateWorkspaceStateRequest, UpdateWorktreeRequest, WorkItemDetail, WorkItemListFilter,
     WorkItemSummary, WorkflowReconciliationProposalDetail,
     WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
-    WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary,
+    WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary, GitHealthStatus,
 };
 use crate::runtime::SessionRegistry;
 use crate::service::SupervisorService;
