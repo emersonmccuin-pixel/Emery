@@ -199,3 +199,43 @@ At the start of every dispatcher session:
 5. `euri_merge_queue_list(project_id)` — check pending merges
 
 Never assume a clean slate — prior sessions may have left work in progress.
+
+---
+
+## Testing the App
+
+**CRITICAL: Always do a full fresh launch before testing.** A stale supervisor binary
+will cause "unsupported method" RPC errors for any endpoints added since it was last built.
+
+### Fresh Launch Protocol
+
+Run the PowerShell script, or do it manually:
+
+```powershell
+powershell -File scripts/fresh-launch.ps1
+```
+
+Manual steps (if script unavailable):
+
+```bash
+# 1. Kill everything
+taskkill //IM euri-supervisor.exe //F 2>/dev/null
+taskkill //IM euri-client.exe //F 2>/dev/null
+
+# 2. Rebuild supervisor (release)
+cargo build --release -p euri-supervisor
+
+# 3. Fix npm .bin links (vite PATH issue)
+cd apps/euri-client && npm install && cd ../..
+
+# 4. Rebuild client (debug, includes frontend)
+cargo tauri build --debug
+
+# 5. Launch supervisor first, then client
+start "" "target/release/euri-supervisor.exe"
+# wait 2 seconds for supervisor to bind
+start "" "target/debug/euri-client.exe"
+```
+
+**Never skip the supervisor rebuild.** The client and supervisor are separate binaries —
+rebuilding one does not rebuild the other.

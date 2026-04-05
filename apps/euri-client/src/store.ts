@@ -903,7 +903,7 @@ class AppStore {
           project_id: project.id,
           label: name,
           path: folderPath,
-          root_kind: "project_root",
+          root_kind: "repo",
         },
         correlationId,
       ) as { id: string };
@@ -964,7 +964,7 @@ class AppStore {
           project_id: projectId,
           label,
           path,
-          root_kind: "project_root",
+          root_kind: "repo",
         },
         correlationId,
       );
