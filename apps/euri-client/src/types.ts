@@ -362,3 +362,11 @@ export type ConnectionStatusEvent = {
 export type DiagnosticsBundleResult = {
   bundle_path: string;
 };
+
+export type GitHealthStatus = {
+  has_remote: boolean;
+  is_clean: boolean;
+  is_pushed: boolean | null;
+  is_behind: boolean | null;
+  last_sync_at: number | null;
+};

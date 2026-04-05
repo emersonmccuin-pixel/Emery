@@ -5,6 +5,7 @@ import type {
   DiagnosticsBundleResult,
   DocumentDetail,
   DocumentSummary,
+  GitHealthStatus,
   MergeQueueEntry,
   PlanningAssignmentDetail,
   PlanningAssignmentSummary,
@@ -532,6 +533,13 @@ export async function updateAccount(
   correlationId?: string,
 ): Promise<unknown> {
   return invoke("update_account", { accountId, input, correlationId });
+}
+
+export async function getProjectRootGitStatus(
+  rootId: string,
+  correlationId?: string,
+): Promise<GitHealthStatus | null> {
+  return invoke("get_project_root_git_status", { rootId, correlationId });
 }
 
 export function connectionLabel(event: ConnectionStatusEvent | null): string {

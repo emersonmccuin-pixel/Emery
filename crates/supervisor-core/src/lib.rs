@@ -34,7 +34,7 @@ pub use models::{
     UpdateWorkflowReconciliationProposalRequest, UpdateWorkspaceStateRequest,
     UpdateWorktreeRequest, InboxEntrySummary, InboxEntryDetail, InboxEntryListFilter,
     CreateInboxEntryRequest, UpdateInboxEntryRequest,
-    WorkItemDetail, WorkItemListFilter, WorkItemSummary,
+    GitHealthStatus, WorkItemDetail, WorkItemListFilter, WorkItemSummary,
     WorkflowReconciliationProposalDetail, WorkflowReconciliationProposalListFilter,
     WorkflowReconciliationProposalSummary, WorkspaceStateRecord, WorktreeDetail,
     WorktreeListFilter, WorktreeSummary,

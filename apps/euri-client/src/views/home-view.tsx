@@ -1,8 +1,9 @@
-import { type DragEvent, type KeyboardEvent, useMemo, useRef, useState } from "react";
+import { type DragEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { appStore, useAppStore } from "../store";
 import { navStore } from "../nav-store";
 import { pickFolder } from "../lib";
-import type { ProjectSummary, SessionSummary, MergeQueueEntry } from "../types";
+import type { GitHealthStatus, ProjectSummary, SessionSummary, MergeQueueEntry } from "../types";
+import { StatusLEDs } from "../components/status-leds";
 
 export function HomeView() {
   const projects = useAppStore((s) => s.bootstrap?.projects ?? []);
@@ -10,7 +11,19 @@ export function HomeView() {
   const mergeQueueByProject = useAppStore((s) => s.mergeQueueByProject);
   const focusProjectIds = useAppStore((s) => s.focusProjectIds);
   const maxFocusSlots = useAppStore((s) => s.maxFocusSlots);
+  const projectDetails = useAppStore((s) => s.projectDetails);
+  const gitStatusByRootId = useAppStore((s) => s.gitStatusByRootId);
   const [showCreateForm, setShowCreateForm] = useState(false);
+
+  // Load git status for all visible focus projects on mount
+  useEffect(() => {
+    const allVisible = [...(focusProjectIds.length > 0 ? focusProjectIds : projects.slice(0, maxFocusSlots).map((p) => p.id))];
+    for (const id of allVisible) {
+      if (projectDetails[id]) {
+        void appStore.loadGitStatus(id);
+      }
+    }
+  }, [focusProjectIds, projects, maxFocusSlots, projectDetails]);
 
   const { focusProjects, otherProjects } = useMemo(() => {
     const focusSet = new Set(focusProjectIds);
@@ -61,6 +74,8 @@ export function HomeView() {
         projects={focusProjects}
         sessions={sessions}
         mergeQueueByProject={mergeQueueByProject}
+        projectDetails={projectDetails}
+        gitStatusByRootId={gitStatusByRootId}
         onNavigate={(id) => navStore.goToProject(id)}
         onUnpin={(id) => appStore.unpinProject(id)}
         onReorder={(ids) => appStore.reorderFocus(ids)}
@@ -188,6 +203,8 @@ function FocusCardGrid({
   projects,
   sessions,
   mergeQueueByProject,
+  projectDetails,
+  gitStatusByRootId,
   onNavigate,
   onUnpin,
   onReorder,
@@ -196,6 +213,8 @@ function FocusCardGrid({
   projects: ProjectSummary[];
   sessions: SessionSummary[];
   mergeQueueByProject: Record<string, MergeQueueEntry[]>;
+  projectDetails: Record<string, { roots: { id: string; archived_at: number | null; git_root_path: string | null }[] }>;
+  gitStatusByRootId: Record<string, GitHealthStatus>;
   onNavigate: (id: string) => void;
   onUnpin: (id: string) => void;
   onReorder: (ids: string[]) => void;
@@ -239,23 +258,29 @@ function FocusCardGrid({
 
   return (
     <div className="focus-card-grid">
-      {projects.map((project, index) => (
-        <FocusCard
-          key={project.id}
-          project={project}
-          sessions={sessions}
-          mergeQueueEntries={mergeQueueByProject[project.id] ?? []}
-          focusIndex={index}
-          showUnpin={showUnpin}
-          isDragOver={dragOverIndex === index}
-          onClick={() => onNavigate(project.id)}
-          onUnpin={() => onUnpin(project.id)}
-          onDragStart={() => handleDragStart(index)}
-          onDragOver={(e) => handleDragOver(e, index)}
-          onDrop={() => handleDrop(index)}
-          onDragEnd={handleDragEnd}
-        />
-      ))}
+      {projects.map((project, index) => {
+        const detail = projectDetails[project.id];
+        const activeRoot = detail?.roots.find((r) => r.archived_at === null && r.git_root_path);
+        const gitStatus = activeRoot ? (gitStatusByRootId[activeRoot.id] ?? null) : null;
+        return (
+          <FocusCard
+            key={project.id}
+            project={project}
+            sessions={sessions}
+            mergeQueueEntries={mergeQueueByProject[project.id] ?? []}
+            gitStatus={gitStatus}
+            focusIndex={index}
+            showUnpin={showUnpin}
+            isDragOver={dragOverIndex === index}
+            onClick={() => onNavigate(project.id)}
+            onUnpin={() => onUnpin(project.id)}
+            onDragStart={() => handleDragStart(index)}
+            onDragOver={(e) => handleDragOver(e, index)}
+            onDrop={() => handleDrop(index)}
+            onDragEnd={handleDragEnd}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -266,6 +291,7 @@ function FocusCard({
   project,
   sessions,
   mergeQueueEntries,
+  gitStatus,
   focusIndex,
   showUnpin,
   isDragOver,
@@ -279,6 +305,7 @@ function FocusCard({
   project: ProjectSummary;
   sessions: SessionSummary[];
   mergeQueueEntries: MergeQueueEntry[];
+  gitStatus: GitHealthStatus | null;
   focusIndex: number;
   showUnpin: boolean;
   isDragOver: boolean;
@@ -348,6 +375,7 @@ function FocusCard({
           <span className={`focus-card-badge focus-card-badge-${status}`}>
             {status}
           </span>
+          <StatusLEDs status={gitStatus} compact />
         </div>
       </button>
     </div>

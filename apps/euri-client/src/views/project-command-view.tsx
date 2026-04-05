@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { appStore, useAppStore, currentDayCadenceKey, currentWeekCadenceKey } from "../store";
 import { navStore } from "../nav-store";
 import { FleetStrip } from "../components/fleet-strip";
@@ -6,6 +6,7 @@ import { MergeQueueSection } from "../components/merge-queue-section";
 import { WorkItemsSection } from "../components/work-items-section";
 import { PlanningSection } from "../components/planning-section";
 import { DocsSection } from "../components/docs-section";
+import { StatusLEDs } from "../components/status-leds";
 
 export function ProjectCommandView({ projectId }: { projectId: string }) {
   const bootstrap = useAppStore((s) => s.bootstrap);
@@ -17,10 +18,27 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
   const mergeQueueDiffs = useAppStore((s) => s.mergeQueueDiffs);
   const loadingKeys = useAppStore((s) => s.loadingKeys);
   const planningViewMode = useAppStore((s) => s.planningViewMode);
+  const projectDetails = useAppStore((s) => s.projectDetails);
+  const gitStatusByRootId = useAppStore((s) => s.gitStatusByRootId);
 
   const selectedWorkItemIds = useAppStore((s) => s.selectedWorkItemIds);
 
+  // Load git status on mount when project detail is available
+  useEffect(() => {
+    if (projectDetails[projectId]) {
+      void appStore.loadGitStatus(projectId);
+    }
+  }, [projectId, projectDetails]);
+
   const project = bootstrap?.projects.find((p) => p.id === projectId) ?? null;
+
+  const gitStatus = useMemo(() => {
+    const detail = projectDetails[projectId];
+    if (!detail) return null;
+    const activeRoot = detail.roots.find((r) => r.archived_at === null && r.git_root_path);
+    if (!activeRoot) return null;
+    return gitStatusByRootId[activeRoot.id] ?? null;
+  }, [projectId, projectDetails, gitStatusByRootId]);
   const projectSessions = useMemo(
     () => sessions.filter((s) => s.project_id === projectId),
     [sessions, projectId],
@@ -59,6 +77,7 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
         >
           ⚙ Settings
         </button>
+        <StatusLEDs status={gitStatus} />
       </div>
       <div className="operations-zone">
         <FleetStrip
