@@ -597,6 +597,258 @@ html[data-theme="vaporwave"] .sidebar {
   font-size: var(--text-base);
 }
 
+/* ── Sidebar brand button ── */
+
+.sidebar-brand-btn {
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0;
+  line-height: 1;
+}
+
+.sidebar-brand-btn:hover {
+  color: var(--color-primary);
+}
+
+/* ── Sidebar spacer ── */
+
+.sidebar-spacer {
+  flex: 1;
+}
+
+/* ── Session dots on project rows ── */
+
+.sidebar-session-dots {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.sidebar-session-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-success, var(--activity-working));
+  flex-shrink: 0;
+}
+
+.sidebar-session-dot.starting {
+  background: var(--activity-starting, var(--color-info));
+  animation: sidebar-dot-pulse 1.4s ease-in-out infinite;
+}
+
+.sidebar-session-dot-overflow {
+  font-size: 9px;
+  color: var(--text-muted);
+  margin-left: 1px;
+}
+
+@keyframes sidebar-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* ── Project links (All projects, + New) ── */
+
+.sidebar-project-links {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--border-subtle);
+  margin-top: var(--space-1);
+}
+
+.sidebar-project-link {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  text-align: left;
+  padding: var(--space-1) var(--space-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-project-link:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+/* ── Inline rename input ── */
+
+.sidebar-rename-input {
+  flex: 1;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  padding: 1px var(--space-1);
+  min-width: 0;
+  outline: none;
+}
+
+.sidebar-rename-input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-dim);
+}
+
+/* ── Fleet section ── */
+
+.sidebar-fleet-section {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-subtle);
+  padding: var(--space-2) 0;
+}
+
+.sidebar-fleet-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-right: var(--space-3);
+}
+
+.sidebar-fleet-count {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-weight: var(--weight-normal);
+}
+
+.sidebar-fleet-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sidebar-fleet-project-subheader {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  padding: var(--space-1) var(--space-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: var(--weight-semibold);
+}
+
+.sidebar-fleet-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.sidebar-fleet-row:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.sidebar-fleet-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-success, var(--activity-working));
+  flex-shrink: 0;
+}
+
+.sidebar-fleet-dot.starting {
+  background: var(--activity-starting, var(--color-info));
+  animation: sidebar-dot-pulse 1.4s ease-in-out infinite;
+}
+
+.sidebar-fleet-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-fleet-empty {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  padding: var(--space-1) var(--space-3);
+}
+
+/* ── Fleet collapsed state ── */
+
+.sidebar-fleet-collapsed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.sidebar-fleet-count-badge {
+  font-size: var(--text-xs);
+  color: var(--color-success, var(--activity-working));
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+}
+
+/* ── Context menu ── */
+
+.context-menu {
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-elevated);
+  padding: 4px 0;
+  min-width: 140px;
+  z-index: 9999;
+}
+
+.context-menu-item {
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.context-menu-item:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.context-menu-item.danger {
+  color: var(--color-error, var(--status-danger, #ff2d78));
+}
+
+.context-menu-item.danger:hover:not(:disabled) {
+  background: rgba(255, 45, 120, 0.1);
+}
+
+.context-menu-item.disabled,
+.context-menu-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* ── Main content ── */
 
 .main-content {
