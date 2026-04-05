@@ -1,7 +1,6 @@
 import { useMemo } from "react";
 import type { PlanningAssignmentSummary, WorkItemSummary } from "../types";
 import { WorkItemRow } from "./work-item-row";
-import { WorkItemForm, type WorkItemFormData } from "./work-item-form";
 import { appStore, useAppStore } from "../store";
 import { navStore } from "../nav-store";
 
@@ -39,11 +38,6 @@ export function WorkItemsSection({
   weekCadenceKey,
   onPlan,
 }: WorkItemsSectionProps) {
-  const showCreateForm = useAppStore((s) => s.showCreateForm);
-  const workItemCreateForm = useAppStore((s) => s.workItemCreateForm);
-  const loadingKeys = useAppStore((s) => s.loadingKeys);
-  const creatingWorkItem = loadingKeys["create-work-item"] ?? false;
-
   const grouped = useMemo(() => {
     const groups: Record<string, WorkItemSummary[]> = {};
     for (const item of workItems) {
@@ -65,18 +59,6 @@ export function WorkItemsSection({
 
   const selectedProjectId = useAppStore((s) => s.selectedProjectId);
 
-  async function handleFormSubmit(data: WorkItemFormData) {
-    appStore.setWorkItemCreateForm(data);
-    const newId = await appStore.handleCreateWorkItem();
-    if (newId && selectedProjectId) {
-      navStore.goToWorkItem(selectedProjectId, newId);
-    }
-  }
-
-  function handleFormCancel() {
-    appStore.setShowCreateForm(false);
-  }
-
   function renderRow(item: WorkItemSummary) {
     return (
       <WorkItemRow
@@ -94,8 +76,6 @@ export function WorkItemsSection({
     );
   }
 
-  const isCreating = showCreateForm === "work";
-
   return (
     <section className="project-section work-items-section">
       <div className="section-header-row">
@@ -103,23 +83,17 @@ export function WorkItemsSection({
         <button
           className="section-add-btn"
           title="New work item"
-          onClick={() => appStore.setShowCreateForm(isCreating ? false : "work")}
+          onClick={() => {
+            if (selectedProjectId) {
+              navStore.openModal({ modal: "create_work_item", projectId: selectedProjectId });
+            }
+          }}
         >
-          {isCreating ? "✕" : "+"}
+          +
         </button>
       </div>
 
-      {isCreating ? (
-        <WorkItemForm
-          mode="create"
-          initialData={workItemCreateForm}
-          loading={creatingWorkItem}
-          onSubmit={handleFormSubmit}
-          onCancel={handleFormCancel}
-        />
-      ) : null}
-
-      {workItems.length === 0 && !isCreating ? (
+      {workItems.length === 0 ? (
         <p className="section-empty">No work items yet.</p>
       ) : null}
 

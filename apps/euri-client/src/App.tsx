@@ -24,13 +24,13 @@ import type {
 } from "./types";
 import { appStore, useAppStore } from "./store";
 import { navStore, useNavLayer, usePeekLayer, useModalLayer } from "./nav-store";
-import type { NavigationLayer, PeekLayer, ModalLayer } from "./nav-store";
+import type { NavigationLayer, PeekLayer } from "./nav-store";
 import { toastStore, useToastStore } from "./toast-store";
 import type { Toast } from "./toast-store";
 import { Topbar } from "./topbar";
 import { Breadcrumb } from "./breadcrumb";
 import { LayerRouter } from "./layer-router";
-import { DispatchSheet } from "./dispatch-sheet";
+import { ModalRouter } from "./modals";
 import { Sidebar } from "./sidebar";
 import { PeekPanel } from "./peek-panel";
 import { Cityscape } from "./components/cityscape";
@@ -131,48 +131,6 @@ function PeekRouter({ peek }: { peek: NonNullable<PeekLayer> }) {
         <div className="peek-stub">
           <div className="peek-stub-type">Project Settings</div>
           <div className="peek-stub-id">{peek.projectId}</div>
-        </div>
-      );
-  }
-}
-
-// ── Modal Router (stub content for Phase 4) ────────────────────────────────
-
-function ModalRouter({ modal }: { modal: NonNullable<ModalLayer> }) {
-  switch (modal.modal) {
-    case "dispatch_single":
-      return (
-        <div className="modal-stub">
-          <div className="modal-stub-type">Dispatch Single</div>
-          <div className="modal-stub-id">{modal.workItemId}</div>
-        </div>
-      );
-    case "dispatch_multi":
-      return (
-        <div className="modal-stub">
-          <div className="modal-stub-type">Dispatch Multi</div>
-          <div className="modal-stub-id">{modal.workItemIds.length} items</div>
-        </div>
-      );
-    case "create_work_item":
-      return (
-        <div className="modal-stub">
-          <div className="modal-stub-type">Create Work Item</div>
-          {modal.parentId && <div className="modal-stub-id">parent: {modal.parentId}</div>}
-        </div>
-      );
-    case "create_project":
-      return (
-        <div className="modal-stub">
-          <div className="modal-stub-type">Create Project</div>
-        </div>
-      );
-    case "confirm":
-      return (
-        <div className="modal-stub">
-          <div className="modal-stub-type">{modal.title}</div>
-          <div className="modal-stub-id">{modal.message}</div>
-          <button onClick={modal.onConfirm}>Confirm</button>
         </div>
       );
   }
@@ -621,7 +579,6 @@ export default function App() {
           {peekLayer && <PeekRouter peek={peekLayer} />}
         </PeekPanel>
       </div>
-      <DispatchSheet />
       <ModalOverlay />
       <ToastStack />
       <Cityscape />

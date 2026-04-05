@@ -346,10 +346,13 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         label: "Delete",
         danger: true,
         onClick: () => {
-          // handleDeleteProject doesn't exist yet — show placeholder toast
-          toastStore.addToast({
-            message: "Delete not available yet",
-            type: "info",
+          navStore.openModal({
+            modal: "confirm",
+            title: "Delete Project",
+            message: `Are you sure you want to delete "${projectName}"? This action cannot be undone.`,
+            onConfirm: () => {
+              void appStore.handleDeleteProject(projectId);
+            },
           });
         },
       },
@@ -452,7 +455,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                 variant="ghost"
                 size="sm"
                 className="sidebar-project-link justify-start px-3 py-2"
-                onClick={() => navStore.goHome()}
+                onClick={() => navStore.openModal({ modal: "create_project" })}
                 title="Create a new project"
               >
                 + New Project
