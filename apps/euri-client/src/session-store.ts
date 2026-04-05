@@ -5,6 +5,7 @@ export type SessionSnapshot = {
   status: string;
   activity_state: string;
   needs_input_reason: string | null;
+  tab_status: string | null;
   live: boolean;
   title: string | null;
   current_mode: string;
@@ -106,6 +107,7 @@ class SessionStore {
       status: string;
       activity_state: string;
       needs_input_reason: string | null;
+      tab_status: string | null;
       live: boolean;
       attached_clients: number;
     },
@@ -117,6 +119,7 @@ class SessionStore {
       existing.status === fields.status &&
       existing.activity_state === fields.activity_state &&
       existing.needs_input_reason === fields.needs_input_reason &&
+      existing.tab_status === fields.tab_status &&
       existing.live === fields.live &&
       existing.attached_clients === fields.attached_clients
     ) {
@@ -132,6 +135,7 @@ class SessionStore {
         status: fields.status,
         activity_state: fields.activity_state,
         needs_input_reason: fields.needs_input_reason,
+        tab_status: fields.tab_status,
         live: fields.live,
         attached_clients: fields.attached_clients,
         title: null,
@@ -169,6 +173,15 @@ export function deriveDisplayState(snap: SessionSnapshot): DisplayState {
   if (snap.runtime_state === "starting") return "starting";
 
   if (snap.runtime_state === "running") {
+    // Prefer agent's own signal when available
+    if (snap.tab_status) {
+      switch (snap.tab_status) {
+        case "busy": return "actively_working";
+        case "idle": return "idle_live";
+        case "waiting": return "waiting_for_input";
+      }
+    }
+    // Fallback to activity_state heuristic
     switch (snap.activity_state) {
       case "working": return "actively_working";
       case "needs_input": return "waiting_for_input";

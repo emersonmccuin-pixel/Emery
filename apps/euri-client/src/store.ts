@@ -438,6 +438,7 @@ class AppStore {
           status: session.status,
           activity_state: session.activity_state,
           needs_input_reason: session.needs_input_reason,
+          tab_status: null,
           live: session.live,
           title: session.title,
           current_mode: session.current_mode,
@@ -595,6 +596,7 @@ class AppStore {
         status: payload.status,
         activity_state: payload.activity_state,
         needs_input_reason: payload.needs_input_reason,
+        tab_status: payload.tab_status ?? null,
         live: payload.live,
         attached_clients: payload.attached_clients,
       });
@@ -618,6 +620,7 @@ class AppStore {
       status: payload.status,
       activity_state: payload.activity_state,
       needs_input_reason: payload.needs_input_reason,
+      tab_status: payload.tab_status ?? null,
       live: payload.live,
       attached_clients: payload.attached_clients,
     });

@@ -2575,6 +2575,21 @@ html[data-theme="vaporwave"] .peek-panel {
   background: var(--activity-error);
 }
 
+/* Agent signal badge — small filled circle indicating reliable status source */
+.agent-signal-badge {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 6px;
+  color: var(--status-live);
+  vertical-align: middle;
+  opacity: 0.7;
+}
+
+/* When agent signal is driving the indicator, slightly boost the glow */
+.activity-indicator.agent-signal.activity-indicator--actively_working {
+  filter: brightness(1.2);
+}
+
 @keyframes activity-fade {
   from { opacity: 0.6; }
   to { opacity: 0.1; }

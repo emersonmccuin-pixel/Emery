@@ -59,6 +59,7 @@ type AgentInfoBarProps = {
   runtimeState: string;
   activityState: string;
   needsInputReason: string | null;
+  tabStatus: string | null;
   live: boolean;
   endedAt: number | null;
   projectId: string | null;
@@ -92,6 +93,7 @@ export function AgentInfoBar({
   runtimeState,
   activityState,
   needsInputReason,
+  tabStatus,
   live,
   endedAt,
   projectId,
@@ -141,7 +143,12 @@ export function AgentInfoBar({
       </span>
 
       {activityState !== "idle" && live ? (
-        <span className="agent-info-activity">{activityState.replace(/_/g, " ")}</span>
+        <span className="agent-info-activity">
+          {activityState.replace(/_/g, " ")}
+          {tabStatus ? (
+            <span className="agent-signal-badge" title="Status from agent signal">●</span>
+          ) : null}
+        </span>
       ) : null}
 
       {needsInputReason ? (

@@ -212,6 +212,7 @@ export type SessionStateChangedEvent = {
   status: string;
   activity_state: string;
   needs_input_reason: string | null;
+  tab_status: string | null;
   attached_clients: number;
   started_at: number | null;
   last_output_at: number | null;

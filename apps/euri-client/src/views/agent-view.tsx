@@ -55,6 +55,7 @@ export function AgentView({
         runtimeState={sessionSnapshot.runtime_state}
         activityState={sessionSnapshot.activity_state}
         needsInputReason={sessionSnapshot.needs_input_reason}
+        tabStatus={sessionSnapshot.tab_status}
         live={live}
         endedAt={sessionSummary?.ended_at ?? null}
         projectId={projectId}

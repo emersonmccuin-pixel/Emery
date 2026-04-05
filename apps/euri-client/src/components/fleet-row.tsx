@@ -18,11 +18,12 @@ function displayStateLabel(state: DisplayState): string {
 function ActivityIndicator({ sessionId }: { sessionId: string }) {
   const displayState = useDisplayState(sessionId);
   const snap = useSessionSnapshot(sessionId);
+  const hasAgentSignal = snap?.tab_status != null;
   return (
     <>
       <span
-        className={`activity-indicator activity-indicator--${displayState}`}
-        title={displayStateLabel(displayState)}
+        className={`activity-indicator activity-indicator--${displayState}${hasAgentSignal ? ' agent-signal' : ''}`}
+        title={`${displayStateLabel(displayState)}${hasAgentSignal ? ' (agent signal)' : ''}`}
       />
       {displayState === "waiting_for_input" && (
         <span
