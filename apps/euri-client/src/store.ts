@@ -6,6 +6,7 @@ import {
   createPlanningAssignment,
   createProject,
   createProjectRoot,
+  removeProjectRoot,
   createSession,
   createSessionBatch,
   createWorkItem,
@@ -875,6 +876,59 @@ class AppStore {
       this.update({ error: String(invokeError) });
     } finally {
       this.setLoading(`save-project:${projectId}`, false);
+    }
+  }
+
+  async handleUpdateProjectName(projectId: string, name: string) {
+    const correlationId = newCorrelationId("project-rename");
+    this.setLoading(`save-project-name:${projectId}`, true);
+    try {
+      const detail = await updateProject(projectId, { name }, correlationId);
+      this.applyProjectDetail(detail);
+      await this.rebootstrap();
+      this.clearError();
+    } catch (invokeError) {
+      this.update({ error: String(invokeError) });
+    } finally {
+      this.setLoading(`save-project-name:${projectId}`, false);
+    }
+  }
+
+  async handleAddProjectRoot(projectId: string, label: string, path: string) {
+    const correlationId = newCorrelationId("project-root-add");
+    this.setLoading(`add-project-root:${projectId}`, true);
+    try {
+      await createProjectRoot(
+        {
+          project_id: projectId,
+          label,
+          path,
+          root_kind: "project_root",
+        },
+        correlationId,
+      );
+      const detail = await getProject(projectId, correlationId);
+      this.applyProjectDetail(detail);
+      this.clearError();
+    } catch (invokeError) {
+      this.update({ error: String(invokeError) });
+    } finally {
+      this.setLoading(`add-project-root:${projectId}`, false);
+    }
+  }
+
+  async handleRemoveProjectRoot(projectId: string, rootId: string) {
+    const correlationId = newCorrelationId("project-root-remove");
+    this.setLoading(`remove-project-root:${rootId}`, true);
+    try {
+      await removeProjectRoot(rootId, correlationId);
+      const detail = await getProject(projectId, correlationId);
+      this.applyProjectDetail(detail);
+      this.clearError();
+    } catch (invokeError) {
+      this.update({ error: String(invokeError) });
+    } finally {
+      this.setLoading(`remove-project-root:${rootId}`, false);
     }
   }
 
