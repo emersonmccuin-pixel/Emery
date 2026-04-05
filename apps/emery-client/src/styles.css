@@ -5420,21 +5420,45 @@ html[data-theme="cyberpunk"] .all-projects-row:hover {
   border-left: 1px solid var(--border-subtle);
   background: var(--bg-surface);
   display: flex;
-  flex-direction: column;
-  overflow-y: auto;
+  flex-direction: row;
   transition: width 150ms ease;
-}
-
-.right-panel.collapsed {
-  width: 0;
   overflow: hidden;
 }
 
-.right-panel-toggle-bar {
-  display: flex;
-  justify-content: flex-end;
-  padding: var(--space-1) var(--space-2);
+.right-panel.collapsed {
+  width: 28px;
+}
+
+/* Toggle rail — always visible, on the left edge of the right panel */
+.right-panel-toggle-rail {
   flex-shrink: 0;
+  width: 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: var(--space-2);
+  border-right: 1px solid var(--border-subtle);
+}
+
+.right-panel:not(.collapsed) .right-panel-toggle-rail {
+  border-right: 1px solid var(--border-subtle);
+}
+
+.right-panel.collapsed .right-panel-toggle-rail {
+  border-right: none;
+}
+
+/* Panel body — takes remaining width, hidden when panel is collapsed */
+.right-panel-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.right-panel.collapsed .right-panel-body {
+  display: none;
 }
 
 .right-panel-toggle {
@@ -5442,7 +5466,7 @@ html[data-theme="cyberpunk"] .all-projects-row:hover {
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  padding: 2px var(--space-1);
+  padding: 4px 6px;
   border-radius: var(--radius-sm);
   font-size: var(--text-xs);
   line-height: 1;
@@ -5734,7 +5758,12 @@ html[data-theme="cyberpunk"] .all-projects-row:hover {
 /* ── Responsive: right panel auto-collapses below 1100px ── */
 @media (max-width: 1100px) {
   .right-panel:not(.collapsed) {
-    width: 0;
-    overflow: hidden;
+    width: 28px;
+  }
+  .right-panel:not(.collapsed) .right-panel-body {
+    display: none;
+  }
+  .right-panel:not(.collapsed) .right-panel-toggle-rail {
+    border-right: none;
   }
 }

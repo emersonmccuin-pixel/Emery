@@ -61,65 +61,66 @@ export function RightPanel({ projectId }: RightPanelProps) {
 
   return (
     <div className={`right-panel${collapsed ? " collapsed" : ""}`}>
-      <div className="right-panel-toggle-bar">
+      {/* Toggle rail — always visible */}
+      <div className="right-panel-toggle-rail">
         <button
           className="right-panel-toggle"
           onClick={() => setCollapsed((c) => !c)}
           title={collapsed ? "Expand panel" : "Collapse panel"}
         >
-          {collapsed ? "\u25C0" : "\u25B6"}
+          {collapsed ? "\u25C4" : "\u25BA"}
         </button>
       </div>
-      {!collapsed && (
-        <>
-          {/* Project header */}
-          <div className="right-panel-header">
-            <div className="right-panel-project-name">
-              {project?.name ?? "Unknown Project"}
-            </div>
-            {namespace && (
-              <div className="right-panel-namespace">namespace: {namespace}</div>
-            )}
-          </div>
 
-          {/* Dispatch session indicator */}
-          {dispatchSession && (
-            <div className="right-panel-section">
-              <div className="right-panel-section-label">DISPATCH</div>
-              <div
-                className="right-panel-dispatch-row clickable"
-                onClick={() =>
-                  navStore.goToAgent(projectId, dispatchSession.id)
-                }
-              >
-                <span className="wt-dot wt-dot-running">{"\u25CF"}</span>
-                <span className="right-panel-dispatch-text">running</span>
-              </div>
+      {/* Panel body — hidden when collapsed */}
+      <div className="right-panel-body">
+        {/* Project header */}
+        <div className="right-panel-header">
+          <div className="right-panel-project-name">
+            {project?.name ?? "Unknown Project"}
+          </div>
+          {namespace && (
+            <div className="right-panel-namespace">namespace: {namespace}</div>
+          )}
+        </div>
+
+        {/* Dispatch session indicator */}
+        {dispatchSession && (
+          <div className="right-panel-section">
+            <div className="right-panel-section-label">DISPATCH</div>
+            <div
+              className="right-panel-dispatch-row clickable"
+              onClick={() =>
+                navStore.goToAgent(projectId, dispatchSession.id)
+              }
+            >
+              <span className="wt-dot wt-dot-running">{"\u25CF"}</span>
+              <span className="right-panel-dispatch-text">running</span>
+            </div>
+          </div>
+        )}
+
+        {/* Worktrees */}
+        <div className="right-panel-section">
+          <div className="right-panel-section-label">
+            WORKTREES ({uniqueWorktrees.length})
+          </div>
+          {uniqueWorktrees.length === 0 ? (
+            <div className="right-panel-empty">No active worktrees</div>
+          ) : (
+            <div className="right-panel-worktree-list">
+              {uniqueWorktrees.map((s) => (
+                <WorktreeRow
+                  key={s.id}
+                  session={s}
+                  isActive={s.id === activeSessionId}
+                  onClick={() => navStore.goToAgent(projectId, s.id)}
+                />
+              ))}
             </div>
           )}
-
-          {/* Worktrees */}
-          <div className="right-panel-section">
-            <div className="right-panel-section-label">
-              WORKTREES ({uniqueWorktrees.length})
-            </div>
-            {uniqueWorktrees.length === 0 ? (
-              <div className="right-panel-empty">No active worktrees</div>
-            ) : (
-              <div className="right-panel-worktree-list">
-                {uniqueWorktrees.map((s) => (
-                  <WorktreeRow
-                    key={s.id}
-                    session={s}
-                    isActive={s.id === activeSessionId}
-                    onClick={() => navStore.goToAgent(projectId, s.id)}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        </>
-      )}
+        </div>
+      </div>
     </div>
   );
 }
