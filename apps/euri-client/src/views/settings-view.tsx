@@ -283,6 +283,14 @@ function AccountRow({
 
 const THEMES = [
   { id: "cyberpunk", label: "Cyberpunk", description: "Glitched neon HUD with scanlines and acid green" },
+  { id: "fallout", label: "Fallout", description: "Pip-Boy green phosphor CRT with flicker and Vault-Tec ASCII" },
+  { id: "vapor", label: "Vaporwave", description: "Sunset gradient with city skyline silhouette" },
+  { id: "synthwave", label: "Synthwave", description: "80s neon grid with hot pink horizon and glowing sun" },
+  { id: "deep-ocean", label: "Deep Ocean", description: "Bioluminescent abyss with drifting particles and caustics" },
+  { id: "aurora", label: "Aurora", description: "Northern lights with twinkling stars and shifting color bands" },
+  { id: "noir", label: "Noir", description: "Film noir warmth with venetian blind light and gold accents" },
+  { id: "amber", label: "Amber Terminal", description: "Classic amber phosphor CRT with dot grid and vignette" },
+  { id: "mars", label: "Mars Colony", description: "Dusty red industrial with hab-module readout" },
   { id: "neutral-dark", label: "Neutral Dark", description: "Clean blue-grey on dark" },
 ] as const;
 
@@ -330,16 +338,17 @@ function AppearanceSection() {
 
 const SAFETY_MODES = [
   { value: "", label: "Default", description: "" },
-  { value: "full", label: "Autonomous", description: "Agent reads, writes, and executes without asking" },
-  { value: "permissive", label: "Supervised", description: "Agent asks before destructive operations" },
-  { value: "none", label: "Read Only", description: "Agent can read files but cannot write or execute" },
+  { value: "full", label: "Autonomous", description: "Agent can read, write, and execute without confirmation" },
+  { value: "normal", label: "Supervised", description: "Agent asks before destructive operations" },
+  { value: "restricted", label: "Read Only", description: "Agent can read files but cannot write or execute" },
 ];
 
-const MODEL_OPTIONS = [
+const KNOWN_MODELS = [
   { value: "", label: "Default" },
-  { value: "opus", label: "Opus" },
-  { value: "sonnet", label: "Sonnet" },
-  { value: "haiku", label: "Haiku" },
+  { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+  { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
+  { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+  { value: "claude-sonnet-4-5-20250514", label: "Claude Sonnet 4.5" },
 ];
 
 function AgentDefaultsSection() {
@@ -381,6 +390,10 @@ function AgentDefaultsRow({
   const [modelInput, setModelInput] = useState(account.default_model ?? "");
   const [safetyMode, setSafetyMode] = useState(account.default_safety_mode ?? "");
   const [saved, setSaved] = useState(false);
+  const [customModelMode, setCustomModelMode] = useState(() => {
+    const val = account.default_model ?? "";
+    return val !== "" && !KNOWN_MODELS.some((m) => m.value === val);
+  });
 
   const saving = loadingKeys[`update-account:${account.id}`] ?? false;
 
@@ -393,25 +406,55 @@ function AgentDefaultsRow({
     setTimeout(() => setSaved(false), 2000);
   }
 
+  function handleModelSelectChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const v = e.target.value;
+    if (v === "__custom__") {
+      setCustomModelMode(true);
+      setModelInput("");
+      setSaved(false);
+    } else {
+      setCustomModelMode(false);
+      setModelInput(v);
+      setSaved(false);
+    }
+  }
+
   return (
     <Card className="settings-agent-defaults-row p-4">
       <div className="settings-agent-defaults-account-name">{account.label}</div>
       <div className="settings-field-group">
         <label className="settings-label">Default model</label>
-        <Select
-          className="settings-select"
-          value={modelInput}
-          onChange={(e) => {
-            setModelInput(e.target.value);
-            setSaved(false);
-          }}
-        >
-          {MODEL_OPTIONS.map((m) => (
-            <option key={m.value} value={m.value}>
-              {m.label}
-            </option>
-          ))}
-        </Select>
+        {customModelMode ? (
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+            <Input
+              className="settings-input"
+              type="text"
+              value={modelInput}
+              onChange={(e) => {
+                setModelInput(e.target.value);
+                setSaved(false);
+              }}
+              placeholder="e.g. claude-sonnet-4-6"
+              style={{ flex: 1 }}
+            />
+            <Button variant="ghost" size="sm" onClick={() => { setCustomModelMode(false); setModelInput(""); setSaved(false); }}>
+              Back
+            </Button>
+          </div>
+        ) : (
+          <Select
+            className="settings-select"
+            value={modelInput}
+            onChange={handleModelSelectChange}
+          >
+            {KNOWN_MODELS.map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.label}
+              </option>
+            ))}
+            <option value="__custom__">Custom...</option>
+          </Select>
+        )}
       </div>
       <div className="settings-field-group">
         <label className="settings-label">Safety mode</label>

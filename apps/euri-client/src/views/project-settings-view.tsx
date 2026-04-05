@@ -33,9 +33,10 @@ const ORIGIN_MODE_LABELS: { key: keyof ModelDefaultsByMode; label: string }[] = 
 
 const MODEL_OPTIONS = [
   { value: "", label: "Default" },
-  { value: "opus", label: "Opus" },
-  { value: "sonnet", label: "Sonnet" },
-  { value: "haiku", label: "Haiku" },
+  { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+  { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
+  { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+  { value: "claude-sonnet-4-5-20250514", label: "Claude Sonnet 4.5" },
 ];
 
 function parseModelDefaults(json: string | null | undefined): ModelDefaults {

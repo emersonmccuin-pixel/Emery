@@ -73,13 +73,77 @@ function getDefaultStopRules(originMode: string): string[] {
 }
 
 const SAFETY_MODE_DESCRIPTIONS: Record<string, string> = {
-  full: "Agent reads, writes, and executes without asking",
-  permissive: "Agent asks before destructive operations",
-  none: "Agent can read files but cannot write or execute",
+  full: "Agent can read, write, and execute without confirmation",
+  normal: "Agent asks before destructive operations",
+  restricted: "Agent can read files but cannot write or execute",
 };
 
 function safetyModeDescription(mode: string): string {
   return SAFETY_MODE_DESCRIPTIONS[mode] ?? "";
+}
+
+const KNOWN_MODELS = [
+  { value: "", label: "Account default" },
+  { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+  { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
+  { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+  { value: "claude-sonnet-4-5-20250514", label: "Claude Sonnet 4.5" },
+];
+
+function ModelSelect({
+  value,
+  onChange,
+  defaultLabel,
+}: {
+  value: string;
+  onChange: (val: string) => void;
+  defaultLabel?: string;
+}) {
+  const isKnown = KNOWN_MODELS.some((m) => m.value === value);
+  const [customMode, setCustomMode] = useState(!isKnown && value !== "");
+
+  function handleSelectChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    const v = e.target.value;
+    if (v === "__custom__") {
+      setCustomMode(true);
+      onChange("");
+    } else {
+      setCustomMode(false);
+      onChange(v);
+    }
+  }
+
+  if (customMode) {
+    return (
+      <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+        <Input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="e.g. claude-sonnet-4-6"
+          style={{ flex: 1 }}
+          autoFocus
+        />
+        <Button variant="ghost" size="sm" onClick={() => { setCustomMode(false); onChange(""); }}>
+          Back
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <Select value={value} onChange={handleSelectChange}>
+      {defaultLabel ? (
+        <option value="">{defaultLabel}</option>
+      ) : (
+        <option value="">Account default</option>
+      )}
+      {KNOWN_MODELS.filter((m) => m.value !== "").map((m) => (
+        <option key={m.value} value={m.value}>{m.label}</option>
+      ))}
+      <option value="__custom__">Custom...</option>
+    </Select>
+  );
 }
 
 // ── Dispatch Single Modal ─────────────────────────────────────────────────
@@ -165,8 +229,8 @@ function DispatchSingleModal({
             <Select value={safetyMode} onChange={(e) => setSafetyMode(e.target.value)}>
               <option value="">Default ({resolvedDefault})</option>
               <option value="full">Autonomous</option>
-              <option value="permissive">Supervised</option>
-              <option value="none">Read Only</option>
+              <option value="normal">Supervised</option>
+              <option value="restricted">Read Only</option>
             </Select>
             {(safetyMode || resolvedDefault) && (
               <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", marginTop: "2px" }}>
@@ -177,12 +241,7 @@ function DispatchSingleModal({
         </div>
         <div className="dispatch-row">
           <span className="dispatch-label">Model</span>
-          <Select value={model} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setModel(e.target.value)}>
-            <option value="">Default ({resolvedDefaultModel})</option>
-            <option value="opus">Opus</option>
-            <option value="sonnet">Sonnet</option>
-            <option value="haiku">Haiku</option>
-          </Select>
+          <ModelSelect value={model} onChange={setModel} defaultLabel={`Default (${resolvedDefaultModel})`} />
         </div>
         {getDefaultStopRules(originMode).length > 0 && (
           <div className="dispatch-row">
@@ -315,8 +374,8 @@ function DispatchMultiModal({
             <Select value={safetyMode} onChange={(e) => setSafetyMode(e.target.value)}>
               <option value="">Default ({resolvedDefault})</option>
               <option value="full">Autonomous</option>
-              <option value="permissive">Supervised</option>
-              <option value="none">Read Only</option>
+              <option value="normal">Supervised</option>
+              <option value="restricted">Read Only</option>
             </Select>
             {(safetyMode || resolvedDefault) && (
               <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", marginTop: "2px" }}>
@@ -327,12 +386,7 @@ function DispatchMultiModal({
         </div>
         <div className="dispatch-row">
           <span className="dispatch-label">Model</span>
-          <Select value={model} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setModel(e.target.value)}>
-            <option value="">Default (execution -&gt; sonnet)</option>
-            <option value="opus">Opus</option>
-            <option value="sonnet">Sonnet</option>
-            <option value="haiku">Haiku</option>
-          </Select>
+          <ModelSelect value={model} onChange={setModel} defaultLabel="Default (execution → sonnet)" />
         </div>
       </div>
 

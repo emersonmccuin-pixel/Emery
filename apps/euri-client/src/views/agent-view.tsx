@@ -64,6 +64,7 @@ export function AgentView({
 
       <div className="agent-terminal-area">
         <AgentTerminal sessionId={sessionId} live={live} />
+        <span className="agent-escape-hint">Double-Escape to exit</span>
       </div>
 
       <AgentControls
