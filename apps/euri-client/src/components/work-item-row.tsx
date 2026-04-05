@@ -6,6 +6,7 @@ type WorkItemRowProps = {
   selected: boolean;
   onToggleSelect: () => void;
   onDispatch: () => void;
+  onNavigate: () => void;
   assignments: PlanningAssignmentSummary[];
   dayCadenceKey: string;
   weekCadenceKey: string;
@@ -17,13 +18,18 @@ export function WorkItemRow({
   selected,
   onToggleSelect,
   onDispatch,
+  onNavigate,
   assignments,
   dayCadenceKey,
   weekCadenceKey,
   onPlan,
 }: WorkItemRowProps) {
   return (
-    <div className={`work-item-row${selected ? " work-item-row-selected" : ""}`}>
+    <div
+      className={`work-item-row${selected ? " work-item-row-selected" : ""}`}
+      onClick={onNavigate}
+      style={{ cursor: "pointer" }}
+    >
       <input
         type="checkbox"
         className="work-item-checkbox"

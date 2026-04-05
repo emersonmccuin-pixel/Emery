@@ -5,7 +5,8 @@ export type NavigationLayer =
   | { layer: "project"; projectId: string }
   | { layer: "agent"; projectId: string; sessionId: string }
   | { layer: "document"; projectId: string; documentId: string }
-  | { layer: "new-document"; projectId: string; workItemId?: string };
+  | { layer: "new-document"; projectId: string; workItemId?: string }
+  | { layer: "work_item"; projectId: string; workItemId: string };
 
 type NavState = {
   current: NavigationLayer;
@@ -75,6 +76,14 @@ export const navStore = {
     emit();
   },
 
+  goToWorkItem(projectId: string, workItemId: string) {
+    state = {
+      current: { layer: "work_item", projectId, workItemId },
+      history: [...state.history, state.current],
+    };
+    emit();
+  },
+
   goBack() {
     if (state.history.length === 0) return;
     const prev = state.history[state.history.length - 1];
@@ -96,7 +105,7 @@ export const navStore = {
       { label: "EURI", layer: { layer: "home" } },
     ];
     const c = state.current;
-    if (c.layer === "project" || c.layer === "agent" || c.layer === "document" || c.layer === "new-document") {
+    if (c.layer === "project" || c.layer === "agent" || c.layer === "document" || c.layer === "new-document" || c.layer === "work_item") {
       crumbs.push({ label: c.projectId, layer: { layer: "project", projectId: c.projectId } });
     }
     if (c.layer === "agent") {
@@ -107,6 +116,9 @@ export const navStore = {
     }
     if (c.layer === "new-document") {
       crumbs.push({ label: "new document", layer: c });
+    }
+    if (c.layer === "work_item") {
+      crumbs.push({ label: c.workItemId, layer: c });
     }
     return crumbs;
   },

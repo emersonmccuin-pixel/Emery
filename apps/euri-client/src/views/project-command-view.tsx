@@ -84,6 +84,7 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
             onClearSelection={() => appStore.clearWorkItemSelection()}
             onDispatch={(workItemId) => void appStore.handleLaunchSessionFromWorkItem(workItemId)}
             onMultiDispatch={() => void appStore.handleMultiDispatch(projectId)}
+            onNavigate={(workItemId) => navStore.goToWorkItem(projectId, workItemId)}
             assignments={assignments}
             dayCadenceKey={dayCadenceKey}
             weekCadenceKey={weekCadenceKey}
