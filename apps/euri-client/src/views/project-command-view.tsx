@@ -75,6 +75,7 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
           assignments={assignments}
           sessions={projectSessions}
           onDispatch={(workItemId) => void appStore.handleLaunchSessionFromWorkItem(workItemId)}
+          onNavigateToSession={(sessionId) => navStore.goToAgent(projectId, sessionId)}
         />
         {planningViewMode !== "day" && (
           <WorkItemsSection

@@ -19,6 +19,7 @@ type WeeklyPlannerProps = {
   sessions: SessionSummary[];
   weekKey: string;
   onDispatch: (workItemId: string) => void;
+  onNavigateToSession: (sessionId: string) => void;
 };
 
 export function WeeklyPlanner({
@@ -27,6 +28,7 @@ export function WeeklyPlanner({
   sessions,
   weekKey,
   onDispatch,
+  onNavigateToSession,
 }: WeeklyPlannerProps) {
   const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const weekDates = useMemo(() => weekDaysFromKey(weekKey), [weekKey]);
@@ -112,7 +114,16 @@ export function WeeklyPlanner({
         <div className="weekly-item-body">
           <div className="weekly-item-top">
             {linkedSession ? (
-              <LiveIndicator state={linkedSession.runtime_state} />
+              <button
+                className="weekly-item-live-btn"
+                title={`Go to session: ${linkedSession.title ?? linkedSession.id}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onNavigateToSession(linkedSession.id);
+                }}
+              >
+                <LiveIndicator state={linkedSession.runtime_state} />
+              </button>
             ) : (
               <span className="weekly-item-session-placeholder" />
             )}
@@ -121,15 +132,18 @@ export function WeeklyPlanner({
           </div>
           <div className="weekly-item-title">{workItem.title}</div>
           <div className="weekly-item-actions">
-            <button
-              className="weekly-item-dispatch-btn"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDispatch(workItem.id);
-              }}
-            >
-              Dispatch
-            </button>
+            {!linkedSession && (
+              <button
+                className="weekly-item-dispatch-btn"
+                title="Dispatch"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDispatch(workItem.id);
+                }}
+              >
+                ▶
+              </button>
+            )}
             <button
               className="weekly-item-remove-btn"
               title={dayAssignment ? "Remove from this day" : "Remove from this week"}
