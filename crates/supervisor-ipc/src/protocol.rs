@@ -65,6 +65,7 @@ pub enum Method {
     MergeQueueCheckConflicts,
     SessionCreateBatch,
     SessionCheckDispatchConflicts,
+    SessionWatch,
 }
 
 impl Method {
@@ -132,6 +133,7 @@ impl Method {
             Self::MergeQueueCheckConflicts => "merge_queue.check_conflicts",
             Self::SessionCreateBatch => "session.create_batch",
             Self::SessionCheckDispatchConflicts => "session.check_dispatch_conflicts",
+            Self::SessionWatch => "session.watch",
         }
     }
 }
@@ -207,6 +209,7 @@ impl TryFrom<&str> for Method {
             "merge_queue.check_conflicts" => Ok(Self::MergeQueueCheckConflicts),
             "session.create_batch" => Ok(Self::SessionCreateBatch),
             "session.check_dispatch_conflicts" => Ok(Self::SessionCheckDispatchConflicts),
+            "session.watch" => Ok(Self::SessionWatch),
             _ => Err(()),
         }
     }
@@ -215,6 +218,13 @@ impl TryFrom<&str> for Method {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CheckDispatchConflictsParams {
     pub work_item_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionWatchParams {
+    pub session_ids: Vec<String>,
+    /// Timeout in seconds. Default 60. Max 300.
+    pub timeout_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -390,6 +390,14 @@ impl Supervisor {
             .unsubscribe_session_state_changed(session_id, subscription_id)
     }
 
+    pub fn watch_sessions(
+        &self,
+        session_ids: Vec<String>,
+        timeout_seconds: u64,
+    ) -> Result<crate::models::SessionWatchResponse> {
+        self.service.watch_sessions(session_ids, timeout_seconds)
+    }
+
     pub fn export_diagnostics_bundle(
         &self,
         request: CreateDiagnosticsBundleRequest,

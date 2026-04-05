@@ -20,14 +20,15 @@ use supervisor_core::{
     WorkflowReconciliationProposalListFilter, WorktreeListFilter,
 };
 
+
 use crate::protocol::{
     AccountGetParams, CheckDispatchConflictsParams, DiagnosticsExportBundleParams,
     DocumentGetParams, ErrorBody, EventEnvelope, HelloResult, Method, ProjectGetParams,
     ProjectRootListParams, RequestEnvelope, ResponseEnvelope, SessionAttachParams,
     SessionControlParams, SessionDetachParams, SessionGetParams, SessionInputParams,
-    SessionResizeParams, SessionSpecGetParams, SubscriptionCloseParams, SubscriptionOpenParams,
-    WorkItemGetParams, WorkflowReconciliationProposalGetParams, WorkspaceStateGetParams,
-    WorktreeGetParams,
+    SessionResizeParams, SessionSpecGetParams, SessionWatchParams, SubscriptionCloseParams,
+    SubscriptionOpenParams, WorkItemGetParams, WorkflowReconciliationProposalGetParams,
+    WorkspaceStateGetParams, WorktreeGetParams,
 };
 
 const PROTOCOL_VERSION: &str = "1";
@@ -611,6 +612,12 @@ impl SupervisorRpc {
                     .check_dispatch_conflicts(&params.work_item_ids)?;
                 Ok(json!({ "warnings": warnings }))
             }
+            Method::SessionWatch => {
+                let params: SessionWatchParams = serde_json::from_value(params)?;
+                let timeout = params.timeout_seconds.unwrap_or(60);
+                let result = self.supervisor.watch_sessions(params.session_ids, timeout)?;
+                Ok(serde_json::to_value(result)?)
+            }
             Method::SubscriptionOpen => {
                 let params: SubscriptionOpenParams = serde_json::from_value(params)?;
                 self.open_subscription(params, connection)
@@ -813,6 +820,7 @@ impl SupervisorRpc {
                 Method::MergeQueueCheckConflicts.as_str(),
                 Method::SessionCreateBatch.as_str(),
                 Method::SessionCheckDispatchConflicts.as_str(),
+                Method::SessionWatch.as_str(),
             ],
             app_data_root: self.supervisor.paths().root.display().to_string(),
             ipc_endpoint: self.ipc_endpoint.clone(),
