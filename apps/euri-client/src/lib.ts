@@ -476,6 +476,21 @@ export async function removeProjectRoot(
   return invoke("remove_project_root", { rootId, correlationId });
 }
 
+export async function gitInitProjectRoot(
+  rootId: string,
+  correlationId?: string,
+): Promise<unknown> {
+  return invoke("git_init_project_root", { rootId, correlationId });
+}
+
+export async function setProjectRootRemote(
+  rootId: string,
+  remoteUrl: string,
+  correlationId?: string,
+): Promise<unknown> {
+  return invoke("set_project_root_remote", { rootId, remoteUrl, correlationId });
+}
+
 export function connectionLabel(event: ConnectionStatusEvent | null): string {
   if (!event) {
     return "connecting";

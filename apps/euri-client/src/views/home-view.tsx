@@ -95,6 +95,7 @@ function ProjectCreateForm({
 }) {
   const [name, setName] = useState("");
   const [folderPath, setFolderPath] = useState("");
+  const [initGit, setInitGit] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   async function handleBrowse() {
@@ -112,7 +113,7 @@ function ProjectCreateForm({
   async function handleSubmit() {
     if (!name.trim() || !folderPath.trim() || submitting) return;
     setSubmitting(true);
-    const projectId = await appStore.handleCreateProject(name.trim(), folderPath.trim());
+    const projectId = await appStore.handleCreateProject(name.trim(), folderPath.trim(), initGit);
     setSubmitting(false);
     if (projectId) {
       onCreated(projectId);
@@ -152,6 +153,18 @@ function ProjectCreateForm({
         <button className="project-create-browse-btn" onClick={handleBrowse} disabled={submitting}>
           Browse
         </button>
+      </div>
+      <div className="project-create-form-row project-create-checkbox-row">
+        <label className="project-create-checkbox-label">
+          <input
+            type="checkbox"
+            className="project-create-checkbox"
+            checked={initGit}
+            onChange={(e) => setInitGit(e.target.checked)}
+            disabled={submitting}
+          />
+          Initialize git repository
+        </label>
       </div>
       <div className="project-create-form-actions">
         <button

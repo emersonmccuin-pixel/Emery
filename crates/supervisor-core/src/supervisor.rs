@@ -12,7 +12,8 @@ use crate::models::{
     DeletePlanningAssignmentRequest, DocumentDetail, DocumentListFilter, DocumentSummary,
     GetWorkspaceStateRequest, MergeQueueEntry, MergeQueueListFilter, PlanningAssignmentDetail,
     PlanningAssignmentListFilter, PlanningAssignmentSummary, ProjectDetail, ProjectRootSummary,
-    ProjectSummary, RemoveProjectRootRequest, SessionAttachResponse, SessionDetachResponse,
+    ProjectSummary, GitInitProjectRootRequest, SetProjectRootRemoteRequest,
+    RemoveProjectRootRequest, SessionAttachResponse, SessionDetachResponse,
     SessionDetail, SessionListFilter, SessionSpecDetail,
     SessionSpecListFilter, SessionSpecSummary, SessionStateChangedEvent, SessionSummary,
     UpdateAccountRequest, UpdateDocumentRequest, UpdatePlanningAssignmentRequest,
@@ -139,6 +140,20 @@ impl Supervisor {
         request: RemoveProjectRootRequest,
     ) -> Result<ProjectRootSummary> {
         self.service.remove_project_root(request)
+    }
+
+    pub fn git_init_project_root(
+        &self,
+        request: GitInitProjectRootRequest,
+    ) -> Result<ProjectRootSummary> {
+        self.service.git_init_project_root(request)
+    }
+
+    pub fn set_project_root_remote(
+        &self,
+        request: SetProjectRootRemoteRequest,
+    ) -> Result<ProjectRootSummary> {
+        self.service.set_project_root_remote(request)
     }
 
     pub fn list_accounts(&self) -> Result<Vec<AccountSummary>> {

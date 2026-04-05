@@ -13,6 +13,7 @@ use supervisor_core::{
     InboxEntryListFilter, MergeQueueCheckConflictsParams, MergeQueueGetDiffParams,
     MergeQueueGetParams, MergeQueueListFilter, MergeQueueMergeParams, MergeQueueParkParams,
     MergeQueueReorderParams, OutputOrResync, PlanningAssignmentListFilter,
+    GitInitProjectRootRequest, SetProjectRootRemoteRequest,
     RemoveProjectRootRequest, SessionListFilter, SessionSpecListFilter, Supervisor,
     UpdateAccountRequest, UpdateDocumentRequest, UpdateInboxEntryRequest,
     UpdatePlanningAssignmentRequest, UpdateProjectRequest, UpdateProjectRootRequest,
@@ -252,6 +253,18 @@ impl SupervisorRpc {
                 let request: RemoveProjectRootRequest = serde_json::from_value(params)?;
                 Ok(serde_json::to_value(
                     self.supervisor.remove_project_root(request)?,
+                )?)
+            }
+            Method::ProjectRootGitInit => {
+                let request: GitInitProjectRootRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.git_init_project_root(request)?,
+                )?)
+            }
+            Method::ProjectRootSetRemote => {
+                let request: SetProjectRootRemoteRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.set_project_root_remote(request)?,
                 )?)
             }
             Method::AccountList => Ok(serde_json::to_value(self.supervisor.list_accounts()?)?),
@@ -807,6 +820,8 @@ impl SupervisorRpc {
                 Method::ProjectRootCreate.as_str(),
                 Method::ProjectRootUpdate.as_str(),
                 Method::ProjectRootRemove.as_str(),
+                Method::ProjectRootGitInit.as_str(),
+                Method::ProjectRootSetRemote.as_str(),
                 Method::AccountList.as_str(),
                 Method::AccountGet.as_str(),
                 Method::AccountCreate.as_str(),

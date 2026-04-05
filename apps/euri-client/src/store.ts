@@ -8,6 +8,8 @@ import {
   createProject,
   createProjectRoot,
   removeProjectRoot,
+  gitInitProjectRoot,
+  setProjectRootRemote,
   createSession,
   createSessionBatch,
   createWorkItem,
@@ -856,11 +858,11 @@ class AppStore {
     }
   }
 
-  async handleCreateProject(name: string, folderPath: string): Promise<string | null> {
+  async handleCreateProject(name: string, folderPath: string, initGit = false): Promise<string | null> {
     const correlationId = newCorrelationId("project-create");
     try {
       const project = await createProject({ name }, correlationId);
-      await createProjectRoot(
+      const root = await createProjectRoot(
         {
           project_id: project.id,
           label: name,
@@ -868,7 +870,14 @@ class AppStore {
           root_kind: "project_root",
         },
         correlationId,
-      );
+      ) as { id: string };
+      if (initGit) {
+        try {
+          await gitInitProjectRoot(root.id, correlationId);
+        } catch {
+          // git init failure is non-fatal — project is created
+        }
+      }
       await this.rebootstrap();
       return project.id;
     } catch (err) {
@@ -945,6 +954,36 @@ class AppStore {
       this.update({ error: String(invokeError) });
     } finally {
       this.setLoading(`remove-project-root:${rootId}`, false);
+    }
+  }
+
+  async handleGitInitProjectRoot(projectId: string, rootId: string) {
+    const correlationId = newCorrelationId("project-root-git-init");
+    this.setLoading(`git-init-project-root:${rootId}`, true);
+    try {
+      await gitInitProjectRoot(rootId, correlationId);
+      const detail = await getProject(projectId, correlationId);
+      this.applyProjectDetail(detail);
+      this.clearError();
+    } catch (invokeError) {
+      this.update({ error: String(invokeError) });
+    } finally {
+      this.setLoading(`git-init-project-root:${rootId}`, false);
+    }
+  }
+
+  async handleSetProjectRootRemote(projectId: string, rootId: string, remoteUrl: string) {
+    const correlationId = newCorrelationId("project-root-set-remote");
+    this.setLoading(`set-project-root-remote:${rootId}`, true);
+    try {
+      await setProjectRootRemote(rootId, remoteUrl, correlationId);
+      const detail = await getProject(projectId, correlationId);
+      this.applyProjectDetail(detail);
+      this.clearError();
+    } catch (invokeError) {
+      this.update({ error: String(invokeError) });
+    } finally {
+      this.setLoading(`set-project-root-remote:${rootId}`, false);
     }
   }
 

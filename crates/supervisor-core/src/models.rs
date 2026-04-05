@@ -265,6 +265,17 @@ pub struct RemoveProjectRootRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct GitInitProjectRootRequest {
+    pub project_root_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SetProjectRootRemoteRequest {
+    pub project_root_id: String,
+    pub remote_url: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct CreateAccountRequest {
     pub agent_kind: String,
     pub label: String,
