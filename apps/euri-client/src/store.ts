@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useCallback, useRef, useSyncExternalStore } from "react";
 import {
   archiveProject,
   deleteProject,
@@ -1883,8 +1883,25 @@ class AppStore {
 export const appStore = new AppStore();
 
 export function useAppStore<T>(selector: (state: AppState) => T): T {
-  return useSyncExternalStore(
-    appStore.subscribe,
-    () => selector(appStore.getState()),
-  );
+  const selectorRef = useRef(selector);
+  const resultRef = useRef<T>(selector(appStore.getState()));
+  selectorRef.current = selector;
+
+  const getSnapshot = useCallback(() => {
+    const next = selectorRef.current(appStore.getState());
+    // Shallow equality check for arrays and objects to prevent infinite re-renders
+    if (resultRef.current === next) return resultRef.current;
+    if (
+      Array.isArray(next) &&
+      Array.isArray(resultRef.current) &&
+      next.length === (resultRef.current as unknown[]).length &&
+      next.every((v, i) => v === (resultRef.current as unknown[])[i])
+    ) {
+      return resultRef.current;
+    }
+    resultRef.current = next;
+    return next;
+  }, []);
+
+  return useSyncExternalStore(appStore.subscribe, getSnapshot);
 }
