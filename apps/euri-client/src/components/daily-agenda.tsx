@@ -29,6 +29,7 @@ type DailyAgendaProps = {
   sessions: SessionSummary[];
   dayCadenceKey: string;
   onDispatch: (workItemId: string) => void;
+  onNavigateToSession: (sessionId: string) => void;
 };
 
 export function DailyAgenda({
@@ -37,6 +38,7 @@ export function DailyAgenda({
   sessions,
   dayCadenceKey,
   onDispatch,
+  onNavigateToSession,
 }: DailyAgendaProps) {
   const agendaItems = useMemo(() => {
     const todayAssignments = assignments.filter(
@@ -81,23 +83,37 @@ export function DailyAgenda({
       >
         <span className={`agenda-priority-edge priority-edge-${priority}`} />
         {item.linkedSession ? (
-          <LiveIndicator state={item.linkedSession.runtime_state} />
+          <button
+            className="agenda-live-btn"
+            title={`Go to session: ${item.linkedSession.title ?? item.linkedSession.id}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onNavigateToSession(item.linkedSession!.id);
+            }}
+          >
+            <LiveIndicator state={item.linkedSession.runtime_state} />
+            <span className="agenda-live-title">
+              {item.linkedSession.title ?? item.linkedSession.worktree_branch ?? "running"}
+            </span>
+          </button>
         ) : (
           <span className="agenda-session-placeholder" />
         )}
         <span className="agenda-callsign">{item.workItem.callsign}</span>
         <span className="agenda-title">{item.workItem.title}</span>
         <StatusBadge status={item.workItem.status} className="agenda-status" />
-        <button
-          className="agenda-dispatch-btn"
-          title="Dispatch"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDispatch(item.workItem.id);
-          }}
-        >
-          Dispatch
-        </button>
+        {!item.linkedSession && (
+          <button
+            className="agenda-dispatch-btn"
+            title="Dispatch"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDispatch(item.workItem.id);
+            }}
+          >
+            ▶
+          </button>
+        )}
         <button
           className="agenda-remove-btn"
           title="Remove from today"

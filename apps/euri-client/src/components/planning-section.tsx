@@ -12,6 +12,7 @@ type PlanningSectionProps = {
   assignments: PlanningAssignmentSummary[];
   sessions: SessionSummary[];
   onDispatch: (workItemId: string) => void;
+  onNavigateToSession: (sessionId: string) => void;
 };
 
 export function PlanningSection({
@@ -21,6 +22,7 @@ export function PlanningSection({
   assignments,
   sessions,
   onDispatch,
+  onNavigateToSession,
 }: PlanningSectionProps) {
   const dayCadenceKey = useMemo(() => currentDayCadenceKey(), []);
   const weekCadenceKey = useMemo(() => currentWeekCadenceKey(), []);
@@ -81,6 +83,7 @@ export function PlanningSection({
           sessions={sessions}
           dayCadenceKey={dayCadenceKey}
           onDispatch={onDispatch}
+          onNavigateToSession={onNavigateToSession}
         />
       )}
       {viewMode === "week" && (
@@ -90,6 +93,7 @@ export function PlanningSection({
           sessions={sessions}
           weekKey={displayedWeekKey}
           onDispatch={onDispatch}
+          onNavigateToSession={onNavigateToSession}
         />
       )}
     </div>
