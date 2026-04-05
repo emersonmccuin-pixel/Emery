@@ -1703,6 +1703,63 @@ button {
   background: rgba(242, 237, 225, 0.2);
 }
 
+/* ── Activity indicator ── */
+.activity-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+.activity-indicator--starting {
+  background: rgba(242, 237, 225, 0.5);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.activity-indicator--actively_working {
+  background: #5ab482;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.activity-indicator--idle_live {
+  background: #5ab482;
+  opacity: 0.4;
+}
+
+.activity-indicator--waiting_for_input {
+  background: #d8a25a;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.activity-indicator--stopping {
+  background: rgba(242, 237, 225, 0.5);
+  animation: activity-fade 2s ease-out forwards;
+}
+
+.activity-indicator--ended {
+  background: rgba(242, 237, 225, 0.15);
+}
+
+.activity-indicator--error {
+  background: #c75050;
+}
+
+@keyframes activity-fade {
+  from { opacity: 0.6; }
+  to { opacity: 0.1; }
+}
+
+.needs-input-badge {
+  font-size: 10px;
+  color: #d8a25a;
+  margin-left: 4px;
+  font-style: italic;
+  flex-shrink: 0;
+}
+
 /* ── Model badge ── */
 .model-badge {
   font-size: 0.65rem;
