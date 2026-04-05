@@ -5,6 +5,7 @@ use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use crate::git;
 use crate::diagnostics::{
     DiagnosticContext, DiagnosticsBundleRequest, DiagnosticsBundleResult, DiagnosticsHub,
 };
@@ -1204,9 +1205,32 @@ impl SupervisorService {
         Ok(Some(SessionDetail { summary, runtime }))
     }
 
-    pub fn create_session(&self, request: CreateSessionRequest) -> Result<SessionDetail> {
+    pub fn create_session(&self, mut request: CreateSessionRequest) -> Result<SessionDetail> {
         let now = unix_time_seconds();
         let session_id = format!("ses_{}", Uuid::new_v4().simple());
+
+        // Auto-create git worktree when requested
+        if request.auto_worktree
+            && request.work_item_id.is_some()
+            && request.worktree_id.is_none()
+        {
+            let project_root_id = request
+                .project_root_id
+                .as_deref()
+                .ok_or_else(|| anyhow!("project_root_id is required for auto-worktree"))?;
+            let work_item_id = request.work_item_id.as_deref().unwrap();
+
+            let (worktree_id, worktree_path) = self.auto_create_worktree_for_session(
+                &request.project_id,
+                project_root_id,
+                work_item_id,
+                now,
+            )?;
+
+            request.worktree_id = Some(worktree_id);
+            request.cwd = worktree_path;
+        }
+
         let spec_record = self.build_session_spec_record(None, request.into(), now)?;
         if let Some(worktree_id) = spec_record.worktree_id.as_deref() {
             if self
@@ -1319,6 +1343,64 @@ impl SupervisorService {
             }),
         )?;
         Ok(detail)
+    }
+
+    fn auto_create_worktree_for_session(
+        &self,
+        project_id: &str,
+        project_root_id: &str,
+        work_item_id: &str,
+        now: i64,
+    ) -> Result<(String, String)> {
+        let root = self
+            .databases
+            .get_project_root(project_root_id)?
+            .ok_or_else(|| anyhow!("project root {} not found", project_root_id))?;
+
+        let git_root = root.git_root_path.as_deref().unwrap_or(&root.path);
+        let git_root_path = Path::new(git_root);
+
+        if !git::git_is_repo(git_root_path) {
+            return Err(anyhow!(
+                "project root {} is not a git repository",
+                git_root
+            ));
+        }
+
+        let work_item = self
+            .databases
+            .get_work_item(work_item_id)?
+            .ok_or_else(|| anyhow!("work item {} not found", work_item_id))?;
+
+        let branch_name = format!("euri/{}", work_item.summary.callsign.to_lowercase());
+        let worktree_dir = &self.databases.paths().worktrees_dir;
+        let worktree_path = worktree_dir.join(branch_name.replace('/', "-"));
+
+        git::git_worktree_add(git_root_path, &branch_name, &worktree_path)?;
+
+        let base_ref = git::git_current_branch(git_root_path)
+            .unwrap_or_else(|_| "HEAD".to_string());
+        let head_commit = git::git_head_commit(&worktree_path)?;
+
+        let worktree_id = format!("wt_{}", Uuid::new_v4().simple());
+        let record = NewWorktreeRecord {
+            id: worktree_id.clone(),
+            project_id: project_id.to_string(),
+            project_root_id: project_root_id.to_string(),
+            branch_name,
+            head_commit: Some(head_commit),
+            base_ref: Some(base_ref),
+            path: worktree_path.to_string_lossy().to_string(),
+            status: "active".to_string(),
+            created_by_session_id: None,
+            last_used_at: Some(now),
+            created_at: now,
+            updated_at: now,
+            closed_at: None,
+        };
+        self.databases.insert_worktree(&record)?;
+
+        Ok((worktree_id, worktree_path.to_string_lossy().to_string()))
     }
 
     pub fn forward_input(&self, session_id: &str, input: &[u8]) -> Result<()> {

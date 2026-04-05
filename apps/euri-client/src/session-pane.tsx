@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { useSessionSnapshot } from "./session-store";
 import { TerminalSurface } from "./terminal-surface";
+import { useAppStore } from "./store";
 
 function sessionTone(session: {
   runtime_state: string;
@@ -35,6 +36,12 @@ export const SessionPane = memo(function SessionPane({
   onTerminate: () => void;
 }) {
   const session = useSessionSnapshot(sessionId);
+  const branchName = useAppStore((s) => {
+    const summary = s.sessions.find((entry) => entry.id === sessionId);
+    if (!summary?.worktree_id || !summary.work_item_id) return null;
+    const workItem = s.workItemDetails[summary.work_item_id];
+    return workItem ? `euri/${workItem.callsign.toLowerCase()}` : null;
+  });
 
   if (!session) {
     return <div className="empty-pane">Session not found.</div>;
@@ -49,6 +56,9 @@ export const SessionPane = memo(function SessionPane({
           <span className={`indicator ${tone}`} />
           <h2>{session.title ?? session.current_mode}</h2>
           <span className={`status-chip ${tone}`}>{session.runtime_state}</span>
+          {branchName ? (
+            <code className="status-chip neutral">{branchName}</code>
+          ) : null}
           {session.activity_state !== "idle" ? (
             <span className="status-chip neutral">{session.activity_state}</span>
           ) : null}

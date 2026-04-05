@@ -757,6 +757,71 @@ button {
   font-size: 0.85rem;
 }
 
+/* ── Dispatch sheet ── */
+
+.dispatch-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: rgba(10, 8, 7, 0.72);
+  backdrop-filter: blur(4px);
+}
+
+.dispatch-sheet {
+  width: 420px;
+  max-width: 92vw;
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px solid rgba(242, 237, 225, 0.1);
+  background: rgba(27, 23, 20, 0.96);
+  display: grid;
+  gap: 14px;
+}
+
+.dispatch-sheet h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.dispatch-details {
+  display: grid;
+  gap: 8px;
+}
+
+.dispatch-row {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 0.82rem;
+}
+
+.dispatch-label {
+  font-size: 0.72rem;
+  color: #cdb58f;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.dispatch-row code {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(242, 237, 225, 0.06);
+  font-family:
+    "IBM Plex Mono",
+    "Cascadia Code",
+    monospace;
+  font-size: 0.8rem;
+}
+
+.dispatch-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 /* ── Responsive ── */
 
 @media (max-width: 960px) {
