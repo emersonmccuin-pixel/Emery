@@ -1,13 +1,14 @@
 import { useEffect, useRef } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
+  attachSession,
   bootstrapShell,
   pollEvents,
   saveWorkspace,
   watchLiveSessions,
 } from "./lib";
 import { sessionStore } from "./session-store";
-import { directWriteToTerminal } from "./terminal-surface";
+import { directResetTerminal, directWriteToTerminal } from "./terminal-surface";
 import {
   configureDiagnostics,
   makeClientEvent,
@@ -17,6 +18,7 @@ import {
 import type {
   ConnectionStatusEvent,
   SessionOutputEvent,
+  SessionResyncEvent,
   SessionStateChangedEvent,
   WorkspacePayloadV2,
 } from "./types";
@@ -167,20 +169,63 @@ export default function App() {
       }
     }
 
+    async function resyncSession(sessionId: string) {
+      try {
+        const response = await attachSession(sessionId, newCorrelationId("resync"));
+        directResetTerminal(sessionId);
+        for (const chunk of response.replay.chunks) {
+          directWriteToTerminal(sessionId, decodeBase64Utf8(chunk.data));
+        }
+        sessionStore.setLastSeenSeq(sessionId, response.output_cursor);
+      } catch {
+        // session not live — ignore
+      }
+    }
+
     async function pollEventLoop() {
       while (!cancelled) {
         try {
           const events = await pollEvents();
+          // Coalesce output chunks per session — avoids per-chunk terminal.write calls
+          const outputBatch = new Map<string, string[]>();
+
           for (const entry of events) {
             if (entry.event === "session.output") {
               const payload = entry.payload as SessionOutputEvent;
-              directWriteToTerminal(payload.session_id, decodeBase64Utf8(payload.data));
+              const { gap, isDuplicate } = sessionStore.recordOutputSeq(
+                payload.session_id,
+                payload.sequence,
+              );
+              if (isDuplicate) continue;
+              if (gap) {
+                console.warn(
+                  `[output-ordering] sequence gap for ${payload.session_id} at seq ${payload.sequence} — resyncing`,
+                );
+                void resyncSession(payload.session_id);
+                continue;
+              }
+              const chunks = outputBatch.get(payload.session_id);
+              if (chunks) {
+                chunks.push(decodeBase64Utf8(payload.data));
+              } else {
+                outputBatch.set(payload.session_id, [decodeBase64Utf8(payload.data)]);
+              }
+            } else if (entry.event === "session.resync_required") {
+              const payload = entry.payload as SessionResyncEvent;
+              console.warn(
+                `[output-ordering] resync_required for ${payload.session_id}: ${payload.reason} (last_available_seq=${payload.last_available_seq})`,
+              );
+              void resyncSession(payload.session_id);
             } else if (entry.event === "session.state_changed") {
               pendingStateChanges.push(entry.payload as SessionStateChangedEvent);
               if (stateChangeTimer === null) {
                 stateChangeTimer = window.setTimeout(flushStateChanges, 200);
               }
             }
+          }
+
+          for (const [sessionId, chunks] of outputBatch) {
+            directWriteToTerminal(sessionId, chunks.join(""));
           }
         } catch {
           // transient poll failure, retry on next tick

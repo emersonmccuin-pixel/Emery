@@ -175,6 +175,12 @@ export type SessionOutputEvent = {
   data: string;
 };
 
+export type SessionResyncEvent = {
+  session_id: string;
+  reason: string;
+  last_available_seq: number;
+};
+
 export type SessionStateChangedEvent = {
   session_id: string;
   runtime_state: string;

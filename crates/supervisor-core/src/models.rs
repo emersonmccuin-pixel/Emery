@@ -894,6 +894,22 @@ pub struct SessionOutputEvent {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ResyncRequiredEvent {
+    pub session_id: String,
+    pub reason: String,
+    pub last_available_seq: u64,
+}
+
+/// Enum carried over the output subscription channel.
+/// Most messages are `Output` chunks; `Resync` is emitted when the replay
+/// buffer has evicted data that the subscriber requested (overflow gap).
+#[derive(Debug, Clone)]
+pub enum OutputOrResync {
+    Output(SessionOutputEvent),
+    Resync(ResyncRequiredEvent),
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SessionStateChangedEvent {
     pub session_id: String,
     pub runtime_state: String,

@@ -13,7 +13,7 @@ use crate::models::{
     GetWorkspaceStateRequest, MergeQueueEntry, MergeQueueListFilter, PlanningAssignmentDetail,
     PlanningAssignmentListFilter, PlanningAssignmentSummary, ProjectDetail, ProjectRootSummary,
     ProjectSummary, RemoveProjectRootRequest, SessionAttachResponse, SessionDetachResponse,
-    SessionDetail, SessionListFilter, SessionOutputEvent, SessionSpecDetail,
+    SessionDetail, SessionListFilter, SessionSpecDetail,
     SessionSpecListFilter, SessionSpecSummary, SessionStateChangedEvent, SessionSummary,
     UpdateAccountRequest, UpdateDocumentRequest, UpdatePlanningAssignmentRequest,
     UpdateProjectRequest, UpdateProjectRootRequest, UpdateSessionSpecRequest,
@@ -360,7 +360,7 @@ impl Supervisor {
         &self,
         session_id: &str,
         after_sequence: Option<u64>,
-    ) -> Result<(String, std::sync::mpsc::Receiver<SessionOutputEvent>)> {
+    ) -> Result<(String, std::sync::mpsc::Receiver<crate::models::OutputOrResync>)> {
         self.service
             .subscribe_session_output(session_id, after_sequence)
     }

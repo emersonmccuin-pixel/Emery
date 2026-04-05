@@ -18,6 +18,7 @@ type Listener = () => void;
 class SessionStore {
   private snapshots = new Map<string, SessionSnapshot>();
   private listeners = new Set<Listener>();
+  private seqState = new Map<string, { lastSeenSeq: number }>();
 
   subscribe = (listener: Listener): (() => void) => {
     this.listeners.add(listener);
@@ -40,6 +41,28 @@ class SessionStore {
 
   seedComplete() {
     this.notify();
+  }
+
+  // --- Output sequence tracking ---
+
+  recordOutputSeq(sessionId: string, seq: number): { gap: boolean; isDuplicate: boolean } {
+    const state = this.seqState.get(sessionId);
+    const lastSeenSeq = state?.lastSeenSeq ?? 0;
+    if (seq <= lastSeenSeq) {
+      // Duplicate or replayed event (e.g. arrives after a resync already advanced the cursor)
+      return { gap: false, isDuplicate: true };
+    }
+    const gap = lastSeenSeq > 0 && seq !== lastSeenSeq + 1;
+    this.seqState.set(sessionId, { lastSeenSeq: seq });
+    return { gap, isDuplicate: false };
+  }
+
+  setLastSeenSeq(sessionId: string, seq: number) {
+    this.seqState.set(sessionId, { lastSeenSeq: seq });
+  }
+
+  clearSeqState(sessionId: string) {
+    this.seqState.delete(sessionId);
   }
 
   updateSession(
