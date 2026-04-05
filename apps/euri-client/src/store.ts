@@ -26,6 +26,9 @@ import {
   listMergeQueue,
   listPlanningAssignments,
   listWorkflowReconciliationProposals,
+  listAccounts,
+  createAccount,
+  updateAccount,
   listWorkItems,
   mergeQueueCheckConflicts,
   mergeQueueMerge,
@@ -302,6 +305,7 @@ export type AppState = {
   maxFocusSlots: number;
   connectionState: "connecting" | "connected" | "reconnecting" | "disconnected";
   editingWorkItemId: string | null;
+  githubToken: string;
 };
 
 function initialState(): AppState {
@@ -349,6 +353,7 @@ function initialState(): AppState {
     dispatchConflicts: [],
     connectionState: "connecting",
     editingWorkItemId: null,
+    githubToken: "",
   };
 }
 
@@ -1714,6 +1719,62 @@ class AppStore {
   selectedProject(): ProjectSummary | null {
     const s = this.state;
     return s.bootstrap?.projects.find((p) => p.id === s.selectedProjectId) ?? null;
+  }
+
+  // --- Account actions ---
+
+  async refreshAccounts() {
+    try {
+      const accounts = await listAccounts(newCorrelationId("refresh-accounts"));
+      if (this.state.bootstrap) {
+        this.update({
+          bootstrap: {
+            ...this.state.bootstrap,
+            accounts: accounts as import("./types").AccountSummary[],
+          },
+        });
+      }
+    } catch (err) {
+      this.update({ error: String(err) });
+    }
+  }
+
+  async handleCreateAccount(input: { label: string; agent_kind?: string; binary_path?: string | null; is_default?: boolean }) {
+    const key = "create-account";
+    this.setLoading(key, true);
+    try {
+      await createAccount(input, newCorrelationId("create-account"));
+      await this.refreshAccounts();
+    } catch (err) {
+      this.update({ error: String(err) });
+    } finally {
+      this.setLoading(key, false);
+    }
+  }
+
+  async handleUpdateAccount(accountId: string, input: { label?: string; binary_path?: string | null; is_default?: boolean; default_model?: string | null; default_safety_mode?: string | null }) {
+    const key = `update-account:${accountId}`;
+    this.setLoading(key, true);
+    try {
+      await updateAccount(accountId, input, newCorrelationId("update-account"));
+      await this.refreshAccounts();
+    } catch (err) {
+      this.update({ error: String(err) });
+    } finally {
+      this.setLoading(key, false);
+    }
+  }
+
+  // --- GitHub token ---
+
+  loadGithubToken() {
+    const token = localStorage.getItem("euri.github_token") ?? "";
+    this.update({ githubToken: token });
+  }
+
+  saveGithubToken(token: string) {
+    localStorage.setItem("euri.github_token", token);
+    this.update({ githubToken: token });
   }
 
 }

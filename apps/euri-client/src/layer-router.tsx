@@ -6,6 +6,7 @@ import { ProjectSettingsView } from "./views/project-settings-view";
 import { AgentView } from "./views/agent-view";
 import { DocumentView } from "./views/document-view";
 import { WorkItemView } from "./views/work-item-view";
+import { SettingsView } from "./views/settings-view";
 
 export function LayerRouter() {
   const layer = useNavLayer();
@@ -27,5 +28,7 @@ export function LayerRouter() {
       return <DocumentView documentId="new" projectId={layer.projectId} workItemId={layer.workItemId} />;
     case "work_item":
       return <WorkItemView projectId={layer.projectId} workItemId={layer.workItemId} />;
+    case "settings":
+      return <SettingsView />;
   }
 }
