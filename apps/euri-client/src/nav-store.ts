@@ -1,0 +1,97 @@
+import { useSyncExternalStore } from "react";
+
+export type NavigationLayer =
+  | { layer: "home" }
+  | { layer: "project"; projectId: string }
+  | { layer: "agent"; projectId: string; sessionId: string };
+
+type NavState = {
+  current: NavigationLayer;
+  history: NavigationLayer[];
+};
+
+type Listener = () => void;
+
+const listeners = new Set<Listener>();
+let state: NavState = {
+  current: { layer: "home" },
+  history: [],
+};
+
+function emit() {
+  for (const listener of listeners) listener();
+}
+
+function getState(): NavState {
+  return state;
+}
+
+function subscribe(listener: Listener): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+export const navStore = {
+  getState,
+  subscribe,
+
+  goHome() {
+    if (state.current.layer === "home") return;
+    state = { current: { layer: "home" }, history: [...state.history, state.current] };
+    emit();
+  },
+
+  goToProject(projectId: string) {
+    state = {
+      current: { layer: "project", projectId },
+      history: [...state.history, state.current],
+    };
+    emit();
+  },
+
+  goToAgent(projectId: string, sessionId: string) {
+    state = {
+      current: { layer: "agent", projectId, sessionId },
+      history: [...state.history, state.current],
+    };
+    emit();
+  },
+
+  goBack() {
+    if (state.history.length === 0) return;
+    const prev = state.history[state.history.length - 1];
+    state = {
+      current: prev,
+      history: state.history.slice(0, -1),
+    };
+    emit();
+  },
+
+  /** Restore navigation from workspace persistence */
+  restore(layer: NavigationLayer) {
+    state = { current: layer, history: [] };
+    emit();
+  },
+
+  breadcrumbs(): Array<{ label: string; layer: NavigationLayer }> {
+    const crumbs: Array<{ label: string; layer: NavigationLayer }> = [
+      { label: "EURI", layer: { layer: "home" } },
+    ];
+    const c = state.current;
+    if (c.layer === "project" || c.layer === "agent") {
+      crumbs.push({ label: c.projectId, layer: { layer: "project", projectId: c.projectId } });
+    }
+    if (c.layer === "agent") {
+      crumbs.push({ label: c.sessionId, layer: c });
+    }
+    return crumbs;
+  },
+};
+
+export function useNavStore<T>(selector: (s: NavState) => T): T {
+  return useSyncExternalStore(subscribe, () => selector(getState()));
+}
+
+export function useNavLayer(): NavigationLayer {
+  return useNavStore((s) => s.current);
+}

@@ -300,13 +300,22 @@ export type WorkspaceResource =
       resource_id: string;
     };
 
-export type WorkspacePayload = {
+export type WorkspacePayloadV1 = {
   version: 1;
   selected_project_id: string | null;
   left_panel: "sessions" | "workbench";
   open_resources: WorkspaceResource[];
   active_resource_id: string | null;
 };
+
+export type WorkspacePayloadV2 = {
+  version: 2;
+  navigation: { layer: string; projectId?: string; sessionId?: string };
+  focus_project_ids: string[];
+  planning_view_mode: string;
+};
+
+export type WorkspacePayload = WorkspacePayloadV1 | WorkspacePayloadV2;
 
 export type WorkspaceStateRecord = {
   id: string;
