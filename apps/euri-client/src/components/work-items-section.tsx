@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import type { PlanningAssignmentSummary, WorkItemSummary } from "../types";
 import { WorkItemRow } from "./work-item-row";
+import { WorkItemForm, type WorkItemFormData } from "./work-item-form";
+import { appStore, useAppStore } from "../store";
 
 type WorkItemsSectionProps = {
   workItems: WorkItemSummary[];
@@ -36,6 +38,11 @@ export function WorkItemsSection({
   weekCadenceKey,
   onPlan,
 }: WorkItemsSectionProps) {
+  const showCreateForm = useAppStore((s) => s.showCreateForm);
+  const workItemCreateForm = useAppStore((s) => s.workItemCreateForm);
+  const loadingKeys = useAppStore((s) => s.loadingKeys);
+  const creatingWorkItem = loadingKeys["create-work-item"] ?? false;
+
   const grouped = useMemo(() => {
     const groups: Record<string, WorkItemSummary[]> = {};
     for (const item of workItems) {
@@ -55,13 +62,13 @@ export function WorkItemsSection({
     return map;
   }, [assignments]);
 
-  if (workItems.length === 0) {
-    return (
-      <section className="project-section">
-        <h3>Work Items</h3>
-        <p className="section-empty">No work items yet.</p>
-      </section>
-    );
+  function handleFormSubmit(data: WorkItemFormData) {
+    appStore.setWorkItemCreateForm(data);
+    void appStore.handleCreateWorkItem();
+  }
+
+  function handleFormCancel() {
+    appStore.setShowCreateForm(false);
   }
 
   function renderRow(item: WorkItemSummary) {
@@ -81,9 +88,34 @@ export function WorkItemsSection({
     );
   }
 
+  const isCreating = showCreateForm === "work";
+
   return (
     <section className="project-section work-items-section">
-      <h3>Work Items</h3>
+      <div className="section-header-row">
+        <h3>Work Items</h3>
+        <button
+          className="section-add-btn"
+          title="New work item"
+          onClick={() => appStore.setShowCreateForm(isCreating ? false : "work")}
+        >
+          {isCreating ? "✕" : "+"}
+        </button>
+      </div>
+
+      {isCreating ? (
+        <WorkItemForm
+          mode="create"
+          initialData={workItemCreateForm}
+          loading={creatingWorkItem}
+          onSubmit={handleFormSubmit}
+          onCancel={handleFormCancel}
+        />
+      ) : null}
+
+      {workItems.length === 0 && !isCreating ? (
+        <p className="section-empty">No work items yet.</p>
+      ) : null}
 
       {selectedIds.length >= 2 ? (
         <div className="multi-dispatch-bar">
