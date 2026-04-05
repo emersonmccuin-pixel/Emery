@@ -36,6 +36,7 @@ export type ProjectDetail = {
   default_account_id: string | null;
   project_type: string | null;
   model_defaults_json: string | null;
+  agent_safety_overrides_json: string | null;
   wcp_namespace: string | null;
   dispatch_item_callsign: string | null;
   settings_json: string | null;

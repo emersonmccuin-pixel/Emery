@@ -185,6 +185,10 @@ impl SupervisorService {
             Some(value) => optional_trimmed(Some(value)),
             None => existing.model_defaults_json.clone(),
         };
+        let agent_safety_overrides_json = match request.agent_safety_overrides_json {
+            Some(value) => optional_trimmed(Some(value)),
+            None => existing.agent_safety_overrides_json.clone(),
+        };
         let wcp_namespace = match request.wcp_namespace {
             Some(value) => optional_trimmed(Some(value)),
             None => existing.wcp_namespace.clone(),
@@ -202,6 +206,7 @@ impl SupervisorService {
             default_account_id,
             project_type,
             model_defaults_json,
+            agent_safety_overrides_json,
             wcp_namespace,
             dispatch_item_callsign,
             settings_json,

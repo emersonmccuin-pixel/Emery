@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { appStore, useAppStore } from "../store";
 import { navStore } from "../nav-store";
 import { pickFolder, listAgentTemplates, createAgentTemplate, updateAgentTemplate, archiveAgentTemplate, updateProject } from "../lib";
-import type { AgentTemplateSummary, ProjectRootSummary } from "../types";
+import type { AgentTemplateSummary, ProjectDetail, ProjectRootSummary, AccountSummary } from "../types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -102,6 +102,10 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
   );
   const [modelDefaultsSaving, setModelDefaultsSaving] = useState(false);
   const [modelDefaultsSaved, setModelDefaultsSaved] = useState(false);
+  const [safetyOverridesJson, setSafetyOverridesJson] = useState("");
+  const [safetyOverridesSaving, setSafetyOverridesSaving] = useState(false);
+  const [safetyOverridesSaved, setSafetyOverridesSaved] = useState(false);
+  const [safetyOverridesError, setSafetyOverridesError] = useState<string | null>(null);
 
   useEffect(() => {
     void appStore.loadProjectReads(projectId);
@@ -138,6 +142,12 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
       setModelDefaults(parseModelDefaults(project.model_defaults_json));
     }
   }, [project?.model_defaults_json]);
+
+  useEffect(() => {
+    if (project) {
+      setSafetyOverridesJson(project.agent_safety_overrides_json ?? "");
+    }
+  }, [project?.agent_safety_overrides_json]);
 
   const savingName = loadingKeys[`save-project-name:${projectId}`] ?? false;
   const addingRoot = loadingKeys[`add-project-root:${projectId}`] ?? false;
@@ -246,6 +256,34 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
       // leave state as-is on error
     } finally {
       setModelDefaultsSaving(false);
+    }
+  }
+
+  async function handleSaveSafetyOverrides() {
+    setSafetyOverridesSaved(false);
+    setSafetyOverridesError(null);
+    // Validate JSON if non-empty
+    const trimmed = safetyOverridesJson.trim();
+    if (trimmed) {
+      try {
+        JSON.parse(trimmed);
+      } catch {
+        setSafetyOverridesError("Invalid JSON — fix before saving.");
+        return;
+      }
+    }
+    setSafetyOverridesSaving(true);
+    try {
+      const detail = await updateProject(projectId, {
+        agent_safety_overrides_json: trimmed || null,
+      });
+      appStore.applyProjectDetail(detail);
+      setSafetyOverridesSaved(true);
+      setTimeout(() => setSafetyOverridesSaved(false), 2000);
+    } catch {
+      setSafetyOverridesError("Failed to save.");
+    } finally {
+      setSafetyOverridesSaving(false);
     }
   }
 
@@ -531,6 +569,62 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
           </CardContent>
         </Card>
 
+        {/* Safety Overrides section */}
+        <Card className="settings-section">
+          <CardHeader>
+          <CardTitle className="settings-section-title">Safety Overrides</CardTitle>
+          <p className="settings-section-desc">
+            Per-agent safety mode and extra args for this project.
+            Format: <code className="settings-inline-code">{"{ \"claude\": { \"safety_mode\": \"full\", \"extra_args\": [] } }"}</code>.
+            Overrides the account default; session-level safety takes final precedence.
+          </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+          <div className="config-resolution-chain">
+            <span className="config-resolution-step">Account default</span>
+            <span className="config-resolution-arrow">→</span>
+            <span className="config-resolution-step config-resolution-step-active">Project overrides (this field)</span>
+            <span className="config-resolution-arrow">→</span>
+            <span className="config-resolution-step">Session override</span>
+          </div>
+          <div className="settings-field-group">
+            <Textarea
+              className="settings-input settings-code-input"
+              value={safetyOverridesJson}
+              onChange={(e) => {
+                setSafetyOverridesJson(e.target.value);
+                setSafetyOverridesSaved(false);
+                setSafetyOverridesError(null);
+              }}
+              placeholder={'{\n  "claude": {\n    "safety_mode": "full",\n    "extra_args": []\n  }\n}'}
+              rows={6}
+              spellCheck={false}
+            />
+          </div>
+          {safetyOverridesError && (
+            <div className="field-error">{safetyOverridesError}</div>
+          )}
+          <div className="model-defaults-actions">
+            <Button
+              variant="terminal"
+              size="sm"
+              onClick={() => void handleSaveSafetyOverrides()}
+              disabled={safetyOverridesSaving}
+            >
+              {safetyOverridesSaving ? "Saving..." : safetyOverridesSaved ? "Saved" : "Save"}
+            </Button>
+          </div>
+          </CardContent>
+        </Card>
+
+        {/* Config Preview section */}
+        {project && (
+          <ConfigPreviewSection
+            project={project}
+            accounts={(bootstrap?.accounts ?? []).filter((a) => a.status !== "disabled")}
+          />
+        )}
+
         {/* Danger Zone */}
         <Card className="settings-section settings-danger-zone">
           <CardHeader>
@@ -582,6 +676,182 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
       </div>
     </div>
     </div>
+  );
+}
+
+// --- ConfigPreviewSection ---
+
+const ORIGIN_MODES_PREVIEW = ["planning", "research", "execution", "follow_up", "dispatch"] as const;
+type OriginModePreview = (typeof ORIGIN_MODES_PREVIEW)[number];
+
+function resolveModelPreview(
+  account: AccountSummary | undefined,
+  project: ProjectDetail,
+  originMode: OriginModePreview,
+): { model: string; source: string } {
+  // Step 1: origin_mode built-in defaults
+  const builtInDefault =
+    originMode === "planning" || originMode === "research" || originMode === "dispatch"
+      ? "opus (built-in default)"
+      : originMode === "execution" || originMode === "follow_up"
+      ? "sonnet (built-in default)"
+      : null;
+
+  // Step 2: account-level default_model
+  let model: string | null = account?.default_model ?? null;
+  let source = model ? `account: ${account?.label}` : builtInDefault ? builtInDefault : "none";
+
+  if (!model && builtInDefault) {
+    source = builtInDefault;
+  }
+
+  // Step 3: project model_defaults_json (by_origin_mode → default)
+  if (project.model_defaults_json) {
+    try {
+      const defaults = JSON.parse(project.model_defaults_json) as {
+        by_origin_mode?: Record<string, string>;
+        default?: string;
+      };
+      const byMode = defaults.by_origin_mode?.[originMode];
+      const fallback = defaults.default;
+      const projectModel = byMode ?? fallback ?? null;
+      if (projectModel) {
+        model = projectModel;
+        source = byMode
+          ? `project: model_defaults_json[by_origin_mode.${originMode}]`
+          : `project: model_defaults_json[default]`;
+      }
+    } catch {
+      // ignore parse errors
+    }
+  }
+
+  // Step 3b: legacy agent_safety_overrides_json model lookup
+  if (project.agent_safety_overrides_json) {
+    try {
+      const overrides = JSON.parse(project.agent_safety_overrides_json) as Record<
+        string,
+        { model?: string }
+      >;
+      // Use 'claude' as representative agent_kind
+      const legacyModel = overrides["claude"]?.model ?? null;
+      if (legacyModel) {
+        model = legacyModel;
+        source = "project: agent_safety_overrides_json[claude.model] (legacy)";
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return { model: model ?? "(none resolved)", source };
+}
+
+function resolveSafetyPreview(
+  account: AccountSummary | undefined,
+  project: ProjectDetail,
+): { mode: string; source: string } {
+  // Step 1: account default
+  let mode = account?.default_safety_mode ?? "cautious (built-in default)";
+  let source = account?.default_safety_mode
+    ? `account: ${account?.label}`
+    : "built-in default (cautious)";
+
+  // Step 2: project agent_safety_overrides_json
+  if (project.agent_safety_overrides_json) {
+    try {
+      const overrides = JSON.parse(project.agent_safety_overrides_json) as Record<
+        string,
+        { safety_mode?: string }
+      >;
+      const projectMode = overrides["claude"]?.safety_mode ?? null;
+      if (projectMode) {
+        mode = projectMode;
+        source = "project: agent_safety_overrides_json[claude.safety_mode]";
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return { mode, source };
+}
+
+function ConfigPreviewSection({
+  project,
+  accounts,
+}: {
+  project: ProjectDetail;
+  accounts: AccountSummary[];
+}) {
+  const defaultAccount = useMemo(
+    () =>
+      accounts.find((a) => a.id === project.default_account_id) ??
+      accounts.find((a) => a.is_default) ??
+      accounts[0],
+    [accounts, project.default_account_id],
+  );
+
+  const safetyPreview = useMemo(
+    () => resolveSafetyPreview(defaultAccount, project),
+    [defaultAccount, project],
+  );
+
+  const modelRows = useMemo(
+    () =>
+      ORIGIN_MODES_PREVIEW.map((mode) => ({
+        mode,
+        ...resolveModelPreview(defaultAccount, project, mode),
+      })),
+    [defaultAccount, project],
+  );
+
+  return (
+    <Card className="settings-section">
+      <CardHeader>
+      <CardTitle className="settings-section-title">Config Preview</CardTitle>
+      <p className="settings-section-desc">
+        What a dispatched session would actually receive based on the current settings.
+        Resolution order: built-in defaults → account → project → session (highest priority, not shown here).
+      </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+      {!defaultAccount && (
+        <div className="settings-empty-note">No account configured — assign a default account to see the preview.</div>
+      )}
+      {defaultAccount && (
+        <>
+          <div className="config-preview-account-row">
+            <span className="config-preview-label">Resolving from account:</span>
+            <span className="config-preview-value">{defaultAccount.label}</span>
+            {project.default_account_id !== defaultAccount.id && (
+              <span className="config-preview-note">(global default)</span>
+            )}
+          </div>
+
+          <div className="config-preview-block">
+            <div className="config-preview-block-title">Safety</div>
+            <div className="config-preview-row">
+              <span className="config-preview-field">mode</span>
+              <span className="config-preview-resolved">{safetyPreview.mode}</span>
+              <span className="config-preview-source">{safetyPreview.source}</span>
+            </div>
+          </div>
+
+          <div className="config-preview-block">
+            <div className="config-preview-block-title">Model by origin mode</div>
+            {modelRows.map(({ mode, model, source }) => (
+              <div className="config-preview-row" key={mode}>
+                <span className="config-preview-field">{mode}</span>
+                <span className="config-preview-resolved">{model}</span>
+                <span className="config-preview-source">{source}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+      </CardContent>
+    </Card>
   );
 }
 

@@ -15,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { pickFolder } from "../lib";
 
-type SettingsTab = "accounts" | "appearance" | "agent-defaults" | "github";
+type SettingsTab = "accounts" | "appearance" | "agent-defaults" | "github" | "resolution";
 
 export function SettingsView() {
   const [activeTab, setActiveTab] = useState<SettingsTab>("accounts");
@@ -25,6 +25,7 @@ export function SettingsView() {
     { id: "appearance", label: "Appearance" },
     { id: "agent-defaults", label: "Agent Defaults" },
     { id: "github", label: "GitHub" },
+    { id: "resolution", label: "Config Resolution" },
   ];
 
   return (
@@ -58,6 +59,7 @@ export function SettingsView() {
             {activeTab === "appearance" && <AppearanceSection />}
             {activeTab === "agent-defaults" && <AgentDefaultsSection />}
             {activeTab === "github" && <GitHubSection />}
+            {activeTab === "resolution" && <ConfigResolutionSection />}
           </div>
         </div>
       </div>
@@ -495,7 +497,7 @@ function AgentDefaultsSection() {
       <CardHeader>
       <CardTitle className="settings-section-title">Agent Defaults</CardTitle>
       <CardDescription className="settings-section-desc">
-        Per-account default model and safety mode. These apply when launching sessions without explicit overrides.
+        Per-account default model and safety mode. Resolution order: built-in defaults &rarr; <strong>account (here)</strong> &rarr; project overrides &rarr; session overrides. See <em>Config Resolution</em> tab for the full hierarchy.
       </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -712,6 +714,102 @@ function GitHubSection() {
           Token configured.
         </div>
       )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// --- Config Resolution Reference Section ---
+
+function ConfigResolutionSection() {
+  return (
+    <Card className="settings-panel">
+      <CardHeader>
+        <CardTitle className="settings-section-title">Config Resolution Reference</CardTitle>
+        <CardDescription className="settings-section-desc">
+          How Emery resolves configuration variables when launching a session. Higher steps override lower ones.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+
+        <div className="config-resolution-reference">
+          <div className="config-resolution-tier">
+            <div className="config-resolution-tier-header">
+              <span className="config-resolution-tier-step">1</span>
+              <span className="config-resolution-tier-name">Built-in defaults</span>
+              <span className="config-resolution-tier-scope">lowest priority</span>
+            </div>
+            <div className="config-resolution-tier-body">
+              <p>Applied before any user configuration. Origin-mode defaults:</p>
+              <ul className="config-resolution-list">
+                <li><code>planning</code>, <code>research</code>, <code>dispatch</code> &rarr; <strong>opus</strong></li>
+                <li><code>execution</code>, <code>follow_up</code> &rarr; <strong>sonnet</strong></li>
+                <li>safety_mode &rarr; <strong>cautious</strong></li>
+              </ul>
+            </div>
+          </div>
+
+          <div className="config-resolution-tier-connector">&darr; overridden by</div>
+
+          <div className="config-resolution-tier">
+            <div className="config-resolution-tier-header">
+              <span className="config-resolution-tier-step">2</span>
+              <span className="config-resolution-tier-name">Account defaults</span>
+              <span className="config-resolution-tier-scope">global</span>
+            </div>
+            <div className="config-resolution-tier-body">
+              <p>Set in <strong>Settings &rarr; Agent Defaults</strong>. Applies to all sessions using that account.</p>
+              <ul className="config-resolution-list">
+                <li><code>default_model</code> &mdash; overrides origin-mode built-in model</li>
+                <li><code>default_safety_mode</code> &mdash; overrides built-in safety default</li>
+                <li><code>default_launch_args_json</code> &mdash; extra CLI args</li>
+              </ul>
+            </div>
+          </div>
+
+          <div className="config-resolution-tier-connector">&darr; overridden by</div>
+
+          <div className="config-resolution-tier">
+            <div className="config-resolution-tier-header">
+              <span className="config-resolution-tier-step">3</span>
+              <span className="config-resolution-tier-name">Project overrides</span>
+              <span className="config-resolution-tier-scope">per-project</span>
+            </div>
+            <div className="config-resolution-tier-body">
+              <p>Set in <strong>Project Settings &rarr; Model Defaults / Safety Overrides</strong>.</p>
+              <ul className="config-resolution-list">
+                <li><code>model_defaults_json.by_origin_mode</code> &mdash; per-mode model override</li>
+                <li><code>model_defaults_json.default</code> &mdash; fallback model for all modes</li>
+                <li><code>agent_safety_overrides_json[agent_kind].safety_mode</code> &mdash; safety override</li>
+                <li><code>agent_safety_overrides_json[agent_kind].extra_args</code> &mdash; extra CLI args override</li>
+              </ul>
+            </div>
+          </div>
+
+          <div className="config-resolution-tier-connector">&darr; overridden by</div>
+
+          <div className="config-resolution-tier config-resolution-tier-highest">
+            <div className="config-resolution-tier-header">
+              <span className="config-resolution-tier-step">4</span>
+              <span className="config-resolution-tier-name">Session-level overrides</span>
+              <span className="config-resolution-tier-scope">highest priority</span>
+            </div>
+            <div className="config-resolution-tier-body">
+              <p>Passed directly when dispatching a session (e.g. via MCP <code>emery_session_create</code>).</p>
+              <ul className="config-resolution-list">
+                <li><code>safety_mode</code> &mdash; explicit safety override for this session</li>
+                <li><code>model</code> &mdash; explicit model override for this session</li>
+                <li><code>extra_args</code> &mdash; explicit extra CLI args for this session</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div className="config-resolution-note">
+          The <strong>Config Preview</strong> in each project&apos;s settings shows what a session would receive
+          given the current account and project configuration.
+        </div>
+
       </CardContent>
     </Card>
   );
