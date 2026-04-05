@@ -126,7 +126,7 @@ function SingleDispatchSheet({
           </div>
           <div className="dispatch-row">
             <span className="dispatch-label">Model</span>
-            <select value={model} onChange={(e) => setModel(e.target.value)}>
+            <select value={model} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setModel(e.target.value)}>
               <option value="">Default ({resolvedDefaultModel})</option>
               <option value="opus">Opus (best reasoning)</option>
               <option value="sonnet">Sonnet (fast/cheap)</option>
@@ -243,7 +243,7 @@ function MultiDispatchSheet({
           </div>
           <div className="dispatch-row">
             <span className="dispatch-label">Model</span>
-            <select value={model} onChange={(e) => setModel(e.target.value)}>
+            <select value={model} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setModel(e.target.value)}>
               <option value="">Default (execution → sonnet)</option>
               <option value="opus">Opus (best reasoning)</option>
               <option value="sonnet">Sonnet (fast/cheap)</option>
