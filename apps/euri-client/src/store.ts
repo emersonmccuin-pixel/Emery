@@ -32,6 +32,52 @@ import {
   newCorrelationId,
   recordClientEvent,
 } from "./diagnostics";
+// ── Completion ding ──
+// Baking timer style ding when an agent session finishes its work.
+// Uses Web Audio API — no audio file needed.
+function playCompletionDing() {
+  try {
+    const ctx = new AudioContext();
+    const now = ctx.currentTime;
+
+    // Three-note ding pattern (like a kitchen timer)
+    const notes = [1047, 1319, 1568]; // C6, E6, G6 — major chord ascending
+    for (let i = 0; i < notes.length; i++) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = "sine";
+      osc.frequency.value = notes[i];
+      const start = now + i * 0.12;
+      gain.gain.setValueAtTime(0.2, start);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + 0.3);
+      osc.start(start);
+      osc.stop(start + 0.3);
+    }
+  } catch {
+    // Audio not available — silently skip
+  }
+}
+
+function playErrorChime() {
+  try {
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = "triangle";
+    osc.frequency.value = 330;
+    gain.gain.setValueAtTime(0.2, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.6);
+  } catch {
+    // Audio not available — silently skip
+  }
+}
+
 import type {
   ConnectionStatusEvent,
   DocumentDetail,
@@ -421,6 +467,15 @@ class AppStore {
       live: payload.live,
       attached_clients: payload.attached_clients,
     });
+
+    // DING when an agent finishes its work
+    if (entry.live && !payload.live) {
+      if (payload.runtime_state === "exited") {
+        playCompletionDing(); // 🔔 baking timer — agent done
+      } else {
+        playErrorChime(); // low tone — something went wrong
+      }
+    }
   }
 
   applyPlanningAssignment(projectId: string, assignment: PlanningAssignmentSummary) {
