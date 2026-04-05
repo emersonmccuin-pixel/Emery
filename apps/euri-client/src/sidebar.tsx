@@ -136,15 +136,28 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       ? navLayer.projectId
       : null;
 
+  const focusProjectIds = useAppStore((s) => s.focusProjectIds);
+
   function openContextMenu(e: React.MouseEvent, projectId: string, projectName: string) {
     e.preventDefault();
     e.stopPropagation();
+
+    const isPinned = focusProjectIds.includes(projectId);
 
     const items: ContextMenuItem[] = [
       {
         label: "Open",
         onClick: () => navStore.goToProject(projectId),
       },
+      isPinned
+        ? {
+            label: "Unpin from focus",
+            onClick: () => appStore.unpinProject(projectId),
+          }
+        : {
+            label: "Pin to focus",
+            onClick: () => appStore.pinProject(projectId),
+          },
       {
         label: "Settings",
         onClick: () => navStore.goToProjectSettings(projectId),
