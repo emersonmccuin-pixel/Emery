@@ -127,6 +127,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null);
+  const [projectFilter, setProjectFilter] = useState("");
 
   const activeProjectId =
     navLayer.layer === "project" ||
@@ -135,6 +136,10 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       : null;
 
   const focusProjectIds = useAppStore((s) => s.focusProjectIds);
+
+  const filteredProjects = projectFilter.trim()
+    ? projects.filter((p) => p.name.toLowerCase().includes(projectFilter.trim().toLowerCase()))
+    : projects;
 
   function openContextMenu(e: React.MouseEvent, projectId: string, projectName: string) {
     e.preventDefault();
@@ -221,8 +226,30 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
           {!collapsed && (
             <div className="sidebar-section-label">Projects</div>
           )}
+          {!collapsed && projects.length > 0 && (
+            <div className="sidebar-search-wrap">
+              <input
+                className="sidebar-search-input"
+                type="text"
+                placeholder="Filter…"
+                value={projectFilter}
+                onChange={(e) => setProjectFilter(e.target.value)}
+                aria-label="Filter projects"
+              />
+              {projectFilter && (
+                <button
+                  className="sidebar-search-clear"
+                  onClick={() => setProjectFilter("")}
+                  aria-label="Clear filter"
+                  title="Clear"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          )}
           <ul className="sidebar-projects-list">
-            {projects.map((project) => {
+            {filteredProjects.map((project) => {
               const isActive = project.id === activeProjectId;
               const isRenaming = renamingProjectId === project.id;
               return (
