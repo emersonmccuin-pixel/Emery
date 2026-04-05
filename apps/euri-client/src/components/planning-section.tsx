@@ -1,13 +1,16 @@
 import { useMemo } from "react";
-import type { WorkItemSummary, PlanningAssignmentSummary } from "../types";
+import type { WorkItemSummary, PlanningAssignmentSummary, SessionSummary } from "../types";
 import { currentDayCadenceKey, currentWeekCadenceKey } from "../store";
 import type { PlanningViewMode } from "../store";
+import { DailyAgenda } from "./daily-agenda";
 
 type PlanningSectionProps = {
   viewMode: PlanningViewMode;
   onSetViewMode: (mode: PlanningViewMode) => void;
   workItems: WorkItemSummary[];
   assignments: PlanningAssignmentSummary[];
+  sessions: SessionSummary[];
+  onDispatch: (workItemId: string) => void;
 };
 
 export function PlanningSection({
@@ -15,6 +18,8 @@ export function PlanningSection({
   onSetViewMode,
   workItems,
   assignments,
+  sessions,
+  onDispatch,
 }: PlanningSectionProps) {
   const dayCadenceKey = useMemo(() => currentDayCadenceKey(), []);
   const weekCadenceKey = useMemo(() => currentWeekCadenceKey(), []);
@@ -44,6 +49,15 @@ export function PlanningSection({
           Week ({viewMode === "week" ? filteredCount : "…"})
         </button>
       </div>
+      {viewMode === "day" && (
+        <DailyAgenda
+          workItems={workItems}
+          assignments={assignments}
+          sessions={sessions}
+          dayCadenceKey={dayCadenceKey}
+          onDispatch={onDispatch}
+        />
+      )}
     </div>
   );
 }

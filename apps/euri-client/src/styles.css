@@ -2008,6 +2008,161 @@ button {
   padding: 4px 0;
 }
 
+/* ── Daily agenda ── */
+.daily-agenda {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.daily-agenda-empty {
+  margin-top: 10px;
+  padding: 12px;
+  font-size: 0.8rem;
+  color: rgba(242, 237, 225, 0.4);
+  text-align: center;
+}
+
+.daily-agenda-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agenda-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px 6px 0;
+  border-radius: 6px;
+  background: rgba(242, 237, 225, 0.04);
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.agenda-row:hover {
+  background: rgba(242, 237, 225, 0.07);
+}
+
+.agenda-row-done {
+  opacity: 0.5;
+}
+
+.agenda-priority-edge {
+  flex-shrink: 0;
+  width: 3px;
+  align-self: stretch;
+  border-radius: 0 2px 2px 0;
+}
+
+.priority-edge-urgent { background: #c75050; }
+.priority-edge-high   { background: #d8a25a; }
+.priority-edge-medium { background: #51858f; }
+.priority-edge-low    { background: rgba(242, 237, 225, 0.2); }
+.priority-edge-none   { background: transparent; }
+
+.agenda-session-placeholder {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+}
+
+.agenda-callsign {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  font-family: "IBM Plex Mono", monospace;
+  color: rgba(242, 237, 225, 0.45);
+  min-width: 52px;
+}
+
+.agenda-title {
+  flex: 1;
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.agenda-status {
+  flex-shrink: 0;
+}
+
+.agenda-dispatch-btn {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  background: rgba(216, 162, 90, 0.15);
+  color: #d8a25a;
+  border-radius: 4px;
+}
+
+.agenda-dispatch-btn:hover {
+  background: rgba(216, 162, 90, 0.28);
+}
+
+.agenda-remove-btn {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  background: transparent;
+  color: rgba(242, 237, 225, 0.25);
+  border-radius: 4px;
+  line-height: 1;
+  margin-right: 4px;
+}
+
+.agenda-remove-btn:hover {
+  background: rgba(199, 80, 80, 0.18);
+  color: #c75050;
+}
+
+.daily-agenda-completed {
+  margin-top: 4px;
+}
+
+.daily-agenda-completed-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  cursor: pointer;
+  border-radius: 4px;
+  list-style: none;
+  user-select: none;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgba(242, 237, 225, 0.4);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.daily-agenda-completed-summary:hover {
+  color: rgba(242, 237, 225, 0.65);
+}
+
+.daily-agenda-completed-summary::-webkit-details-marker {
+  display: none;
+}
+
+.daily-agenda-completed-count {
+  font-size: 0.7rem;
+  color: rgba(242, 237, 225, 0.25);
+}
+
+.daily-agenda-completed-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 2px;
+}
+
 /* ── Docs section ── */
 .docs-section .doc-group {
   margin-bottom: 8px;
