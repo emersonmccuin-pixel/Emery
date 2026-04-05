@@ -388,6 +388,32 @@ export async function createProjectRoot(
   return invoke("create_project_root", { input, correlationId });
 }
 
+export async function listProjectRoots(
+  projectId: string,
+  correlationId?: string,
+): Promise<unknown[]> {
+  return invoke("list_project_roots", { projectId, correlationId });
+}
+
+export async function updateProjectRoot(
+  rootId: string,
+  input: {
+    label?: string;
+    path?: string;
+    remote_url?: string | null;
+  },
+  correlationId?: string,
+): Promise<unknown> {
+  return invoke("update_project_root", { rootId, input, correlationId });
+}
+
+export async function removeProjectRoot(
+  rootId: string,
+  correlationId?: string,
+): Promise<unknown> {
+  return invoke("remove_project_root", { rootId, correlationId });
+}
+
 export function connectionLabel(event: ConnectionStatusEvent | null): string {
   if (!event) {
     return "connecting";

@@ -1195,6 +1195,57 @@ fn create_project_root(
         .map_err(error_string)
 }
 
+#[tauri::command]
+fn list_project_roots(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    project_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "project_root.list",
+            json!({ "project_id": project_id }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn update_project_root(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    root_id: String,
+    input: Value,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    let mut payload = input;
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("root_id".to_string(), Value::String(root_id));
+    }
+    manager
+        .request_value(&app, "project_root.update", payload, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn remove_project_root(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    root_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "project_root.remove",
+            json!({ "root_id": root_id }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
 fn main() {
     if let Err(error) = debug_dev_server_preflight() {
         eprintln!("{error}");
@@ -1244,7 +1295,10 @@ fn main() {
             merge_queue_reorder,
             merge_queue_check_conflicts,
             pick_folder,
-            create_project_root
+            create_project_root,
+            list_project_roots,
+            update_project_root,
+            remove_project_root
         ])
         .run(tauri::generate_context!())
         .expect("failed to run EURI client");

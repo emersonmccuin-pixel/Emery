@@ -3,6 +3,7 @@ import { useSyncExternalStore } from "react";
 export type NavigationLayer =
   | { layer: "home" }
   | { layer: "project"; projectId: string }
+  | { layer: "project-settings"; projectId: string }
   | { layer: "agent"; projectId: string; sessionId: string }
   | { layer: "document"; projectId: string; documentId: string }
   | { layer: "new-document"; projectId: string; workItemId?: string }
@@ -47,6 +48,14 @@ export const navStore = {
   goToProject(projectId: string) {
     state = {
       current: { layer: "project", projectId },
+      history: [...state.history, state.current],
+    };
+    emit();
+  },
+
+  goToProjectSettings(projectId: string) {
+    state = {
+      current: { layer: "project-settings", projectId },
       history: [...state.history, state.current],
     };
     emit();
@@ -105,8 +114,11 @@ export const navStore = {
       { label: "EURI", layer: { layer: "home" } },
     ];
     const c = state.current;
-    if (c.layer === "project" || c.layer === "agent" || c.layer === "document" || c.layer === "new-document" || c.layer === "work_item") {
+    if (c.layer === "project" || c.layer === "project-settings" || c.layer === "agent" || c.layer === "document" || c.layer === "new-document" || c.layer === "work_item") {
       crumbs.push({ label: c.projectId, layer: { layer: "project", projectId: c.projectId } });
+    }
+    if (c.layer === "project-settings") {
+      crumbs.push({ label: "settings", layer: c });
     }
     if (c.layer === "agent") {
       crumbs.push({ label: c.sessionId, layer: c });

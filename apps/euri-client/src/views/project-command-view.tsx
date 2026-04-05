@@ -51,6 +51,15 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
 
   return (
     <div className="project-command-view">
+      <div className="project-command-topbar">
+        <button
+          className="btn-ghost btn-sm project-settings-btn"
+          onClick={() => navStore.goToProjectSettings(projectId)}
+          title="Project settings"
+        >
+          ⚙ Settings
+        </button>
+      </div>
       <div className="operations-zone">
         <FleetStrip
           sessions={projectSessions}
