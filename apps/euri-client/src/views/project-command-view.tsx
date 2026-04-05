@@ -5,11 +5,13 @@ import { FleetStrip } from "../components/fleet-strip";
 import { MergeQueueSection } from "../components/merge-queue-section";
 import { WorkItemsSection } from "../components/work-items-section";
 import { PlanningSection } from "../components/planning-section";
+import { DocsSection } from "../components/docs-section";
 
 export function ProjectCommandView({ projectId }: { projectId: string }) {
   const bootstrap = useAppStore((s) => s.bootstrap);
   const sessions = useAppStore((s) => s.sessions);
   const workItemsByProject = useAppStore((s) => s.workItemsByProject);
+  const documentsByProject = useAppStore((s) => s.documentsByProject);
   const planningAssignmentsByProject = useAppStore((s) => s.planningAssignmentsByProject);
   const mergeQueueByProject = useAppStore((s) => s.mergeQueueByProject);
   const mergeQueueDiffs = useAppStore((s) => s.mergeQueueDiffs);
@@ -24,6 +26,7 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
     [sessions, projectId],
   );
   const workItems = workItemsByProject[projectId] ?? [];
+  const documents = documentsByProject[projectId] ?? [];
   const assignments = planningAssignmentsByProject[projectId] ?? [];
   const mergeQueue = mergeQueueByProject[projectId] ?? [];
 
@@ -78,6 +81,10 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
           onClearSelection={() => appStore.clearWorkItemSelection()}
           onDispatch={(workItemId) => void appStore.handleLaunchSessionFromWorkItem(workItemId)}
           onMultiDispatch={() => void appStore.handleMultiDispatch(projectId)}
+        />
+        <DocsSection
+          documents={documents}
+          workItems={workItems}
         />
       </div>
     </div>

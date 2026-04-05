@@ -1908,3 +1908,78 @@ button {
 .planning-section {
   padding: 4px 0;
 }
+
+/* ── Docs section ── */
+.docs-section .doc-group {
+  margin-bottom: 8px;
+}
+
+.doc-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  margin-bottom: 2px;
+}
+
+.doc-group-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgba(242, 237, 225, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.doc-group-count {
+  font-size: 0.7rem;
+  color: rgba(242, 237, 225, 0.3);
+}
+
+.doc-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 4px;
+  cursor: default;
+  min-width: 0;
+}
+
+.doc-row[role="button"] {
+  cursor: pointer;
+}
+
+.doc-row:hover {
+  background: rgba(242, 237, 225, 0.05);
+}
+
+.doc-title {
+  flex: 1;
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-type-chip {
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(242, 237, 225, 0.08);
+  color: rgba(242, 237, 225, 0.55);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.doc-linked-callsign {
+  font-size: 0.72rem;
+  color: rgba(210, 129, 55, 0.75);
+  font-family: "IBM Plex Mono", monospace;
+  flex-shrink: 0;
+}
+
+.doc-updated {
+  font-size: 0.72rem;
+  color: rgba(242, 237, 225, 0.3);
+  flex-shrink: 0;
+}
