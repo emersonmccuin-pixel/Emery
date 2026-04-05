@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { navStore } from "../nav-store";
 
 // ── Inline helpers — only used by AgentInfoBar ──
 
@@ -60,6 +61,8 @@ type AgentInfoBarProps = {
   needsInputReason: string | null;
   live: boolean;
   endedAt: number | null;
+  projectId: string | null;
+  workItemId: string | null;
 };
 
 export function AgentInfoBar({
@@ -73,13 +76,28 @@ export function AgentInfoBar({
   needsInputReason,
   live,
   endedAt: _endedAt,
+  projectId,
+  workItemId,
 }: AgentInfoBarProps) {
   return (
     <div className="agent-info-bar">
       <LiveIndicator state={runtimeState} />
 
       <span className="agent-info-label">
-        {callsign ? <strong>{callsign}</strong> : null}
+        {callsign ? (
+          workItemId && projectId ? (
+            <button
+              className="agent-info-callsign-link"
+              style={{ cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: "3px", background: "none", border: "none", padding: 0, font: "inherit", color: "inherit" }}
+              onClick={() => navStore.goToWorkItem(projectId, workItemId)}
+              title="View work item"
+            >
+              <strong>{callsign}</strong>
+            </button>
+          ) : (
+            <strong>{callsign}</strong>
+          )
+        ) : null}
         {title ? <span className="agent-info-title">{title}</span> : null}
       </span>
 

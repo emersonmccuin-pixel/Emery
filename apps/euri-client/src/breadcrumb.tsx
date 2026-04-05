@@ -5,10 +5,16 @@ import { useAppStore } from "./store";
 
 type Crumb = { label: string; layer: NavigationLayer };
 
+const UUID_REGEX = /^[0-9a-f-]{36}$/i;
+
 function buildCrumbs(current: NavigationLayer): Crumb[] {
   const crumbs: Crumb[] = [{ label: "EURI", layer: { layer: "home" } }];
   if (current.layer === "project" || current.layer === "agent" || current.layer === "document" || current.layer === "new-document" || current.layer === "work_item") {
     crumbs.push({ label: current.projectId, layer: { layer: "project", projectId: current.projectId } });
+  }
+  if (current.layer === "inbox") {
+    crumbs.push({ label: current.projectId, layer: { layer: "project", projectId: current.projectId } });
+    crumbs.push({ label: "Inbox", layer: current });
   }
   if (current.layer === "agent") {
     crumbs.push({ label: current.sessionId, layer: current });
@@ -37,9 +43,11 @@ export function Breadcrumb() {
   function resolveLabel(crumb: Crumb): string {
     const layer = crumb.layer;
     if (layer.layer === "home") return "EURI";
+    if (layer.layer === "inbox") return "Inbox";
     if (layer.layer === "project") {
       const project = bootstrap?.projects.find((p) => p.id === layer.projectId);
-      return project?.name ?? crumb.label;
+      const resolved = project?.name ?? crumb.label;
+      return UUID_REGEX.test(resolved) ? "..." : resolved;
     }
     if (layer.layer === "agent") {
       const session = sessions.find((s) => s.id === layer.sessionId);
@@ -47,17 +55,20 @@ export function Breadcrumb() {
         const wi = workItemDetails[session.work_item_id];
         if (wi) return wi.callsign;
       }
-      return session?.title ?? session?.current_mode ?? crumb.label;
+      const resolved = session?.title ?? session?.current_mode ?? crumb.label;
+      return UUID_REGEX.test(resolved) ? "..." : resolved;
     }
     if (layer.layer === "document") {
       const doc = documentDetails[layer.documentId];
-      return doc?.title ?? crumb.label;
+      const resolved = doc?.title ?? crumb.label;
+      return UUID_REGEX.test(resolved) ? "..." : resolved;
     }
     if (layer.layer === "work_item") {
       const wi = workItemDetails[layer.workItemId];
-      return wi?.callsign ?? crumb.label;
+      const resolved = wi?.callsign ?? crumb.label;
+      return UUID_REGEX.test(resolved) ? "..." : resolved;
     }
-    return crumb.label;
+    return UUID_REGEX.test(crumb.label) ? "..." : crumb.label;
   }
 
   return (

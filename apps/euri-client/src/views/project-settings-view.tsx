@@ -84,6 +84,7 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
     }
     setConfirmArchive(false);
     await appStore.handleArchiveProject(projectId);
+    navStore.goHome();
   }
 
   async function refreshTemplates() {
@@ -102,7 +103,7 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
         <h2 className="project-settings-title">Project Settings</h2>
         <button
           className="btn-ghost btn-sm"
-          onClick={() => navStore.goToProject(projectId)}
+          onClick={() => navStore.goBack()}
         >
           ← Back
         </button>

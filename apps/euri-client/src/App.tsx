@@ -354,7 +354,18 @@ export default function App() {
   }, []);
 
   if (!bootstrap) {
-    return <div className="app-shell loading-state">{error ?? "Connecting to the supervisor…"}</div>;
+    return (
+      <div className="app-shell loading-state">
+        {error ? (
+          error
+        ) : (
+          <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span className="reconnecting-spinner" />
+            Connecting to the supervisor…
+          </span>
+        )}
+      </div>
+    );
   }
 
   return (
