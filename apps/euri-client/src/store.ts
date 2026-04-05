@@ -1720,6 +1720,32 @@ class AppStore {
     }
   }
 
+  async handleMarkAllInboxRead(projectId: string) {
+    const entries = this.state.inboxEntriesByProject[projectId] ?? [];
+    const unread = entries.filter((e) => e.read_at === null);
+    if (unread.length === 0) return;
+    const nowSecs = Math.floor(Date.now() / 1000);
+    // Optimistic update
+    const optimistic = entries.map((e) => e.read_at === null ? { ...e, read_at: nowSecs } : e);
+    this.update({
+      inboxEntriesByProject: { ...this.state.inboxEntriesByProject, [projectId]: optimistic },
+    });
+    this.setLoading(`inbox-mark-all-read:${projectId}`, true);
+    try {
+      await Promise.all(unread.map((e) => updateInboxEntry(e.id, { read_at: nowSecs })));
+      await this.handleLoadInboxUnreadCount(projectId);
+      this.clearError();
+    } catch (invokeError) {
+      // Rollback
+      this.update({
+        inboxEntriesByProject: { ...this.state.inboxEntriesByProject, [projectId]: entries },
+        error: String(invokeError),
+      });
+    } finally {
+      this.setLoading(`inbox-mark-all-read:${projectId}`, false);
+    }
+  }
+
   // --- Derived state helpers ---
 
   filteredSessions(): SessionSummary[] {

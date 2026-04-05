@@ -4,15 +4,16 @@ import { navStore } from "../nav-store";
 import { StatusBadge } from "../components/status-badge";
 import { PlanPicker } from "../components/plan-picker";
 import { WorkItemForm, type WorkItemFormData } from "../components/work-item-form";
+import { renderMarkdown } from "../utils/markdown";
 
-function renderMarkdownBasic(md: string): string {
-  return md
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\n/g, "<br>")
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/`([^`]+)`/g, "<code>$1</code>");
+function runtimeStateLabel(state: string): string {
+  switch (state) {
+    case "completed": return "Completed";
+    case "errored":   return "Errored";
+    case "interrupted": return "Interrupted";
+    case "terminated": return "Terminated";
+    default: return state;
+  }
 }
 
 function formatDuration(startedAt: number | null, endedAt: number | null): string {
@@ -211,6 +212,23 @@ export function WorkItemView({
               Reopen
             </button>
           ) : null}
+          {workItem.status === "in_progress" ? (
+            <button
+              className="wi-action-btn wi-action-btn--block"
+              disabled={statusTransitioning}
+              onClick={() => void handleStatusTransition("blocked")}
+            >
+              Block
+            </button>
+          ) : workItem.status === "blocked" ? (
+            <button
+              className="wi-action-btn wi-action-btn--unblock"
+              disabled={statusTransitioning}
+              onClick={() => void handleStatusTransition("in_progress")}
+            >
+              Unblock
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -231,7 +249,7 @@ export function WorkItemView({
               <h3>Description</h3>
               <div
                 className="wi-detail-description"
-                dangerouslySetInnerHTML={{ __html: renderMarkdownBasic(workItem.description) }}
+                dangerouslySetInnerHTML={{ __html: renderMarkdown(workItem.description) }}
               />
             </section>
           ) : null}
@@ -242,7 +260,7 @@ export function WorkItemView({
               <h3>Acceptance Criteria</h3>
               <div
                 className="wi-detail-criteria"
-                dangerouslySetInnerHTML={{ __html: renderMarkdownBasic(workItem.acceptance_criteria) }}
+                dangerouslySetInnerHTML={{ __html: renderMarkdown(workItem.acceptance_criteria) }}
               />
             </section>
           ) : null}
@@ -306,7 +324,7 @@ export function WorkItemView({
                 <span className={`wi-session-indicator indicator-${s.runtime_state}`} />
                 <span className="wi-session-title">{s.title ?? s.current_mode}</span>
                 <span className="wi-session-branch">{s.worktree_branch ?? ""}</span>
-                <span className="wi-session-exit-status">{s.status}</span>
+                <span className="wi-session-exit-status">{runtimeStateLabel(s.runtime_state)}</span>
                 <span className="wi-session-duration">{formatDuration(s.started_at, s.ended_at)}</span>
               </div>
             ))}
@@ -369,6 +387,7 @@ export function WorkItemView({
           <WorkItemForm
             mode="create"
             initialData={{ parent_id: workItemId }}
+            lockedParentLabel={`${workItem.callsign}: ${workItem.title}`}
             loading={creatingChild}
             onSubmit={(data) => void handleAddChildSubmit(data)}
             onCancel={() => setShowAddChildForm(false)}

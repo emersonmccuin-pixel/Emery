@@ -162,7 +162,7 @@ export function WorkItemForm({
 
       {/* Actions */}
       <div className="wi-form-actions">
-        <button type="submit" className="secondary-button" disabled={!canSubmit}>
+        <button type="submit" className="primary-button" disabled={!canSubmit}>
           {loading ? "Saving…" : mode === "create" ? "Create" : "Save"}
         </button>
         <button type="button" className="secondary-button" onClick={onCancel}>
