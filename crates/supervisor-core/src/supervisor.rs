@@ -22,6 +22,7 @@ use crate::models::{
     WorkItemSummary, WorkflowReconciliationProposalDetail,
     WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
     WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary,
+    InboxEntrySummary, InboxEntryDetail, InboxEntryListFilter, UpdateInboxEntryRequest,
 };
 use crate::runtime::SessionRegistry;
 use crate::service::SupervisorService;
@@ -433,6 +434,24 @@ impl Supervisor {
 
     pub fn check_merge_conflicts(&self, id: &str) -> Result<Vec<String>> {
         self.service.check_merge_conflicts(id)
+    }
+
+    // --- Inbox ---
+
+    pub fn list_inbox_entries(&self, filter: InboxEntryListFilter) -> Result<Vec<InboxEntrySummary>> {
+        self.service.list_inbox_entries(filter)
+    }
+
+    pub fn get_inbox_entry(&self, id: &str) -> Result<Option<InboxEntryDetail>> {
+        self.service.get_inbox_entry(id)
+    }
+
+    pub fn update_inbox_entry(&self, request: UpdateInboxEntryRequest) -> Result<InboxEntryDetail> {
+        self.service.update_inbox_entry(request)
+    }
+
+    pub fn count_unread_inbox_entries(&self, project_id: Option<&str>) -> Result<i64> {
+        self.service.count_unread_inbox_entries(project_id.unwrap_or(""))
     }
 }
 

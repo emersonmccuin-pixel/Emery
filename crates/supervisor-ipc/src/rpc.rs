@@ -10,10 +10,11 @@ use supervisor_core::{
     CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest,
     CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
     DeletePlanningAssignmentRequest, DiagnosticContext, DocumentListFilter,
-    MergeQueueCheckConflictsParams, MergeQueueGetDiffParams, MergeQueueGetParams,
-    MergeQueueListFilter, MergeQueueMergeParams, MergeQueueParkParams, MergeQueueReorderParams,
-    OutputOrResync, PlanningAssignmentListFilter, RemoveProjectRootRequest, SessionListFilter,
-    SessionSpecListFilter, Supervisor, UpdateAccountRequest, UpdateDocumentRequest,
+    InboxEntryListFilter, MergeQueueCheckConflictsParams, MergeQueueGetDiffParams,
+    MergeQueueGetParams, MergeQueueListFilter, MergeQueueMergeParams, MergeQueueParkParams,
+    MergeQueueReorderParams, OutputOrResync, PlanningAssignmentListFilter,
+    RemoveProjectRootRequest, SessionListFilter, SessionSpecListFilter, Supervisor,
+    UpdateAccountRequest, UpdateDocumentRequest, UpdateInboxEntryRequest,
     UpdatePlanningAssignmentRequest, UpdateProjectRequest, UpdateProjectRootRequest,
     UpdateSessionSpecRequest, UpdateWorkItemRequest, UpdateWorkflowReconciliationProposalRequest,
     UpdateWorkspaceStateRequest, UpdateWorktreeRequest, WorkItemListFilter,
@@ -23,12 +24,12 @@ use supervisor_core::{
 
 use crate::protocol::{
     AccountGetParams, CheckDispatchConflictsParams, DiagnosticsExportBundleParams,
-    DocumentGetParams, ErrorBody, EventEnvelope, HelloResult, Method, ProjectGetParams,
-    ProjectRootListParams, RequestEnvelope, ResponseEnvelope, SessionAttachParams,
-    SessionControlParams, SessionDetachParams, SessionGetParams, SessionInputParams,
-    SessionResizeParams, SessionSpecGetParams, SessionWatchParams, SubscriptionCloseParams,
-    SubscriptionOpenParams, WorkItemGetParams, WorkflowReconciliationProposalGetParams,
-    WorkspaceStateGetParams, WorktreeGetParams,
+    DocumentGetParams, ErrorBody, EventEnvelope, HelloResult, InboxCountUnreadParams,
+    InboxGetParams, Method, ProjectGetParams, ProjectRootListParams, RequestEnvelope,
+    ResponseEnvelope, SessionAttachParams, SessionControlParams, SessionDetachParams,
+    SessionGetParams, SessionInputParams, SessionResizeParams, SessionSpecGetParams,
+    SessionWatchParams, SubscriptionCloseParams, SubscriptionOpenParams, WorkItemGetParams,
+    WorkflowReconciliationProposalGetParams, WorkspaceStateGetParams, WorktreeGetParams,
 };
 
 const PROTOCOL_VERSION: &str = "1";
@@ -617,6 +618,33 @@ impl SupervisorRpc {
                 let timeout = params.timeout_seconds.unwrap_or(60);
                 let result = self.supervisor.watch_sessions(params.session_ids, timeout)?;
                 Ok(serde_json::to_value(result)?)
+            }
+            Method::InboxList => {
+                let filter: InboxEntryListFilter = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.list_inbox_entries(filter)?,
+                )?)
+            }
+            Method::InboxGet => {
+                let params: InboxGetParams = serde_json::from_value(params)?;
+                let entry = self
+                    .supervisor
+                    .get_inbox_entry(&params.inbox_entry_id)?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("inbox entry {} was not found", params.inbox_entry_id)
+                    })?;
+                Ok(serde_json::to_value(entry)?)
+            }
+            Method::InboxUpdate => {
+                let request: UpdateInboxEntryRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.update_inbox_entry(request)?,
+                )?)
+            }
+            Method::InboxCountUnread => {
+                let params: InboxCountUnreadParams = serde_json::from_value(params)?;
+                let count = self.supervisor.count_unread_inbox_entries(params.project_id.as_deref())?;
+                Ok(json!({ "count": count }))
             }
             Method::SubscriptionOpen => {
                 let params: SubscriptionOpenParams = serde_json::from_value(params)?;

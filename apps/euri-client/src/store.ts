@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import {
   bootstrapShell,
   checkDispatchConflicts,
+  countUnreadInboxEntries,
   createDocument,
   createPlanningAssignment,
   createProject,
@@ -17,6 +18,7 @@ import {
   getWorkItem,
   interruptSession,
   listDocuments,
+  listInboxEntries,
   listMergeQueue,
   listPlanningAssignments,
   listWorkflowReconciliationProposals,
@@ -26,6 +28,7 @@ import {
   mergeQueuePark,
   terminateSession,
   updateDocument,
+  updateInboxEntry,
   updateProject,
   updateWorkflowReconciliationProposal,
   updateWorkItem,
@@ -101,6 +104,7 @@ import type {
   WorkItemSummary,
   WorkflowReconciliationProposalSummary,
 } from "./types";
+import type { InboxEntrySummary } from "./lib";
 
 // --- Constants ---
 
@@ -263,6 +267,8 @@ export type AppState = {
   reconciliationByWorkItem: Record<string, WorkflowReconciliationProposalSummary[]>;
   mergeQueueByProject: Record<string, MergeQueueEntry[]>;
   mergeQueueDiffs: Record<string, string>;
+  inboxEntriesByProject: Record<string, InboxEntrySummary[]>;
+  inboxUnreadCountByProject: Record<string, number>;
   connectionEvent: ConnectionStatusEvent | null;
   loadingKeys: Record<string, boolean>;
   error: string | null;
@@ -308,6 +314,8 @@ function initialState(): AppState {
     reconciliationByWorkItem: {},
     mergeQueueByProject: {},
     mergeQueueDiffs: {},
+    inboxEntriesByProject: {},
+    inboxUnreadCountByProject: {},
     connectionEvent: null,
     loadingKeys: {},
     error: null,
@@ -1383,6 +1391,55 @@ class AppStore {
       this.update({ error: String(invokeError) });
     } finally {
       this.setLoading(`merge-conflicts:${entryId}`, false);
+    }
+  }
+
+  // --- Inbox ---
+
+  async handleLoadInboxEntries(projectId: string, status?: string) {
+    this.setLoading(`inbox:${projectId}`, true);
+    try {
+      const entries = await listInboxEntries(projectId, status);
+      this.update({
+        inboxEntriesByProject: { ...this.state.inboxEntriesByProject, [projectId]: entries },
+      });
+      this.clearError();
+    } catch (invokeError) {
+      this.update({ error: String(invokeError) });
+    } finally {
+      this.setLoading(`inbox:${projectId}`, false);
+    }
+  }
+
+  async handleLoadInboxUnreadCount(projectId: string) {
+    try {
+      const result = await countUnreadInboxEntries(projectId);
+      this.update({
+        inboxUnreadCountByProject: {
+          ...this.state.inboxUnreadCountByProject,
+          [projectId]: result.count,
+        },
+      });
+    } catch {
+      // non-critical — silently ignore
+    }
+  }
+
+  async handleUpdateInboxEntry(
+    inboxEntryId: string,
+    updates: { status?: string; read_at?: number | null; resolved_at?: number | null },
+    projectId: string,
+  ) {
+    this.setLoading(`inbox-update:${inboxEntryId}`, true);
+    try {
+      await updateInboxEntry(inboxEntryId, updates);
+      await this.handleLoadInboxEntries(projectId);
+      await this.handleLoadInboxUnreadCount(projectId);
+      this.clearError();
+    } catch (invokeError) {
+      this.update({ error: String(invokeError) });
+    } finally {
+      this.setLoading(`inbox-update:${inboxEntryId}`, false);
     }
   }
 

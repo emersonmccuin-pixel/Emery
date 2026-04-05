@@ -66,6 +66,10 @@ pub enum Method {
     SessionCreateBatch,
     SessionCheckDispatchConflicts,
     SessionWatch,
+    InboxList,
+    InboxGet,
+    InboxUpdate,
+    InboxCountUnread,
 }
 
 impl Method {
@@ -134,6 +138,10 @@ impl Method {
             Self::SessionCreateBatch => "session.create_batch",
             Self::SessionCheckDispatchConflicts => "session.check_dispatch_conflicts",
             Self::SessionWatch => "session.watch",
+            Self::InboxList => "inbox.list",
+            Self::InboxGet => "inbox.get",
+            Self::InboxUpdate => "inbox.update",
+            Self::InboxCountUnread => "inbox.count_unread",
         }
     }
 }
@@ -210,6 +218,10 @@ impl TryFrom<&str> for Method {
             "session.create_batch" => Ok(Self::SessionCreateBatch),
             "session.check_dispatch_conflicts" => Ok(Self::SessionCheckDispatchConflicts),
             "session.watch" => Ok(Self::SessionWatch),
+            "inbox.list" => Ok(Self::InboxList),
+            "inbox.get" => Ok(Self::InboxGet),
+            "inbox.update" => Ok(Self::InboxUpdate),
+            "inbox.count_unread" => Ok(Self::InboxCountUnread),
             _ => Err(()),
         }
     }
@@ -218,6 +230,16 @@ impl TryFrom<&str> for Method {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CheckDispatchConflictsParams {
     pub work_item_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct InboxGetParams {
+    pub inbox_entry_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct InboxCountUnreadParams {
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

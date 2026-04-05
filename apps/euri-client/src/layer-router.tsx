@@ -1,5 +1,6 @@
 import { useNavLayer } from "./nav-store";
 import { HomeView } from "./views/home-view";
+import { InboxView } from "./views/inbox-view";
 import { ProjectCommandView } from "./views/project-command-view";
 import { AgentView } from "./views/agent-view";
 import { DocumentView } from "./views/document-view";
@@ -11,6 +12,8 @@ export function LayerRouter() {
   switch (layer.layer) {
     case "home":
       return <HomeView />;
+    case "inbox":
+      return <InboxView projectId={layer.projectId} />;
     case "project":
       return <ProjectCommandView projectId={layer.projectId} />;
     case "agent":

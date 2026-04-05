@@ -373,6 +373,68 @@ export async function pickFolder(): Promise<string | null> {
   return invoke("pick_folder");
 }
 
+// --- Inbox ---
+
+export type InboxEntrySummary = {
+  id: string;
+  project_id: string;
+  session_id: string | null;
+  work_item_id: string | null;
+  worktree_id: string | null;
+  entry_type: string;
+  title: string;
+  summary: string;
+  status: string;
+  branch_name: string | null;
+  diff_stat_json: string | null;
+  metadata_json: string | null;
+  read_at: number | null;
+  resolved_at: number | null;
+  created_at: number;
+  updated_at: number;
+  session_title: string | null;
+  work_item_callsign: string | null;
+};
+
+export type InboxEntryDetail = InboxEntrySummary;
+
+export async function listInboxEntries(
+  projectId: string,
+  status?: string,
+  unreadOnly?: boolean,
+  correlationId?: string,
+): Promise<InboxEntrySummary[]> {
+  return invoke("list_inbox_entries", { projectId, status, unreadOnly, correlationId });
+}
+
+export async function getInboxEntry(
+  inboxEntryId: string,
+  correlationId?: string,
+): Promise<InboxEntryDetail> {
+  return invoke("get_inbox_entry", { inboxEntryId, correlationId });
+}
+
+export async function updateInboxEntry(
+  inboxEntryId: string,
+  updates: { status?: string; read_at?: number | null; resolved_at?: number | null },
+  correlationId?: string,
+): Promise<InboxEntryDetail> {
+  return invoke("update_inbox_entry", {
+    inboxEntryId,
+    status: updates.status,
+    readAt: updates.read_at,
+    resolvedAt: updates.resolved_at,
+    correlationId,
+  });
+}
+
+export async function countUnreadInboxEntries(
+  projectId: string,
+  correlationId?: string,
+): Promise<{ count: number }> {
+  return invoke("count_unread_inbox_entries", { projectId, correlationId });
+}
+
 export async function createProjectRoot(
   input: {
     project_id: string;
