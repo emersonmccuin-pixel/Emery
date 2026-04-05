@@ -126,9 +126,9 @@ function getDefaultStopRules(originMode: string): string[] {
 }
 
 const SAFETY_MODE_DESCRIPTIONS: Record<string, string> = {
-  full: "Agent can read, write, and execute without confirmation",
-  normal: "Agent asks before destructive operations",
-  restricted: "Agent can read files but cannot write or execute",
+  yolo: "Agent can read, write, and execute without confirmation",
+  cautious: "Agent asks before destructive operations",
+  autonomous: "Agent operates independently with safety guardrails",
 };
 
 function safetyModeDescription(mode: string): string {
@@ -259,7 +259,7 @@ function DispatchSingleModal({
   const branchName = `emery/${workItem.callsign.toLowerCase()}`;
   const root = project.roots[0] ?? null;
   const isExecution = originMode === "execution";
-  const resolvedDefault = defaultAccount?.default_safety_mode ?? "full";
+  const resolvedDefault = defaultAccount?.default_safety_mode ?? "cautious";
   const resolvedDefaultModel = isExecution ? "sonnet" : "opus";
   const modeMeta = getOriginModeMeta(originMode);
   const stopRules = getDefaultStopRules(originMode);
@@ -301,9 +301,9 @@ function DispatchSingleModal({
           <div className="dispatch-field-control">
             <Select value={safetyMode} onChange={(e) => setSafetyMode(e.target.value)}>
               <option value="">Default ({resolvedDefault})</option>
-              <option value="full">Autonomous</option>
-              <option value="normal">Supervised</option>
-              <option value="restricted">Read Only</option>
+              <option value="cautious">Cautious</option>
+              <option value="autonomous">Autonomous</option>
+              <option value="yolo">Yolo (Skip Permissions)</option>
             </Select>
             {(safetyMode || resolvedDefault) && (
               <p className="dispatch-field-hint">
@@ -407,7 +407,7 @@ function DispatchMultiModal({
   });
   const [safetyMode, setSafetyMode] = useState<string>("");
   const [model, setModel] = useState<string>("");
-  const resolvedDefault = defaultAccount?.default_safety_mode ?? "full";
+  const resolvedDefault = defaultAccount?.default_safety_mode ?? "cautious";
 
   if (!project) {
     return <div className="modal-loading">Loading...</div>;
@@ -491,9 +491,9 @@ function DispatchMultiModal({
           <div className="dispatch-field-control">
             <Select value={safetyMode} onChange={(e) => setSafetyMode(e.target.value)}>
               <option value="">Default ({resolvedDefault})</option>
-              <option value="full">Autonomous</option>
-              <option value="normal">Supervised</option>
-              <option value="restricted">Read Only</option>
+              <option value="cautious">Cautious</option>
+              <option value="autonomous">Autonomous</option>
+              <option value="yolo">Yolo (Skip Permissions)</option>
             </Select>
             {(safetyMode || resolvedDefault) && (
               <p className="dispatch-field-hint">

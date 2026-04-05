@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useAppStore } from "../store";
+import { navStore } from "../nav-store";
 import { FocusCard } from "../components/focus-card";
 import type { ProjectSummary } from "../types";
 
@@ -19,90 +20,77 @@ export function HomeView() {
   }, [allProjects, focusProjectIds]);
 
   const visibleProjects = useMemo(() => {
-    if (!filter.trim()) return focusProjects;
     const query = filter.trim().toLowerCase();
+    if (!query) return focusProjects;
     return focusProjects.filter((p) => p.name.toLowerCase().includes(query));
   }, [focusProjects, filter]);
 
-  const showSearch = focusProjects.length > 0;
-
   return (
-    <div className="content-frame">
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: focusProjects.length === 0 ? "center" : "flex-start",
-          minHeight: "100%",
-          padding: "64px 32px 32px",
-          boxSizing: "border-box",
-        }}
-      >
-        {showSearch && (
-          <div className="home-search-wrap">
-            <input
-              className="home-search-input"
-              type="text"
-              placeholder="Filter projects…"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              aria-label="Filter projects"
-            />
-            {filter && (
-              <button
-                className="home-search-clear"
-                onClick={() => setFilter("")}
-                aria-label="Clear filter"
-                title="Clear"
-              >
-                ×
-              </button>
-            )}
-          </div>
-        )}
+    <div className="home-view">
+      <div className="content-frame-wide">
+        <header className="mb-8">
+          <h1 className="text-2xl font-bold text-[var(--text-primary)] mb-2">Dashboard</h1>
+          <p className="text-[var(--text-secondary)]">Manage your active projects and agents.</p>
+        </header>
+
+        <div className="home-search-wrap">
+          <input
+            className="home-search-input"
+            type="text"
+            placeholder="Filter projects…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            aria-label="Filter projects"
+          />
+          {filter && (
+            <button
+              className="home-search-clear"
+              onClick={() => setFilter("")}
+              aria-label="Clear filter"
+              title="Clear"
+            >
+              ×
+            </button>
+          )}
+        </div>
 
         {focusProjects.length > 0 ? (
-          visibleProjects.length > 0 ? (
-            <div
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: 20,
-                justifyContent: "center",
-                maxWidth: 1040,
-                width: "100%",
-              }}
-            >
-              {visibleProjects.map((project) => (
-                <FocusCard
-                  key={project.id}
-                  project={project}
-                  sessions={sessions}
-                />
-              ))}
+          <section>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="all-projects-header m-0">
+                {filter ? "Search Results" : "Pinned Projects"}
+              </h2>
             </div>
-          ) : (
-            <p
-              style={{
-                color: "var(--text-muted)",
-                fontSize: "var(--text-sm)",
-                letterSpacing: "0.04em",
-              }}
-            >
-              No projects match "{filter}"
-            </p>
-          )
+
+            {visibleProjects.length > 0 ? (
+              <div className="focus-card-grid">
+                {visibleProjects.map((project) => (
+                  <FocusCard
+                    key={project.id}
+                    project={project}
+                    sessions={sessions}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="empty-pane bg-[var(--surface-sunken)] rounded-lg p-10 border border-[var(--border-subtle)]">
+                <p>No projects found matching "{filter}"</p>
+              </div>
+            )}
+          </section>
         ) : (
-          <p
-            style={{
-              color: "var(--text-secondary, #8a8a9a)",
-              fontSize: 14,
-              letterSpacing: "0.04em",
-            }}
-          >
-            Pin a project from the sidebar to get started
-          </p>
+          <div className="empty-pane bg-[var(--surface-sunken)] rounded-lg p-20 border border-[var(--border-subtle)] flex flex-col items-center justify-center text-center">
+            <p className="text-lg text-[var(--text-primary)] mb-4 font-semibold">Welcome to EURI</p>
+            <p className="text-[var(--text-secondary)] mb-8 max-w-md">
+              Pin a project from the sidebar to get started, or create a new project to begin your workflow.
+            </p>
+            <button
+              className="btn-sm bg-[var(--accent)] text-[var(--text-on-primary)] hover:brightness-110 font-bold px-6 py-2"
+              onClick={() => navStore.openModal({ modal: "create_project" })}
+            >
+              + Create First Project
+            </button>
+          </div>
         )}
       </div>
     </div>
