@@ -4,7 +4,7 @@ import { navStore, useNavLayer } from "./nav-store";
 import { ContextMenu, type ContextMenuItem } from "./components/context-menu";
 import { DurationDisplay } from "./components/duration-display";
 import { toastStore } from "./toast-store";
-import type { SessionSummary } from "./types";
+import type { AccountSummary, SessionSummary } from "./types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -116,6 +116,19 @@ function SessionDots({ projectId, sessions }: { projectId: string; sessions: Ses
 
 function FleetDot({ session }: { session: SessionSummary }) {
   const isStarting = session.runtime_state === "starting";
+  const isChat = session.origin_mode === "chat";
+
+  if (isChat) {
+    return (
+      <span
+        className="sidebar-fleet-chat-icon"
+        title={isStarting ? "Starting chat" : "Chat session"}
+      >
+        💬
+      </span>
+    );
+  }
+
   return (
     <span
       className={`sidebar-fleet-dot${isStarting ? " starting" : ""}`}
@@ -195,6 +208,62 @@ function FleetSection({ collapsed, sessions }: FleetSectionProps) {
   );
 }
 
+// ── Account picker popover for Quick Chat ─────────────────────────────────
+
+function AccountPickerPopover({
+  accounts,
+  onSelect,
+  onClose,
+}: {
+  accounts: AccountSummary[];
+  onSelect: (accountId: string, setDefault: boolean) => void;
+  onClose: () => void;
+}) {
+  const [setDefault, setSetDefault] = useState(false);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [onClose]);
+
+  return (
+    <div ref={popoverRef} className="sidebar-account-picker">
+      <div className="sidebar-account-picker-header">Select account</div>
+      <ul className="sidebar-account-picker-list">
+        {accounts.map((account) => (
+          <li key={account.id}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="sidebar-account-picker-row justify-start px-3 py-2"
+              onClick={() => onSelect(account.id, setDefault)}
+            >
+              <span className="sidebar-account-picker-label">{account.label}</span>
+              <Badge variant="outline" className="sidebar-account-picker-badge">
+                {account.agent_kind}
+              </Badge>
+            </Button>
+          </li>
+        ))}
+      </ul>
+      <label className="sidebar-account-picker-default">
+        <input
+          type="checkbox"
+          checked={setDefault}
+          onChange={(e) => setSetDefault(e.target.checked)}
+        />
+        <span>Set as default</span>
+      </label>
+    </div>
+  );
+}
+
 // ── Sidebar props ──────────────────────────────────────────────────────────
 
 interface SidebarProps {
@@ -221,6 +290,9 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null);
+  const [showAccountPicker, setShowAccountPicker] = useState(false);
+  const quickChatLoading = useAppStore((s) => s.loadingKeys["quick-chat"] ?? false);
+  const accounts = useAppStore((s) => s.bootstrap?.accounts ?? []);
 
   const activeProjectId =
     navLayer.layer === "project" ||
@@ -397,16 +469,66 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
         {/* Bottom nav */}
         <div className="sidebar-bottom">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="sidebar-nav-btn justify-start px-3 py-2"
-            disabled
-            title="Quick Chat (coming soon)"
-          >
-            <span className="sidebar-nav-icon">✦</span>
-            {!collapsed && <span>Quick Chat</span>}
-          </Button>
+          <div className="sidebar-quick-chat-wrapper">
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "sidebar-nav-btn justify-start px-3 py-2",
+                showAccountPicker && "active",
+              )}
+              disabled={quickChatLoading}
+              title="Quick Chat"
+              onClick={() => {
+                if (quickChatLoading) return;
+
+                // No accounts at all — direct to settings
+                if (accounts.length === 0) {
+                  toastStore.addToast({
+                    type: "info",
+                    message: "No accounts configured. Go to Settings to add one.",
+                    action: {
+                      label: "Settings",
+                      onClick: () => navStore.goToSettings(),
+                    },
+                  });
+                  return;
+                }
+
+                // Single account — launch directly
+                if (accounts.length === 1) {
+                  void appStore.launchQuickChat(accounts[0].id);
+                  return;
+                }
+
+                // Check for saved default
+                const defaultId = localStorage.getItem("euri:quick-chat-default-account");
+                if (defaultId && accounts.find((a) => a.id === defaultId)) {
+                  void appStore.launchQuickChat(defaultId);
+                  return;
+                }
+
+                // Multiple accounts, no default — show picker
+                setShowAccountPicker((v) => !v);
+              }}
+            >
+              <span className="sidebar-nav-icon">✦</span>
+              {!collapsed && <span>{quickChatLoading ? "Starting..." : "Quick Chat"}</span>}
+            </Button>
+            {showAccountPicker && (
+              <AccountPickerPopover
+                accounts={accounts}
+                onSelect={(accountId, setDefault) => {
+                  setShowAccountPicker(false);
+                  if (setDefault) {
+                    localStorage.setItem("euri:quick-chat-default-account", accountId);
+                  }
+                  void appStore.launchQuickChat(accountId);
+                }}
+                onClose={() => setShowAccountPicker(false)}
+              />
+            )}
+          </div>
           <Button
             variant="ghost"
             size="sm"

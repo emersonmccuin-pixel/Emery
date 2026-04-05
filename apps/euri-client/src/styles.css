@@ -589,6 +589,84 @@ html[data-theme="vaporwave"] .sidebar {
   font-size: var(--text-base);
 }
 
+/* ── Quick Chat wrapper & account picker ── */
+
+.sidebar-quick-chat-wrapper {
+  position: relative;
+}
+
+.sidebar-account-picker {
+  position: absolute;
+  bottom: 100%;
+  left: var(--space-2);
+  margin-bottom: var(--space-1);
+  min-width: 220px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) 0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  z-index: 100;
+}
+
+.sidebar-account-picker-header {
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.sidebar-account-picker-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.sidebar-account-picker-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.sidebar-account-picker-label {
+  flex: 1;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-account-picker-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+}
+
+.sidebar-account-picker-default {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-top: 1px solid var(--border-subtle);
+  margin-top: var(--space-1);
+}
+
+.sidebar-account-picker-default input[type="checkbox"] {
+  accent-color: var(--color-primary, var(--accent));
+}
+
+/* ── Fleet chat icon ── */
+
+.sidebar-fleet-chat-icon {
+  font-size: 12px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
 /* ── Sidebar brand button ── */
 
 .sidebar-brand-btn {

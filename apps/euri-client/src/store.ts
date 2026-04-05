@@ -1869,6 +1869,118 @@ class AppStore {
     }
   }
 
+  // --- Quick Chat ---
+
+  /**
+   * Get or create the scratch "Quick Chats" project used for unscoped sessions.
+   * Returns the project ID or null on failure.
+   */
+  async getOrCreateScratchProject(): Promise<string | null> {
+    // Fast path: cached in localStorage
+    const cached = localStorage.getItem("euri:scratch-project-id");
+    if (cached) {
+      // Verify it still exists in bootstrap
+      const exists = this.state.bootstrap?.projects.find((p) => p.id === cached && p.archived_at === null);
+      if (exists) return cached;
+      // Stale — clear and re-check
+      localStorage.removeItem("euri:scratch-project-id");
+    }
+
+    // Check if project already exists by name
+    const existing = this.state.bootstrap?.projects.find(
+      (p) => p.name === "Quick Chats" && p.archived_at === null,
+    );
+    if (existing) {
+      localStorage.setItem("euri:scratch-project-id", existing.id);
+      return existing.id;
+    }
+
+    // Create it
+    try {
+      const correlationId = newCorrelationId("quick-chat-project");
+      const project = await createProject(
+        { name: "Quick Chats", project_type: "scratch" },
+        correlationId,
+      );
+      // Create a placeholder root so sessions have a cwd
+      const appDataRoot = this.state.bootstrap?.health.app_data_root ?? ".";
+      await createProjectRoot(
+        {
+          project_id: project.id,
+          label: "scratch",
+          path: appDataRoot,
+          root_kind: "virtual",
+        },
+        correlationId,
+      );
+      await this.rebootstrap();
+      localStorage.setItem("euri:scratch-project-id", project.id);
+      return project.id;
+    } catch (err) {
+      toastStore.addToast({ type: "error", message: `Failed to create scratch project: ${err}` });
+      return null;
+    }
+  }
+
+  /**
+   * Launch a Quick Chat session with the given account.
+   * Returns the session ID or null on failure.
+   */
+  async launchQuickChat(accountId: string): Promise<string | null> {
+    this.setLoading("quick-chat", true);
+    try {
+      const projectId = await this.getOrCreateScratchProject();
+      if (!projectId) return null;
+
+      const account = this.state.bootstrap?.accounts.find((a) => a.id === accountId);
+      if (!account) {
+        toastStore.addToast({ type: "error", message: "Account not found." });
+        return null;
+      }
+
+      const appDataRoot = this.state.bootstrap?.health.app_data_root ?? ".";
+      const correlationId = newCorrelationId("quick-chat-session");
+
+      const detail = await createSession(
+        {
+          project_id: projectId,
+          project_root_id: null,
+          worktree_id: null,
+          work_item_id: null,
+          account_id: account.id,
+          agent_kind: account.agent_kind,
+          cwd: appDataRoot,
+          command: account.binary_path ?? account.agent_kind,
+          args: [],
+          env_preset_ref: account.env_preset_ref,
+          origin_mode: "chat",
+          current_mode: "chat",
+          title: `Quick Chat ${new Date().toLocaleTimeString()}`,
+          title_policy: "manual",
+          restore_policy: "reattach",
+          initial_terminal_cols: 120,
+          initial_terminal_rows: 40,
+        },
+        correlationId,
+      );
+
+      this.applySessionDetail(detail);
+      await watchLiveSessions([detail.id], correlationId);
+      this.clearError();
+
+      // Navigate to the new session
+      navStore.goToAgent(projectId, detail.id);
+
+      toastStore.addToast({ type: "success", message: "Quick Chat started" });
+      return detail.id;
+    } catch (err) {
+      toastStore.addToast({ type: "error", message: `Quick Chat failed: ${err}` });
+      return null;
+    } finally {
+      this.setLoading("quick-chat", false);
+    }
+  }
+
   // --- GitHub token ---
 
   loadGithubToken() {
