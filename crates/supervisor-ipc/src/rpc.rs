@@ -5,7 +5,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use supervisor_core::{
-    AgentTemplateListFilter, ArchiveAgentTemplateRequest, ArchiveProjectRequest, ConflictWarning,
+    AgentTemplateListFilter, ArchiveAgentTemplateRequest, ArchiveProjectRequest, DeleteProjectRequest, ConflictWarning,
     CreateAccountRequest, CreateAgentTemplateRequest, CreateDiagnosticsBundleRequest,
     CreateDocumentRequest, CreatePlanningAssignmentRequest, CreateProjectRequest,
     CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest,
@@ -237,6 +237,11 @@ impl SupervisorRpc {
                 Ok(serde_json::to_value(
                     self.supervisor.archive_project(request)?,
                 )?)
+            }
+            Method::ProjectDelete => {
+                let request: DeleteProjectRequest = serde_json::from_value(params)?;
+                self.supervisor.delete_project(request)?;
+                Ok(serde_json::to_value(json!({ "ok": true }))?)
             }
             Method::ProjectRootList => {
                 let params: ProjectRootListParams = serde_json::from_value(params)?;
@@ -897,6 +902,7 @@ impl SupervisorRpc {
                 Method::ProjectCreate.as_str(),
                 Method::ProjectUpdate.as_str(),
                 Method::ProjectArchive.as_str(),
+                Method::ProjectDelete.as_str(),
                 Method::ProjectRootList.as_str(),
                 Method::ProjectRootCreate.as_str(),
                 Method::ProjectRootUpdate.as_str(),

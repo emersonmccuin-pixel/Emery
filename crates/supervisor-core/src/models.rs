@@ -260,6 +260,11 @@ pub struct ArchiveProjectRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct DeleteProjectRequest {
+    pub project_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct CreateProjectRootRequest {
     pub project_id: String,
     pub label: String,

@@ -6,7 +6,7 @@ use crate::bootstrap::AppPaths;
 use crate::diagnostics::{DiagnosticContext, DiagnosticsBundleResult, DiagnosticsHub};
 use crate::models::{
     AccountDetail, AccountSummary, AgentTemplateDetail, AgentTemplateListFilter,
-    AgentTemplateSummary, ArchiveAgentTemplateRequest, ArchiveProjectRequest, CreateAccountRequest,
+    AgentTemplateSummary, ArchiveAgentTemplateRequest, ArchiveProjectRequest, DeleteProjectRequest, CreateAccountRequest,
     CreateAgentTemplateRequest, CreateDiagnosticsBundleRequest, CreateDocumentRequest,
     CreatePlanningAssignmentRequest, CreateProjectRequest, CreateProjectRootRequest,
     CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest,
@@ -125,6 +125,10 @@ impl Supervisor {
 
     pub fn archive_project(&self, request: ArchiveProjectRequest) -> Result<ProjectDetail> {
         self.service.archive_project(request)
+    }
+
+    pub fn delete_project(&self, request: DeleteProjectRequest) -> Result<()> {
+        self.service.delete_project(request)
     }
 
     pub fn list_project_roots(&self, project_id: &str) -> Result<Vec<ProjectRootSummary>> {

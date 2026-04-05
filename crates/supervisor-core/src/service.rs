@@ -13,7 +13,7 @@ use crate::diagnostics::{
 use crate::models::{
     AccountDetail, AccountSummary, AccountUpdateRecord, AgentTemplateDetail, AgentTemplateListFilter,
     AgentTemplateSummary, AgentTemplateUpdateRecord, ArchiveAgentTemplateRequest,
-    ArchiveProjectRequest, CreateAccountRequest, CreateAgentTemplateRequest,
+    ArchiveProjectRequest, DeleteProjectRequest, CreateAccountRequest, CreateAgentTemplateRequest,
     CreateDiagnosticsBundleRequest, CreateDocumentRequest, CreateInboxEntryRequest,
     CreatePlanningAssignmentRequest, CreateProjectRequest, CreateProjectRootRequest,
     CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest,
@@ -503,6 +503,28 @@ impl SupervisorService {
 
         self.get_project(&request.project_id)?
             .ok_or_else(|| anyhow!("project {} was not found", request.project_id))
+    }
+
+    pub fn delete_project(&self, request: DeleteProjectRequest) -> Result<()> {
+        let existing = self
+            .get_project(&request.project_id)?
+            .ok_or_else(|| anyhow!("project {} was not found", request.project_id))?;
+
+        if self.databases.project_has_live_sessions(&request.project_id)? {
+            return Err(anyhow!(
+                "cannot delete project '{}': it has active sessions running",
+                existing.name
+            ));
+        }
+
+        if self.databases.project_has_pending_merges(&request.project_id)? {
+            return Err(anyhow!(
+                "cannot delete project '{}': it has pending merge queue entries",
+                existing.name
+            ));
+        }
+
+        self.databases.delete_project(&request.project_id)
     }
 
     pub fn list_accounts(&self) -> Result<Vec<AccountSummary>> {
