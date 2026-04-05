@@ -20,11 +20,11 @@ import type {
   SessionOutputEvent,
   SessionResyncEvent,
   SessionStateChangedEvent,
-  WorkspacePayloadV2,
+  WorkspacePayloadV3,
 } from "./types";
 import { appStore, useAppStore } from "./store";
-import { navStore, useNavLayer } from "./nav-store";
-import type { NavigationLayer } from "./nav-store";
+import { navStore, useNavLayer, usePeekLayer, useModalLayer } from "./nav-store";
+import type { NavigationLayer, PeekLayer, ModalLayer } from "./nav-store";
 import { toastStore, useToastStore } from "./toast-store";
 import type { Toast } from "./toast-store";
 import { Topbar } from "./topbar";
@@ -77,13 +77,119 @@ function decodeBase64Utf8(base64: string): string {
   return new TextDecoder().decode(bytes);
 }
 
-function buildWorkspacePayloadV2(navigation: NavigationLayer): WorkspacePayloadV2 {
+function buildWorkspacePayloadV3(mainNav: NavigationLayer, sidebarCollapsed: boolean): WorkspacePayloadV3 {
   return {
-    version: 2,
-    navigation,
+    version: 3,
+    main_navigation: mainNav,
     focus_project_ids: appStore.getState().focusProjectIds,
     planning_view_mode: appStore.getState().planningViewMode,
+    sidebar_collapsed: sidebarCollapsed,
   };
+}
+
+// ── Peek Router (stub content for Phase 3) ─────────────────────────────────
+
+function PeekRouter({ peek }: { peek: NonNullable<PeekLayer> }) {
+  switch (peek.peek) {
+    case "work_item":
+      return (
+        <div className="peek-stub">
+          <div className="peek-stub-type">Work Item</div>
+          <div className="peek-stub-id">{peek.workItemId}</div>
+        </div>
+      );
+    case "inbox":
+      return (
+        <div className="peek-stub">
+          <div className="peek-stub-type">Inbox</div>
+          <div className="peek-stub-id">{peek.projectId}</div>
+        </div>
+      );
+    case "document":
+      return (
+        <div className="peek-stub">
+          <div className="peek-stub-type">Document</div>
+          <div className="peek-stub-id">{peek.documentId}</div>
+        </div>
+      );
+    case "session_detail":
+      return (
+        <div className="peek-stub">
+          <div className="peek-stub-type">Session Detail</div>
+          <div className="peek-stub-id">{peek.sessionId}</div>
+        </div>
+      );
+    case "merge_diff":
+      return (
+        <div className="peek-stub">
+          <div className="peek-stub-type">Merge Diff</div>
+          <div className="peek-stub-id">{peek.entryId}</div>
+        </div>
+      );
+    case "project_settings":
+      return (
+        <div className="peek-stub">
+          <div className="peek-stub-type">Project Settings</div>
+          <div className="peek-stub-id">{peek.projectId}</div>
+        </div>
+      );
+  }
+}
+
+// ── Modal Router (stub content for Phase 4) ────────────────────────────────
+
+function ModalRouter({ modal }: { modal: NonNullable<ModalLayer> }) {
+  switch (modal.modal) {
+    case "dispatch_single":
+      return (
+        <div className="modal-stub">
+          <div className="modal-stub-type">Dispatch Single</div>
+          <div className="modal-stub-id">{modal.workItemId}</div>
+        </div>
+      );
+    case "dispatch_multi":
+      return (
+        <div className="modal-stub">
+          <div className="modal-stub-type">Dispatch Multi</div>
+          <div className="modal-stub-id">{modal.workItemIds.length} items</div>
+        </div>
+      );
+    case "create_work_item":
+      return (
+        <div className="modal-stub">
+          <div className="modal-stub-type">Create Work Item</div>
+          {modal.parentId && <div className="modal-stub-id">parent: {modal.parentId}</div>}
+        </div>
+      );
+    case "create_project":
+      return (
+        <div className="modal-stub">
+          <div className="modal-stub-type">Create Project</div>
+        </div>
+      );
+    case "confirm":
+      return (
+        <div className="modal-stub">
+          <div className="modal-stub-type">{modal.title}</div>
+          <div className="modal-stub-id">{modal.message}</div>
+          <button onClick={modal.onConfirm}>Confirm</button>
+        </div>
+      );
+  }
+}
+
+// ── Modal Overlay ──────────────────────────────────────────────────────────
+
+function ModalOverlay() {
+  const modal = useModalLayer();
+  if (!modal) return null;
+  return (
+    <div className="modal-overlay" onClick={() => navStore.closeModal()}>
+      <div className="modal-container" onClick={(e) => e.stopPropagation()}>
+        <ModalRouter modal={modal} />
+      </div>
+    </div>
+  );
 }
 
 export default function App() {
@@ -92,6 +198,7 @@ export default function App() {
   const focusProjectIds = useAppStore((s) => s.focusProjectIds);
   const connectionState = useAppStore((s) => s.connectionState);
   const navLayer = useNavLayer();
+  const peekLayer = usePeekLayer();
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     try {
@@ -168,7 +275,19 @@ export default function App() {
           restoreApplied.current = true;
           const restored = payload.workspace?.payload;
           if (restored) {
-            if (restored.version === 2) {
+            if (restored.version === 3) {
+              // V3: main_navigation, peek/modal always start closed
+              const layer = restored.main_navigation as NavigationLayer;
+              navStore.restore(layer);
+              if (layer.layer === "project" || layer.layer === "agent") {
+                appStore.setSelectedProjectId(layer.projectId);
+              }
+              appStore.setFocusProjectIds(restored.focus_project_ids ?? []);
+              if (restored.sidebar_collapsed !== undefined) {
+                setSidebarCollapsed(restored.sidebar_collapsed);
+              }
+            } else if (restored.version === 2) {
+              // V2 migration: navigation -> main_navigation
               const layer = restored.navigation as NavigationLayer;
               navStore.restore(layer);
               if (layer.layer === "project" || layer.layer === "agent") {
@@ -349,7 +468,7 @@ export default function App() {
     }
   }, [navProjectId]);
 
-  // --- Workspace persistence ---
+  // --- Workspace persistence (V3 — peek/modal are NOT persisted) ---
   const navSessionId = navLayer.layer === "agent" ? navLayer.sessionId : null;
 
   useEffect(() => {
@@ -358,22 +477,33 @@ export default function App() {
       window.clearTimeout(persistTimeout.current);
     }
     persistTimeout.current = window.setTimeout(() => {
-      const layer = navStore.getState().current;
+      const mainLayer = navStore.getState().main;
       void saveWorkspace(
-        buildWorkspacePayloadV2(layer),
+        buildWorkspacePayloadV3(mainLayer, sidebarCollapsed),
         newCorrelationId("workspace-save"),
       ).catch((invokeError: unknown) => appStore.setError(String(invokeError)));
     }, 250);
-  }, [bootstrap, navLayer.layer, navProjectId, navSessionId, focusProjectIds]);
+  }, [bootstrap, navLayer.layer, navProjectId, navSessionId, focusProjectIds, sidebarCollapsed]);
 
   // --- Keyboard shortcuts ---
   const lastEscapeRef = useRef<number>(0);
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      const layer = navStore.getState().current;
+      const { main: layer, modal, peek } = navStore.getState();
 
       if (e.key === "Escape") {
+        // Priority: Modal (if open) -> Peek (if open) -> Main (go back)
+        if (modal) {
+          e.preventDefault();
+          navStore.closeModal();
+          return;
+        }
+        if (peek) {
+          e.preventDefault();
+          navStore.closePeek();
+          return;
+        }
         if (layer.layer === "agent") {
           // Double-Escape to exit agent view — single Escape passes through to terminal
           const now = Date.now();
@@ -387,6 +517,7 @@ export default function App() {
         } else if (layer.layer !== "home") {
           navStore.goBack();
         }
+        return;
       }
 
       if (e.ctrlKey && e.key === "`") {
@@ -486,9 +617,12 @@ export default function App() {
             <LayerRouter />
           </div>
         </div>
-        <PeekPanel hidden />
+        <PeekPanel hidden={!peekLayer} onClose={() => navStore.closePeek()}>
+          {peekLayer && <PeekRouter peek={peekLayer} />}
+        </PeekPanel>
       </div>
       <DispatchSheet />
+      <ModalOverlay />
       <ToastStack />
       <Cityscape />
     </div>
