@@ -4,7 +4,7 @@ use clap::Parser;
 use regex::Regex;
 use rusqlite::{Connection, params};
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -15,16 +15,16 @@ use zip::ZipArchive;
 // ---------------------------------------------------------------------------
 
 #[derive(Parser, Debug)]
-#[command(name = "wcp-import", about = "Import a WCP export into Emery knowledge.db")]
+#[command(name = "wcp-import", about = "Import a WCP export into Emery (all namespaces)")]
 struct Args {
     #[arg(long, help = "Path to the WCP export zip file")]
     export_zip: PathBuf,
 
-    #[arg(long, help = "Project UUID to assign imported items to")]
-    project_id: String,
-
     #[arg(long, help = "Path to knowledge.db (default: %LOCALAPPDATA%\\Emery\\knowledge.db)")]
-    db_path: Option<PathBuf>,
+    knowledge_db: Option<PathBuf>,
+
+    #[arg(long, help = "Path to app.db (default: %LOCALAPPDATA%\\Emery\\app.db)")]
+    app_db: Option<PathBuf>,
 }
 
 // ---------------------------------------------------------------------------
@@ -50,8 +50,8 @@ struct WorkItemFrontmatter {
 #[derive(Debug)]
 struct WorkItem {
     id: String,
-    callsign: String,          // already renamed EMERY-NNN
-    original_callsign: String, // EURI-NNN for lookup
+    callsign: String,          // final callsign (renamed for EURI, original otherwise)
+    original_callsign: String, // original WCP callsign for lookup
     title: String,
     description: String,
     acceptance_criteria: Option<String>,
@@ -69,23 +69,44 @@ struct WorkItem {
 }
 
 // ---------------------------------------------------------------------------
+// Per-namespace import summary
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct NsSummary {
+    items_inserted: usize,
+    activity_logs_inserted: usize,
+    artifacts_inserted: usize,
+    docs_inserted: usize,
+    links_inserted: usize,
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn rename_callsign(s: &str) -> String {
-    s.replace("EURI-", "EMERY-").replace("EURI/", "EMERY/")
+/// Only renames EURI callsigns. All other namespaces are left unchanged.
+fn maybe_rename_callsign(s: &str, namespace: &str) -> String {
+    if namespace == "EURI" {
+        s.replace("EURI-", "EMERY-").replace("EURI/", "EMERY/")
+    } else {
+        s.to_string()
+    }
 }
 
-fn rename_body(s: &str) -> String {
-    s.replace("EURI-", "EMERY-").replace("EURI/", "EMERY/")
+/// Rename body text (only for EURI namespace).
+fn maybe_rename_body(s: &str, namespace: &str) -> String {
+    if namespace == "EURI" {
+        s.replace("EURI-", "EMERY-").replace("EURI/", "EMERY/")
+    } else {
+        s.to_string()
+    }
 }
 
 fn date_to_epoch(date_str: &str) -> i64 {
     NaiveDate::parse_from_str(date_str.trim(), "%Y-%m-%d")
         .map(|d| d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp())
-        .unwrap_or_else(|_| {
-            chrono::Utc::now().timestamp()
-        })
+        .unwrap_or_else(|_| chrono::Utc::now().timestamp())
 }
 
 fn now_epoch() -> i64 {
@@ -93,7 +114,6 @@ fn now_epoch() -> i64 {
 }
 
 fn parse_sequence(callsign: &str) -> Option<i64> {
-    // e.g. "EMERY-42" -> 42
     callsign.split('-').last()?.parse().ok()
 }
 
@@ -113,7 +133,6 @@ fn split_frontmatter(content: &str) -> (String, String) {
 
 /// Split body at `## Activity Log` heading.
 fn split_activity_log(body: &str) -> (String, Option<String>) {
-    // Look for a heading line that is "## Activity Log" (case-insensitive)
     let re = Regex::new(r"(?mi)^##\s+Activity Log\s*$").unwrap();
     if let Some(m) = re.find(body) {
         let description = body[..m.start()].trim_end().to_string();
@@ -125,7 +144,7 @@ fn split_activity_log(body: &str) -> (String, Option<String>) {
     }
 }
 
-/// Parse [[EMERY-NNN]] and [[slug]] wiki-links from content.
+/// Parse [[CALLSIGN]] and [[slug]] wiki-links from content.
 fn extract_wiki_links(content: &str) -> Vec<String> {
     let re = Regex::new(r"\[\[([^\]]+)\]\]").unwrap();
     re.captures_iter(content)
@@ -138,7 +157,7 @@ fn slug_from_filename(name: &str) -> String {
     name.replace(' ', "-").to_lowercase()
 }
 
-/// Normalize work item type — accept WCP names and map unknown -> "task"
+/// Normalize work item type.
 fn normalize_type(t: &str) -> String {
     let lower = t.trim().to_lowercase();
     match lower.as_str() {
@@ -150,12 +169,11 @@ fn normalize_type(t: &str) -> String {
     }
 }
 
-/// Normalize status — map WCP values to DB values.
+/// Normalize status.
 fn normalize_status(s: &str) -> String {
     let lower = s.trim().to_lowercase();
     match lower.as_str() {
         "backlog" | "planned" | "in_progress" | "blocked" | "done" | "archived" => lower,
-        // Common WCP aliases
         "todo" => "backlog".to_string(),
         "in progress" => "in_progress".to_string(),
         "complete" | "completed" | "closed" => "done".to_string(),
@@ -166,86 +184,152 @@ fn normalize_status(s: &str) -> String {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Main
-// ---------------------------------------------------------------------------
+/// Discover all top-level namespace directories in the zip.
+/// A namespace dir is identified by a path component that looks like an all-caps identifier
+/// containing at least one work-item file (<NS>/<NS>-NNN.md).
+fn discover_namespaces(file_names: &[String]) -> Vec<(String, String)> {
+    // Returns Vec of (namespace_key, prefix) where prefix includes trailing slash
+    // e.g. ("EURI", "EURI/") or ("EURI", "export/EURI/")
+    let wi_pattern = Regex::new(r"^(.+?/)?([A-Z][A-Z0-9]+)/\2-\d+\.md$").unwrap();
 
-fn main() -> Result<()> {
-    let args = Args::parse();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut namespaces: Vec<(String, String)> = Vec::new();
 
-    // Resolve db path
-    let db_path = match args.db_path {
-        Some(p) => p,
-        None => {
-            let local_app_data = std::env::var("LOCALAPPDATA")
-                .context("LOCALAPPDATA env var not set; use --db-path")?;
-            PathBuf::from(local_app_data).join("Emery").join("knowledge.db")
-        }
-    };
-
-    println!("Opening database: {}", db_path.display());
-    let conn = Connection::open(&db_path)
-        .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
-
-    // Enable foreign keys
-    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
-
-    let project_id = args.project_id.clone();
-
-    // Open zip
-    println!("Opening export zip: {}", args.export_zip.display());
-    let zip_file = std::fs::File::open(&args.export_zip)
-        .with_context(|| format!("Failed to open zip: {}", args.export_zip.display()))?;
-    let mut archive = ZipArchive::new(zip_file)?;
-
-    // Collect all file names upfront
-    let file_names: Vec<String> = (0..archive.len())
-        .map(|i| archive.by_index(i).map(|f| f.name().to_string()))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    println!("Found {} entries in zip", file_names.len());
-
-    // ---------------------------------------------------------------------------
-    // Detect EURI namespace root prefix (e.g. "EURI/" or "export/EURI/")
-    // ---------------------------------------------------------------------------
-    let ns_prefix = {
-        let mut prefix = None;
-        for name in &file_names {
-            // Look for something like "*/EURI/" or "EURI/"
-            if let Some(pos) = name.find("EURI/") {
-                prefix = Some(name[..pos + 5].to_string()); // includes "EURI/"
-                break;
+    for name in file_names {
+        if let Some(caps) = wi_pattern.captures(name) {
+            let outer_prefix = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            let ns = caps[2].to_string();
+            if seen.insert(ns.clone()) {
+                let prefix = format!("{}{}/", outer_prefix, ns);
+                namespaces.push((ns, prefix));
             }
         }
-        prefix.unwrap_or_else(|| "EURI/".to_string())
-    };
-    println!("Namespace prefix detected: '{}'", ns_prefix);
+    }
 
-    // ---------------------------------------------------------------------------
-    // Classify files
-    // ---------------------------------------------------------------------------
-    // Work item files: <prefix>EURI-NNN.md (directly under ns root)
-    // Artifact files: <prefix>EURI-NNN/<anything>.md
-    // Standalone docs: <prefix>docs/<anything>.md
+    namespaces
+}
+
+// ---------------------------------------------------------------------------
+// Project creation helpers
+// ---------------------------------------------------------------------------
+
+/// Ensure a project exists in app.db for this namespace. Returns the project_id.
+fn ensure_project(
+    app_conn: &Connection,
+    namespace: &str,
+) -> Result<String> {
+    // Check if a project with this wcp_namespace already exists
+    let existing: Option<String> = app_conn
+        .query_row(
+            "SELECT id FROM projects WHERE wcp_namespace = ?1 LIMIT 1",
+            params![namespace],
+            |row| row.get(0),
+        )
+        .ok();
+
+    if let Some(id) = existing {
+        println!("  Project already exists for namespace {}: {}", namespace, id);
+        return Ok(id);
+    }
+
+    // Determine sort_order as max + 1
+    let sort_order: i64 = app_conn
+        .query_row(
+            "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM projects",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(1);
+
+    // Derive name and slug
+    let name = if namespace == "EURI" {
+        "Emery".to_string()
+    } else {
+        // Title-case the namespace key
+        let mut chars = namespace.chars();
+        match chars.next() {
+            None => namespace.to_string(),
+            Some(first) => first.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase(),
+        }
+    };
+    let slug = namespace.to_lowercase();
+    let project_id = format!("proj_{}", Uuid::new_v4());
+    let now = now_epoch();
+
+    // dispatch_item_callsign: for EURI use EMERY, otherwise use the namespace key
+    let dispatch_callsign = if namespace == "EURI" {
+        "EMERY".to_string()
+    } else {
+        namespace.to_string()
+    };
+
+    app_conn.execute(
+        "INSERT INTO projects (
+            id, name, slug, sort_order, default_account_id,
+            project_type, model_defaults_json, settings_json, instructions_md,
+            created_at, updated_at, archived_at,
+            wcp_namespace, dispatch_item_callsign
+        ) VALUES (
+            ?1, ?2, ?3, ?4, NULL,
+            'standard', '{}', '{}', '',
+            ?5, ?5, NULL,
+            ?6, ?7
+        )",
+        params![
+            project_id,
+            name,
+            slug,
+            sort_order,
+            now,
+            namespace,
+            dispatch_callsign,
+        ],
+    )
+    .with_context(|| format!("Failed to insert project for namespace {}", namespace))?;
+
+    println!("  Created project '{}' ({}) → {}", name, namespace, project_id);
+    Ok(project_id)
+}
+
+// ---------------------------------------------------------------------------
+// Per-namespace import
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::too_many_arguments)]
+fn import_namespace(
+    namespace: &str,
+    prefix: &str,
+    file_names: &[String],
+    archive: &mut ZipArchive<std::fs::File>,
+    knowledge_conn: &Connection,
+    project_id: &str,
+    summary: &mut NsSummary,
+) -> Result<()> {
+    // Build regexes for this namespace
+    let ns_escaped = regex::escape(prefix);
+    // Callsign prefix used in file names (original, pre-rename)
+    let ns_key = namespace; // e.g. "EURI"
 
     let wi_re = Regex::new(&format!(
-        r"^{}(EURI-\d+)\.md$",
-        regex::escape(&ns_prefix)
+        r"^{}({}-\d+)\.md$",
+        ns_escaped,
+        regex::escape(ns_key),
     ))?;
     let artifact_re = Regex::new(&format!(
-        r"^{}(EURI-\d+)/(.+\.md)$",
-        regex::escape(&ns_prefix)
+        r"^{}({}-\d+)/(.+\.md)$",
+        ns_escaped,
+        regex::escape(ns_key),
     ))?;
     let doc_re = Regex::new(&format!(
         r"^{}docs/(.+\.md)$",
-        regex::escape(&ns_prefix)
+        ns_escaped,
     ))?;
 
-    let mut work_item_files: Vec<(String, String)> = Vec::new(); // (callsign, zip_name)
-    let mut artifact_files: Vec<(String, String, String)> = Vec::new(); // (parent_callsign, filename, zip_name)
-    let mut doc_files: Vec<(String, String)> = Vec::new(); // (filename, zip_name)
+    let mut work_item_files: Vec<(String, String)> = Vec::new();
+    let mut artifact_files: Vec<(String, String, String)> = Vec::new();
+    let mut doc_files: Vec<(String, String)> = Vec::new();
 
-    for name in &file_names {
+    for name in file_names {
         if let Some(caps) = wi_re.captures(name) {
             work_item_files.push((caps[1].to_string(), name.clone()));
         } else if let Some(caps) = artifact_re.captures(name) {
@@ -256,41 +340,40 @@ fn main() -> Result<()> {
     }
 
     println!(
-        "Classified: {} work items, {} artifacts, {} standalone docs",
+        "  Classified: {} work items, {} artifacts, {} standalone docs",
         work_item_files.len(),
         artifact_files.len(),
         doc_files.len()
     );
 
-    // ---------------------------------------------------------------------------
     // Helper: read zip entry to string
-    // ---------------------------------------------------------------------------
-    let read_zip_entry = |archive: &mut ZipArchive<std::fs::File>, zip_name: &str| -> Result<String> {
-        let mut entry = archive.by_name(zip_name)
+    let read_zip_entry = |arc: &mut ZipArchive<std::fs::File>, zip_name: &str| -> Result<String> {
+        let mut entry = arc
+            .by_name(zip_name)
             .with_context(|| format!("Entry not found: {}", zip_name))?;
         let mut buf = String::new();
         entry.read_to_string(&mut buf)?;
         Ok(buf)
     };
 
-    // ---------------------------------------------------------------------------
-    // Phase 1: Parse all work item files, assign UUIDs
-    // ---------------------------------------------------------------------------
-    println!("\nPhase 1: Parsing work items...");
-
-    // callsign_map: original EURI-NNN -> UUID
-    let mut callsign_map: HashMap<String, String> = HashMap::new();
+    // -----------------------------------------------------------------------
+    // Phase 1: Parse work items
+    // -----------------------------------------------------------------------
+    let mut callsign_map: HashMap<String, String> = HashMap::new(); // original -> UUID
     let mut work_items: Vec<WorkItem> = Vec::new();
 
     for (original_callsign, zip_name) in &work_item_files {
-        let content = read_zip_entry(&mut archive, zip_name)?;
+        let content = read_zip_entry(archive, zip_name)?;
         let (fm_str, body_raw) = split_frontmatter(&content);
 
         let fm: WorkItemFrontmatter = if fm_str.is_empty() {
             WorkItemFrontmatter::default()
         } else {
             serde_yaml::from_str(&fm_str).unwrap_or_else(|e| {
-                eprintln!("  Warning: failed to parse frontmatter for {}: {}", original_callsign, e);
+                eprintln!(
+                    "  Warning: failed to parse frontmatter for {}: {}",
+                    original_callsign, e
+                );
                 WorkItemFrontmatter::default()
             })
         };
@@ -298,10 +381,8 @@ fn main() -> Result<()> {
         let id = Uuid::new_v4().to_string();
         callsign_map.insert(original_callsign.clone(), id.clone());
 
-        // Rename callsign and body
-        let callsign = rename_callsign(original_callsign);
-        let body_renamed = rename_body(&body_raw);
-
+        let callsign = maybe_rename_callsign(original_callsign, namespace);
+        let body_renamed = maybe_rename_body(&body_raw, namespace);
         let (description, activity_log) = split_activity_log(&body_renamed);
 
         let title = fm.title.unwrap_or_else(|| callsign.clone());
@@ -311,7 +392,6 @@ fn main() -> Result<()> {
         let created_at = fm.created.as_deref().map(date_to_epoch).unwrap_or_else(now_epoch);
         let updated_at = fm.updated.as_deref().map(date_to_epoch).unwrap_or_else(now_epoch);
         let closed_at = if status == "done" { Some(updated_at) } else { None };
-
         let child_sequence = parse_sequence(&callsign);
 
         work_items.push(WorkItem {
@@ -335,12 +415,9 @@ fn main() -> Result<()> {
         });
     }
 
-    // ---------------------------------------------------------------------------
+    // -----------------------------------------------------------------------
     // Phase 2: Resolve parent_id and root_work_item_id
-    // ---------------------------------------------------------------------------
-    println!("Phase 2: Resolving parent chains...");
-
-    // First resolve parent_id
+    // -----------------------------------------------------------------------
     for i in 0..work_items.len() {
         if let Some(parent_cs) = work_items[i].parent_callsign.clone() {
             if let Some(parent_uuid) = callsign_map.get(&parent_cs) {
@@ -354,27 +431,26 @@ fn main() -> Result<()> {
         }
     }
 
-    // Resolve root_work_item_id by walking parent chain
-    // We need to do this iteratively to avoid borrow issues
     let parent_ids: Vec<Option<String>> = work_items.iter().map(|wi| wi.parent_id.clone()).collect();
     let ids: Vec<String> = work_items.iter().map(|wi| wi.id.clone()).collect();
-
-    // id -> index lookup for walking
-    let id_to_index: HashMap<String, usize> = ids.iter().enumerate().map(|(i, id)| (id.clone(), i)).collect();
+    let id_to_index: HashMap<String, usize> =
+        ids.iter().enumerate().map(|(i, id)| (id.clone(), i)).collect();
 
     for i in 0..work_items.len() {
         let mut root = ids[i].clone();
-        let mut visited = std::collections::HashSet::new();
+        let mut visited = HashSet::new();
         let mut current = i;
         loop {
             if visited.contains(&current) {
-                eprintln!("  Warning: cycle detected in parent chain for {}", work_items[i].original_callsign);
+                eprintln!(
+                    "  Warning: cycle detected in parent chain for {}",
+                    work_items[i].original_callsign
+                );
                 break;
             }
             visited.insert(current);
             match &parent_ids[current] {
                 None => {
-                    // current is the root
                     root = ids[current].clone();
                     break;
                 }
@@ -382,7 +458,6 @@ fn main() -> Result<()> {
                     if let Some(&next) = id_to_index.get(pid) {
                         current = next;
                     } else {
-                        // parent is outside export, use self as root
                         root = ids[i].clone();
                         break;
                     }
@@ -392,14 +467,11 @@ fn main() -> Result<()> {
         work_items[i].root_work_item_id = Some(root);
     }
 
-    // ---------------------------------------------------------------------------
+    // -----------------------------------------------------------------------
     // Phase 3: Insert work items
-    // ---------------------------------------------------------------------------
-    println!("Phase 3: Inserting work items...");
-    let mut items_inserted = 0usize;
-
+    // -----------------------------------------------------------------------
     for wi in &work_items {
-        let result = conn.execute(
+        let result = knowledge_conn.execute(
             "INSERT OR IGNORE INTO work_items (
                 id, project_id, parent_id, root_work_item_id, callsign, child_sequence,
                 title, description, acceptance_criteria, work_item_type, status, priority,
@@ -425,20 +497,16 @@ fn main() -> Result<()> {
             ],
         );
         match result {
-            Ok(n) if n > 0 => items_inserted += 1,
+            Ok(n) if n > 0 => summary.items_inserted += 1,
             Ok(_) => eprintln!("  Skipped (duplicate): {}", wi.callsign),
             Err(e) => eprintln!("  Error inserting {}: {}", wi.callsign, e),
         }
     }
 
-    println!("  Inserted {} work items", items_inserted);
-
-    // ---------------------------------------------------------------------------
-    // Phase 4: Insert activity logs as documents
-    // ---------------------------------------------------------------------------
-    println!("Phase 4: Inserting activity logs...");
-    let mut activity_logs_inserted = 0usize;
-    let mut link_queue: Vec<(String, String, String)> = Vec::new(); // (source_type, source_id, link_target)
+    // -----------------------------------------------------------------------
+    // Phase 4: Activity logs + wiki-link queue
+    // -----------------------------------------------------------------------
+    let mut link_queue: Vec<(String, String, String)> = Vec::new();
 
     for wi in &work_items {
         if let Some(log_content) = &wi.activity_log {
@@ -446,7 +514,7 @@ fn main() -> Result<()> {
             let slug = format!("{}-activity-log", wi.callsign.to_lowercase());
             let title = format!("{} Activity Log", wi.callsign);
 
-            let result = conn.execute(
+            let result = knowledge_conn.execute(
                 "INSERT OR IGNORE INTO documents (
                     id, project_id, work_item_id, session_id, doc_type, title, slug,
                     status, content_markdown, created_at, updated_at, archived_at
@@ -464,8 +532,7 @@ fn main() -> Result<()> {
             );
             match result {
                 Ok(n) if n > 0 => {
-                    activity_logs_inserted += 1;
-                    // Queue wiki-links
+                    summary.activity_logs_inserted += 1;
                     for link in extract_wiki_links(log_content) {
                         link_queue.push(("document".to_string(), doc_id.clone(), link));
                     }
@@ -476,27 +543,20 @@ fn main() -> Result<()> {
         }
     }
 
-    println!("  Inserted {} activity logs", activity_logs_inserted);
-
-    // Also queue wiki-links from work item descriptions
     for wi in &work_items {
         for link in extract_wiki_links(&wi.description) {
             link_queue.push(("work_item".to_string(), wi.id.clone(), link));
         }
     }
 
-    // ---------------------------------------------------------------------------
-    // Phase 5: Insert artifacts
-    // ---------------------------------------------------------------------------
-    println!("Phase 5: Inserting artifacts...");
-    let mut artifacts_inserted = 0usize;
-
+    // -----------------------------------------------------------------------
+    // Phase 5: Artifacts
+    // -----------------------------------------------------------------------
     for (parent_callsign, filename, zip_name) in &artifact_files {
-        let content = read_zip_entry(&mut archive, zip_name)?;
+        let content = read_zip_entry(archive, zip_name)?;
         let (fm_str, body_raw) = split_frontmatter(&content);
-        let body = rename_body(&body_raw);
+        let body = maybe_rename_body(&body_raw, namespace);
 
-        // Try to get title from frontmatter, fall back to filename stem
         let stem = filename.trim_end_matches(".md");
         let title: String = if !fm_str.is_empty() {
             serde_yaml::from_str::<serde_yaml::Value>(&fm_str)
@@ -507,16 +567,16 @@ fn main() -> Result<()> {
             stem.replace('-', " ")
         };
 
-        // Resolve parent work item id
         let work_item_id = callsign_map.get(parent_callsign).cloned();
         if work_item_id.is_none() {
             eprintln!("  Warning: artifact parent '{}' not found", parent_callsign);
         }
 
         let doc_id = Uuid::new_v4().to_string();
-        let slug = format!("{}-{}", rename_callsign(parent_callsign).to_lowercase(), slug_from_filename(stem));
+        let renamed_parent = maybe_rename_callsign(parent_callsign, namespace);
+        let slug = format!("{}-{}", renamed_parent.to_lowercase(), slug_from_filename(stem));
 
-        let result = conn.execute(
+        let result = knowledge_conn.execute(
             "INSERT OR IGNORE INTO documents (
                 id, project_id, work_item_id, session_id, doc_type, title, slug,
                 status, content_markdown, created_at, updated_at, archived_at
@@ -533,7 +593,7 @@ fn main() -> Result<()> {
         );
         match result {
             Ok(n) if n > 0 => {
-                artifacts_inserted += 1;
+                summary.artifacts_inserted += 1;
                 for link in extract_wiki_links(&body) {
                     link_queue.push(("document".to_string(), doc_id.clone(), link));
                 }
@@ -543,18 +603,13 @@ fn main() -> Result<()> {
         }
     }
 
-    println!("  Inserted {} artifacts", artifacts_inserted);
-
-    // ---------------------------------------------------------------------------
-    // Phase 6: Insert standalone docs
-    // ---------------------------------------------------------------------------
-    println!("Phase 6: Inserting standalone documents...");
-    let mut docs_inserted = 0usize;
-
+    // -----------------------------------------------------------------------
+    // Phase 6: Standalone docs
+    // -----------------------------------------------------------------------
     for (filename, zip_name) in &doc_files {
-        let content = read_zip_entry(&mut archive, zip_name)?;
+        let content = read_zip_entry(archive, zip_name)?;
         let (fm_str, body_raw) = split_frontmatter(&content);
-        let body = rename_body(&body_raw);
+        let body = maybe_rename_body(&body_raw, namespace);
 
         let stem = filename.trim_end_matches(".md");
         let title: String = if !fm_str.is_empty() {
@@ -569,7 +624,7 @@ fn main() -> Result<()> {
         let doc_id = Uuid::new_v4().to_string();
         let slug = slug_from_filename(stem);
 
-        let result = conn.execute(
+        let result = knowledge_conn.execute(
             "INSERT OR IGNORE INTO documents (
                 id, project_id, work_item_id, session_id, doc_type, title, slug,
                 status, content_markdown, created_at, updated_at, archived_at
@@ -585,7 +640,7 @@ fn main() -> Result<()> {
         );
         match result {
             Ok(n) if n > 0 => {
-                docs_inserted += 1;
+                summary.docs_inserted += 1;
                 for link in extract_wiki_links(&body) {
                     link_queue.push(("document".to_string(), doc_id.clone(), link));
                 }
@@ -595,42 +650,32 @@ fn main() -> Result<()> {
         }
     }
 
-    println!("  Inserted {} standalone documents", docs_inserted);
-
-    // ---------------------------------------------------------------------------
-    // Phase 7: Resolve and insert links
-    // ---------------------------------------------------------------------------
-    println!("Phase 7: Inserting wiki-links...");
-
-    // Build a lookup from renamed callsign -> UUID (for resolving [[EMERY-NNN]] references)
-    let renamed_callsign_map: HashMap<String, String> = work_items
+    // -----------------------------------------------------------------------
+    // Phase 7: Wiki-links
+    // -----------------------------------------------------------------------
+    // Build lookup: final callsign -> UUID
+    let callsign_to_uuid: HashMap<String, String> = work_items
         .iter()
         .map(|wi| (wi.callsign.clone(), wi.id.clone()))
         .collect();
 
-    // Callsign pattern: EMERY-NNN
-    let callsign_re = Regex::new(r"^EMERY-\d+$").unwrap();
-
-    let mut links_inserted = 0usize;
+    // Pattern: any UPPERCASE-NNN callsign (e.g. EMERY-42, PROJ-7)
+    let callsign_re = Regex::new(r"^[A-Z][A-Z0-9]*-\d+$").unwrap();
 
     for (source_type, source_id, link_target) in &link_queue {
-        // Determine target
         let (target_type, target_id) = if callsign_re.is_match(link_target) {
-            // It's a work item reference
-            if let Some(tid) = renamed_callsign_map.get(link_target.as_str()) {
+            if let Some(tid) = callsign_to_uuid.get(link_target.as_str()) {
                 ("work_item".to_string(), tid.clone())
             } else {
-                // unknown callsign — skip
                 continue;
             }
         } else {
-            // It's a slug reference to a document — we don't resolve these into IDs
-            // since we'd need to query back; skip for now
+            // slug reference — skip
             continue;
         };
 
         let link_id = Uuid::new_v4().to_string();
-        let result = conn.execute(
+        let result = knowledge_conn.execute(
             "INSERT OR IGNORE INTO links (
                 id, source_entity_type, source_entity_id,
                 target_entity_type, target_entity_id,
@@ -646,26 +691,150 @@ fn main() -> Result<()> {
             ],
         );
         match result {
-            Ok(n) if n > 0 => links_inserted += 1,
+            Ok(n) if n > 0 => summary.links_inserted += 1,
             Ok(_) => {}
             Err(e) => eprintln!("  Error inserting link: {}", e),
         }
     }
 
-    println!("  Inserted {} links", links_inserted);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Main
+// ---------------------------------------------------------------------------
+
+fn main() -> Result<()> {
+    let args = Args::parse();
+
+    // Resolve paths
+    let local_app_data = std::env::var("LOCALAPPDATA")
+        .unwrap_or_else(|_| String::new());
+
+    let knowledge_db_path = match args.knowledge_db {
+        Some(p) => p,
+        None => {
+            if local_app_data.is_empty() {
+                anyhow::bail!("LOCALAPPDATA env var not set; use --knowledge-db");
+            }
+            PathBuf::from(&local_app_data).join("Emery").join("knowledge.db")
+        }
+    };
+
+    let app_db_path = match args.app_db {
+        Some(p) => p,
+        None => {
+            if local_app_data.is_empty() {
+                anyhow::bail!("LOCALAPPDATA env var not set; use --app-db");
+            }
+            PathBuf::from(&local_app_data).join("Emery").join("app.db")
+        }
+    };
+
+    println!("Opening knowledge.db: {}", knowledge_db_path.display());
+    let knowledge_conn = Connection::open(&knowledge_db_path)
+        .with_context(|| format!("Failed to open knowledge.db at {}", knowledge_db_path.display()))?;
+    knowledge_conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+
+    println!("Opening app.db:       {}", app_db_path.display());
+    let app_conn = Connection::open(&app_db_path)
+        .with_context(|| format!("Failed to open app.db at {}", app_db_path.display()))?;
+
+    // Open zip
+    println!("Opening export zip:   {}", args.export_zip.display());
+    let zip_file = std::fs::File::open(&args.export_zip)
+        .with_context(|| format!("Failed to open zip: {}", args.export_zip.display()))?;
+    let mut archive = ZipArchive::new(zip_file)?;
+
+    // Collect all file names upfront
+    let file_names: Vec<String> = (0..archive.len())
+        .map(|i| archive.by_index(i).map(|f| f.name().to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    println!("Found {} entries in zip", file_names.len());
+
+    // Discover namespaces
+    let namespaces = discover_namespaces(&file_names);
+    if namespaces.is_empty() {
+        anyhow::bail!("No namespace directories found in the zip (expected files like NS/NS-NNN.md)");
+    }
+    println!(
+        "Discovered {} namespace(s): {}",
+        namespaces.len(),
+        namespaces.iter().map(|(ns, _)| ns.as_str()).collect::<Vec<_>>().join(", ")
+    );
+
+    // Per-namespace totals
+    let mut all_summaries: Vec<(String, NsSummary)> = Vec::new();
+
+    for (namespace, prefix) in &namespaces {
+        println!("\n========================================");
+        println!("Namespace: {} (prefix: '{}')", namespace, prefix);
+        println!("========================================");
+
+        // Ensure project exists in app.db
+        let project_id = ensure_project(&app_conn, namespace)?;
+
+        let mut summary = NsSummary::default();
+        import_namespace(
+            namespace,
+            prefix,
+            &file_names,
+            &mut archive,
+            &knowledge_conn,
+            &project_id,
+            &mut summary,
+        )?;
+
+        println!(
+            "  Done: {} items, {} logs, {} artifacts, {} docs, {} links",
+            summary.items_inserted,
+            summary.activity_logs_inserted,
+            summary.artifacts_inserted,
+            summary.docs_inserted,
+            summary.links_inserted,
+        );
+
+        all_summaries.push((namespace.clone(), summary));
+    }
 
     // ---------------------------------------------------------------------------
-    // Summary
+    // Final summary
     // ---------------------------------------------------------------------------
     println!("\n========================================");
-    println!("Import complete.");
-    println!("  Work items:      {}", items_inserted);
-    println!("  Activity logs:   {}", activity_logs_inserted);
-    println!("  Artifacts:       {}", artifacts_inserted);
-    println!("  Standalone docs: {}", docs_inserted);
-    println!("  Links:           {}", links_inserted);
-    println!("  Project ID:      {}", project_id);
-    println!("  Database:        {}", db_path.display());
+    println!("Import complete — per-namespace summary:");
+    println!("========================================");
+    println!(
+        "{:<12} {:>8} {:>8} {:>10} {:>8} {:>7}",
+        "Namespace", "Items", "Logs", "Artifacts", "Docs", "Links"
+    );
+    println!("{}", "-".repeat(59));
+
+    let mut total = NsSummary::default();
+    for (ns, s) in &all_summaries {
+        println!(
+            "{:<12} {:>8} {:>8} {:>10} {:>8} {:>7}",
+            ns, s.items_inserted, s.activity_logs_inserted, s.artifacts_inserted, s.docs_inserted, s.links_inserted
+        );
+        total.items_inserted += s.items_inserted;
+        total.activity_logs_inserted += s.activity_logs_inserted;
+        total.artifacts_inserted += s.artifacts_inserted;
+        total.docs_inserted += s.docs_inserted;
+        total.links_inserted += s.links_inserted;
+    }
+    println!("{}", "-".repeat(59));
+    println!(
+        "{:<12} {:>8} {:>8} {:>10} {:>8} {:>7}",
+        "TOTAL",
+        total.items_inserted,
+        total.activity_logs_inserted,
+        total.artifacts_inserted,
+        total.docs_inserted,
+        total.links_inserted
+    );
+    println!("========================================");
+    println!("knowledge.db: {}", knowledge_db_path.display());
+    println!("app.db:       {}", app_db_path.display());
     println!("========================================");
 
     Ok(())
