@@ -592,8 +592,11 @@ class AppStore {
       attached_clients: payload.attached_clients,
     });
 
-    // DING when an agent finishes its work
+    // Session ended: release per-session memory in session-store
     if (entry.live && !payload.live) {
+      sessionStore.onSessionEnded(payload.session_id);
+
+      // DING when an agent finishes its work
       if (payload.runtime_state === "exited") {
         playCompletionDing(); // 🔔 baking timer — agent done
       } else {

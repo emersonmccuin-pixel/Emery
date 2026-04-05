@@ -921,6 +921,17 @@ impl SessionRegistry {
         Ok(())
     }
 
+    /// Release all remaining state subscribers after the final broadcast.
+    /// Dropping the Senders signals to any waiting Receivers that the channel
+    /// is closed, preventing subscriber threads from blocking indefinitely.
+    fn clear_state_subscribers_after_exit(&self, session_id: &str) {
+        if let Ok(mut guard) = self.lock() {
+            if let Some(state) = guard.get_mut(session_id) {
+                state.state_subscribers.clear();
+            }
+        }
+    }
+
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, HashMap<String, RuntimeSessionState>>> {
         self.inner
             .lock()
@@ -1021,6 +1032,10 @@ fn wait_for_exit(
                             "failed to publish exit state for session {session_id}: {error:#}"
                         );
                     }
+                    // Release all state subscriber channels — session is done and
+                    // will never produce more state events. This signals waiting
+                    // Receivers that the channel is closed.
+                    registry.clear_state_subscribers_after_exit(session_id);
                     let _ = registry.diagnostics.record(
                         "runtime",
                         "session.exited",
@@ -1070,6 +1085,7 @@ fn wait_for_exit(
                     "failed to publish failed exit state for session {session_id}: {event_error:#}"
                 );
             }
+            registry.clear_state_subscribers_after_exit(session_id);
             let _ = registry.diagnostics.record_with_level(
                 "error",
                 "runtime",
