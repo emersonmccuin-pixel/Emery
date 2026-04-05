@@ -5,6 +5,7 @@ type DocsSectionProps = {
   documents: DocumentSummary[];
   workItems: WorkItemSummary[];
   onOpen?: (documentId: string) => void;
+  onNew?: () => void;
 };
 
 function formatUpdatedAt(updatedAt: number): string {
@@ -14,7 +15,7 @@ function formatUpdatedAt(updatedAt: number): string {
   });
 }
 
-export function DocsSection({ documents, workItems, onOpen }: DocsSectionProps) {
+export function DocsSection({ documents, workItems, onOpen, onNew }: DocsSectionProps) {
   const workItemById = useMemo(() => {
     const map: Record<string, WorkItemSummary> = {};
     for (const item of workItems) map[item.id] = item;
@@ -37,6 +38,9 @@ export function DocsSection({ documents, workItems, onOpen }: DocsSectionProps) 
       <section className="project-section docs-section">
         <div className="section-header">
           <h3>Documents</h3>
+          {onNew && (
+            <button className="section-new-btn" onClick={onNew} title="New document">+</button>
+          )}
         </div>
         <p className="section-empty">No documents yet.</p>
       </section>
@@ -48,6 +52,9 @@ export function DocsSection({ documents, workItems, onOpen }: DocsSectionProps) 
       <div className="section-header">
         <h3>Documents</h3>
         <span className="section-count">{documents.length}</span>
+        {onNew && (
+          <button className="section-new-btn" onClick={onNew} title="New document">+</button>
+        )}
       </div>
 
       {grouped ? (
