@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "mcp__wcp__wcp_get",
-      "Bash(code:*)",
-      "mcp__wcp__wcp_update"
-    ]
-  }
-}
