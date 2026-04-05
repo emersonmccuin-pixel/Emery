@@ -1,8 +1,71 @@
 import { useEffect, useState } from "react";
 import { appStore, useAppStore } from "../store";
 import { navStore } from "../nav-store";
-import { pickFolder, listAgentTemplates, createAgentTemplate, updateAgentTemplate, archiveAgentTemplate } from "../lib";
+import { pickFolder, listAgentTemplates, createAgentTemplate, updateAgentTemplate, archiveAgentTemplate, updateProject } from "../lib";
 import type { AgentTemplateSummary, ProjectRootSummary } from "../types";
+
+// ---- Model defaults helpers ----
+
+type ModelDefaultsByMode = {
+  planning: string;
+  research: string;
+  execution: string;
+  follow_up: string;
+};
+
+type ModelDefaults = {
+  by_origin_mode: ModelDefaultsByMode;
+  default: string;
+};
+
+const ORIGIN_MODE_LABELS: { key: keyof ModelDefaultsByMode; label: string }[] = [
+  { key: "planning", label: "Planning" },
+  { key: "research", label: "Research" },
+  { key: "execution", label: "Execution" },
+  { key: "follow_up", label: "Follow-up" },
+];
+
+const MODEL_OPTIONS = [
+  { value: "", label: "Use default" },
+  { value: "opus", label: "Opus" },
+  { value: "sonnet", label: "Sonnet" },
+];
+
+function parseModelDefaults(json: string | null | undefined): ModelDefaults {
+  const empty: ModelDefaults = {
+    by_origin_mode: { planning: "", research: "", execution: "", follow_up: "" },
+    default: "",
+  };
+  if (!json) return empty;
+  try {
+    const parsed = JSON.parse(json) as Partial<ModelDefaults>;
+    return {
+      by_origin_mode: {
+        planning: parsed.by_origin_mode?.planning ?? "",
+        research: parsed.by_origin_mode?.research ?? "",
+        execution: parsed.by_origin_mode?.execution ?? "",
+        follow_up: parsed.by_origin_mode?.follow_up ?? "",
+      },
+      default: parsed.default ?? "",
+    };
+  } catch {
+    return empty;
+  }
+}
+
+function serializeModelDefaults(defaults: ModelDefaults): string | null {
+  const by_origin_mode: Partial<Record<keyof ModelDefaultsByMode, string>> = {};
+  for (const { key } of ORIGIN_MODE_LABELS) {
+    if (defaults.by_origin_mode[key]) {
+      by_origin_mode[key] = defaults.by_origin_mode[key];
+    }
+  }
+  const obj: Record<string, unknown> = {};
+  if (Object.keys(by_origin_mode).length > 0) obj.by_origin_mode = by_origin_mode;
+  if (defaults.default) obj.default = defaults.default;
+  if (Object.keys(obj).length === 0) return null;
+  return JSON.stringify(obj);
+}
 
 export function ProjectSettingsView({ projectId }: { projectId: string }) {
   const projectDetails = useAppStore((s) => s.projectDetails);
@@ -19,6 +82,11 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
   const [agentTemplates, setAgentTemplates] = useState<AgentTemplateSummary[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const [showAddTemplate, setShowAddTemplate] = useState(false);
+  const [modelDefaults, setModelDefaults] = useState<ModelDefaults>(() =>
+    parseModelDefaults(null),
+  );
+  const [modelDefaultsSaving, setModelDefaultsSaving] = useState(false);
+  const [modelDefaultsSaved, setModelDefaultsSaved] = useState(false);
 
   useEffect(() => {
     void appStore.loadProjectReads(projectId);
@@ -37,6 +105,12 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
       setNameInput(project.name);
     }
   }, [project?.name]);
+
+  useEffect(() => {
+    if (project) {
+      setModelDefaults(parseModelDefaults(project.model_defaults_json));
+    }
+  }, [project?.model_defaults_json]);
 
   const savingName = loadingKeys[`save-project-name:${projectId}`] ?? false;
   const addingRoot = loadingKeys[`add-project-root:${projectId}`] ?? false;
@@ -85,6 +159,22 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
     setConfirmArchive(false);
     await appStore.handleArchiveProject(projectId);
     navStore.goHome();
+  }
+
+  async function handleSaveModelDefaults() {
+    setModelDefaultsSaved(false);
+    setModelDefaultsSaving(true);
+    try {
+      const json = serializeModelDefaults(modelDefaults);
+      const detail = await updateProject(projectId, { model_defaults_json: json });
+      appStore.applyProjectDetail(detail);
+      setModelDefaultsSaved(true);
+      setTimeout(() => setModelDefaultsSaved(false), 2000);
+    } catch {
+      // leave state as-is on error
+    } finally {
+      setModelDefaultsSaving(false);
+    }
   }
 
   async function refreshTemplates() {
@@ -222,6 +312,62 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
               ))}
             </div>
           )}
+        </section>
+
+        {/* Model Defaults section */}
+        <section className="settings-section">
+          <h3 className="settings-section-title">Model Defaults</h3>
+          <p className="settings-section-desc">
+            Override the model used per origin mode. Leave empty to use the global default.
+          </p>
+          <div className="model-defaults-grid">
+            {ORIGIN_MODE_LABELS.map(({ key, label }) => (
+              <div className="model-defaults-row" key={key}>
+                <span className="model-defaults-mode-label">{label}</span>
+                <select
+                  className="model-defaults-select"
+                  value={modelDefaults.by_origin_mode[key]}
+                  onChange={(e) =>
+                    setModelDefaults((prev) => ({
+                      ...prev,
+                      by_origin_mode: { ...prev.by_origin_mode, [key]: e.target.value },
+                    }))
+                  }
+                >
+                  {MODEL_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+            <div className="model-defaults-row model-defaults-row-default">
+              <span className="model-defaults-mode-label">Default (fallback)</span>
+              <select
+                className="model-defaults-select"
+                value={modelDefaults.default}
+                onChange={(e) =>
+                  setModelDefaults((prev) => ({ ...prev, default: e.target.value }))
+                }
+              >
+                {MODEL_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="model-defaults-actions">
+            <button
+              className="btn-primary btn-sm"
+              onClick={() => void handleSaveModelDefaults()}
+              disabled={modelDefaultsSaving}
+            >
+              {modelDefaultsSaving ? "Saving..." : modelDefaultsSaved ? "Saved" : "Save"}
+            </button>
+          </div>
         </section>
 
         {/* Danger Zone */}

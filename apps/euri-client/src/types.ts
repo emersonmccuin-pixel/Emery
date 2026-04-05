@@ -5,6 +5,7 @@ export type ProjectSummary = {
   sort_order: number;
   default_account_id: string | null;
   project_type: string | null;
+  model_defaults_json: string | null;
   root_count: number;
   live_session_count: number;
   created_at: number;
@@ -33,6 +34,7 @@ export type ProjectDetail = {
   sort_order: number;
   default_account_id: string | null;
   project_type: string | null;
+  model_defaults_json: string | null;
   settings_json: string | null;
   created_at: number;
   updated_at: number;

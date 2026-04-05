@@ -86,6 +86,16 @@ impl SupervisorService {
         let now = unix_time_seconds();
         let project_id = format!("proj_{}", Uuid::new_v4().simple());
 
+        // If model_defaults_json is explicitly provided, use it.
+        // Otherwise, if a project_type is set, auto-derive from its templates.
+        let model_defaults_json = if let Some(mdj) = optional_trimmed(request.model_defaults_json) {
+            Some(mdj)
+        } else if let Some(ref ptype) = project_type {
+            derive_model_defaults_from_templates(ptype)
+        } else {
+            None
+        };
+
         let record = NewProjectRecord {
             id: project_id.clone(),
             name,
@@ -93,6 +103,7 @@ impl SupervisorService {
             sort_order,
             default_account_id,
             project_type: project_type.clone(),
+            model_defaults_json,
             settings_json: optional_trimmed(request.settings_json),
             instructions_md: optional_trimmed(request.instructions_md),
             created_at: now,
@@ -163,6 +174,10 @@ impl SupervisorService {
             Some(value) => optional_trimmed(Some(value)),
             None => existing.instructions_md.clone(),
         };
+        let model_defaults_json = match request.model_defaults_json {
+            Some(value) => optional_trimmed(Some(value)),
+            None => existing.model_defaults_json.clone(),
+        };
 
         let record = ProjectUpdateRecord {
             id: existing.id.clone(),
@@ -171,6 +186,7 @@ impl SupervisorService {
             sort_order: request.sort_order.unwrap_or(existing.sort_order),
             default_account_id,
             project_type,
+            model_defaults_json,
             settings_json,
             instructions_md,
             updated_at: unix_time_seconds(),
@@ -1500,6 +1516,21 @@ impl SupervisorService {
 
         // 3. Project-level override
         if let Some(project) = self.databases.get_project(project_id)? {
+            // 3a. New model_defaults_json (by_origin_mode → default)
+            if let Some(mdj) = &project.model_defaults_json {
+                if let Ok(defaults) = serde_json::from_str::<serde_json::Value>(mdj) {
+                    // Check by_origin_mode first, then fall back to default
+                    let by_mode = defaults
+                        .get("by_origin_mode")
+                        .and_then(|m| m.get(origin_mode))
+                        .and_then(|v| v.as_str());
+                    let fallback = defaults.get("default").and_then(|v| v.as_str());
+                    if let Some(m) = by_mode.or(fallback) {
+                        model = Some(m.to_string());
+                    }
+                }
+            }
+            // 3b. Legacy agent_safety_overrides_json model lookup (backward compat)
             if let Some(overrides_json) = &project.agent_safety_overrides_json {
                 if let Ok(overrides) = serde_json::from_str::<serde_json::Value>(overrides_json) {
                     if let Some(agent_config) = overrides.get(agent_kind) {
@@ -3282,6 +3313,49 @@ fn default_templates_for_type(project_type: &str) -> Vec<TemplateSpec> {
         ],
         _ => vec![],
     }
+}
+
+/// Derive a `model_defaults_json` value from the default templates for a project type.
+/// Collects unique `default_model` values and maps them to origin_mode defaults
+/// that make sense for the project type's template set.
+fn derive_model_defaults_from_templates(project_type: &str) -> Option<String> {
+    let templates = default_templates_for_type(project_type);
+    if templates.is_empty() {
+        return None;
+    }
+
+    // Collect the most common model to use as the "default" fallback.
+    // Also build by_origin_mode using the template's origin_mode mapped to its model.
+    // Since multiple templates may share an origin_mode, we pick the first model seen per mode.
+    let mut by_origin_mode: serde_json::Map<String, serde_json::Value> =
+        serde_json::Map::new();
+    let mut default_model: Option<String> = None;
+
+    for tpl in &templates {
+        if let Some(ref model) = tpl.default_model {
+            if default_model.is_none() {
+                default_model = Some(model.clone());
+            }
+            let mode = tpl.origin_mode.as_str();
+            if !by_origin_mode.contains_key(mode) {
+                by_origin_mode.insert(mode.to_string(), serde_json::Value::String(model.clone()));
+            }
+        }
+    }
+
+    if by_origin_mode.is_empty() && default_model.is_none() {
+        return None;
+    }
+
+    let mut obj = serde_json::Map::new();
+    if !by_origin_mode.is_empty() {
+        obj.insert("by_origin_mode".to_string(), serde_json::Value::Object(by_origin_mode));
+    }
+    if let Some(dm) = default_model {
+        obj.insert("default".to_string(), serde_json::Value::String(dm));
+    }
+
+    serde_json::to_string(&serde_json::Value::Object(obj)).ok()
 }
 
 fn unix_time_seconds() -> i64 {
