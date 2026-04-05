@@ -757,6 +757,23 @@ fn update_project(
 }
 
 #[tauri::command]
+fn archive_project(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    project_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "project.archive",
+            json!({ "project_id": project_id }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
 fn get_work_item(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
@@ -1384,6 +1401,7 @@ fn main() {
             get_session,
             create_project,
             update_project,
+            archive_project,
             list_work_items,
             get_work_item,
             create_work_item,

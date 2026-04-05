@@ -130,6 +130,13 @@ export async function updateProject(
   return invoke("update_project", { projectId, input, correlationId });
 }
 
+export async function archiveProject(
+  projectId: string,
+  correlationId?: string,
+): Promise<ProjectDetail> {
+  return invoke("archive_project", { projectId, correlationId });
+}
+
 export async function getWorkItem(
   workItemId: string,
   correlationId?: string,

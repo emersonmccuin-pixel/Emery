@@ -3864,6 +3864,54 @@ button {
 .settings-root-info {
   flex: 1;
   min-width: 0;
+}
+
+/* --- Settings danger zone --- */
+
+.settings-danger-zone {
+  margin-top: 8px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid rgba(var(--color-error-rgb, 255, 45, 120), 0.35);
+  background: rgba(var(--color-error-rgb, 255, 45, 120), 0.05);
+}
+
+.settings-danger-zone-title {
+  color: var(--color-error) !important;
+}
+
+.settings-danger-zone-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-danger-zone-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-danger-zone-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-danger-zone-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.settings-danger-zone-description {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
 /* --- Inbox --- */
 
 .inbox-view {
@@ -3990,6 +4038,8 @@ button {
 
 .btn-danger:hover:not(:disabled) {
   opacity: 0.85;
+}
+
 .inbox-entry {
   border: 1px solid var(--border-subtle);
   background: var(--surface-raised);

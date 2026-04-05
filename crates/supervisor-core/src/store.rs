@@ -406,6 +406,58 @@ impl DatabaseSet {
         Ok(())
     }
 
+    pub fn archive_project(&self, project_id: &str, now: i64) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let updated = connection.execute(
+            "UPDATE projects
+             SET archived_at = COALESCE(archived_at, ?2),
+                 updated_at = ?2
+             WHERE id = ?1",
+            params![project_id, now],
+        )?;
+
+        if updated == 0 {
+            return Err(anyhow!("project {} was not found", project_id));
+        }
+
+        Ok(())
+    }
+
+    pub fn archive_project_roots_for_project(&self, project_id: &str, now: i64) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "UPDATE project_roots
+             SET archived_at = COALESCE(archived_at, ?2),
+                 updated_at = ?2
+             WHERE project_id = ?1",
+            params![project_id, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn project_has_live_sessions(&self, project_id: &str) -> Result<bool> {
+        let connection = open_connection(&self.paths.app_db)?;
+        exists(
+            &connection,
+            "SELECT 1 FROM sessions
+             WHERE project_id = ?1
+               AND status = 'active'
+               AND runtime_state IN ('starting', 'running', 'stopping')",
+            params![project_id],
+        )
+    }
+
+    pub fn project_has_pending_merges(&self, project_id: &str) -> Result<bool> {
+        let connection = open_connection(&self.paths.app_db)?;
+        exists(
+            &connection,
+            "SELECT 1 FROM merge_queue
+             WHERE project_id = ?1
+               AND status IN ('queued', 'ready', 'merging', 'conflict')",
+            params![project_id],
+        )
+    }
+
     pub fn archive_project_root(&self, project_root_id: &str, now: i64) -> Result<()> {
         let connection = open_connection(&self.paths.app_db)?;
         let updated = connection.execute(

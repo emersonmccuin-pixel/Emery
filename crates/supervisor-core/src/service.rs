@@ -23,8 +23,8 @@ use crate::models::{
     NewSessionSpecRecord, NewWorkItemRecord, NewWorkflowReconciliationProposalRecord,
     NewWorktreeRecord, PlanningAssignmentDetail, PlanningAssignmentListFilter,
     PlanningAssignmentSummary, PlanningAssignmentUpdateRecord, ProjectDetail, ProjectRootSummary,
-    ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord, GitInitProjectRootRequest,
-    SetProjectRootRemoteRequest, RemoveProjectRootRequest,
+    ArchiveProjectRequest, ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord,
+    GitInitProjectRootRequest, SetProjectRootRemoteRequest, RemoveProjectRootRequest,
     SessionArtifactRecord, SessionAttachResponse, SessionDetachResponse, SessionDetail,
     SessionListFilter, SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary,
     SessionSpecUpdateRecord, SessionStateChangedEvent, SessionSummary, SessionWatchResponse,
@@ -382,6 +382,37 @@ impl SupervisorService {
         self.databases
             .get_project_root(&existing.id)?
             .ok_or_else(|| anyhow!("project root {} was not found", existing.id))
+    }
+
+    pub fn archive_project(&self, request: ArchiveProjectRequest) -> Result<ProjectDetail> {
+        let existing = self
+            .get_project(&request.project_id)?
+            .ok_or_else(|| anyhow!("project {} was not found", request.project_id))?;
+
+        if existing.archived_at.is_some() {
+            return Err(anyhow!("project '{}' is already archived", existing.name));
+        }
+
+        if self.databases.project_has_live_sessions(&request.project_id)? {
+            return Err(anyhow!(
+                "cannot archive project '{}': it has active sessions running",
+                existing.name
+            ));
+        }
+
+        if self.databases.project_has_pending_merges(&request.project_id)? {
+            return Err(anyhow!(
+                "cannot archive project '{}': it has pending merge queue entries",
+                existing.name
+            ));
+        }
+
+        let now = unix_time_seconds();
+        self.databases.archive_project(&request.project_id, now)?;
+        self.databases.archive_project_roots_for_project(&request.project_id, now)?;
+
+        self.get_project(&request.project_id)?
+            .ok_or_else(|| anyhow!("project {} was not found", request.project_id))
     }
 
     pub fn list_accounts(&self) -> Result<Vec<AccountSummary>> {
