@@ -56,6 +56,13 @@ pub enum Method {
     SessionTerminate,
     SubscriptionOpen,
     SubscriptionClose,
+    MergeQueueList,
+    MergeQueueGet,
+    MergeQueueGetDiff,
+    MergeQueueMerge,
+    MergeQueuePark,
+    MergeQueueReorder,
+    MergeQueueCheckConflicts,
 }
 
 impl Method {
@@ -114,6 +121,13 @@ impl Method {
             Self::SessionTerminate => "session.terminate",
             Self::SubscriptionOpen => "subscription.open",
             Self::SubscriptionClose => "subscription.close",
+            Self::MergeQueueList => "merge_queue.list",
+            Self::MergeQueueGet => "merge_queue.get",
+            Self::MergeQueueGetDiff => "merge_queue.get_diff",
+            Self::MergeQueueMerge => "merge_queue.merge",
+            Self::MergeQueuePark => "merge_queue.park",
+            Self::MergeQueueReorder => "merge_queue.reorder",
+            Self::MergeQueueCheckConflicts => "merge_queue.check_conflicts",
         }
     }
 }
@@ -180,6 +194,13 @@ impl TryFrom<&str> for Method {
             "session.terminate" => Ok(Self::SessionTerminate),
             "subscription.open" => Ok(Self::SubscriptionOpen),
             "subscription.close" => Ok(Self::SubscriptionClose),
+            "merge_queue.list" => Ok(Self::MergeQueueList),
+            "merge_queue.get" => Ok(Self::MergeQueueGet),
+            "merge_queue.get_diff" => Ok(Self::MergeQueueGetDiff),
+            "merge_queue.merge" => Ok(Self::MergeQueueMerge),
+            "merge_queue.park" => Ok(Self::MergeQueuePark),
+            "merge_queue.reorder" => Ok(Self::MergeQueueReorder),
+            "merge_queue.check_conflicts" => Ok(Self::MergeQueueCheckConflicts),
             _ => Err(()),
         }
     }

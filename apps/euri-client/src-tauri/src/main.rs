@@ -1022,6 +1022,126 @@ fn poll_events(manager: State<'_, Arc<SupervisorManager>>) -> Vec<FrontendEvent>
     buf.drain(..).collect()
 }
 
+#[tauri::command]
+fn list_merge_queue(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    project_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "merge_queue.list",
+            json!({ "project_id": project_id }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn get_merge_queue_entry(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    merge_queue_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "merge_queue.get",
+            json!({ "merge_queue_id": merge_queue_id }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn get_merge_queue_diff(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    merge_queue_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "merge_queue.get_diff",
+            json!({ "merge_queue_id": merge_queue_id }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn merge_queue_merge(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    merge_queue_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "merge_queue.merge",
+            json!({ "merge_queue_id": merge_queue_id }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn merge_queue_park(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    merge_queue_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "merge_queue.park",
+            json!({ "merge_queue_id": merge_queue_id }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn merge_queue_reorder(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    project_id: String,
+    ordered_ids: Vec<String>,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "merge_queue.reorder",
+            json!({ "project_id": project_id, "ordered_ids": ordered_ids }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn merge_queue_check_conflicts(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    merge_queue_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "merge_queue.check_conflicts",
+            json!({ "merge_queue_id": merge_queue_id }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
 fn main() {
     if let Err(error) = debug_dev_server_preflight() {
         eprintln!("{error}");
@@ -1059,7 +1179,14 @@ fn main() {
             update_workflow_reconciliation_proposal,
             create_session,
             export_diagnostics_bundle,
-            poll_events
+            poll_events,
+            list_merge_queue,
+            get_merge_queue_entry,
+            get_merge_queue_diff,
+            merge_queue_merge,
+            merge_queue_park,
+            merge_queue_reorder,
+            merge_queue_check_conflicts
         ])
         .run(tauri::generate_context!())
         .expect("failed to run EURI client");

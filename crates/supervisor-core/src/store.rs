@@ -6,21 +6,22 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::bootstrap::AppPaths;
+use crate::git;
 use crate::models::{
     AccountDetail, AccountSummary, AccountUpdateRecord, DocumentDetail, DocumentListFilter,
-    DocumentSummary, DocumentUpdateRecord, NewAccountRecord, NewDocumentRecord,
-    NewPlanningAssignmentRecord, NewProjectRecord, NewProjectRootRecord, NewSessionRecord,
-    NewSessionSpecRecord, NewWorkItemRecord, NewWorkflowReconciliationProposalRecord,
-    NewWorktreeRecord, PlanningAssignmentDetail, PlanningAssignmentListFilter,
-    PlanningAssignmentSummary, PlanningAssignmentUpdateRecord, ProjectDetail, ProjectRootSummary,
-    ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord, SessionArtifactRecord,
-    SessionListFilter, SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary,
-    SessionSpecUpdateRecord, SessionSummary, UpdateWorkspaceStateRequest, WorkItemDetail,
-    WorkItemListFilter, WorkItemSummary, WorkItemUpdateRecord,
-    WorkflowReconciliationProposalDetail, WorkflowReconciliationProposalListFilter,
-    WorkflowReconciliationProposalSummary, WorkflowReconciliationProposalUpdateRecord,
-    WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary,
-    WorktreeUpdateRecord,
+    DocumentSummary, DocumentUpdateRecord, MergeQueueEntry, MergeQueueListFilter,
+    NewAccountRecord, NewDocumentRecord, NewMergeQueueRecord, NewPlanningAssignmentRecord,
+    NewProjectRecord, NewProjectRootRecord, NewSessionRecord, NewSessionSpecRecord,
+    NewWorkItemRecord, NewWorkflowReconciliationProposalRecord, NewWorktreeRecord,
+    PlanningAssignmentDetail, PlanningAssignmentListFilter, PlanningAssignmentSummary,
+    PlanningAssignmentUpdateRecord, ProjectDetail, ProjectRootSummary, ProjectRootUpdateRecord,
+    ProjectSummary, ProjectUpdateRecord, SessionArtifactRecord, SessionListFilter,
+    SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary, SessionSpecUpdateRecord,
+    SessionSummary, UpdateWorkspaceStateRequest, WorkItemDetail, WorkItemListFilter,
+    WorkItemSummary, WorkItemUpdateRecord, WorkflowReconciliationProposalDetail,
+    WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
+    WorkflowReconciliationProposalUpdateRecord, WorkspaceStateRecord, WorktreeDetail,
+    WorktreeListFilter, WorktreeSummary, WorktreeUpdateRecord,
 };
 use crate::schema::{migrate_app_db, migrate_knowledge_db};
 
@@ -2428,6 +2429,157 @@ impl DatabaseSet {
             project_root_id
         ))
     }
+
+    // --- Merge Queue ---
+
+    pub fn insert_merge_queue_entry(&self, record: &NewMergeQueueRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "INSERT INTO merge_queue (
+                id, project_id, session_id, worktree_id, branch_name,
+                base_ref, position, status, diff_stat_json,
+                conflict_files_json, has_uncommitted_changes, queued_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                record.id,
+                record.project_id,
+                record.session_id,
+                record.worktree_id,
+                record.branch_name,
+                record.base_ref,
+                record.position,
+                record.status,
+                record.diff_stat_json,
+                record.conflict_files_json,
+                bool_to_sqlite(record.has_uncommitted_changes),
+                record.queued_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_merge_queue(&self, filter: &MergeQueueListFilter) -> Result<Vec<MergeQueueEntry>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let mut sql = String::from(
+            "SELECT
+                mq.id, mq.project_id, mq.session_id, mq.worktree_id,
+                mq.branch_name, mq.base_ref, mq.position, mq.status,
+                mq.diff_stat_json, mq.conflict_files_json,
+                mq.has_uncommitted_changes, mq.queued_at, mq.merged_at,
+                s.title AS session_title,
+                wi.callsign AS work_item_callsign
+             FROM merge_queue mq
+             LEFT JOIN sessions s ON s.id = mq.session_id
+             LEFT JOIN work_items wi ON wi.id = s.work_item_id
+             WHERE mq.project_id = ?1",
+        );
+        let mut values: Vec<String> = vec![filter.project_id.clone()];
+        if let Some(ref status) = filter.status {
+            sql.push_str(" AND mq.status = ?");
+            values.push(status.clone());
+        }
+        sql.push_str(" ORDER BY mq.position ASC");
+
+        let mut statement = connection.prepare(&sql)?;
+        let rows = statement.query_map(params_from_iter(values.iter()), map_merge_queue_entry)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn get_merge_queue_entry(&self, id: &str) -> Result<Option<MergeQueueEntry>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection
+            .query_row(
+                "SELECT
+                    mq.id, mq.project_id, mq.session_id, mq.worktree_id,
+                    mq.branch_name, mq.base_ref, mq.position, mq.status,
+                    mq.diff_stat_json, mq.conflict_files_json,
+                    mq.has_uncommitted_changes, mq.queued_at, mq.merged_at,
+                    s.title AS session_title,
+                    wi.callsign AS work_item_callsign
+                 FROM merge_queue mq
+                 LEFT JOIN sessions s ON s.id = mq.session_id
+                 LEFT JOIN work_items wi ON wi.id = s.work_item_id
+                 WHERE mq.id = ?1",
+                [id],
+                map_merge_queue_entry,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn update_merge_queue_status(
+        &self,
+        id: &str,
+        status: &str,
+        merged_at: Option<i64>,
+    ) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "UPDATE merge_queue SET status = ?2, merged_at = ?3 WHERE id = ?1",
+            params![id, status, merged_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_merge_queue_diff_stat(&self, id: &str, diff_stat_json: &str) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "UPDATE merge_queue SET diff_stat_json = ?2 WHERE id = ?1",
+            params![id, diff_stat_json],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_merge_queue_conflict_files(
+        &self,
+        id: &str,
+        conflict_files_json: &str,
+    ) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "UPDATE merge_queue SET conflict_files_json = ?2 WHERE id = ?1",
+            params![id, conflict_files_json],
+        )?;
+        Ok(())
+    }
+
+    pub fn reorder_merge_queue(&self, project_id: &str, ordered_ids: &[String]) -> Result<()> {
+        let mut connection = open_connection(&self.paths.app_db)?;
+        let tx = connection.transaction()?;
+        for (index, id) in ordered_ids.iter().enumerate() {
+            tx.execute(
+                "UPDATE merge_queue SET position = ?2 WHERE id = ?1 AND project_id = ?3",
+                params![id, index as i64, project_id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn next_merge_queue_position(&self, project_id: &str) -> Result<i64> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let position: i64 = connection.query_row(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM merge_queue WHERE project_id = ?1",
+            [project_id],
+            |row| row.get(0),
+        )?;
+        Ok(position)
+    }
+
+    pub fn update_worktree_status(
+        &self,
+        worktree_id: &str,
+        status: &str,
+        updated_at: i64,
+    ) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "UPDATE worktrees SET status = ?2, updated_at = ?3 WHERE id = ?1",
+            params![worktree_id, status, updated_at],
+        )?;
+        Ok(())
+    }
 }
 
 fn open_connection(path: &Path) -> Result<Connection> {
@@ -2695,4 +2847,35 @@ fn parse_args_json(value: &str) -> rusqlite::Result<Vec<String>> {
 fn parse_json_value(value: &str) -> rusqlite::Result<Value> {
     serde_json::from_str(value)
         .map_err(|error| rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(error)))
+}
+
+fn map_merge_queue_entry(row: &Row<'_>) -> rusqlite::Result<MergeQueueEntry> {
+    let diff_stat_json: Option<String> = row.get(8)?;
+    let conflict_files_json: Option<String> = row.get(9)?;
+    let has_uncommitted: i64 = row.get(10)?;
+
+    let diff_stat = diff_stat_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<git::DiffStat>(s).ok());
+    let conflict_files = conflict_files_json
+        .as_deref()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok());
+
+    Ok(MergeQueueEntry {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        session_id: row.get(2)?,
+        worktree_id: row.get(3)?,
+        branch_name: row.get(4)?,
+        base_ref: row.get(5)?,
+        position: row.get(6)?,
+        status: row.get(7)?,
+        diff_stat,
+        conflict_files,
+        has_uncommitted_changes: has_uncommitted != 0,
+        queued_at: row.get(11)?,
+        merged_at: row.get(12)?,
+        session_title: row.get(13)?,
+        work_item_callsign: row.get(14)?,
+    })
 }

@@ -20,6 +20,10 @@ const APP_MIGRATIONS: &[(&str, &str)] = &[
         "0004_workflow_reconciliation_shape",
         include_str!("migrations/app/0004_workflow_reconciliation_shape.sql"),
     ),
+    (
+        "0005_merge_queue",
+        include_str!("migrations/app/0005_merge_queue.sql"),
+    ),
 ];
 const KNOWLEDGE_MIGRATIONS: &[(&str, &str)] = &[(
     "0001_initial",

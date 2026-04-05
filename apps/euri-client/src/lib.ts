@@ -4,6 +4,7 @@ import type {
   DiagnosticsBundleResult,
   DocumentDetail,
   DocumentSummary,
+  MergeQueueEntry,
   PlanningAssignmentDetail,
   PlanningAssignmentSummary,
   ProjectDetail,
@@ -302,6 +303,51 @@ export async function exportDiagnosticsBundle(
     frontendEvents,
     correlationId,
   });
+}
+
+// --- Merge Queue ---
+
+export async function listMergeQueue(
+  projectId: string,
+  correlationId?: string,
+): Promise<MergeQueueEntry[]> {
+  return invoke("list_merge_queue", { projectId, correlationId });
+}
+
+export async function getMergeQueueDiff(
+  mergeQueueId: string,
+  correlationId?: string,
+): Promise<{ diff: string }> {
+  return invoke("get_merge_queue_diff", { mergeQueueId, correlationId });
+}
+
+export async function mergeQueueMerge(
+  mergeQueueId: string,
+  correlationId?: string,
+): Promise<void> {
+  await invoke("merge_queue_merge", { mergeQueueId, correlationId });
+}
+
+export async function mergeQueuePark(
+  mergeQueueId: string,
+  correlationId?: string,
+): Promise<void> {
+  await invoke("merge_queue_park", { mergeQueueId, correlationId });
+}
+
+export async function mergeQueueReorder(
+  projectId: string,
+  orderedIds: string[],
+  correlationId?: string,
+): Promise<void> {
+  await invoke("merge_queue_reorder", { projectId, orderedIds, correlationId });
+}
+
+export async function mergeQueueCheckConflicts(
+  mergeQueueId: string,
+  correlationId?: string,
+): Promise<{ conflicts: string[] }> {
+  return invoke("merge_queue_check_conflicts", { mergeQueueId, correlationId });
 }
 
 export function connectionLabel(event: ConnectionStatusEvent | null): string {

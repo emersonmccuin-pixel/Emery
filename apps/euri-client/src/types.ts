@@ -246,6 +246,31 @@ export type DocumentSummary = {
 
 export type DocumentDetail = DocumentSummary;
 
+export type MergeQueueDiffStat = {
+  files_changed: number;
+  insertions: number;
+  deletions: number;
+  raw: string;
+};
+
+export type MergeQueueEntry = {
+  id: string;
+  project_id: string;
+  session_id: string;
+  worktree_id: string;
+  branch_name: string;
+  base_ref: string;
+  position: number;
+  status: "pending" | "ready" | "merging" | "merged" | "conflict" | "parked";
+  diff_stat: MergeQueueDiffStat | null;
+  conflict_files: string[] | null;
+  has_uncommitted_changes: boolean;
+  queued_at: number;
+  merged_at: number | null;
+  session_title: string | null;
+  work_item_callsign: string | null;
+};
+
 export type WorkspaceResource =
   | {
       resource_type: "project_home";
@@ -266,6 +291,11 @@ export type WorkspaceResource =
   | {
       resource_type: "document_detail";
       document_id: string;
+      project_id: string;
+      resource_id: string;
+    }
+  | {
+      resource_type: "merge_queue";
       project_id: string;
       resource_id: string;
     };

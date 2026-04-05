@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::git;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectSummary {
     pub id: String,
@@ -986,4 +988,78 @@ pub struct SessionArtifactRecord {
     pub generator_ref: Option<String>,
     pub supersedes_artifact_id: Option<String>,
     pub created_at: i64,
+}
+
+// --- Merge Queue ---
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MergeQueueEntry {
+    pub id: String,
+    pub project_id: String,
+    pub session_id: String,
+    pub worktree_id: String,
+    pub branch_name: String,
+    pub base_ref: String,
+    pub position: i64,
+    pub status: String,
+    pub diff_stat: Option<git::DiffStat>,
+    pub conflict_files: Option<Vec<String>>,
+    pub has_uncommitted_changes: bool,
+    pub queued_at: i64,
+    pub merged_at: Option<i64>,
+    pub session_title: Option<String>,
+    pub work_item_callsign: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewMergeQueueRecord {
+    pub id: String,
+    pub project_id: String,
+    pub session_id: String,
+    pub worktree_id: String,
+    pub branch_name: String,
+    pub base_ref: String,
+    pub position: i64,
+    pub status: String,
+    pub diff_stat_json: Option<String>,
+    pub conflict_files_json: Option<String>,
+    pub has_uncommitted_changes: bool,
+    pub queued_at: i64,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct MergeQueueListFilter {
+    pub project_id: String,
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MergeQueueGetParams {
+    pub merge_queue_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MergeQueueGetDiffParams {
+    pub merge_queue_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MergeQueueMergeParams {
+    pub merge_queue_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MergeQueueParkParams {
+    pub merge_queue_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MergeQueueReorderParams {
+    pub project_id: String,
+    pub ordered_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MergeQueueCheckConflictsParams {
+    pub merge_queue_id: String,
 }
