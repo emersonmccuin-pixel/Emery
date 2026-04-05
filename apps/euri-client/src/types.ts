@@ -139,7 +139,7 @@ export type ConflictWarning = {
 };
 
 export type PendingDispatch =
-  | { mode: "single"; workItemId: string; projectId: string }
+  | { mode: "single"; workItemId: string; projectId: string; originMode: string }
   | { mode: "multi"; workItemIds: string[]; projectId: string };
 
 export type EncodedTerminalChunk = {

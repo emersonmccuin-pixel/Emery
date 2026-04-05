@@ -871,7 +871,7 @@ class AppStore {
       return;
     }
 
-    this.update({ pendingDispatch: { mode: "single", workItemId, projectId: s.selectedProjectId } });
+    this.update({ pendingDispatch: { mode: "single", workItemId, projectId: s.selectedProjectId, originMode: "execution" } });
   }
 
   cancelDispatch() {
@@ -952,7 +952,7 @@ class AppStore {
     }
   }
 
-  async confirmDispatch(opts: { autoWorktree: boolean }) {
+  async confirmDispatch(opts: { autoWorktree: boolean; originMode: string }) {
     const dispatch = this.state.pendingDispatch;
     if (!dispatch || dispatch.mode !== "single") return;
 
@@ -994,8 +994,8 @@ class AppStore {
           command: account.binary_path ?? account.agent_kind,
           args: [],
           env_preset_ref: account.env_preset_ref,
-          origin_mode: "planning",
-          current_mode: "planning",
+          origin_mode: opts.originMode,
+          current_mode: opts.originMode,
           title: `${workItem.callsign} · ${workItem.title}`,
           title_policy: "manual",
           restore_policy: "reattach",

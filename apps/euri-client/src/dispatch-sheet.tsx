@@ -32,6 +32,7 @@ export function DispatchSheet() {
         workItem={workItem}
         project={project}
         account={defaultAccount}
+        originMode={pendingDispatch.originMode}
         onConfirm={(opts) => void appStore.confirmDispatch(opts)}
         onCancel={() => appStore.cancelDispatch()}
       />
@@ -62,17 +63,20 @@ function SingleDispatchSheet({
   workItem,
   project,
   account,
+  originMode,
   onConfirm,
   onCancel,
 }: {
   workItem: WorkItemSummary;
   project: ProjectDetail;
   account: AccountSummary | null;
-  onConfirm: (opts: { autoWorktree: boolean }) => void;
+  originMode: string;
+  onConfirm: (opts: { autoWorktree: boolean; originMode: string }) => void;
   onCancel: () => void;
 }) {
   const branchName = `euri/${workItem.callsign.toLowerCase()}`;
   const root = project.roots[0] ?? null;
+  const isExecution = originMode === "execution";
 
   return (
     <div className="dispatch-overlay" onClick={onCancel}>
@@ -83,10 +87,23 @@ function SingleDispatchSheet({
             <span className="dispatch-label">Work Item</span>
             <span>{workItem.callsign} &middot; {workItem.title}</span>
           </div>
-          <div className="dispatch-row">
-            <span className="dispatch-label">Branch</span>
-            <code>{branchName}</code>
-          </div>
+          {isExecution ? (
+            <>
+              <div className="dispatch-row">
+                <span className="dispatch-label">Branch</span>
+                <code>{branchName}</code>
+              </div>
+              <div className="dispatch-row">
+                <span className="dispatch-label">Location</span>
+                <span>Worktree (new branch from HEAD)</span>
+              </div>
+            </>
+          ) : (
+            <div className="dispatch-row">
+              <span className="dispatch-label">Location</span>
+              <span>Project root (main)</span>
+            </div>
+          )}
           <div className="dispatch-row">
             <span className="dispatch-label">Account</span>
             <span>{account?.label ?? account?.agent_kind ?? "\u2014"}</span>
@@ -98,8 +115,8 @@ function SingleDispatchSheet({
         </div>
         <div className="dispatch-actions">
           <button className="secondary-button" onClick={onCancel}>Cancel</button>
-          <button className="secondary-button" onClick={() => onConfirm({ autoWorktree: true })}>
-            Launch on Branch
+          <button className="secondary-button" onClick={() => onConfirm({ autoWorktree: isExecution, originMode })}>
+            {isExecution ? "Launch on Branch" : "Launch on Main"}
           </button>
         </div>
       </div>
