@@ -44,6 +44,7 @@ export function AgentView({
   const live = sessionSnapshot.live;
 
   return (
+    <div className="content-frame-full">
     <div className="agent-view">
       <AgentInfoBar
         callsign={callsign}
@@ -71,6 +72,7 @@ export function AgentView({
         onTerminate={() => void appStore.handleTerminateSession(sessionId)}
         onDetach={() => navStore.goBack()}
       />
+    </div>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   attachSession,
@@ -31,6 +31,10 @@ import { Topbar } from "./topbar";
 import { Breadcrumb } from "./breadcrumb";
 import { LayerRouter } from "./layer-router";
 import { DispatchSheet } from "./dispatch-sheet";
+import { Sidebar } from "./sidebar";
+import { PeekPanel } from "./peek-panel";
+
+const SIDEBAR_COLLAPSED_KEY = "euri.sidebar-collapsed";
 
 function ToastStack() {
   const toasts = useToastStore();
@@ -85,6 +89,31 @@ export default function App() {
   const focusProjectIds = useAppStore((s) => s.focusProjectIds);
   const connectionState = useAppStore((s) => s.connectionState);
   const navLayer = useNavLayer();
+
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleSidebarRef = useRef<() => void>(() => {});
+
+  function toggleSidebar() {
+    setSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(next));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+  }
+
+  // Keep ref in sync so the keydown handler (registered once) always calls the latest version
+  toggleSidebarRef.current = toggleSidebar;
 
   const restoreApplied = useRef(false);
   const persistTimeout = useRef<number | null>(null);
@@ -366,6 +395,11 @@ export default function App() {
         navStore.goToSettings();
       }
 
+      if (e.ctrlKey && e.key === "b") {
+        e.preventDefault();
+        toggleSidebarRef.current();
+      }
+
       if (e.ctrlKey && e.key >= "1" && e.key <= "5") {
         e.preventDefault();
         const index = parseInt(e.key, 10) - 1;
@@ -405,38 +439,44 @@ export default function App() {
   return (
     <div className="app-shell">
       <Topbar />
-      <Breadcrumb />
-      {error ? (
-        <div className="error-banner">
-          <span>{error}</span>
-          <button className="secondary-button" onClick={() => appStore.clearError()}>
-            Dismiss
-          </button>
+      <div className="app-body">
+        <Sidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} />
+        <div className="main-content">
+          <Breadcrumb />
+          {error ? (
+            <div className="error-banner">
+              <span>{error}</span>
+              <button className="secondary-button" onClick={() => appStore.clearError()}>
+                Dismiss
+              </button>
+            </div>
+          ) : null}
+          {connectionState === "reconnecting" ? (
+            <div className="reconnecting-banner">
+              <span className="reconnecting-spinner" />
+              <span>Reconnecting to supervisor...</span>
+            </div>
+          ) : null}
+          {connectionState === "disconnected" ? (
+            <div className="disconnected-banner">
+              <span>Disconnected from supervisor</span>
+              <button
+                className="secondary-button"
+                onClick={() => {
+                  appStore.setConnectionState("reconnecting");
+                  void appStore.rebootstrap();
+                }}
+              >
+                Retry
+              </button>
+            </div>
+          ) : null}
+          <div className="main-content-inner">
+            <LayerRouter />
+          </div>
         </div>
-      ) : null}
-      {connectionState === "reconnecting" ? (
-        <div className="reconnecting-banner">
-          <span className="reconnecting-spinner" />
-          <span>Reconnecting to supervisor...</span>
-        </div>
-      ) : null}
-      {connectionState === "disconnected" ? (
-        <div className="disconnected-banner">
-          <span>Disconnected from supervisor</span>
-          <button
-            className="secondary-button"
-            onClick={() => {
-              appStore.setConnectionState("reconnecting");
-              void appStore.rebootstrap();
-            }}
-          >
-            Retry
-          </button>
-        </div>
-      ) : null}
-      <main className="layer-viewport">
-        <LayerRouter />
-      </main>
+        <PeekPanel hidden />
+      </div>
       <DispatchSheet />
       <ToastStack />
     </div>

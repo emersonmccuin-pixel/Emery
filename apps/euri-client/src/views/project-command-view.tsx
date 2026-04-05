@@ -70,6 +70,7 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
   }
 
   return (
+    <div className="content-frame-wide">
     <div className="project-command-view">
       {accounts.length === 0 && (
         <div className="setup-banner">
@@ -147,6 +148,7 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
           onNew={() => navStore.goToNewDocument(projectId)}
         />
       </div>
+    </div>
     </div>
   );
 }
