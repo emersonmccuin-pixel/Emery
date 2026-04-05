@@ -1,4 +1,4 @@
-# EURI UX Component Audit
+# Emery UX Component Audit
 _Generated 2026-04-05 against branch `dev`_
 
 ---
@@ -703,4 +703,4 @@ The dispatch sheet uses `"yolo"` and `"cautious"`, and Agent Defaults uses `"ful
 
 ---
 
-_End of audit. 39 files examined. Key files: `apps/euri-client/src/views/*.tsx`, `apps/euri-client/src/components/*.tsx`, `apps/euri-client/src/store.ts`, `apps/euri-client/src/lib.ts`, `apps/euri-client/src/types.ts`, `crates/supervisor-core/src/models.rs`._
+_End of audit. 39 files examined. Key files: `apps/emery-client/src/views/*.tsx`, `apps/emery-client/src/components/*.tsx`, `apps/emery-client/src/store.ts`, `apps/emery-client/src/lib.ts`, `apps/emery-client/src/types.ts`, `crates/supervisor-core/src/models.rs`._

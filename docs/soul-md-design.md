@@ -1,6 +1,6 @@
 # SOUL.md System Design
 
-> Design document for agent personality and behavioral configuration in EURI.
+> Design document for agent personality and behavioral configuration in Emery.
 > Produced 2026-04-05 by Opus research agent.
 
 ---
@@ -72,7 +72,7 @@ Resolution order (most specific wins):
 3. **Project-level** default personality -- if present, use it
 4. **No personality** -- agent communicates in its default style
 
-### Relationship to Templates (EURI-80)
+### Relationship to Templates (Emery-80)
 
 Templates define *what role an agent plays*. Personalities define *how that agent communicates*. They are orthogonal:
 
@@ -84,7 +84,7 @@ Templates gain a new optional field: `personality_id`. When set, the personality
 
 ### Ownership
 
-- **Built-in personalities** ship with EURI. They are read-only and available to all projects. Marked `is_builtin: true`.
+- **Built-in personalities** ship with Emery. They are read-only and available to all projects. Marked `is_builtin: true`.
 - **User personalities** are created by users. They are available to all projects (global scope). Marked `is_builtin: false`.
 - Personalities are NOT project-scoped. A personality created for one project can be used in any other. This keeps the library simple and encourages reuse.
 
@@ -121,9 +121,9 @@ tags: ["coordination", "fast-paced", "informal"]
 You are a fast-talking NYC taxi dispatcher...
 ```
 
-**Export**: `euri_personality_export(personality_id)` returns the file content as a string. The UI offers a "Download .soul.md" button.
+**Export**: `emery_personality_export(personality_id)` returns the file content as a string. The UI offers a "Download .soul.md" button.
 
-**Import**: `euri_personality_import(soul_md_content)` parses the frontmatter and body, creates a new user personality. The UI offers a "Import .soul.md" button or drag-and-drop.
+**Import**: `emery_personality_import(soul_md_content)` parses the frontmatter and body, creates a new user personality. The UI offers a "Import .soul.md" button or drag-and-drop.
 
 **Sharing**: Users can share `.soul.md` files directly (email, Slack, GitHub gist). No cloud sync in v1.
 
@@ -388,7 +388,7 @@ The `/new-personality` command is a conversational flow where the user describes
 ```
 User: /new-personality
 
-EURI: What kind of personality are you looking for? You can describe it in
+Emery: What kind of personality are you looking for? You can describe it in
       plain language -- a character, a vibe, a communication style, or even
       just a few adjectives.
 
@@ -401,7 +401,7 @@ EURI: What kind of personality are you looking for? You can describe it in
 User: I want something like a grumpy but secretly caring shop teacher.
       Calls everyone "kid." Explains things by analogy to woodworking.
 
-EURI: Got it. Here's what I came up with:
+Emery: Got it. Here's what I came up with:
 
       **Name:** Shop Teacher
       **Description:** Grumpy veteran craftsman who teaches through
@@ -419,27 +419,27 @@ EURI: Got it. Here's what I came up with:
 User: Love it but make the woodworking analogies more specific -- use actual
       joinery terms.
 
-EURI: Updated. [Shows revised SOUL.md]
+Emery: Updated. [Shows revised SOUL.md]
 
       Save it?
 
 User: Yes.
 
-EURI: Saved "Shop Teacher" to your personality library. You can assign it to
+Emery: Saved "Shop Teacher" to your personality library. You can assign it to
       any agent template or use it when dispatching sessions.
 ```
 
 ### Technical Flow
 
 1. User invokes `/new-personality` (or the UI button "New Personality")
-2. EURI collects a natural language description (1-3 exchanges max)
+2. Emery collects a natural language description (1-3 exchanges max)
 3. Claude generates a SOUL.md following the standard structure:
    - Voice section
    - Communication Style section
    - Personality Traits section
    - What You Never Do section
 4. User reviews, optionally iterates
-5. On confirmation: `euri_personality_create` is called with name, description, tags (auto-extracted), and the soul_md content
+5. On confirmation: `emery_personality_create` is called with name, description, tags (auto-extracted), and the soul_md content
 6. The personality appears in the library immediately
 
 ### Generation Guidelines
@@ -541,7 +541,7 @@ CREATE TABLE personalities (
     description     TEXT,                       -- Short description for library browsing
     soul_md         TEXT NOT NULL,              -- The full SOUL.md content
     tags_json       TEXT,                       -- JSON array: ["coordination", "informal"]
-    is_builtin      INTEGER NOT NULL DEFAULT 0, -- 1 = ships with EURI, read-only
+    is_builtin      INTEGER NOT NULL DEFAULT 0, -- 1 = ships with Emery, read-only
     sort_order      INTEGER NOT NULL DEFAULT 0,
     created_at      INTEGER NOT NULL,           -- unix seconds
     updated_at      INTEGER NOT NULL,
@@ -631,20 +631,20 @@ New tools:
 
 | Tool | Purpose |
 |------|---------|
-| `euri_personality_list` | List available personalities (with optional tag filter) |
-| `euri_personality_get` | Get full personality detail including soul_md |
-| `euri_personality_create` | Create a new user personality |
-| `euri_personality_update` | Update an existing user personality |
-| `euri_personality_archive` | Soft-delete a personality |
-| `euri_personality_export` | Export a personality as .soul.md content |
-| `euri_personality_import` | Import a .soul.md file as a new personality |
+| `emery_personality_list` | List available personalities (with optional tag filter) |
+| `emery_personality_get` | Get full personality detail including soul_md |
+| `emery_personality_create` | Create a new user personality |
+| `emery_personality_update` | Update an existing user personality |
+| `emery_personality_archive` | Soft-delete a personality |
+| `emery_personality_export` | Export a personality as .soul.md content |
+| `emery_personality_import` | Import a .soul.md file as a new personality |
 
 Modified tools:
 
 | Tool | Change |
 |------|--------|
-| `euri_session_create` | Add optional `personality_id` parameter |
-| `euri_session_create_batch` | Add optional `personality_id` per session entry |
+| `emery_session_create` | Add optional `personality_id` parameter |
+| `emery_session_create_batch` | Add optional `personality_id` per session entry |
 
 ### RPC Extensions
 
@@ -662,7 +662,7 @@ personality.archive  (personality_id) -> PersonalityDetail
 
 ## 8. Implementation Roadmap
 
-### Phase 1: Core Data Model (EURI-XXX)
+### Phase 1: Core Data Model (Emery-XXX)
 
 - Add `personalities` table to SQLite schema
 - Add `default_personality_id` column to `projects`
@@ -674,16 +674,16 @@ personality.archive  (personality_id) -> PersonalityDetail
 
 **Estimated complexity**: Medium. Follows existing patterns from `agent_templates`.
 
-### Phase 2: RPC + MCP Tools (EURI-XXX)
+### Phase 2: RPC + MCP Tools (Emery-XXX)
 
 - Add `personality.*` RPC handlers
-- Add `euri_personality_*` MCP tool descriptors and handlers
-- Add `personality_id` parameter to `euri_session_create` and `euri_session_create_batch`
+- Add `emery_personality_*` MCP tool descriptors and handlers
+- Add `personality_id` parameter to `emery_session_create` and `emery_session_create_batch`
 - Wire up personality resolution in session creation flow
 
 **Estimated complexity**: Medium. Follows existing patterns from session/template tools.
 
-### Phase 3: Injection (EURI-XXX)
+### Phase 3: Injection (Emery-XXX)
 
 - Modify `handle_session_create` and `handle_session_create_batch` in `session.rs`
 - Add personality resolution logic (session > template > project default)
@@ -693,7 +693,7 @@ personality.archive  (personality_id) -> PersonalityDetail
 
 **Estimated complexity**: Small. The injection infrastructure already exists; this adds one more tier.
 
-### Phase 4: Export / Import (EURI-XXX)
+### Phase 4: Export / Import (Emery-XXX)
 
 - Define `.soul.md` file format (YAML frontmatter + markdown body)
 - Implement `personality.export` RPC method (serialize to file format)
@@ -702,7 +702,7 @@ personality.archive  (personality_id) -> PersonalityDetail
 
 **Estimated complexity**: Small.
 
-### Phase 5: Frontend -- Personality Library (EURI-XXX)
+### Phase 5: Frontend -- Personality Library (Emery-XXX)
 
 - New "Personalities" section in project settings or global settings
 - Library view: grid/list of available personalities with name, description, tags
@@ -712,7 +712,7 @@ personality.archive  (personality_id) -> PersonalityDetail
 
 **Estimated complexity**: Medium-large. New UI surface area.
 
-### Phase 6: /new-personality Skill (EURI-XXX)
+### Phase 6: /new-personality Skill (Emery-XXX)
 
 - Implement as a Claude Code skill (conversational flow)
 - Prompt engineering for SOUL.md generation
@@ -721,7 +721,7 @@ personality.archive  (personality_id) -> PersonalityDetail
 
 **Estimated complexity**: Small-medium. Mostly prompt engineering.
 
-### Phase 7: Frontend -- Personality Creation (EURI-XXX)
+### Phase 7: Frontend -- Personality Creation (Emery-XXX)
 
 - "New Personality" button in library view
 - Two paths: manual (text editor) or assisted (/new-personality style wizard)
@@ -750,7 +750,7 @@ personality.archive  (personality_id) -> PersonalityDetail
 
 When this system ships, the dispatcher's CLAUDE.md should be updated to include:
 
-- New tool reference entries for `euri_personality_*` tools
+- New tool reference entries for `emery_personality_*` tools
 - Updated builder briefing template with optional personality context
 - Guidance on when to use personality overrides vs. template defaults
 - Note that personality assignment is part of Phase 2 (Dispatch) in the lifecycle

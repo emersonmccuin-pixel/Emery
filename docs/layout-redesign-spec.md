@@ -1,4 +1,4 @@
-# EURI Layout Redesign Spec
+# Emery Layout Redesign Spec
 
 **Date:** 2026-04-05
 **Branch:** `dev`
@@ -214,9 +214,9 @@ The sidebar is the persistent navigation anchor. It provides spatial context at 
 |    Project C    ●         |
 +---------------------------+
 | FLEET          3 running  |  <- Section 2: Session fleet
-|  ● EURI-58 implementing   |
-|  ● EURI-61 planning       |
-|  ○ EURI-55 completed      |
+|  ● Emery-58 implementing   |
+|  ● Emery-61 planning       |
+|  ○ Emery-55 completed      |
 +---------------------------+
 |                           |
 |                           |  <- Flex spacer
@@ -298,7 +298,7 @@ All of this already exists in `appStore`. The sidebar is a pure read from existi
 
 **Transition:** `width` animates over 150ms with `ease`. Content fades at 120ms. Icons snap to center alignment when collapsed.
 
-**Persistence:** Collapse state saved to `localStorage` key `euri:sidebar-collapsed`. Restored on boot.
+**Persistence:** Collapse state saved to `localStorage` key `emery:sidebar-collapsed`. Restored on boot.
 
 ---
 
@@ -462,7 +462,7 @@ A Claude agent session not tied to any project. For general questions, brainstor
 
 - The account picker is a small popover anchored to the Quick Chat button.
 - Shows: account label, agent_kind badge.
-- "Set as default" checkbox: when checked, saves the selected account ID to `localStorage` key `euri:quick-chat-default-account`. Future Quick Chats use this account automatically.
+- "Set as default" checkbox: when checked, saves the selected account ID to `localStorage` key `emery:quick-chat-default-account`. Future Quick Chats use this account automatically.
 - If only one account exists, skip the picker and use it directly.
 
 ### Where transcripts go
@@ -476,7 +476,7 @@ A Claude agent session not tied to any project. For general questions, brainstor
 
 - Auto-created on first Quick Chat launch if it does not exist.
 - Named "Quick Chats" (or "Scratch" — user-renameable).
-- Folder path: a dedicated directory under the app's data directory (e.g., `~/.euri/scratch/`).
+- Folder path: a dedicated directory under the app's data directory (e.g., `~/.emery/scratch/`).
 - Does not appear in the focus project slots by default (but can be pinned).
 - Listed in "All projects" on the home view.
 
@@ -517,7 +517,7 @@ The primary CTA for launching a session is the "Launch Agent" button (renamed fr
 2. **Dispatch modal** opens (center modal, not full overlay sheet).
 3. User configures: account, safety mode, model, origin mode.
 4. User clicks "Launch".
-5. Session creates. A **toast notification** appears: "Agent launched for EURI-58" with a "View" action button.
+5. Session creates. A **toast notification** appears: "Agent launched for Emery-58" with a "View" action button.
 6. The user stays on the project command view. The new session appears in the Fleet section (sidebar + project view fleet strip).
 7. If the user clicks "View" on the toast, they navigate to the agent terminal.
 
@@ -545,7 +545,7 @@ To watch a session, the user clicks the session row in either location. This is 
 
 When a session completes (while the user is elsewhere):
 
-1. **Toast notification:** "EURI-58 completed" (or "EURI-58 errored") with action buttons: "View Terminal", "View Merge Queue" (if applicable).
+1. **Toast notification:** "Emery-58 completed" (or "Emery-58 errored") with action buttons: "View Terminal", "View Merge Queue" (if applicable).
 2. **Sidebar fleet section:** The session row changes from pulsing green to a static checkmark (completed) or X (errored). It stays visible for 5 minutes, then fades.
 3. **Audio cue:** Existing ding/chime sounds continue.
 4. **Inbox entry:** Created as before for async review.
@@ -571,7 +571,7 @@ The sidebar always shows the project navigator, so the user never loses orientat
 - Button label: "Launch Agent"
 - Modal title: "Launch Agent Session"
 - Multi-dispatch: "Launch N Agents"
-- Toast: "Agent launched for EURI-58"
+- Toast: "Agent launched for Emery-58"
 
 **Note:** The backend terminology (dispatch, sessions, fleet) stays as-is. This is a UI label change only.
 
@@ -671,8 +671,8 @@ type NavState = {
 The breadcrumb reflects only the **main** layer. Peek content gets its own mini-breadcrumb inside the peek panel header. Modals have no breadcrumb.
 
 Breadcrumb additions:
-- Settings: show "EURI > Settings" (currently missing from breadcrumb).
-- Inbox (if opened in main rather than peek): show "EURI > {Project} > Inbox".
+- Settings: show "Emery > Settings" (currently missing from breadcrumb).
+- Inbox (if opened in main rather than peek): show "Emery > {Project} > Inbox".
 
 ### navStore API changes
 
@@ -729,7 +729,7 @@ Migration from V2: `navigation` becomes `main_navigation`. Everything else maps 
 
 These changes are structural — they cannot be done incrementally without creating an inconsistent state.
 
-**Work item: EURI-xxx — App shell three-zone layout**
+**Work item: Emery-xxx — App shell three-zone layout**
 
 Scope:
 1. New `app-body` flex container wrapping sidebar placeholder + main content + peek placeholder.
@@ -750,7 +750,7 @@ Scope:
 
 ### Phase 1: Sidebar (ship after Phase 0)
 
-**Work item: EURI-xxx — Sidebar project navigator + fleet**
+**Work item: Emery-xxx — Sidebar project navigator + fleet**
 
 Scope:
 1. New `Sidebar` component with three sections.
@@ -772,7 +772,7 @@ Scope:
 
 ### Phase 2: Navigation model split (ship after Phase 1)
 
-**Work item: EURI-xxx — Split nav-store into main/peek/modal channels**
+**Work item: Emery-xxx — Split nav-store into main/peek/modal channels**
 
 Scope:
 1. Refactor `NavigationLayer` into `MainLayer`, `PeekLayer`, `ModalLayer`.
@@ -795,7 +795,7 @@ Scope:
 
 ### Phase 3: Peek panel integration (ship after Phase 2)
 
-**Work item: EURI-xxx — Wire peek panel to work items, inbox, diffs**
+**Work item: Emery-xxx — Wire peek panel to work items, inbox, diffs**
 
 Scope:
 1. Work item row click in project command view -> `openPeek({ peek: "work_item", ... })` instead of `navStore.goToWorkItem(...)`.
@@ -808,7 +808,7 @@ Scope:
 
 ### Phase 4: Modal integration (ship after Phase 2)
 
-**Work item: EURI-xxx — Move dispatch + create forms to center modal**
+**Work item: Emery-xxx — Move dispatch + create forms to center modal**
 
 Scope:
 1. Replace `DispatchSheet` overlay with modal-based dispatch.
@@ -820,7 +820,7 @@ Scope:
 
 ### Phase 5: Session launch flow (ship after Phase 4)
 
-**Work item: EURI-xxx — Session launch flow redesign**
+**Work item: Emery-xxx — Session launch flow redesign**
 
 Scope:
 1. Remove auto-navigation after single dispatch (stay in place, show toast).
@@ -834,7 +834,7 @@ Scope:
 
 ### Phase 6: Naming and polish (ship after Phase 5)
 
-**Work item: EURI-xxx — Naming fixes, safety mode labels, model dropdown**
+**Work item: Emery-xxx — Naming fixes, safety mode labels, model dropdown**
 
 Scope:
 1. Safety mode label changes + descriptions.
@@ -846,7 +846,7 @@ Scope:
 
 ### Phase 7: Quick Chat (ship after Phase 1)
 
-**Work item: EURI-xxx — Quick Chat feature**
+**Work item: Emery-xxx — Quick Chat feature**
 
 Scope:
 1. Auto-create scratch project on first Quick Chat.

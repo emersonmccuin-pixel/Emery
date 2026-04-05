@@ -1,5 +1,5 @@
-# EURI Stable Install Script
-# Builds supervisor + client from a git ref and installs to ~/.euri/bin/
+# Emery Stable Install Script
+# Builds supervisor + client from a git ref and installs to ~/.emery/bin/
 # Usage:
 #   powershell -File scripts/install-stable.ps1              # build from current HEAD
 #   powershell -File scripts/install-stable.ps1 -Ref main    # build from main branch
@@ -14,7 +14,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $root
 
-$installDir = Join-Path $env:USERPROFILE ".euri" "bin"
+$installDir = Join-Path $env:USERPROFILE ".emery" "bin"
 
 # --- Ensure install directory exists ---
 if (-not (Test-Path $installDir)) {
@@ -46,7 +46,7 @@ Write-Host "=== Building from $commitHash ($commitMsg) ===" -ForegroundColor Cya
 
 # --- Build supervisor (release) ---
 Write-Host "=== Building supervisor (release) ===" -ForegroundColor Cyan
-cargo build --release -p euri-supervisor
+cargo build --release -p emery-supervisor
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Supervisor build failed!" -ForegroundColor Red
     if ($originalBranch -ne "") { git checkout $originalBranch; if ($stashed) { git stash pop } }
@@ -56,7 +56,7 @@ if ($LASTEXITCODE -ne 0) {
 # --- Build client (release) ---
 if (-not $SkipClient) {
     Write-Host "=== Installing frontend deps ===" -ForegroundColor Cyan
-    Set-Location "$root\apps\euri-client"
+    Set-Location "$root\apps\emery-client"
     npm install --silent 2>$null
     Set-Location $root
 
@@ -72,13 +72,13 @@ if (-not $SkipClient) {
 # --- Copy binaries ---
 Write-Host "=== Installing to $installDir ===" -ForegroundColor Green
 
-Copy-Item "$root\target\release\euri-supervisor.exe" "$installDir\euri-supervisor.exe" -Force
-Write-Host "  euri-supervisor.exe  -> $installDir" -ForegroundColor Gray
+Copy-Item "$root\target\release\emery-supervisor.exe" "$installDir\emery-supervisor.exe" -Force
+Write-Host "  emery-supervisor.exe  -> $installDir" -ForegroundColor Gray
 
 if (-not $SkipClient) {
     # Tauri release build outputs to target/release
-    Copy-Item "$root\target\release\euri-client.exe" "$installDir\euri-client.exe" -Force
-    Write-Host "  euri-client.exe      -> $installDir" -ForegroundColor Gray
+    Copy-Item "$root\target\release\emery-client.exe" "$installDir\emery-client.exe" -Force
+    Write-Host "  emery-client.exe      -> $installDir" -ForegroundColor Gray
 }
 
 # --- Write version marker ---

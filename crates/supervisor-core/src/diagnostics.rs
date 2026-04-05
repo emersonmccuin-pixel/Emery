@@ -10,7 +10,8 @@ use serde_json::{Value, json};
 
 use crate::bootstrap::AppPaths;
 
-const DIAGNOSTICS_ENV: &str = "EURI_DEV_DIAGNOSTICS";
+const DIAGNOSTICS_ENV: &str = "EMERY_DEV_DIAGNOSTICS";
+const LEGACY_DIAGNOSTICS_ENV: &str = "EURI_DEV_DIAGNOSTICS";
 
 #[derive(Debug, Clone)]
 pub struct DiagnosticsHub {
@@ -63,15 +64,7 @@ pub struct DiagnosticsBundleResult {
 
 impl DiagnosticsHub {
     pub fn from_env(paths: &AppPaths) -> Result<Self> {
-        let enabled = env::var(DIAGNOSTICS_ENV)
-            .ok()
-            .map(|value| {
-                matches!(
-                    value.trim().to_ascii_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )
-            })
-            .unwrap_or(false);
+        let enabled = diagnostics_enabled();
         let logs_dir = paths.logs_dir.join("diagnostics");
         let bundles_dir = logs_dir.join("bundles");
         if enabled {
@@ -209,6 +202,19 @@ impl DiagnosticsHub {
     pub fn session_debug_dir(&self, session_id: &str) -> PathBuf {
         self.sessions_dir.join(session_id).join("debug")
     }
+}
+
+fn diagnostics_enabled() -> bool {
+    [DIAGNOSTICS_ENV, LEGACY_DIAGNOSTICS_ENV]
+        .into_iter()
+        .find_map(|key| env::var(key).ok())
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
 }
 
 fn append_jsonl(path: &Path, value: &impl Serialize) -> Result<()> {

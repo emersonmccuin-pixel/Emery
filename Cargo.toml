@@ -1,10 +1,10 @@
 [workspace]
 members = [
-    "apps/euri-supervisor",
-    "apps/euri-client/src-tauri",
+    "apps/emery-supervisor",
+    "apps/emery-client/src-tauri",
     "crates/supervisor-core",
     "crates/supervisor-ipc",
-    "crates/euri-mcp",
+    "crates/emery-mcp",
 ]
 resolver = "2"
 

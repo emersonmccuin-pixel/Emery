@@ -6,6 +6,7 @@ use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use crate::agent_profile::{AgentProfile, GuardKind, InstructionDisposition};
 use crate::git;
 use crate::diagnostics::{
     DiagnosticContext, DiagnosticsBundleRequest, DiagnosticsBundleResult, DiagnosticsHub,
@@ -546,7 +547,8 @@ impl SupervisorService {
     }
 
     pub fn create_account(&self, request: CreateAccountRequest) -> Result<AccountDetail> {
-        let agent_kind = validate_agent_kind(&request.agent_kind)?;
+        let profile = AgentProfile::for_kind(&request.agent_kind)?;
+        let agent_kind = profile.kind.to_string();
         let label = required_trimmed("account label", &request.label)?;
         let env_preset_ref = optional_trimmed(request.env_preset_ref);
         if let Some(env_preset_id) = env_preset_ref.as_deref() {
@@ -590,7 +592,10 @@ impl SupervisorService {
             .ok_or_else(|| anyhow!("account {} was not found", request.account_id))?;
 
         let agent_kind = match request.agent_kind.as_deref() {
-            Some(agent_kind) => validate_agent_kind(agent_kind)?,
+            Some(agent_kind) => {
+                let profile = AgentProfile::for_kind(agent_kind)?;
+                profile.kind.to_string()
+            }
             None => existing.summary.agent_kind.clone(),
         };
         let env_preset_ref = match request.env_preset_ref {
@@ -1603,6 +1608,7 @@ impl SupervisorService {
     pub fn create_session(&self, mut request: CreateSessionRequest) -> Result<SessionDetail> {
         let now = unix_time_seconds();
         let session_id = format!("ses_{}", Uuid::new_v4().simple());
+        let profile = AgentProfile::for_kind(&request.agent_kind)?;
 
         // Enforce origin_mode → location rules
         match request.origin_mode.as_str() {
@@ -1649,12 +1655,12 @@ impl SupervisorService {
             }
         }
 
-        // Write dispatcher guard (PreToolUse hooks that block code writing)
+        // Write dispatcher guard and instructions
+        let mut guard_instructions: Option<String> = None;
         if request.origin_mode == "dispatch" {
-            write_dispatcher_guard(&request.cwd)?;
+            guard_instructions = profile.write_guard(&request.cwd, GuardKind::Dispatcher)?;
         }
 
-        // Build and write dispatcher instructions
         if request.origin_mode == "dispatch" {
             let project = self.databases.get_project(&request.project_id)?;
             let (project_name, wcp_ns, dispatch_item, project_instr) = match &project {
@@ -1666,13 +1672,27 @@ impl SupervisorService {
                 ),
                 None => ("Unknown", None, None, None),
             };
-            let instructions = build_dispatcher_instructions(
+            let mut instructions = build_dispatcher_instructions(
                 project_name,
                 wcp_ns,
                 dispatch_item,
                 project_instr,
             );
-            write_instructions_file(&request.cwd, &instructions)?;
+
+            // Prepend guard rules for non-hook agents
+            if let Some(ref guard_text) = guard_instructions {
+                instructions = format!("{}\n\n---\n\n{}", guard_text, instructions);
+            }
+
+            match profile.write_instructions(&request.cwd, &instructions)? {
+                InstructionDisposition::WrittenToFile => {}
+                InstructionDisposition::InjectIntoPrompt(text) => {
+                    if let Some(flag) = profile.prompt_flag {
+                        request.args.push(flag.to_string());
+                        request.args.push(text);
+                    }
+                }
+            }
         }
 
         // Resolve safety configuration and inject CLI args
@@ -1683,7 +1703,7 @@ impl SupervisorService {
             request.safety_mode.as_deref(),
             request.extra_args.as_deref(),
         )?;
-        let safety_args = safety_mode_to_args(&request.agent_kind, &safety.mode);
+        let safety_args = profile.safety_args(&safety.mode);
         for arg in safety_args {
             if !request.args.contains(&arg) {
                 request.args.push(arg);
@@ -1695,8 +1715,8 @@ impl SupervisorService {
             }
         }
 
-        // Resolve and inject model (claude-code only)
-        if request.agent_kind == "claude-code" {
+        // Resolve and inject model (profile-controlled)
+        if profile.supports_model_injection {
             let resolved_model = self.resolve_model(
                 &request.account_id,
                 &request.project_id,
@@ -1705,9 +1725,11 @@ impl SupervisorService {
                 request.model.as_deref(),
             )?;
             if let Some(ref model) = resolved_model {
-                if !request.args.iter().any(|a| a == "--model") {
-                    request.args.push("--model".to_string());
-                    request.args.push(model.clone());
+                let model_args = profile.model_args(model);
+                for arg in model_args {
+                    if !request.args.contains(&arg) {
+                        request.args.push(arg);
+                    }
                 }
             }
         }
@@ -1976,7 +1998,7 @@ impl SupervisorService {
             .get_work_item(work_item_id)?
             .ok_or_else(|| anyhow!("work item {} not found", work_item_id))?;
 
-        let branch_name = format!("euri/{}", work_item.summary.callsign.to_lowercase());
+        let branch_name = format!("emery/{}", work_item.summary.callsign.to_lowercase());
         let worktree_dir = &self.databases.paths().worktrees_dir;
         let worktree_path = worktree_dir.join(branch_name.replace('/', "-"));
 
@@ -2317,7 +2339,8 @@ impl SupervisorService {
             self.ensure_env_preset_exists(env_preset_id)?;
         }
 
-        let agent_kind = validate_agent_kind(&draft.agent_kind)?;
+        let profile = AgentProfile::for_kind(&draft.agent_kind)?;
+        let agent_kind = profile.kind.to_string();
         let cwd = absolute_path_string("session cwd", &draft.cwd)?;
         let command = required_trimmed("session command", &draft.command)?;
         let origin_mode = validate_session_mode(&draft.origin_mode)?;
@@ -3544,13 +3567,6 @@ fn validate_root_kind(value: &str) -> Result<String> {
     }
 }
 
-fn validate_agent_kind(value: &str) -> Result<String> {
-    let normalized = required_trimmed("agent kind", value)?.to_lowercase();
-    match normalized.as_str() {
-        "claude" | "codex" => Ok(normalized),
-        _ => Err(anyhow!("agent kind must be one of: claude, codex")),
-    }
-}
 
 fn validate_account_status(value: &str) -> Result<String> {
     let normalized = required_trimmed("account status", value)?.to_lowercase();
@@ -3923,15 +3939,6 @@ struct ResolvedSafetyConfig {
     extra_args: Vec<String>,
 }
 
-fn safety_mode_to_args(agent_kind: &str, mode: &str) -> Vec<String> {
-    match (agent_kind, mode) {
-        ("claude-code", "yolo") => vec!["--dangerously-skip-permissions".to_string()],
-        ("claude-code", "cautious") => vec![],
-        ("codex", "yolo") => vec!["--full-auto".to_string()],
-        ("codex", "cautious") => vec![],
-        _ => vec![],
-    }
-}
 
 fn validate_safety_mode(value: &str) -> Result<String> {
     let normalized = value.trim().to_lowercase();
@@ -4032,17 +4039,6 @@ fn extract_file_paths(text: &str) -> Vec<String> {
     paths
 }
 
-fn write_instructions_file(dir_path: &str, instructions: &str) -> Result<()> {
-    let claude_dir = std::path::Path::new(dir_path).join(".claude");
-    std::fs::create_dir_all(&claude_dir)
-        .map_err(|e| anyhow!("failed to create .claude dir: {}", e))?;
-
-    let file_path = claude_dir.join("instructions.md");
-    std::fs::write(&file_path, instructions)
-        .map_err(|e| anyhow!("failed to write instructions.md: {}", e))?;
-
-    Ok(())
-}
 
 fn build_dispatcher_instructions(
     project_name: &str,
@@ -4073,14 +4069,14 @@ Coordination item: `{item_display}`
 
 ## Available Tools
 - **wcp_*** — Work item management (create, update, comment, search)
-- **euri_*** — Session management (worktree_create, session_create, session_watch, merge_queue)
+- **emery_*** — Session management (worktree_create, session_create, session_watch, merge_queue)
 
 ## Session Start Checklist
 1. `wcp_namespaces` — discover namespaces
 2. `wcp_list(namespace: "{ns_display}")` — find in-progress work
-3. `euri_worktree_list(project_id)` — check active worktrees
-4. `euri_session_list(project_id)` — check running sessions
-5. `euri_merge_queue_list(project_id)` — check pending merges
+3. `emery_worktree_list(project_id)` — check active worktrees
+4. `emery_session_list(project_id)` — check running sessions
+5. `emery_merge_queue_list(project_id)` — check pending merges
 
 ## Lifecycle
 1. **Plan** — read coordination item for project context, identify work to dispatch
@@ -4095,39 +4091,6 @@ Coordination item: `{item_display}`
 - If a builder is blocked, they'll comment — check regularly"#));
 
     parts.join("\n\n---\n\n")
-}
-
-fn write_dispatcher_guard(project_root: &str) -> Result<()> {
-    let claude_dir = std::path::Path::new(project_root).join(".claude");
-    std::fs::create_dir_all(&claude_dir)
-        .map_err(|e| anyhow!("failed to create .claude dir: {}", e))?;
-
-    // Node.js inline script that blocks code-writing tools for dispatcher sessions
-    let node_script = r#"const i=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));const t=i.tool_name||'';if(['Edit','Write','MultiEdit','NotebookEdit'].includes(t)){process.stdout.write(JSON.stringify({continue:false,stopReason:'Dispatchers do not write code. Create a work item and dispatch a builder session instead.'}));process.exit(0);}if(t==='Bash'){const cmd=(i.tool_input||{}).command||'';const wp=['echo>','cat>','>','mv ','cp ','rm ','mkdir ','touch ','chmod ','chown ','npm install','cargo install','git clone'];if(wp.some(p=>cmd.toLowerCase().includes(p))){process.stdout.write(JSON.stringify({continue:false,stopReason:'Dispatchers should not modify the filesystem. Dispatch a builder for implementation tasks.'}));process.exit(0);}}process.stdout.write(JSON.stringify({continue:true}));"#;
-
-    let settings = serde_json::json!({
-        "hooks": {
-            "PreToolUse": [
-                {
-                    "matcher": ".*",
-                    "hooks": [
-                        {
-                            "type": "command",
-                            "command": format!("node -e \"{}\"", node_script)
-                        }
-                    ]
-                }
-            ]
-        }
-    });
-
-    let settings_path = claude_dir.join("settings.local.json");
-    let settings_str = serde_json::to_string_pretty(&settings)
-        .map_err(|e| anyhow!("failed to serialize settings: {}", e))?;
-    std::fs::write(&settings_path, settings_str)
-        .map_err(|e| anyhow!("failed to write settings.local.json: {}", e))?;
-
-    Ok(())
 }
 
 impl From<CreateSessionSpecRequest> for SessionSpecDraft {

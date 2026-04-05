@@ -1,4 +1,4 @@
-# EURI UX Flow Analysis
+# Emery UX Flow Analysis
 
 **Date:** 2026-04-05
 **Scope:** Full app audit — navigation, journeys, friction, dead ends, missing transitions
@@ -22,7 +22,7 @@
   ├── → [document]         DocsSection row click
   ├── → [new-document]     DocsSection "+ New" button
   ├── → [inbox]            topbar "inbox" button (only when project is selected)
-  └── ← [home]             breadcrumb "EURI" or Escape or Ctrl+`
+  └── ← [home]             breadcrumb "Emery" or Escape or Ctrl+`
 
 [project-settings]  (ProjectSettingsView)
   ├── → [project]          "← Back" button
@@ -60,9 +60,9 @@
 
 ### Persistent chrome (always visible)
 
-**Topbar** (`topbar.tsx`): EURI brand + connection dot | inbox button (project-scoped) | connection status chip | "N live" chip | optional "debug" chip | "settings" button
+**Topbar** (`topbar.tsx`): Emery brand + connection dot | inbox button (project-scoped) | connection status chip | "N live" chip | optional "debug" chip | "settings" button
 
-**Breadcrumb bar** (`breadcrumb.tsx`): EURI › [project name] › [agent|document|work_item|"new document"]
+**Breadcrumb bar** (`breadcrumb.tsx`): Emery › [project name] › [agent|document|work_item|"new document"]
 - Note: `settings`, `project-settings`, and `inbox` are NOT in the breadcrumb trail.
 
 ---
@@ -317,7 +317,7 @@ When an agent finishes and the user is elsewhere in the app, the only signal is 
 The topbar inbox button toggles between inbox and home (`goHome()`), not between inbox and the previous view. If user was on a work item or document and clicks inbox, they lose their place. Coming back from inbox goes to home, not back to where they were. Source: `topbar.tsx` lines 19–26 (`navStore.goHome()`).
 
 **F6: Inbox missing from breadcrumb**
-When in InboxView, the breadcrumb bar shows only "EURI" (home) — inbox is not in the breadcrumb chain. The back route from inbox is either clicking the inbox button again (which goes home, not back) or Escape. There is no obvious way to return to the project. Source: `breadcrumb.tsx` — `buildCrumbs` has no case for `inbox` layer.
+When in InboxView, the breadcrumb bar shows only "Emery" (home) — inbox is not in the breadcrumb chain. The back route from inbox is either clicking the inbox button again (which goes home, not back) or Escape. There is no obvious way to return to the project. Source: `breadcrumb.tsx` — `buildCrumbs` has no case for `inbox` layer.
 
 **F7: No default account setting from project UI**
 `project.default_account_id` exists in the data model and is used in DispatchSheet to pre-select an account, but ProjectSettingsView has no UI to set it. Users cannot configure which account a project uses without directly editing data. Source: `project-settings-view.tsx` — no `default_account_id` field.

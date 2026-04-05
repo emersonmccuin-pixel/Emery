@@ -1,3 +1,4 @@
+pub mod agent_profile;
 mod bootstrap;
 mod diagnostics;
 pub mod git;

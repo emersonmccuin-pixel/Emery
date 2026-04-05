@@ -388,7 +388,7 @@ pub fn git_status(path: &Path) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-/// Get diff stat between two refs (e.g., main...euri/euri-31).
+/// Get diff stat between two refs (e.g., main...emery/emery-31).
 pub fn git_diff_stat(repo_root: &Path, base_ref: &str, head_ref: &str) -> Result<DiffStat> {
     let output = Command::new("git")
         .current_dir(repo_root)
