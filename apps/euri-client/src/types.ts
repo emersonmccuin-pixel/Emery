@@ -103,6 +103,7 @@ export type SessionSummary = {
   project_id: string;
   project_root_id: string | null;
   worktree_id: string | null;
+  worktree_branch: string | null;
   work_item_id: string | null;
   account_id: string;
   agent_kind: string;

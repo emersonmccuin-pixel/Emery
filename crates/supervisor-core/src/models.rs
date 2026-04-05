@@ -786,6 +786,7 @@ pub struct SessionSummary {
     pub project_id: String,
     pub project_root_id: Option<String>,
     pub worktree_id: Option<String>,
+    pub worktree_branch: Option<String>,
     pub work_item_id: Option<String>,
     pub account_id: String,
     pub agent_kind: String,
@@ -918,6 +919,7 @@ pub struct SessionListFilter {
     pub project_id: Option<String>,
     pub status: Option<String>,
     pub runtime_state: Option<String>,
+    pub work_item_id: Option<String>,
     pub limit: Option<usize>,
 }
 

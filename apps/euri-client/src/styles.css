@@ -694,6 +694,102 @@ button {
   background: rgba(216, 162, 90, 0.14);
 }
 
+/* ── Fleet strip ── */
+
+.fleet-strip {
+  grid-column: 1 / -1;
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  border: 1px solid rgba(242, 237, 225, 0.07);
+  background: rgba(27, 23, 20, 0.82);
+  backdrop-filter: blur(18px);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.fleet-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.fleet-header h3 {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.fleet-count {
+  font-size: 0.72rem;
+  color: #c3bcaf;
+}
+
+.fleet-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  background: rgba(242, 237, 225, 0.04);
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.fleet-row:hover {
+  background: rgba(216, 162, 90, 0.14);
+}
+
+.fleet-state {
+  flex-shrink: 0;
+  width: 1rem;
+  display: flex;
+  align-items: center;
+}
+
+.fleet-label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
+}
+
+.fleet-callsign,
+.fleet-mode {
+  font-weight: 600;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.fleet-title {
+  font-size: 0.8rem;
+  color: #c3bcaf;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fleet-branch {
+  font-size: 0.7rem;
+  color: #a69e90;
+  background: rgba(242, 237, 225, 0.06);
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
+  font-family: "IBM Plex Mono", "Cascadia Code", monospace;
+}
+
+.fleet-duration {
+  font-size: 0.7rem;
+  color: #a69e90;
+  white-space: nowrap;
+}
+
 /* ── Terminal surface ── */
 
 .terminal-surface {

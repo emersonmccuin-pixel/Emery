@@ -6,6 +6,7 @@ import type {
   ShellBootstrap,
   WorkItemSummary,
 } from "./types";
+import { FleetStrip } from "./fleet-strip";
 
 export function ProjectHome({
   project,
@@ -56,14 +57,11 @@ export function ProjectHome({
     <div className="project-home">
       <div className="project-grid">
         {liveSessions.length > 0 ? (
-          <section className="card session-card-list">
-            <h3>Live sessions</h3>
-            {liveSessions.map((session) => (
-              <button key={session.id} className="session-link" onClick={() => onOpenSession(session.id)}>
-                <span className="list-meta"><span className="indicator live" />{session.title ?? session.current_mode}</span>
-              </button>
-            ))}
-          </section>
+          <FleetStrip
+            sessions={sessions}
+            workItems={workItems}
+            onOpenSession={onOpenSession}
+          />
         ) : null}
 
         {activeWorkItems.length > 0 ? (
