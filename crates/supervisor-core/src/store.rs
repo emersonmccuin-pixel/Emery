@@ -1870,53 +1870,60 @@ impl DatabaseSet {
         let connection = open_connection(&self.paths.app_db)?;
         let mut sql = String::from(
             "SELECT
-                id,
-                session_spec_id,
-                project_id,
-                project_root_id,
-                worktree_id,
-                work_item_id,
-                account_id,
-                agent_kind,
-                origin_mode,
-                current_mode,
-                title,
-                title_source,
-                runtime_state,
-                status,
-                activity_state,
-                needs_input_reason,
-                pty_owner_key,
-                cwd,
-                started_at,
-                ended_at,
-                last_output_at,
-                last_attached_at,
-                created_at,
-                updated_at,
-                archived_at
-             FROM sessions
+                s.id,
+                s.session_spec_id,
+                s.project_id,
+                s.project_root_id,
+                s.worktree_id,
+                w.branch_name,
+                s.work_item_id,
+                s.account_id,
+                s.agent_kind,
+                s.origin_mode,
+                s.current_mode,
+                s.title,
+                s.title_source,
+                s.runtime_state,
+                s.status,
+                s.activity_state,
+                s.needs_input_reason,
+                s.pty_owner_key,
+                s.cwd,
+                s.started_at,
+                s.ended_at,
+                s.last_output_at,
+                s.last_attached_at,
+                s.created_at,
+                s.updated_at,
+                s.archived_at
+             FROM sessions s
+             LEFT JOIN worktrees w ON s.worktree_id = w.id
              WHERE 1 = 1",
         );
 
         let mut values = Vec::new();
 
         if let Some(project_id) = filter.project_id.as_deref() {
-            sql.push_str(" AND project_id = ?");
+            sql.push_str(" AND s.project_id = ?");
             values.push(project_id.to_string());
         }
 
         if let Some(status) = filter.status.as_deref() {
-            sql.push_str(" AND status = ?");
+            sql.push_str(" AND s.status = ?");
             values.push(status.to_string());
         }
 
         if let Some(runtime_state) = filter.runtime_state.as_deref() {
-            sql.push_str(" AND runtime_state = ?");
+            sql.push_str(" AND s.runtime_state = ?");
             values.push(runtime_state.to_string());
         }
 
-        sql.push_str(" ORDER BY created_at DESC");
+        if let Some(work_item_id) = filter.work_item_id.as_deref() {
+            sql.push_str(" AND s.work_item_id = ?");
+            values.push(work_item_id.to_string());
+        }
+
+        sql.push_str(" ORDER BY s.created_at DESC");
 
         if let Some(limit) = filter.limit {
             sql.push_str(" LIMIT ?");
@@ -1950,33 +1957,35 @@ impl DatabaseSet {
         connection
             .query_row(
                 "SELECT
-                    id,
-                    session_spec_id,
-                    project_id,
-                    project_root_id,
-                    worktree_id,
-                    work_item_id,
-                    account_id,
-                    agent_kind,
-                    origin_mode,
-                    current_mode,
-                    title,
-                    title_source,
-                    runtime_state,
-                    status,
-                    activity_state,
-                    needs_input_reason,
-                    pty_owner_key,
-                    cwd,
-                    started_at,
-                    ended_at,
-                    last_output_at,
-                    last_attached_at,
-                    created_at,
-                    updated_at,
-                    archived_at
-                 FROM sessions
-                 WHERE id = ?1",
+                    s.id,
+                    s.session_spec_id,
+                    s.project_id,
+                    s.project_root_id,
+                    s.worktree_id,
+                    w.branch_name,
+                    s.work_item_id,
+                    s.account_id,
+                    s.agent_kind,
+                    s.origin_mode,
+                    s.current_mode,
+                    s.title,
+                    s.title_source,
+                    s.runtime_state,
+                    s.status,
+                    s.activity_state,
+                    s.needs_input_reason,
+                    s.pty_owner_key,
+                    s.cwd,
+                    s.started_at,
+                    s.ended_at,
+                    s.last_output_at,
+                    s.last_attached_at,
+                    s.created_at,
+                    s.updated_at,
+                    s.archived_at
+                 FROM sessions s
+                 LEFT JOIN worktrees w ON s.worktree_id = w.id
+                 WHERE s.id = ?1",
                 [session_id],
                 map_session_summary,
             )
@@ -2572,26 +2581,27 @@ fn map_session_summary(row: &Row<'_>) -> rusqlite::Result<SessionSummary> {
         project_id: row.get(2)?,
         project_root_id: row.get(3)?,
         worktree_id: row.get(4)?,
-        work_item_id: row.get(5)?,
-        account_id: row.get(6)?,
-        agent_kind: row.get(7)?,
-        origin_mode: row.get(8)?,
-        current_mode: row.get(9)?,
-        title: row.get(10)?,
-        title_source: row.get(11)?,
-        runtime_state: row.get(12)?,
-        status: row.get(13)?,
-        activity_state: row.get(14)?,
-        needs_input_reason: row.get(15)?,
-        pty_owner_key: row.get(16)?,
-        cwd: row.get(17)?,
-        started_at: row.get(18)?,
-        ended_at: row.get(19)?,
-        last_output_at: row.get(20)?,
-        last_attached_at: row.get(21)?,
-        created_at: row.get(22)?,
-        updated_at: row.get(23)?,
-        archived_at: row.get(24)?,
+        worktree_branch: row.get(5)?,
+        work_item_id: row.get(6)?,
+        account_id: row.get(7)?,
+        agent_kind: row.get(8)?,
+        origin_mode: row.get(9)?,
+        current_mode: row.get(10)?,
+        title: row.get(11)?,
+        title_source: row.get(12)?,
+        runtime_state: row.get(13)?,
+        status: row.get(14)?,
+        activity_state: row.get(15)?,
+        needs_input_reason: row.get(16)?,
+        pty_owner_key: row.get(17)?,
+        cwd: row.get(18)?,
+        started_at: row.get(19)?,
+        ended_at: row.get(20)?,
+        last_output_at: row.get(21)?,
+        last_attached_at: row.get(22)?,
+        created_at: row.get(23)?,
+        updated_at: row.get(24)?,
+        archived_at: row.get(25)?,
         live: false,
     })
 }
