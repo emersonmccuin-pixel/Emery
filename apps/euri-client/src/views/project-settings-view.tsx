@@ -15,6 +15,7 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
   const [nameInput, setNameInput] = useState("");
   const [nameSaved, setNameSaved] = useState(false);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+  const [confirmArchive, setConfirmArchive] = useState(false);
 
   useEffect(() => {
     void appStore.loadProjectReads(projectId);
@@ -28,6 +29,7 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
 
   const savingName = loadingKeys[`save-project-name:${projectId}`] ?? false;
   const addingRoot = loadingKeys[`add-project-root:${projectId}`] ?? false;
+  const archiving = loadingKeys[`archive-project:${projectId}`] ?? false;
 
   if (!project && !projectSummary) {
     return <div className="empty-pane">Loading project settings...</div>;
@@ -62,6 +64,15 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
     }
     setConfirmRemoveId(null);
     await appStore.handleRemoveProjectRoot(projectId, rootId);
+  }
+
+  async function handleArchive() {
+    if (!confirmArchive) {
+      setConfirmArchive(true);
+      return;
+    }
+    setConfirmArchive(false);
+    await appStore.handleArchiveProject(projectId);
   }
 
   return (
@@ -146,6 +157,30 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
             </div>
           )}
           {addingRoot && <div className="settings-adding-root">Adding root...</div>}
+        </section>
+
+        {/* Danger Zone */}
+        <section className="settings-section settings-danger-zone">
+          <h3 className="settings-section-title settings-danger-zone-title">Danger Zone</h3>
+          <div className="settings-danger-zone-body">
+            <div className="settings-danger-zone-item">
+              <div className="settings-danger-zone-info">
+                <span className="settings-danger-zone-label">Archive project</span>
+                <span className="settings-danger-zone-description">
+                  Hides this project from the home view. Cannot be done while sessions are running or
+                  merge queue entries are pending.
+                </span>
+              </div>
+              <button
+                className={`btn-sm ${confirmArchive ? "btn-danger" : "btn-ghost"}`}
+                onClick={() => void handleArchive()}
+                disabled={archiving}
+                title={confirmArchive ? "Click again to confirm archive" : "Archive project"}
+              >
+                {archiving ? "Archiving..." : confirmArchive ? "Confirm?" : "Archive"}
+              </button>
+            </div>
+          </div>
         </section>
       </div>
     </div>

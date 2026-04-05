@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import {
+  archiveProject,
   bootstrapShell,
   checkDispatchConflicts,
   countUnreadInboxEntries,
@@ -38,6 +39,7 @@ import {
   watchLiveSessions,
 } from "./lib";
 import { sessionStore } from "./session-store";
+import { navStore } from "./nav-store";
 import {
   makeClientEvent,
   newCorrelationId,
@@ -984,6 +986,21 @@ class AppStore {
       this.update({ error: String(invokeError) });
     } finally {
       this.setLoading(`set-project-root-remote:${rootId}`, false);
+    }
+  }
+
+  async handleArchiveProject(projectId: string) {
+    const correlationId = newCorrelationId("project-archive");
+    this.setLoading(`archive-project:${projectId}`, true);
+    try {
+      await archiveProject(projectId, correlationId);
+      await this.rebootstrap();
+      navStore.goHome();
+      this.clearError();
+    } catch (invokeError) {
+      this.update({ error: String(invokeError) });
+    } finally {
+      this.setLoading(`archive-project:${projectId}`, false);
     }
   }
 

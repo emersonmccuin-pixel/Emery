@@ -238,6 +238,11 @@ pub struct UpdateProjectRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct ArchiveProjectRequest {
+    pub project_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct CreateProjectRootRequest {
     pub project_id: String,
     pub label: String,

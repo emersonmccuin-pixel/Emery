@@ -5,7 +5,7 @@ use anyhow::Result;
 use crate::bootstrap::AppPaths;
 use crate::diagnostics::{DiagnosticContext, DiagnosticsBundleResult, DiagnosticsHub};
 use crate::models::{
-    AccountDetail, AccountSummary, CreateAccountRequest, CreateDiagnosticsBundleRequest,
+    AccountDetail, AccountSummary, ArchiveProjectRequest, CreateAccountRequest, CreateDiagnosticsBundleRequest,
     CreateDocumentRequest, CreatePlanningAssignmentRequest, CreateProjectRequest,
     CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
     CreateWorkItemRequest, CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
@@ -115,6 +115,10 @@ impl Supervisor {
 
     pub fn update_project(&self, request: UpdateProjectRequest) -> Result<ProjectDetail> {
         self.service.update_project(request)
+    }
+
+    pub fn archive_project(&self, request: ArchiveProjectRequest) -> Result<ProjectDetail> {
+        self.service.archive_project(request)
     }
 
     pub fn list_project_roots(&self, project_id: &str) -> Result<Vec<ProjectRootSummary>> {
