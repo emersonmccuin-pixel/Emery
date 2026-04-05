@@ -11,7 +11,7 @@ import {
 } from "../lib";
 import type { VaultEntry, VaultLockStatus, VaultAuditEntry } from "../types";
 import { useAppStore } from "../store";
-import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Input } from "../components/ui";
+import { Badge, Button, Card, CardContent, CardHeader, CardTitle, Input, Select } from "../components/ui";
 
 function formatRelativeTime(ts: number): string {
   const diff = Date.now() - ts * 1000;
@@ -136,7 +136,7 @@ export function VaultView() {
               </Button>
             ) : (
               <div className="vault-unlock-row">
-                <select
+                <Select
                   className="settings-select vault-duration-select"
                   value={unlockMinutes}
                   onChange={(e) => setUnlockMinutes(Number(e.target.value))}
@@ -146,7 +146,7 @@ export function VaultView() {
                   <option value={60}>1 hr</option>
                   <option value={120}>2 hr</option>
                   <option value={480}>8 hr</option>
-                </select>
+                </Select>
                 <Button size="sm" onClick={() => void handleUnlock()}>
                   Unlock
                 </Button>
@@ -466,14 +466,14 @@ function AddEntryForm({
       <CardContent>
         <div className="settings-field-group">
           <label className="settings-label">Scope</label>
-          <select className="settings-select" value={scope} onChange={(e) => setScope(e.target.value)}>
+          <Select className="settings-select" value={scope} onChange={(e) => setScope(e.target.value)}>
             <option value="global">Global</option>
             {projects.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
         <div className="settings-field-group">
           <label className="settings-label">Key</label>

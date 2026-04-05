@@ -8,7 +8,7 @@ import type {
   WorkItemSummary,
   WorkflowReconciliationProposalSummary,
 } from "./types";
-import { Button } from "./components/ui";
+import { Button, Input, Select, Textarea } from "./components/ui";
 
 const WORK_ITEM_TYPES = ["epic", "task", "bug", "feature", "research", "support"] as const;
 const WORK_ITEM_STATUSES = [
@@ -142,7 +142,7 @@ export function WorkItemPane({
 
           <label className="field">
             <span>Title</span>
-            <input
+            <Input
               value={form.title}
               onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
             />
@@ -150,7 +150,7 @@ export function WorkItemPane({
 
           <label className="field">
             <span>Description</span>
-            <textarea
+            <Textarea
               value={form.description}
               onChange={(event) =>
                 setForm((current) => ({ ...current, description: event.target.value }))
@@ -160,7 +160,7 @@ export function WorkItemPane({
 
           <label className="field">
             <span>Acceptance criteria</span>
-            <textarea
+            <Textarea
               value={form.acceptance_criteria}
               onChange={(event) =>
                 setForm((current) => ({ ...current, acceptance_criteria: event.target.value }))
@@ -171,7 +171,7 @@ export function WorkItemPane({
           <div className="field-row">
             <label className="field">
               <span>Type</span>
-              <select
+              <Select
                 value={form.work_item_type}
                 onChange={(event) =>
                   setForm((current) => ({ ...current, work_item_type: event.target.value }))
@@ -182,11 +182,11 @@ export function WorkItemPane({
                     {value}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
             <label className="field">
               <span>Status</span>
-              <select
+              <Select
                 value={form.status}
                 onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))}
               >
@@ -195,11 +195,11 @@ export function WorkItemPane({
                     {value}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
             <label className="field">
               <span>Priority</span>
-              <select
+              <Select
                 value={form.priority}
                 onChange={(event) => setForm((current) => ({ ...current, priority: event.target.value }))}
               >
@@ -208,7 +208,7 @@ export function WorkItemPane({
                     {value || "none"}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
           </div>
         </section>
@@ -405,25 +405,25 @@ export function DocumentPane({
         <div className="field-row">
           <label className="field">
             <span>Title</span>
-            <input value={form.title} onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} />
+            <Input value={form.title} onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} />
           </label>
           <label className="field">
             <span>Slug</span>
-            <input value={form.slug} onChange={(event) => setForm((current) => ({ ...current, slug: event.target.value }))} />
+            <Input value={form.slug} onChange={(event) => setForm((current) => ({ ...current, slug: event.target.value }))} />
           </label>
         </div>
 
         <div className="field-row">
           <label className="field">
             <span>Type</span>
-            <input
+            <Input
               value={form.doc_type}
               onChange={(event) => setForm((current) => ({ ...current, doc_type: event.target.value }))}
             />
           </label>
           <label className="field">
             <span>Status</span>
-            <select
+            <Select
               value={form.status}
               onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))}
             >
@@ -432,11 +432,11 @@ export function DocumentPane({
                   {value}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <label className="field">
             <span>Linked work item</span>
-            <select
+            <Select
               value={form.work_item_id}
               onChange={(event) =>
                 setForm((current) => ({ ...current, work_item_id: event.target.value }))
@@ -448,13 +448,13 @@ export function DocumentPane({
                   {item.callsign} · {item.title}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
         </div>
 
         <label className="field">
           <span>Markdown</span>
-          <textarea
+          <Textarea
             className="markdown-editor"
             value={form.content_markdown}
             onChange={(event) =>

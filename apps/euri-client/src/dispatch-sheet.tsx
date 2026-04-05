@@ -6,7 +6,7 @@ import type {
   WorkItemSummary,
 } from "./types";
 import { useAppStore, appStore } from "./store";
-import { Button } from "./components/ui";
+import { Button, Select } from "./components/ui";
 
 export function DispatchSheet() {
   const pendingDispatch = useAppStore((s) => s.pendingDispatch);
@@ -163,12 +163,12 @@ function SingleDispatchSheet({
           <div className="dispatch-row">
             <span className="dispatch-label">Safety Mode</span>
             <div>
-              <select value={safetyMode} onChange={(e) => setSafetyMode(e.target.value)}>
+              <Select value={safetyMode} onChange={(e) => setSafetyMode(e.target.value)}>
                 <option value="">Default ({resolvedDefault})</option>
                 <option value="full">Autonomous</option>
                 <option value="permissive">Supervised</option>
                 <option value="none">Read Only</option>
-              </select>
+              </Select>
               {(safetyMode || resolvedDefault) && (
                 <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", marginTop: "2px" }}>
                   {safetyModeDescription(safetyMode || resolvedDefault)}
@@ -178,12 +178,12 @@ function SingleDispatchSheet({
           </div>
           <div className="dispatch-row">
             <span className="dispatch-label">Model</span>
-            <select value={model} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setModel(e.target.value)}>
+            <Select value={model} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setModel(e.target.value)}>
               <option value="">Default ({resolvedDefaultModel})</option>
               <option value="opus">Opus</option>
               <option value="sonnet">Sonnet</option>
               <option value="haiku">Haiku</option>
-            </select>
+            </Select>
           </div>
           {getDefaultStopRules(originMode).length > 0 && (
             <div className="dispatch-row">
@@ -295,7 +295,7 @@ function MultiDispatchSheet({
                 <span className="dispatch-item-title">{item.title}</span>
                 <code className="dispatch-item-branch">euri/{item.callsign.toLowerCase()}</code>
               </div>
-              <select
+              <Select
                 className="dispatch-item-account"
                 value={itemAccounts[item.id] ?? ""}
                 onChange={(e) =>
@@ -307,7 +307,7 @@ function MultiDispatchSheet({
                     {a.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           ))}
         </div>
@@ -316,12 +316,12 @@ function MultiDispatchSheet({
           <div className="dispatch-row">
             <span className="dispatch-label">Safety Mode</span>
             <div>
-              <select value={safetyMode} onChange={(e) => setSafetyMode(e.target.value)}>
+              <Select value={safetyMode} onChange={(e) => setSafetyMode(e.target.value)}>
                 <option value="">Default ({resolvedDefault})</option>
                 <option value="full">Autonomous</option>
                 <option value="permissive">Supervised</option>
                 <option value="none">Read Only</option>
-              </select>
+              </Select>
               {(safetyMode || resolvedDefault) && (
                 <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", marginTop: "2px" }}>
                   {safetyModeDescription(safetyMode || resolvedDefault)}
@@ -331,12 +331,12 @@ function MultiDispatchSheet({
           </div>
           <div className="dispatch-row">
             <span className="dispatch-label">Model</span>
-            <select value={model} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setModel(e.target.value)}>
+            <Select value={model} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setModel(e.target.value)}>
               <option value="">Default (execution → sonnet)</option>
               <option value="opus">Opus</option>
               <option value="sonnet">Sonnet</option>
               <option value="haiku">Haiku</option>
-            </select>
+            </Select>
           </div>
         </div>
 

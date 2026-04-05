@@ -1761,16 +1761,6 @@ html[data-theme="vaporwave"] .peek-panel {
   min-height: 100px;
 }
 
-.secondary-button {
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-md);
-  background: var(--surface-hover);
-  color: var(--text-primary);
-  font-size: var(--text-base);
-}
-
-.secondary-button:hover { background: var(--surface-active); }
-
 /* ── Proposal cards ── */
 
 .proposal-card {
@@ -3855,71 +3845,6 @@ html[data-theme="vaporwave"] .peek-panel {
   border: 1px solid var(--border-subtle);
 }
 
-.wi-action-btn {
-  padding: 6px 14px;
-  border-radius: var(--radius-sm);
-  font-size: var(--text-base);
-  cursor: pointer;
-  border: none;
-  transition: opacity 0.15s, background 0.15s;
-  white-space: nowrap;
-}
-
-.wi-action-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.wi-action-btn--primary {
-  background: var(--accent);
-  color: var(--bg-base, #000);
-  font-weight: var(--weight-semibold);
-}
-
-.wi-action-btn--primary:hover:not(:disabled) {
-  opacity: 0.85;
-}
-
-.wi-action-btn--secondary {
-  background: var(--surface-active);
-  color: var(--text-primary);
-}
-
-.wi-action-btn--secondary:hover:not(:disabled) {
-  background: var(--border-subtle);
-}
-
-.wi-action-btn--status {
-  background: transparent;
-  color: var(--accent);
-  border: 1px solid var(--accent);
-  margin-left: auto;
-}
-
-.wi-action-btn--status:hover:not(:disabled) {
-  background: var(--accent-muted);
-}
-
-.wi-action-btn--block {
-  background: transparent;
-  color: var(--status-warning, #ffc832);
-  border: 1px solid var(--status-warning, #ffc832);
-}
-
-.wi-action-btn--block:hover:not(:disabled) {
-  background: var(--status-warning-bg, rgba(255, 159, 67, 0.12));
-}
-
-.wi-action-btn--unblock {
-  background: transparent;
-  color: var(--status-live, #3df5d0);
-  border: 1px solid var(--status-live, #3df5d0);
-}
-
-.wi-action-btn--unblock:hover:not(:disabled) {
-  background: var(--status-live-bg, rgba(61, 245, 208, 0.12));
-}
-
 /* ── Live session cards ── */
 
 .wi-session-cards {
@@ -4438,22 +4363,6 @@ html[data-theme="vaporwave"] .peek-panel {
 .btn-sm:disabled {
   opacity: 0.45;
   cursor: not-allowed;
-}
-
-.btn-primary {
-  color: var(--text-on-primary, #000);
-}
-
-.btn-primary:hover:not(:disabled) {
-  opacity: 0.85;
-}
-
-.btn-ghost {
-  color: var(--text-secondary);
-}
-
-.btn-ghost:hover:not(:disabled) {
-  color: var(--text-primary);
 }
 
 .btn-danger {
@@ -5569,23 +5478,6 @@ html[data-theme="vaporwave"] .peek-panel {
   margin-top: 10px;
 }
 
-/* ── Button hierarchy (P2-6) ── */
-.primary-button {
-  padding: var(--space-1) var(--space-3);
-  color: var(--accent);
-  font-size: var(--text-base);
-  font-weight: var(--weight-medium);
-}
-
-.primary-button:hover:not(:disabled) {
-  filter: brightness(1.06);
-}
-
-.primary-button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
 .danger-button {
   padding: var(--space-1) var(--space-3);
   border-radius: var(--radius-md);
@@ -6307,10 +6199,6 @@ html[data-theme="cyberpunk"] .project-create-browse-btn,
 html[data-theme="cyberpunk"] .project-create-submit-btn,
 html[data-theme="cyberpunk"] .project-create-cancel-btn,
 html[data-theme="cyberpunk"] .home-new-project-btn,
-html[data-theme="cyberpunk"] .primary-button,
-html[data-theme="cyberpunk"] .secondary-button,
-html[data-theme="cyberpunk"] .btn-primary,
-html[data-theme="cyberpunk"] .btn-ghost,
 html[data-theme="cyberpunk"] .section-add-btn {
   border-radius: 0;
 }

@@ -12,6 +12,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 
 type SettingsTab = "accounts" | "appearance" | "agent-defaults" | "github";
 
@@ -397,7 +398,7 @@ function AgentDefaultsRow({
       <div className="settings-agent-defaults-account-name">{account.label}</div>
       <div className="settings-field-group">
         <label className="settings-label">Default model</label>
-        <select
+        <Select
           className="settings-select"
           value={modelInput}
           onChange={(e) => {
@@ -410,11 +411,11 @@ function AgentDefaultsRow({
               {m.label}
             </option>
           ))}
-        </select>
+        </Select>
       </div>
       <div className="settings-field-group">
         <label className="settings-label">Safety mode</label>
-        <select
+        <Select
           className="settings-select"
           value={safetyMode}
           onChange={(e) => {
@@ -427,7 +428,7 @@ function AgentDefaultsRow({
               {m.label}
             </option>
           ))}
-        </select>
+        </Select>
         {safetyMode && SAFETY_MODES.find((m) => m.value === safetyMode)?.description && (
           <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", marginTop: "2px" }}>
             {SAFETY_MODES.find((m) => m.value === safetyMode)!.description}

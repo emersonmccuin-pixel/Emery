@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { WORK_ITEM_TYPES, WORK_ITEM_STATUSES, PRIORITIES, useAppStore } from "../store";
 import type { WorkItemSummary } from "../types";
-import { Button, Input } from "./ui";
+import { Button, Input, Select, Textarea } from "./ui";
 
 export type WorkItemFormData = {
   title: string;
@@ -111,7 +111,7 @@ export function WorkItemForm({
       {/* Status */}
       <div className="wi-form-field">
         <label className="wi-form-label">Status</label>
-        <select
+        <Select
           className="wi-form-input"
           value={form.status}
           onChange={(e) => set("status", e.target.value)}
@@ -121,7 +121,7 @@ export function WorkItemForm({
               {s.replace("_", " ")}
             </option>
           ))}
-        </select>
+        </Select>
       </div>
 
       {/* Parent */}
@@ -140,7 +140,7 @@ export function WorkItemForm({
       {/* Description */}
       <div className="wi-form-field">
         <label className="wi-form-label">Description</label>
-        <textarea
+        <Textarea
           className="wi-form-textarea"
           value={form.description}
           onChange={(e) => set("description", e.target.value)}
@@ -152,7 +152,7 @@ export function WorkItemForm({
       {/* Acceptance Criteria */}
       <div className="wi-form-field">
         <label className="wi-form-label">Acceptance Criteria</label>
-        <textarea
+        <Textarea
           className="wi-form-textarea"
           value={form.acceptance_criteria}
           onChange={(e) => set("acceptance_criteria", e.target.value)}

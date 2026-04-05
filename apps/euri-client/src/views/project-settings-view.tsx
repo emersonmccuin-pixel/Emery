@@ -6,6 +6,8 @@ import type { AgentTemplateSummary, ProjectRootSummary } from "../types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
 // ---- Model defaults helpers ----
@@ -315,7 +317,7 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
               Default Account
             </label>
             <div className="settings-input-row">
-              <select
+              <Select
                 id="project-default-account"
                 className="settings-input"
                 value={defaultAccountId}
@@ -330,7 +332,7 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
                     {account.label}
                   </option>
                 ))}
-              </select>
+              </Select>
               <Button
                 variant="terminal"
                 size="sm"
@@ -354,7 +356,7 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
             Markdown instructions injected into every agent session for this project.
           </p>
           <div className="settings-field-group">
-            <textarea
+            <Textarea
               className="settings-input"
               value={instructionsMd}
               onChange={(e) => {
@@ -480,7 +482,7 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
             {ORIGIN_MODE_LABELS.map(({ key, label }) => (
               <div className="model-defaults-row" key={key}>
                 <span className="model-defaults-mode-label">{label}</span>
-                <select
+                <Select
                   className="model-defaults-select"
                   value={modelDefaults.by_origin_mode[key]}
                   onChange={(e) =>
@@ -495,12 +497,12 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
                       {opt.label}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
             ))}
             <div className="model-defaults-row model-defaults-row-default">
               <span className="model-defaults-mode-label">Default (fallback)</span>
-              <select
+              <Select
                 className="model-defaults-select"
                 value={modelDefaults.default}
                 onChange={(e) =>
@@ -512,7 +514,7 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
                     {opt.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           </div>
           <div className="model-defaults-actions">
@@ -647,14 +649,16 @@ function RootRow({
             ) : (
               <span className="settings-root-remote-empty">No remote</span>
             )}
-            <button
-              className="settings-root-action-btn btn-sm btn-ghost"
+            <Button
+              variant="ghost"
+              size="sm"
+              className="settings-root-action-btn"
               onClick={handleStartEditRemote}
               disabled={settingRemote}
               title={root.remote_url ? "Edit remote URL" : "Add remote URL"}
             >
               {root.remote_url ? "Edit remote" : "Add remote"}
-            </button>
+            </Button>
           </div>
         )}
         {isGitRepo && editingRemote && (
@@ -785,30 +789,30 @@ function TemplateRow({
         )}
         {editing && (
           <div className="agent-template-edit-form">
-            <input
+            <Input
               className="settings-input"
               type="text"
               value={labelInput}
               onChange={(e) => { setLabelInput(e.target.value); setError(null); }}
               placeholder="Label"
             />
-            <input
+            <Input
               className="settings-input"
               type="text"
               value={modelInput}
               onChange={(e) => { setModelInput(e.target.value); setError(null); }}
               placeholder="Model (e.g. claude-sonnet-4-5)"
             />
-            <select
+            <Select
               className="settings-input agent-template-mode-select"
               value={originModeInput}
               onChange={(e) => { setOriginModeInput(e.target.value); setError(null); }}
             >
               <option value="code">code</option>
               <option value="chat">chat</option>
-            </select>
+            </Select>
             <label className="settings-label">Instructions (markdown)</label>
-            <textarea
+            <Textarea
               className="settings-input"
               value={instructionsMd}
               onChange={(e) => { setInstructionsMd(e.target.value); setError(null); }}
@@ -816,7 +820,7 @@ function TemplateRow({
               rows={4}
             />
             <label className="settings-label">Stop Rules (JSON array)</label>
-            <textarea
+            <Textarea
               className="settings-input"
               value={stopRulesJson}
               onChange={(e) => { setStopRulesJson(e.target.value); setError(null); }}
@@ -923,7 +927,7 @@ function AddTemplateForm({
   return (
     <div className="agent-template-add-form">
       <div className="agent-template-edit-form">
-        <input
+        <Input
           className="settings-input"
           type="text"
           value={keyInput}
@@ -931,22 +935,22 @@ function AddTemplateForm({
           placeholder="Template key (e.g. implementer)"
           autoFocus
         />
-        <input
+        <Input
           className="settings-input"
           type="text"
           value={labelInput}
           onChange={(e) => { setLabelInput(e.target.value); setError(null); }}
           placeholder="Label (e.g. Implementer)"
         />
-        <select
+        <Select
           className="settings-input agent-template-mode-select"
           value={originMode}
           onChange={(e) => { setOriginMode(e.target.value); setError(null); }}
         >
           <option value="code">code</option>
           <option value="chat">chat</option>
-        </select>
-        <input
+        </Select>
+        <Input
           className="settings-input"
           type="text"
           value={modelInput}
@@ -954,7 +958,7 @@ function AddTemplateForm({
           placeholder="Model (optional)"
         />
         <label className="settings-label">Instructions (markdown)</label>
-        <textarea
+        <Textarea
           className="settings-input"
           value={instructionsMd}
           onChange={(e) => { setInstructionsMd(e.target.value); setError(null); }}
@@ -962,7 +966,7 @@ function AddTemplateForm({
           rows={4}
         />
         <label className="settings-label">Stop Rules (JSON array)</label>
-        <textarea
+        <Textarea
           className="settings-input"
           value={stopRulesJson}
           onChange={(e) => { setStopRulesJson(e.target.value); setError(null); }}

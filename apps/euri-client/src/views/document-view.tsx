@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { appStore, useAppStore } from "../store";
 import { navStore } from "../nav-store";
+import { Button, Input, Select, Textarea } from "../components/ui";
 import { renderMarkdown } from "../utils/markdown";
 
 const DOC_TYPE_SUGGESTIONS = ["note", "prd", "architecture", "gameplan", "meeting", "adr", "runbook"];
@@ -64,7 +65,7 @@ function NewDocumentView({
         <div className="doc-meta-panel">
           <div className="doc-meta-row">
             <label className="doc-meta-label">Title</label>
-            <input
+            <Input
               className="doc-meta-input doc-meta-input--wide"
               type="text"
               value={title}
@@ -75,7 +76,7 @@ function NewDocumentView({
           </div>
           <div className="doc-meta-row">
             <label className="doc-meta-label">Type</label>
-            <input
+            <Input
               className="doc-meta-input"
               type="text"
               list="doc-type-options"
@@ -89,7 +90,7 @@ function NewDocumentView({
           </div>
           <div className="doc-meta-row">
             <label className="doc-meta-label">Status</label>
-            <select
+            <Select
               className="doc-meta-select"
               value={status}
               onChange={(e) => setStatus(e.target.value)}
@@ -97,11 +98,11 @@ function NewDocumentView({
               {DOC_STATUS_OPTIONS.map((s) => (
                 <option key={s} value={s}>{s}</option>
               ))}
-            </select>
+            </Select>
           </div>
           <div className="doc-meta-row">
             <label className="doc-meta-label">Work item</label>
-            <select
+            <Select
               className="doc-meta-select"
               value={workItemId}
               onChange={(e) => setWorkItemId(e.target.value)}
@@ -110,11 +111,11 @@ function NewDocumentView({
               {workItems.map((w) => (
                 <option key={w.id} value={w.id}>{w.callsign} {w.title}</option>
               ))}
-            </select>
+            </Select>
           </div>
         </div>
 
-        <textarea
+        <Textarea
           className="document-editor document-editor--create"
           value={content}
           onChange={(e) => setContent(e.target.value)}
@@ -125,29 +126,30 @@ function NewDocumentView({
         {error && <p className="doc-create-error">{error}</p>}
 
         <div className="document-create-actions">
-          <button
-            className="doc-save-btn"
+          <Button
             onClick={() => void handleCreate()}
             disabled={isCreating}
           >
             {isCreating ? "Creating…" : "Create"}
-          </button>
-          <button
-            className="doc-cancel-btn"
+          </Button>
+          <Button
+            variant="secondary"
             onClick={() => navStore.goToProject(projectId)}
           >
             Cancel
-          </button>
+          </Button>
         </div>
       </div>
 
       <div className="document-view-footer">
-        <button
+        <Button
           className="breadcrumb-link"
+          variant="ghost"
+          size="sm"
           onClick={() => navStore.goToProject(projectId)}
         >
           ← {project?.name ?? "Project"}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -293,20 +295,22 @@ function ExistingDocumentView({
             {isDirty && <span className="doc-unsaved-dot" title="Unsaved changes" />}
           </div>
         </div>
-        <button
+        <Button
           className={`doc-meta-toggle${metaOpen ? " doc-meta-toggle--active" : ""}`}
+          variant="ghost"
+          size="sm"
           onClick={() => setMetaOpen((v) => !v)}
           title="Edit metadata"
         >
           ⋯
-        </button>
+        </Button>
       </div>
 
       {metaOpen && (
         <div className="doc-meta-panel doc-meta-panel--overlay">
           <div className="doc-meta-row">
             <label className="doc-meta-label">Title</label>
-            <input
+            <Input
               className="doc-meta-input doc-meta-input--wide"
               type="text"
               value={metaTitle}
@@ -315,7 +319,7 @@ function ExistingDocumentView({
           </div>
           <div className="doc-meta-row">
             <label className="doc-meta-label">Type</label>
-            <input
+            <Input
               className="doc-meta-input"
               type="text"
               list="doc-type-options-edit"
@@ -328,7 +332,7 @@ function ExistingDocumentView({
           </div>
           <div className="doc-meta-row">
             <label className="doc-meta-label">Status</label>
-            <select
+            <Select
               className="doc-meta-select"
               value={metaStatus}
               onChange={(e) => setMetaStatus(e.target.value)}
@@ -336,11 +340,11 @@ function ExistingDocumentView({
               {DOC_STATUS_OPTIONS.map((s) => (
                 <option key={s} value={s}>{s}</option>
               ))}
-            </select>
+            </Select>
           </div>
           <div className="doc-meta-row">
             <label className="doc-meta-label">Work item</label>
-            <select
+            <Select
               className="doc-meta-select"
               value={metaWorkItemId}
               onChange={(e) => setMetaWorkItemId(e.target.value)}
@@ -349,36 +353,39 @@ function ExistingDocumentView({
               {workItems.map((w) => (
                 <option key={w.id} value={w.id}>{w.callsign} {w.title}</option>
               ))}
-            </select>
+            </Select>
           </div>
           <div className="doc-meta-actions">
             {metaSaveStatus === "saving" && <span className="doc-save-status">Saving…</span>}
             {metaSaveStatus === "saved" && <span className="doc-save-status doc-save-status--done">Saved</span>}
-            <button
-              className="doc-save-btn"
+            <Button
               onClick={() => void handleSaveMeta()}
               disabled={!isMetaDirty || metaSaveStatus === "saving"}
             >
               Save metadata
-            </button>
+            </Button>
           </div>
         </div>
       )}
 
       <div className="document-view-toolbar">
         <div className="document-mode-toggle">
-          <button
+          <Button
             className={`mode-btn${mode === "edit" ? " mode-btn--active" : ""}`}
+            variant={mode === "edit" ? "default" : "ghost"}
+            size="sm"
             onClick={() => setMode("edit")}
           >
             Edit
-          </button>
-          <button
+          </Button>
+          <Button
             className={`mode-btn${mode === "preview" ? " mode-btn--active" : ""}`}
+            variant={mode === "preview" ? "default" : "ghost"}
+            size="sm"
             onClick={() => setMode("preview")}
           >
             Preview
-          </button>
+          </Button>
         </div>
         <div className="document-view-actions">
           {saveStatus === "saving" && (
@@ -387,19 +394,18 @@ function ExistingDocumentView({
           {saveStatus === "saved" && (
             <span className="doc-save-status doc-save-status--done">Saved</span>
           )}
-          <button
-            className="doc-save-btn"
+          <Button
             onClick={() => void handleSave()}
             disabled={!isDirty || isSaving}
           >
             Save
-          </button>
+          </Button>
         </div>
       </div>
 
       <div className="document-view-body">
         {mode === "edit" ? (
-          <textarea
+          <Textarea
             ref={textareaRef}
             className="document-editor"
             value={content}
@@ -417,12 +423,14 @@ function ExistingDocumentView({
       </div>
 
       <div className="document-view-footer">
-        <button
+        <Button
           className="breadcrumb-link"
+          variant="ghost"
+          size="sm"
           onClick={() => navStore.goToProject(projectId)}
         >
           ← {project?.name ?? "Project"}
-        </button>
+        </Button>
       </div>
     </div>
   );
