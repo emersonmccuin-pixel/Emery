@@ -2,9 +2,9 @@ import { lazy, Suspense } from "react";
 import { useNavLayer } from "./nav-store";
 import { HomeView } from "./views/home-view";
 
-const ProjectCommandView = lazy(async () => {
-  const module = await import("./views/project-command-view");
-  return { default: module.ProjectCommandView };
+const ProjectDetailView = lazy(async () => {
+  const module = await import("./views/project-detail-view");
+  return { default: module.ProjectDetailView };
 });
 
 const AgentView = lazy(async () => {
@@ -23,7 +23,7 @@ export function LayerRouter() {
     case "project":
       return (
         <Suspense fallback={<div className="layer-stub">Loading project...</div>}>
-          <ProjectCommandView projectId={layer.projectId} />
+          <ProjectDetailView projectId={layer.projectId} />
         </Suspense>
       );
     case "agent":
