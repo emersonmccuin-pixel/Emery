@@ -199,6 +199,35 @@ function ModelSelect({
   );
 }
 
+// ── Origin mode metadata ──────────────────────────────────────────────────
+
+const ORIGIN_MODE_META: Record<string, { label: string; description: string; accent: string }> = {
+  execution: {
+    label: "Execution",
+    description: "Implements the task on a dedicated worktree branch",
+    accent: "var(--status-live)",
+  },
+  planning: {
+    label: "Planning",
+    description: "Produces a plan without writing files or running commands",
+    accent: "var(--accent)",
+  },
+  research: {
+    label: "Research",
+    description: "Investigates and returns findings — read-only",
+    accent: "var(--text-secondary)",
+  },
+  follow_up: {
+    label: "Follow-up",
+    description: "Addresses a targeted issue in an existing session",
+    accent: "var(--status-warning)",
+  },
+};
+
+function getOriginModeMeta(mode: string) {
+  return ORIGIN_MODE_META[mode] ?? { label: mode, description: "", accent: "var(--accent)" };
+}
+
 // ── Dispatch Single Modal ─────────────────────────────────────────────────
 
 function DispatchSingleModal({
@@ -232,6 +261,8 @@ function DispatchSingleModal({
   const isExecution = originMode === "execution";
   const resolvedDefault = defaultAccount?.default_safety_mode ?? "full";
   const resolvedDefaultModel = isExecution ? "sonnet" : "opus";
+  const modeMeta = getOriginModeMeta(originMode);
+  const stopRules = getDefaultStopRules(originMode);
 
   function handleConfirm() {
     void appStore.confirmDispatch({
@@ -245,40 +276,29 @@ function DispatchSingleModal({
 
   return (
     <div className="modal-dispatch">
-      <h3 className="modal-title">Launch Session</h3>
-      <div className="dispatch-details">
-        <div className="dispatch-row">
-          <span className="dispatch-label">Work Item</span>
-          <span>{workItem.callsign} &middot; {workItem.title}</span>
-        </div>
-        {isExecution ? (
-          <>
-            <div className="dispatch-row">
-              <span className="dispatch-label">Branch</span>
-              <code>{branchName}</code>
-            </div>
-            <div className="dispatch-row">
-              <span className="dispatch-label">Location</span>
-              <span>Worktree (new branch from HEAD)</span>
-            </div>
-          </>
-        ) : (
-          <div className="dispatch-row">
-            <span className="dispatch-label">Location</span>
-            <span>Project root (main)</span>
+      {/* Header */}
+      <div className="dispatch-header">
+        <div className="dispatch-header-left">
+          <h3 className="modal-title" style={{ marginBottom: 0 }}>Launch Session</h3>
+          <div className="dispatch-mode-badge" style={{ "--mode-accent": modeMeta.accent } as React.CSSProperties}>
+            {modeMeta.label}
           </div>
-        )}
-        <div className="dispatch-row">
-          <span className="dispatch-label">Account</span>
-          <span>{defaultAccount?.label ?? defaultAccount?.agent_kind ?? "\u2014"}</span>
         </div>
-        <div className="dispatch-row">
-          <span className="dispatch-label">Base</span>
-          <span>Current HEAD of {root?.path ?? "project root"}</span>
-        </div>
-        <div className="dispatch-row">
-          <span className="dispatch-label">Safety Mode</span>
-          <div>
+        <p className="dispatch-mode-desc">{modeMeta.description}</p>
+      </div>
+
+      {/* Work item target — primary, prominent */}
+      <div className="dispatch-target-card">
+        <span className="dispatch-target-callsign">{workItem.callsign}</span>
+        <span className="dispatch-target-sep">&middot;</span>
+        <span className="dispatch-target-title">{workItem.title}</span>
+      </div>
+
+      {/* Session configuration fields */}
+      <div className="dispatch-fields">
+        <div className="dispatch-field">
+          <label className="dispatch-field-label">Safety Mode</label>
+          <div className="dispatch-field-control">
             <Select value={safetyMode} onChange={(e) => setSafetyMode(e.target.value)}>
               <option value="">Default ({resolvedDefault})</option>
               <option value="full">Autonomous</option>
@@ -286,33 +306,65 @@ function DispatchSingleModal({
               <option value="restricted">Read Only</option>
             </Select>
             {(safetyMode || resolvedDefault) && (
-              <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", marginTop: "2px" }}>
+              <p className="dispatch-field-hint">
                 {safetyModeDescription(safetyMode || resolvedDefault)}
-              </div>
+              </p>
             )}
           </div>
         </div>
-        <div className="dispatch-row">
-          <span className="dispatch-label">Model</span>
-          <ModelSelect value={model} onChange={setModel} defaultLabel={`Default (${resolvedDefaultModel})`} />
-        </div>
-        {getDefaultStopRules(originMode).length > 0 && (
-          <div className="dispatch-row">
-            <span className="dispatch-label">Stop Rules</span>
-            <span className="dispatch-stop-rules">
-              {getDefaultStopRules(originMode).map((rule, i) => (
-                <span key={i} className="dispatch-stop-rule">{rule}</span>
-              ))}
-            </span>
+
+        <div className="dispatch-field">
+          <label className="dispatch-field-label">Model</label>
+          <div className="dispatch-field-control">
+            <ModelSelect value={model} onChange={setModel} defaultLabel={`Default (${resolvedDefaultModel})`} />
           </div>
-        )}
+        </div>
       </div>
+
+      {/* Dispatch preview summary */}
+      <div className="dispatch-preview">
+        <p className="dispatch-preview-label">Will dispatch</p>
+        <div className="dispatch-preview-rows">
+          <div className="dispatch-preview-row">
+            <span className="dispatch-preview-key">Account</span>
+            <span className="dispatch-preview-val">{defaultAccount?.label ?? defaultAccount?.agent_kind ?? "—"}</span>
+          </div>
+          {isExecution ? (
+            <>
+              <div className="dispatch-preview-row">
+                <span className="dispatch-preview-key">Branch</span>
+                <code className="dispatch-preview-code">{branchName}</code>
+              </div>
+              <div className="dispatch-preview-row">
+                <span className="dispatch-preview-key">Worktree</span>
+                <span className="dispatch-preview-val">New worktree from HEAD</span>
+              </div>
+            </>
+          ) : (
+            <div className="dispatch-preview-row">
+              <span className="dispatch-preview-key">Working dir</span>
+              <span className="dispatch-preview-val">{root?.path ?? "Project root"}</span>
+            </div>
+          )}
+          {stopRules.length > 0 && (
+            <div className="dispatch-preview-row dispatch-preview-row--rules">
+              <span className="dispatch-preview-key">Stop rules</span>
+              <span className="dispatch-stop-rules">
+                {stopRules.map((rule, i) => (
+                  <span key={i} className="dispatch-stop-rule">{rule}</span>
+                ))}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+
       <div className="modal-actions">
-        <Button variant="secondary" onClick={() => navStore.closeModal()}>
+        <Button variant="ghost" size="sm" onClick={() => navStore.closeModal()}>
           Cancel
         </Button>
         {defaultAccount ? (
-          <Button variant="secondary" onClick={handleConfirm}>
+          <Button variant="terminal" size="sm" onClick={handleConfirm}>
             {isExecution ? "Launch on Branch" : "Launch on Main"}
           </Button>
         ) : (
@@ -380,11 +432,21 @@ function DispatchMultiModal({
 
   return (
     <div className="modal-dispatch">
-      <h3 className="modal-title">Launch {workItems.length} Sessions</h3>
+      {/* Header */}
+      <div className="dispatch-header">
+        <div className="dispatch-header-left">
+          <h3 className="modal-title" style={{ marginBottom: 0 }}>Batch Dispatch</h3>
+          <div className="dispatch-mode-badge dispatch-mode-badge--multi">
+            {workItems.length} sessions
+          </div>
+        </div>
+        <p className="dispatch-mode-desc">Each work item launches on its own execution branch.</p>
+      </div>
 
-      {conflicts.length > 0 ? (
+      {/* Conflict warning */}
+      {conflicts.length > 0 && (
         <div className="dispatch-conflicts">
-          <span className="dispatch-conflict-header">File overlap detected:</span>
+          <span className="dispatch-conflict-header">File overlap detected</span>
           {conflicts.map((c, i) => (
             <div key={i} className="dispatch-conflict-row">
               <strong>{c.item_a}</strong> and <strong>{c.item_b}</strong> both touch:{" "}
@@ -394,8 +456,9 @@ function DispatchMultiModal({
             </div>
           ))}
         </div>
-      ) : null}
+      )}
 
+      {/* Per-item account assignment */}
       <div className="dispatch-item-list">
         {workItems.map((item) => (
           <div key={item.id} className="dispatch-item-row">
@@ -421,10 +484,11 @@ function DispatchMultiModal({
         ))}
       </div>
 
-      <div className="dispatch-details">
-        <div className="dispatch-row">
-          <span className="dispatch-label">Safety Mode</span>
-          <div>
+      {/* Shared session settings */}
+      <div className="dispatch-fields">
+        <div className="dispatch-field">
+          <label className="dispatch-field-label">Safety Mode</label>
+          <div className="dispatch-field-control">
             <Select value={safetyMode} onChange={(e) => setSafetyMode(e.target.value)}>
               <option value="">Default ({resolvedDefault})</option>
               <option value="full">Autonomous</option>
@@ -432,22 +496,24 @@ function DispatchMultiModal({
               <option value="restricted">Read Only</option>
             </Select>
             {(safetyMode || resolvedDefault) && (
-              <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", marginTop: "2px" }}>
+              <p className="dispatch-field-hint">
                 {safetyModeDescription(safetyMode || resolvedDefault)}
-              </div>
+              </p>
             )}
           </div>
         </div>
-        <div className="dispatch-row">
-          <span className="dispatch-label">Model</span>
-          <ModelSelect value={model} onChange={setModel} defaultLabel="Default (execution → sonnet)" />
+        <div className="dispatch-field">
+          <label className="dispatch-field-label">Model</label>
+          <div className="dispatch-field-control">
+            <ModelSelect value={model} onChange={setModel} defaultLabel="Default (execution → sonnet)" />
+          </div>
         </div>
       </div>
 
       <div className="modal-actions">
-        <Button variant="secondary" onClick={() => navStore.closeModal()}>Cancel</Button>
-        <Button variant="secondary" onClick={handleConfirm}>
-          Launch All ({workItems.length} sessions)
+        <Button variant="ghost" size="sm" onClick={() => navStore.closeModal()}>Cancel</Button>
+        <Button variant="terminal" size="sm" onClick={handleConfirm}>
+          Launch {workItems.length} Sessions
         </Button>
       </div>
     </div>
