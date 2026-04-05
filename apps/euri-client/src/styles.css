@@ -1146,3 +1146,245 @@ button {
   cursor: pointer;
   padding: 4px 0;
 }
+
+/* ── Project Command View ── */
+.project-command-view {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 8px 0;
+}
+
+.operations-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.planning-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ── Section shared ── */
+.project-section {
+  background: rgba(242, 237, 225, 0.03);
+  border: 1px solid rgba(242, 237, 225, 0.07);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.section-header h3 {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.section-count {
+  font-size: 0.75rem;
+  color: rgba(242, 237, 225, 0.4);
+}
+
+.section-empty {
+  color: rgba(242, 237, 225, 0.3);
+  font-size: 0.8rem;
+}
+
+/* ── Fleet enhancements ── */
+.fleet-strip-empty {
+  border-style: dashed;
+}
+
+.fleet-empty-text {
+  color: rgba(242, 237, 225, 0.3);
+  font-size: 0.8rem;
+  text-align: center;
+  margin: 8px 0;
+}
+
+.fleet-activity {
+  font-size: 0.7rem;
+  color: rgba(242, 237, 225, 0.4);
+}
+
+/* ── Live indicator ── */
+.live-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.indicator-live {
+  background: #5ab482;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.indicator-pending {
+  background: #d8a25a;
+}
+
+.indicator-warning {
+  background: #c75050;
+}
+
+.indicator-muted {
+  background: rgba(242, 237, 225, 0.2);
+}
+
+/* ── Model badge ── */
+.model-badge {
+  font-size: 0.65rem;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(242, 237, 225, 0.06);
+  color: rgba(242, 237, 225, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+/* ── Status badge ── */
+.status-badge {
+  font-size: 0.65rem;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.status-badge-active, .status-badge-running, .status-badge-ready {
+  background: rgba(90, 180, 130, 0.15);
+  color: #5ab482;
+}
+
+.status-badge-pending, .status-badge-starting, .status-badge-queued {
+  background: rgba(216, 162, 90, 0.15);
+  color: #d8a25a;
+}
+
+.status-badge-conflict, .status-badge-failed {
+  background: rgba(199, 80, 80, 0.15);
+  color: #c75050;
+}
+
+.status-badge-parked, .status-badge-idle, .status-badge-exited {
+  background: rgba(242, 237, 225, 0.06);
+  color: rgba(242, 237, 225, 0.4);
+}
+
+/* ── Duration ── */
+.duration {
+  font-size: 0.75rem;
+  color: rgba(242, 237, 225, 0.4);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* ── Diff stats ── */
+.diff-stats {
+  display: inline-flex;
+  gap: 6px;
+  font-size: 0.75rem;
+}
+
+.diff-files {
+  color: rgba(242, 237, 225, 0.5);
+}
+
+.diff-ins {
+  color: #5ab482;
+}
+
+.diff-del {
+  color: #c75050;
+}
+
+/* ── Work items section ── */
+.work-item-group {
+  margin-top: 8px;
+}
+
+.work-item-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.work-item-group-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(242, 237, 225, 0.4);
+}
+
+.work-item-group-count {
+  font-size: 0.7rem;
+  color: rgba(242, 237, 225, 0.25);
+}
+
+.work-item-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  transition: background 0.1s;
+}
+
+.work-item-row:hover {
+  background: rgba(242, 237, 225, 0.04);
+}
+
+.work-item-callsign {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: rgba(216, 162, 90, 0.8);
+  flex-shrink: 0;
+}
+
+.work-item-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-item-meta {
+  font-size: 0.7rem;
+  color: rgba(242, 237, 225, 0.3);
+  flex-shrink: 0;
+}
+
+.work-item-dispatch-btn {
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 3px;
+  background: rgba(216, 162, 90, 0.12);
+  color: #d8a25a;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.work-item-row:hover .work-item-dispatch-btn {
+  opacity: 1;
+}
+
+.work-item-dispatch-btn:hover {
+  background: rgba(216, 162, 90, 0.25);
+}
+
+/* ── Planning section ── */
+.planning-section {
+  padding: 4px 0;
+}
