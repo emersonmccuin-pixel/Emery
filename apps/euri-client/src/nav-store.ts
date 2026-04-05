@@ -3,7 +3,8 @@ import { useSyncExternalStore } from "react";
 export type NavigationLayer =
   | { layer: "home" }
   | { layer: "project"; projectId: string }
-  | { layer: "agent"; projectId: string; sessionId: string };
+  | { layer: "agent"; projectId: string; sessionId: string }
+  | { layer: "document"; projectId: string; documentId: string };
 
 type NavState = {
   current: NavigationLayer;
@@ -57,6 +58,14 @@ export const navStore = {
     emit();
   },
 
+  goToDocument(projectId: string, documentId: string) {
+    state = {
+      current: { layer: "document", projectId, documentId },
+      history: [...state.history, state.current],
+    };
+    emit();
+  },
+
   goBack() {
     if (state.history.length === 0) return;
     const prev = state.history[state.history.length - 1];
@@ -78,11 +87,14 @@ export const navStore = {
       { label: "EURI", layer: { layer: "home" } },
     ];
     const c = state.current;
-    if (c.layer === "project" || c.layer === "agent") {
+    if (c.layer === "project" || c.layer === "agent" || c.layer === "document") {
       crumbs.push({ label: c.projectId, layer: { layer: "project", projectId: c.projectId } });
     }
     if (c.layer === "agent") {
       crumbs.push({ label: c.sessionId, layer: c });
+    }
+    if (c.layer === "document") {
+      crumbs.push({ label: c.documentId, layer: c });
     }
     return crumbs;
   },

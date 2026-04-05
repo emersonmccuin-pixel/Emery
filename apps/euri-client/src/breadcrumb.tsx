@@ -7,11 +7,14 @@ type Crumb = { label: string; layer: NavigationLayer };
 
 function buildCrumbs(current: NavigationLayer): Crumb[] {
   const crumbs: Crumb[] = [{ label: "EURI", layer: { layer: "home" } }];
-  if (current.layer === "project" || current.layer === "agent") {
+  if (current.layer === "project" || current.layer === "agent" || current.layer === "document") {
     crumbs.push({ label: current.projectId, layer: { layer: "project", projectId: current.projectId } });
   }
   if (current.layer === "agent") {
     crumbs.push({ label: current.sessionId, layer: current });
+  }
+  if (current.layer === "document") {
+    crumbs.push({ label: current.documentId, layer: current });
   }
   return crumbs;
 }
@@ -21,6 +24,7 @@ export function Breadcrumb() {
   const bootstrap = useAppStore((s) => s.bootstrap);
   const sessions = useAppStore((s) => s.sessions);
   const workItemDetails = useAppStore((s) => s.workItemDetails);
+  const documentDetails = useAppStore((s) => s.documentDetails);
 
   const crumbs = useMemo(() => buildCrumbs(navLayer), [navLayer]);
 
@@ -38,6 +42,10 @@ export function Breadcrumb() {
         if (wi) return wi.callsign;
       }
       return session?.title ?? session?.current_mode ?? crumb.label;
+    }
+    if (layer.layer === "document") {
+      const doc = documentDetails[layer.documentId];
+      return doc?.title ?? crumb.label;
     }
     return crumb.label;
   }
