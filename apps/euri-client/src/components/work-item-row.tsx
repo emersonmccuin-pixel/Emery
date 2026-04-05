@@ -1,13 +1,27 @@
-import type { WorkItemSummary } from "../types";
+import type { PlanningAssignmentSummary, WorkItemSummary } from "../types";
+import { PlanPicker } from "./plan-picker";
 
 type WorkItemRowProps = {
   workItem: WorkItemSummary;
   selected: boolean;
   onToggleSelect: () => void;
   onDispatch: () => void;
+  assignments: PlanningAssignmentSummary[];
+  dayCadenceKey: string;
+  weekCadenceKey: string;
+  onPlan: (cadenceType: "day" | "week", cadenceKey: string) => void;
 };
 
-export function WorkItemRow({ workItem, selected, onToggleSelect, onDispatch }: WorkItemRowProps) {
+export function WorkItemRow({
+  workItem,
+  selected,
+  onToggleSelect,
+  onDispatch,
+  assignments,
+  dayCadenceKey,
+  weekCadenceKey,
+  onPlan,
+}: WorkItemRowProps) {
   return (
     <div className={`work-item-row${selected ? " work-item-row-selected" : ""}`}>
       <input
@@ -23,6 +37,12 @@ export function WorkItemRow({ workItem, selected, onToggleSelect, onDispatch }: 
         {workItem.status}
         {workItem.priority ? ` · ${workItem.priority}` : ""}
       </span>
+      <PlanPicker
+        assignments={assignments}
+        dayCadenceKey={dayCadenceKey}
+        weekCadenceKey={weekCadenceKey}
+        onToggle={onPlan}
+      />
       <button
         className="work-item-dispatch-btn"
         onClick={(e) => { e.stopPropagation(); onDispatch(); }}

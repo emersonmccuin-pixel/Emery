@@ -81,6 +81,12 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
           onClearSelection={() => appStore.clearWorkItemSelection()}
           onDispatch={(workItemId) => void appStore.handleLaunchSessionFromWorkItem(workItemId)}
           onMultiDispatch={() => void appStore.handleMultiDispatch(projectId)}
+          assignments={assignments}
+          dayCadenceKey={dayCadenceKey}
+          weekCadenceKey={weekCadenceKey}
+          onPlan={(workItemId, cadenceType, cadenceKey) =>
+            void appStore.handleTogglePlanningAssignment(workItemId, cadenceType, cadenceKey)
+          }
         />
         <DocsSection
           documents={documents}

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { WorkItemSummary } from "../types";
+import type { PlanningAssignmentSummary, WorkItemSummary } from "../types";
 import { WorkItemRow } from "./work-item-row";
 
 type WorkItemsSectionProps = {
@@ -9,6 +9,10 @@ type WorkItemsSectionProps = {
   onClearSelection: () => void;
   onDispatch: (workItemId: string) => void;
   onMultiDispatch: () => void;
+  assignments: PlanningAssignmentSummary[];
+  dayCadenceKey: string;
+  weekCadenceKey: string;
+  onPlan: (workItemId: string, cadenceType: "day" | "week", cadenceKey: string) => void;
 };
 
 const STATUS_GROUPS = [
@@ -25,6 +29,10 @@ export function WorkItemsSection({
   onClearSelection,
   onDispatch,
   onMultiDispatch,
+  assignments,
+  dayCadenceKey,
+  weekCadenceKey,
+  onPlan,
 }: WorkItemsSectionProps) {
   const grouped = useMemo(() => {
     const groups: Record<string, WorkItemSummary[]> = {};
@@ -36,12 +44,37 @@ export function WorkItemsSection({
     return groups;
   }, [workItems]);
 
+  const assignmentsByWorkItem = useMemo(() => {
+    const map: Record<string, PlanningAssignmentSummary[]> = {};
+    for (const a of assignments) {
+      if (!map[a.work_item_id]) map[a.work_item_id] = [];
+      map[a.work_item_id].push(a);
+    }
+    return map;
+  }, [assignments]);
+
   if (workItems.length === 0) {
     return (
       <section className="project-section">
         <h3>Work Items</h3>
         <p className="section-empty">No work items yet.</p>
       </section>
+    );
+  }
+
+  function renderRow(item: WorkItemSummary) {
+    return (
+      <WorkItemRow
+        key={item.id}
+        workItem={item}
+        selected={selectedIds.includes(item.id)}
+        onToggleSelect={() => onToggleSelect(item.id)}
+        onDispatch={() => onDispatch(item.id)}
+        assignments={assignmentsByWorkItem[item.id] ?? []}
+        dayCadenceKey={dayCadenceKey}
+        weekCadenceKey={weekCadenceKey}
+        onPlan={(cadenceType, cadenceKey) => onPlan(item.id, cadenceType, cadenceKey)}
+      />
     );
   }
 
@@ -70,15 +103,7 @@ export function WorkItemsSection({
               <span className="work-item-group-label">{label}</span>
               <span className="work-item-group-count">{items.length}</span>
             </div>
-            {items.map((item) => (
-              <WorkItemRow
-                key={item.id}
-                workItem={item}
-                selected={selectedIds.includes(item.id)}
-                onToggleSelect={() => onToggleSelect(item.id)}
-                onDispatch={() => onDispatch(item.id)}
-              />
-            ))}
+            {items.map(renderRow)}
           </div>
         );
       })}
@@ -88,15 +113,7 @@ export function WorkItemsSection({
             <span className="work-item-group-label">Done</span>
             <span className="work-item-group-count">{grouped["done"].length}</span>
           </summary>
-          {grouped["done"].map((item) => (
-            <WorkItemRow
-              key={item.id}
-              workItem={item}
-              selected={selectedIds.includes(item.id)}
-              onToggleSelect={() => onToggleSelect(item.id)}
-              onDispatch={() => onDispatch(item.id)}
-            />
-          ))}
+          {grouped["done"].map(renderRow)}
         </details>
       ) : null}
     </section>

@@ -1904,6 +1904,105 @@ button {
   background: rgba(216, 162, 90, 0.25);
 }
 
+/* ── Plan picker ── */
+.plan-picker {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.plan-picker-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 3px;
+  background: transparent;
+  color: rgba(242, 237, 225, 0.3);
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, background 0.15s;
+}
+
+.work-item-row:hover .plan-picker-btn {
+  opacity: 1;
+}
+
+.plan-picker-btn-active {
+  opacity: 1 !important;
+  color: #d8a25a;
+}
+
+.plan-picker-btn:hover {
+  background: rgba(242, 237, 225, 0.06);
+  color: rgba(242, 237, 225, 0.7);
+}
+
+.plan-picker-btn-active:hover {
+  background: rgba(216, 162, 90, 0.12);
+  color: #d8a25a;
+}
+
+.plan-picker-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 200;
+  min-width: 140px;
+  background: var(--surface-overlay, #2a2520);
+  border: 1px solid var(--border-default, rgba(242, 237, 225, 0.1));
+  border-radius: var(--radius-lg, 6px);
+  padding: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.plan-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  color: rgba(242, 237, 225, 0.75);
+  text-align: left;
+  background: transparent;
+  transition: background 0.1s, color 0.1s;
+}
+
+.plan-picker-item:hover {
+  background: rgba(242, 237, 225, 0.06);
+  color: rgba(242, 237, 225, 0.95);
+}
+
+.plan-picker-item-checked {
+  color: #d8a25a;
+}
+
+.plan-picker-item-remove {
+  color: rgba(242, 237, 225, 0.4);
+}
+
+.plan-picker-item-remove:hover {
+  color: rgba(242, 90, 90, 0.85);
+  background: rgba(242, 90, 90, 0.08);
+}
+
+.plan-picker-check {
+  width: 12px;
+  font-size: 0.65rem;
+  color: #d8a25a;
+  flex-shrink: 0;
+}
+
+.plan-picker-separator {
+  height: 1px;
+  background: var(--border-default, rgba(242, 237, 225, 0.08));
+  margin: 3px 0;
+}
+
 /* ── Planning section ── */
 .planning-section {
   padding: 4px 0;
