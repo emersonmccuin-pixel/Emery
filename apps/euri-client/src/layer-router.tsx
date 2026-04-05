@@ -7,6 +7,7 @@ import { AgentView } from "./views/agent-view";
 import { DocumentView } from "./views/document-view";
 import { WorkItemView } from "./views/work-item-view";
 import { SettingsView } from "./views/settings-view";
+import { VaultView } from "./views/vault-view";
 
 export function LayerRouter() {
   const layer = useNavLayer();
@@ -30,5 +31,7 @@ export function LayerRouter() {
       return <WorkItemView projectId={layer.projectId} workItemId={layer.workItemId} />;
     case "settings":
       return <SettingsView />;
+    case "vault":
+      return <VaultView />;
   }
 }

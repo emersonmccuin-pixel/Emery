@@ -9,7 +9,8 @@ export type NavigationLayer =
   | { layer: "document"; projectId: string; documentId: string }
   | { layer: "new-document"; projectId: string; workItemId?: string }
   | { layer: "work_item"; projectId: string; workItemId: string }
-  | { layer: "settings" };
+  | { layer: "settings" }
+  | { layer: "vault" };
 
 type NavState = {
   current: NavigationLayer;
@@ -111,6 +112,14 @@ export const navStore = {
     emit();
   },
 
+  goToVault() {
+    state = {
+      current: { layer: "vault" },
+      history: [...state.history, state.current],
+    };
+    emit();
+  },
+
   goBack() {
     if (state.history.length === 0) return;
     const prev = state.history[state.history.length - 1];
@@ -134,6 +143,9 @@ export const navStore = {
     const c = state.current;
     if (c.layer === "settings") {
       crumbs.push({ label: "settings", layer: c });
+    }
+    if (c.layer === "vault") {
+      crumbs.push({ label: "vault", layer: c });
     }
     if (c.layer === "inbox") {
       crumbs.push({ label: "inbox", layer: c });

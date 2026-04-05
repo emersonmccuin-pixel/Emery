@@ -65,6 +65,13 @@ export function Topbar() {
           </button>
         ) : null}
         <button
+          className="status-chip neutral"
+          onClick={() => navStore.goToVault()}
+          title="Vault"
+        >
+          vault
+        </button>
+        <button
           className="status-chip neutral settings-btn"
           onClick={() => navStore.goToSettings()}
           title="Settings (Ctrl+,)"

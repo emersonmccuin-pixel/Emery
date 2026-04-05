@@ -15,6 +15,9 @@ import type {
   SessionAttachResponse,
   SessionDetail,
   ShellBootstrap,
+  VaultAuditEntry,
+  VaultEntry,
+  VaultLockStatus,
   WorkflowReconciliationProposalDetail,
   WorkflowReconciliationProposalSummary,
   WorkItemDetail,
@@ -591,6 +594,45 @@ export async function archiveAgentTemplate(
   correlationId?: string,
 ): Promise<AgentTemplateDetail> {
   return invoke("archive_agent_template", { agentTemplateId, correlationId });
+}
+
+// --- Vault ---
+
+export async function vaultList(scope?: string, correlationId?: string): Promise<VaultEntry[]> {
+  return invoke("vault_list", { scope, correlationId });
+}
+
+export async function vaultSet(
+  scope: string,
+  key: string,
+  value: string,
+  description?: string | null,
+  correlationId?: string,
+): Promise<VaultEntry> {
+  return invoke("vault_set", { scope, key, value, description, correlationId });
+}
+
+export async function vaultDelete(id: string, correlationId?: string): Promise<void> {
+  await invoke("vault_delete", { id, correlationId });
+}
+
+export async function vaultUnlock(
+  durationMinutes?: number,
+  correlationId?: string,
+): Promise<VaultLockStatus> {
+  return invoke("vault_unlock", { durationMinutes, correlationId });
+}
+
+export async function vaultLock(correlationId?: string): Promise<VaultLockStatus> {
+  return invoke("vault_lock", { correlationId });
+}
+
+export async function vaultStatus(correlationId?: string): Promise<VaultLockStatus> {
+  return invoke("vault_status", { correlationId });
+}
+
+export async function vaultAuditLog(correlationId?: string): Promise<VaultAuditEntry[]> {
+  return invoke("vault_audit_log", { correlationId });
 }
 
 export function connectionLabel(event: ConnectionStatusEvent | null): string {
