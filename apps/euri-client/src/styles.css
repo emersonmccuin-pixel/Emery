@@ -150,8 +150,10 @@ button {
 .layer-viewport {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   padding: 8px;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ── Breadcrumb ── */
@@ -437,32 +439,223 @@ button {
   height: 100%;
 }
 
-/* ── Session pane ── */
+/* ── Agent View ── */
 
-.session-pane {
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-  gap: 6px;
+.agent-view {
+  display: flex;
+  flex-direction: column;
   height: 100%;
-  overflow: hidden;
+  min-height: 0;
 }
 
-.session-header {
+/* ── Agent Info Bar ── */
+
+.agent-info-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(242, 237, 225, 0.03);
+  border: 1px solid rgba(242, 237, 225, 0.07);
+  border-radius: 6px;
+  flex-shrink: 0;
 }
 
-.session-header h2 {
-  margin: 0;
-  font-size: 0.95rem;
+.agent-info-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
-.session-header p {
-  margin: 0;
+.agent-info-label strong {
+  color: rgba(216, 162, 90, 0.9);
+  font-size: 0.85rem;
+}
+
+.agent-info-title {
+  color: rgba(242, 237, 225, 0.7);
+  font-size: 0.85rem;
+}
+
+.agent-info-branch {
   font-size: 0.75rem;
-  color: #c3bcaf;
+  padding: 1px 6px;
+  background: rgba(242, 237, 225, 0.06);
+  border-radius: 3px;
+  color: rgba(242, 237, 225, 0.5);
+}
+
+.agent-info-model {
+  font-size: 0.75rem;
+  padding: 1px 6px;
+  background: rgba(242, 237, 225, 0.06);
+  border-radius: 3px;
+  color: rgba(242, 237, 225, 0.5);
+}
+
+.agent-info-duration {
+  font-size: 0.75rem;
+  color: rgba(242, 237, 225, 0.4);
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-info-state {
+  font-size: 0.7rem;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.agent-info-state-running {
+  background: rgba(90, 180, 130, 0.12);
+  color: #5ab482;
+}
+
+.agent-info-state-starting,
+.agent-info-state-stopping {
+  background: rgba(216, 162, 90, 0.12);
+  color: #d8a25a;
+}
+
+.agent-info-state-exited {
+  background: rgba(242, 237, 225, 0.06);
+  color: rgba(242, 237, 225, 0.4);
+}
+
+.agent-info-state-failed,
+.agent-info-state-interrupted {
+  background: rgba(199, 80, 80, 0.12);
+  color: #c75050;
+}
+
+.agent-info-activity {
+  font-size: 0.7rem;
+  color: rgba(242, 237, 225, 0.4);
+}
+
+.agent-info-input-reason {
+  font-size: 0.7rem;
+  color: #d8a25a;
+}
+
+.agent-info-ended {
+  font-size: 0.75rem;
+  color: rgba(242, 237, 225, 0.3);
+}
+
+/* ── Agent Terminal Area ── */
+
+.agent-terminal-area {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 0;
+  margin: 4px 0;
+}
+
+.agent-terminal-container {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.agent-terminal-container .terminal-surface {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── /btw Panel Rail ── */
+
+.btw-rail {
+  width: 24px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 8px;
+  background: rgba(242, 237, 225, 0.02);
+  border-left: 1px solid rgba(242, 237, 225, 0.05);
+  cursor: default;
+}
+
+.btw-icon {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  font-size: 0.7rem;
+  color: rgba(242, 237, 225, 0.2);
+  border: 1px solid rgba(242, 237, 225, 0.08);
+  border-radius: 4px;
+}
+
+.btw-rail:hover .btw-icon {
+  color: rgba(242, 237, 225, 0.4);
+  border-color: rgba(242, 237, 225, 0.15);
+}
+
+/* ── Agent Controls ── */
+
+.agent-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(242, 237, 225, 0.03);
+  border: 1px solid rgba(242, 237, 225, 0.07);
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.agent-controls-spacer {
+  flex: 1;
+}
+
+.agent-controls-ended {
+  font-size: 0.8rem;
+  color: rgba(242, 237, 225, 0.3);
+}
+
+.agent-control-btn {
+  font-size: 0.75rem;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: rgba(242, 237, 225, 0.06);
+  color: rgba(242, 237, 225, 0.7);
+  transition: background 0.1s;
+}
+
+.agent-control-btn:hover {
+  background: rgba(242, 237, 225, 0.12);
+  color: #f2ede1;
+}
+
+.agent-control-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.agent-control-btn-danger {
+  color: #c75050;
+}
+
+.agent-control-btn-danger:hover {
+  background: rgba(199, 80, 80, 0.15);
+}
+
+.terminate-confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.terminate-confirm-text {
+  font-size: 0.75rem;
+  color: #c75050;
 }
 
 /* ── Detail pane ── */
