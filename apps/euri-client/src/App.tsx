@@ -33,6 +33,7 @@ import { LayerRouter } from "./layer-router";
 import { DispatchSheet } from "./dispatch-sheet";
 import { Sidebar } from "./sidebar";
 import { PeekPanel } from "./peek-panel";
+import { Cityscape } from "./components/cityscape";
 
 const SIDEBAR_COLLAPSED_KEY = "euri.sidebar-collapsed";
 
@@ -479,6 +480,7 @@ export default function App() {
       </div>
       <DispatchSheet />
       <ToastStack />
+      <Cityscape />
     </div>
   );
 }
