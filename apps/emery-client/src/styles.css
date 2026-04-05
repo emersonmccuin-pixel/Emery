@@ -4492,6 +4492,228 @@ html[data-theme="vaporwave"] .sidebar {
   margin-top: 4px;
 }
 
+/* --- Config resolution chain indicator --- */
+
+.config-resolution-chain {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  background: var(--bg-subtle, var(--surface-overlay));
+  border: 1px solid var(--border-subtle, var(--border-default));
+  border-radius: var(--radius-sm, 4px);
+  margin-bottom: 8px;
+}
+
+.config-resolution-step {
+  font-size: var(--text-xs, 0.72rem);
+  color: var(--text-secondary);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--border-subtle, var(--border-default));
+}
+
+.config-resolution-step-active {
+  color: var(--color-primary, var(--text-primary));
+  border-color: var(--color-primary, var(--border-default));
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+}
+
+.config-resolution-arrow {
+  font-size: var(--text-xs, 0.72rem);
+  color: var(--text-muted, var(--text-secondary));
+}
+
+/* --- Config Preview block --- */
+
+.config-preview-account-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-sm, 0.8rem);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle, var(--border-default));
+}
+
+.config-preview-label {
+  color: var(--text-secondary);
+}
+
+.config-preview-value {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.config-preview-note {
+  color: var(--text-muted, var(--text-secondary));
+  font-size: var(--text-xs, 0.72rem);
+  font-style: italic;
+}
+
+.config-preview-block {
+  margin-top: 8px;
+}
+
+.config-preview-block-title {
+  font-size: var(--text-xs, 0.72rem);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted, var(--text-secondary));
+  margin-bottom: 6px;
+}
+
+.config-preview-row {
+  display: grid;
+  grid-template-columns: 110px 1fr 1fr;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: var(--text-sm, 0.8rem);
+}
+
+.config-preview-field {
+  color: var(--text-secondary);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs, 0.72rem);
+}
+
+.config-preview-resolved {
+  color: var(--text-primary);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs, 0.72rem);
+}
+
+.config-preview-source {
+  color: var(--text-muted, var(--text-secondary));
+  font-size: var(--text-xs, 0.72rem);
+  font-style: italic;
+}
+
+/* --- Inline code in settings descriptions --- */
+
+.settings-inline-code {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.85em;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--bg-subtle, var(--surface-overlay));
+  border: 1px solid var(--border-subtle, var(--border-default));
+}
+
+/* --- Code-style textarea for JSON inputs --- */
+
+.settings-code-input {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs, 0.72rem);
+  line-height: 1.5;
+}
+
+/* --- Config Resolution Reference (global settings) --- */
+
+.config-resolution-reference {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.config-resolution-tier {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm, 4px);
+  overflow: hidden;
+}
+
+.config-resolution-tier-highest {
+  border-color: var(--color-primary, var(--border-default));
+}
+
+.config-resolution-tier-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--bg-subtle, var(--surface-overlay));
+  border-bottom: 1px solid var(--border-subtle, var(--border-default));
+}
+
+.config-resolution-tier-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--color-primary, var(--text-secondary));
+  color: var(--bg-base, #fff);
+  font-size: var(--text-xs, 0.72rem);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.config-resolution-tier-name {
+  font-size: var(--text-sm, 0.8rem);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.config-resolution-tier-scope {
+  font-size: var(--text-xs, 0.72rem);
+  color: var(--text-muted, var(--text-secondary));
+  margin-left: auto;
+  font-style: italic;
+}
+
+.config-resolution-tier-body {
+  padding: 10px 12px;
+  font-size: var(--text-sm, 0.8rem);
+  color: var(--text-secondary);
+}
+
+.config-resolution-tier-body p {
+  margin: 0 0 6px;
+}
+
+.config-resolution-list {
+  margin: 0;
+  padding-left: 18px;
+  list-style: disc;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.config-resolution-list li {
+  color: var(--text-secondary);
+  font-size: var(--text-xs, 0.72rem);
+  line-height: 1.4;
+}
+
+.config-resolution-list code {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.9em;
+  background: var(--bg-input, var(--surface-raised));
+  border-radius: 2px;
+  padding: 0 3px;
+}
+
+.config-resolution-tier-connector {
+  text-align: center;
+  padding: 4px 0;
+  color: var(--text-muted, var(--text-secondary));
+  font-size: var(--text-xs, 0.72rem);
+}
+
+.config-resolution-note {
+  font-size: var(--text-sm, 0.8rem);
+  color: var(--text-secondary);
+  padding: 8px 12px;
+  background: var(--bg-subtle, var(--surface-overlay));
+  border: 1px solid var(--border-subtle, var(--border-default));
+  border-radius: var(--radius-sm, 4px);
+  margin-top: 8px;
+}
+
 /* ── Setup banner (no accounts configured) ── */
 .setup-banner {
   display: flex;

@@ -263,7 +263,8 @@ impl DatabaseSet {
                  instructions_md = ?9,
                  wcp_namespace = ?10,
                  dispatch_item_callsign = ?11,
-                 updated_at = ?12
+                 updated_at = ?12,
+                 agent_safety_overrides_json = ?13
              WHERE id = ?1",
             params![
                 record.id,
@@ -278,6 +279,7 @@ impl DatabaseSet {
                 record.wcp_namespace,
                 record.dispatch_item_callsign,
                 record.updated_at,
+                record.agent_safety_overrides_json,
             ],
         )?;
 
