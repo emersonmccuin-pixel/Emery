@@ -4315,6 +4315,31 @@ html[data-theme="vaporwave"] .sidebar {
   font-style: italic;
 }
 
+/* --- Create Project: Namespace field --- */
+
+.project-create-namespace-row {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.project-create-namespace-input {
+  width: 100%;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
+.project-create-namespace-hint {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.project-create-namespace-error {
+  font-size: var(--text-sm);
+  color: var(--color-error);
+}
+
 /* --- Agent Templates (project settings) --- */
 
 .agent-templates-list {

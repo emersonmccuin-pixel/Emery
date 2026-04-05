@@ -140,6 +140,7 @@ function toProjectSummary(detail: ProjectDetail, current?: ProjectSummary | null
     archived_at: detail.archived_at,
     project_type: detail.project_type,
     model_defaults_json: detail.model_defaults_json,
+    wcp_namespace: detail.wcp_namespace,
   };
 }
 
@@ -790,10 +791,10 @@ class AppStore {
     }
   }
 
-  async handleCreateProject(name: string, folderPath: string, initGit = false, projectType?: string | null): Promise<string | null> {
+  async handleCreateProject(name: string, folderPath: string, initGit = false, projectType?: string | null, wcpNamespace?: string | null): Promise<string | null> {
     const correlationId = newCorrelationId("project-create");
     try {
-      const project = await createProject({ name, project_type: projectType ?? null }, correlationId);
+      const project = await createProject({ name, project_type: projectType ?? null, wcp_namespace: wcpNamespace ?? null }, correlationId);
       const root = await createProjectRoot(
         {
           project_id: project.id,

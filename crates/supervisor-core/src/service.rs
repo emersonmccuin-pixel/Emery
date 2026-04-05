@@ -110,6 +110,7 @@ impl SupervisorService {
             default_account_id,
             project_type: project_type.clone(),
             model_defaults_json,
+            wcp_namespace: optional_trimmed(request.wcp_namespace),
             settings_json: optional_trimmed(request.settings_json),
             instructions_md: optional_trimmed(request.instructions_md),
             created_at: now,

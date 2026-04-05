@@ -573,11 +573,22 @@ const PROJECT_TYPES = [
   { value: "research", label: "Research" },
 ] as const;
 
+/** Validate a WCP namespace key: uppercase letters, digits, underscores only, no spaces. */
+function validateNamespaceKey(key: string): string | null {
+  if (!key) return null;
+  if (!/^[A-Z][A-Z0-9_]*$/.test(key)) {
+    return "Namespace must start with an uppercase letter and contain only A–Z, 0–9, or underscore.";
+  }
+  return null;
+}
+
 function CreateProjectModal() {
   const [name, setName] = useState("");
   const [folderPath, setFolderPath] = useState("");
   const [initGit, setInitGit] = useState(false);
   const [projectType, setProjectType] = useState<string>("");
+  const [wcpNamespace, setWcpNamespace] = useState("");
+  const [namespaceError, setNamespaceError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   async function handleBrowse() {
@@ -592,11 +603,30 @@ function CreateProjectModal() {
     }
   }
 
+  function handleNamespaceChange(val: string) {
+    // Auto-uppercase as user types
+    const upper = val.toUpperCase().replace(/\s/g, "_");
+    setWcpNamespace(upper);
+    setNamespaceError(validateNamespaceKey(upper));
+  }
+
   async function handleSubmit() {
     if (!name.trim() || !folderPath.trim() || submitting) return;
+    const nsKey = wcpNamespace.trim();
+    const nsError = nsKey ? validateNamespaceKey(nsKey) : null;
+    if (nsError) {
+      setNamespaceError(nsError);
+      return;
+    }
     setSubmitting(true);
     const typeValue = projectType || null;
-    const projectId = await appStore.handleCreateProject(name.trim(), folderPath.trim(), initGit, typeValue);
+    const projectId = await appStore.handleCreateProject(
+      name.trim(),
+      folderPath.trim(),
+      initGit,
+      typeValue,
+      nsKey || null,
+    );
     setSubmitting(false);
     if (projectId) {
       navStore.closeModal();
@@ -608,7 +638,11 @@ function CreateProjectModal() {
     if (e.key === "Enter") void handleSubmit();
   }
 
-  const canSubmit = name.trim().length > 0 && folderPath.trim().length > 0 && !submitting;
+  const canSubmit =
+    name.trim().length > 0 &&
+    folderPath.trim().length > 0 &&
+    !namespaceError &&
+    !submitting;
 
   return (
     <div className="modal-create-project">
@@ -646,6 +680,26 @@ function CreateProjectModal() {
           <Button variant="ghost" size="sm" className="project-create-browse-btn" onClick={handleBrowse} disabled={submitting}>
             Browse
           </Button>
+        </div>
+        <div className="project-create-form-row project-create-namespace-row">
+          <span className="project-create-type-label">WCP Namespace</span>
+          <Input
+            className="project-create-input project-create-namespace-input"
+            type="text"
+            placeholder="e.g. MYPROJECT (optional)"
+            value={wcpNamespace}
+            onChange={(e) => handleNamespaceChange(e.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={submitting}
+            aria-describedby={namespaceError ? "namespace-error" : undefined}
+          />
+          {namespaceError ? (
+            <span id="namespace-error" className="project-create-namespace-error">{namespaceError}</span>
+          ) : wcpNamespace ? (
+            <span className="project-create-namespace-hint">Links this project to the <code>{wcpNamespace}</code> namespace in the knowledge store.</span>
+          ) : (
+            <span className="project-create-namespace-hint">Optional. Links to a WCP namespace for work items and documents.</span>
+          )}
         </div>
         <div className="project-create-form-row project-create-type-row">
           <span className="project-create-type-label">Project type</span>
