@@ -25,7 +25,7 @@ pub use models::{
     PlanningAssignmentDetail, PlanningAssignmentListFilter, PlanningAssignmentSummary,
     ProjectDetail, ProjectRootSummary, ProjectSummary, RemoveProjectRootRequest, ReplaySnapshot,
     SessionAttachResponse, SessionDetachResponse, SessionDetail, SessionListFilter,
-    SessionOutputEvent, SessionRuntimeView, SessionSpecDetail, SessionSpecListFilter,
+    OutputOrResync, ResyncRequiredEvent, SessionOutputEvent, SessionRuntimeView, SessionSpecDetail, SessionSpecListFilter,
     SessionSpecSummary, SessionStateChangedEvent, SessionSummary, SessionWatchResponse,
     UpdateAccountRequest,
     UpdateDocumentRequest, UpdatePlanningAssignmentRequest, UpdateProjectRequest,

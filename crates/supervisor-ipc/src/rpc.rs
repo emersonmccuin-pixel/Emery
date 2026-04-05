@@ -12,7 +12,7 @@ use supervisor_core::{
     DeletePlanningAssignmentRequest, DiagnosticContext, DocumentListFilter,
     MergeQueueCheckConflictsParams, MergeQueueGetDiffParams, MergeQueueGetParams,
     MergeQueueListFilter, MergeQueueMergeParams, MergeQueueParkParams, MergeQueueReorderParams,
-    PlanningAssignmentListFilter, RemoveProjectRootRequest, SessionListFilter,
+    OutputOrResync, PlanningAssignmentListFilter, RemoveProjectRootRequest, SessionListFilter,
     SessionSpecListFilter, Supervisor, UpdateAccountRequest, UpdateDocumentRequest,
     UpdatePlanningAssignmentRequest, UpdateProjectRequest, UpdateProjectRootRequest,
     UpdateSessionSpecRequest, UpdateWorkItemRequest, UpdateWorkflowReconciliationProposalRequest,
@@ -658,13 +658,23 @@ impl SupervisorRpc {
                 let event_sender = connection.event_sender.clone();
                 let forward_subscription_id = subscription_id.clone();
                 std::thread::spawn(move || {
-                    while let Ok(event) = receiver.recv() {
+                    while let Ok(msg) = receiver.recv() {
+                        let (event_name, payload) = match msg {
+                            OutputOrResync::Output(ev) => (
+                                "session.output",
+                                serde_json::to_value(ev).unwrap_or(Value::Null),
+                            ),
+                            OutputOrResync::Resync(ev) => (
+                                "session.resync_required",
+                                serde_json::to_value(ev).unwrap_or(Value::Null),
+                            ),
+                        };
                         if event_sender
                             .send(EventEnvelope {
                                 message_type: "event",
                                 subscription_id: forward_subscription_id.clone(),
-                                event: "session.output".to_string(),
-                                payload: serde_json::to_value(event).unwrap_or(Value::Null),
+                                event: event_name.to_string(),
+                                payload,
                             })
                             .is_err()
                         {

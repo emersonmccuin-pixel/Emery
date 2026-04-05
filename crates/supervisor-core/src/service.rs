@@ -23,7 +23,7 @@ use crate::models::{
     PlanningAssignmentUpdateRecord, ProjectDetail, ProjectRootSummary, ProjectRootUpdateRecord,
     ProjectSummary, ProjectUpdateRecord, RemoveProjectRootRequest, SessionArtifactRecord,
     SessionAttachResponse, SessionDetachResponse, SessionDetail, SessionListFilter,
-    SessionOutputEvent, SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary,
+    SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary,
     SessionSpecUpdateRecord, SessionStateChangedEvent, SessionSummary, SessionWatchResponse,
     UpdateAccountRequest,
     UpdateDocumentRequest, UpdatePlanningAssignmentRequest, UpdateProjectRequest,
@@ -1654,7 +1654,7 @@ impl SupervisorService {
         &self,
         session_id: &str,
         after_sequence: Option<u64>,
-    ) -> Result<(String, std::sync::mpsc::Receiver<SessionOutputEvent>)> {
+    ) -> Result<(String, std::sync::mpsc::Receiver<crate::models::OutputOrResync>)> {
         self.registry.subscribe_output(session_id, after_sequence)
     }
 

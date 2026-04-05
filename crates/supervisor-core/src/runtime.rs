@@ -14,8 +14,8 @@ use uuid::Uuid;
 
 use crate::diagnostics::{DiagnosticContext, DiagnosticsHub};
 use crate::models::{
-    EncodedTerminalChunk, ReplaySnapshot, SessionOutputEvent, SessionRuntimeView,
-    SessionStateChangedEvent,
+    EncodedTerminalChunk, OutputOrResync, ReplaySnapshot, ResyncRequiredEvent, SessionOutputEvent,
+    SessionRuntimeView, SessionStateChangedEvent,
 };
 use crate::output_filter::OutputFilter;
 use crate::store::DatabaseSet;
@@ -74,7 +74,7 @@ struct RuntimeSessionState {
     raw_log_path: PathBuf,
     replay: ReplayBuffer,
     raw_log: RawLogWriter,
-    output_subscribers: HashMap<String, Sender<SessionOutputEvent>>,
+    output_subscribers: HashMap<String, Sender<OutputOrResync>>,
     state_subscribers: HashMap<String, Sender<SessionStateChangedEvent>>,
     controller: Option<Arc<SessionProcessController>>,
     requested_stop: Option<RequestedStop>,
@@ -307,7 +307,7 @@ impl SessionRegistry {
         state.raw_log.append(chunk)?;
 
         let sequence = state.replay.append(timestamp, chunk);
-        let event = encode_output_event(session_id, sequence, timestamp, chunk);
+        let event = OutputOrResync::Output(encode_output_event(session_id, sequence, timestamp, chunk));
         let stale_subscribers = state
             .output_subscribers
             .iter()
@@ -567,7 +567,7 @@ impl SessionRegistry {
         &self,
         session_id: &str,
         after_sequence: Option<u64>,
-    ) -> Result<(String, Receiver<SessionOutputEvent>)> {
+    ) -> Result<(String, Receiver<OutputOrResync>)> {
         let mut guard = self.lock()?;
         let state = guard
             .get_mut(session_id)
@@ -578,15 +578,36 @@ impl SessionRegistry {
 
         let after_sequence = after_sequence.unwrap_or_default();
         let (sender, receiver) = mpsc::channel();
-        for chunk in state.replay.chunks_after(after_sequence) {
+
+        // Detect overflow: if the subscriber's cursor is behind the oldest available chunk,
+        // chunks were evicted from the ring buffer and the subscriber missed data.
+        let overflow = after_sequence > 0
+            && state
+                .replay
+                .oldest_sequence()
+                .map(|oldest| oldest > after_sequence + 1)
+                .unwrap_or(false);
+
+        if overflow {
+            let last_available_seq = state.replay.latest_sequence();
             sender
-                .send(encode_output_event(
-                    session_id,
-                    chunk.sequence,
-                    chunk.timestamp,
-                    &chunk.payload,
-                ))
-                .map_err(|_| anyhow!("failed to seed output subscription"))?;
+                .send(OutputOrResync::Resync(ResyncRequiredEvent {
+                    session_id: session_id.to_string(),
+                    reason: "overflow".to_string(),
+                    last_available_seq,
+                }))
+                .map_err(|_| anyhow!("failed to send resync event for output subscription"))?;
+        } else {
+            for chunk in state.replay.chunks_after(after_sequence) {
+                sender
+                    .send(OutputOrResync::Output(encode_output_event(
+                        session_id,
+                        chunk.sequence,
+                        chunk.timestamp,
+                        &chunk.payload,
+                    )))
+                    .map_err(|_| anyhow!("failed to seed output subscription"))?;
+            }
         }
 
         let subscription_id = format!("sub_{}", Uuid::new_v4().simple());
@@ -1204,6 +1225,11 @@ impl ReplayBuffer {
         }
 
         sequence
+    }
+
+    fn oldest_sequence(&self) -> Option<u64> {
+        let guard = self.inner.lock().expect("replay buffer lock poisoned");
+        guard.chunks.front().map(|chunk| chunk.sequence)
     }
 
     fn latest_sequence(&self) -> u64 {
