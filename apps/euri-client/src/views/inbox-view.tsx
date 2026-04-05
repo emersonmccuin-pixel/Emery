@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useAppStore, appStore } from "../store";
 import { navStore } from "../nav-store";
 import type { InboxEntrySummary } from "../lib";
+import { Button } from "../components/ui";
 
 type StatusFilter = "all" | "success" | "needs_review";
 
@@ -186,14 +187,15 @@ export function InboxView({ projectId }: { projectId: string }) {
         <h2 className="inbox-title">Inbox</h2>
         <span className="inbox-count">{allEntries.length} entries</span>
         {unreadCount > 0 ? (
-          <button
-            className="btn-ghost btn-sm"
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => void appStore.handleMarkAllInboxRead(projectId)}
             disabled={markingAllRead}
             title="Mark all as read"
           >
             {markingAllRead ? "Marking…" : `Mark all read (${unreadCount})`}
-          </button>
+          </Button>
         ) : null}
       </div>
       <div className="inbox-filters">

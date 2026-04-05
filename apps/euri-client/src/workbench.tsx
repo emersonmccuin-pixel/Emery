@@ -8,6 +8,7 @@ import type {
   WorkItemSummary,
   WorkflowReconciliationProposalSummary,
 } from "./types";
+import { Button } from "./components/ui";
 
 const WORK_ITEM_TYPES = ["epic", "task", "bug", "feature", "research", "support"] as const;
 const WORK_ITEM_STATUSES = [
@@ -111,9 +112,9 @@ export function WorkItemPane({
             <span className="status-chip neutral">{detail.work_item_type}</span>
             {detail.priority ? <span className="status-chip neutral">{detail.priority}</span> : null}
           </div>
-          <button className="secondary-button" onClick={onLaunchSession} disabled={launchingSession}>
+          <Button variant="secondary" onClick={onLaunchSession} disabled={launchingSession}>
             {launchingSession ? "Starting…" : "Start session"}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -121,8 +122,8 @@ export function WorkItemPane({
         <section className="card editor-card">
           <div className="section-header">
             <h3>Edit work item</h3>
-            <button
-              className="secondary-button"
+            <Button
+              variant="secondary"
               onClick={() =>
                 onSave({
                   title: form.title,
@@ -136,7 +137,7 @@ export function WorkItemPane({
               disabled={saving}
             >
               {saving ? "Saving…" : "Save"}
-            </button>
+            </Button>
           </div>
 
           <label className="field">
@@ -223,9 +224,9 @@ export function WorkItemPane({
               <span className={`status-chip ${dailyAssignment ? "live" : "neutral"}`}>
                 {dailyAssignment ? "assigned" : "not assigned"}
               </span>
-              <button className="secondary-button" onClick={onToggleDailyAssignment}>
+              <Button variant="secondary" onClick={onToggleDailyAssignment}>
                 {dailyAssignment ? "Remove" : "Assign"}
-              </button>
+              </Button>
             </div>
           </div>
           <div className="planning-row">
@@ -237,9 +238,9 @@ export function WorkItemPane({
               <span className={`status-chip ${weeklyAssignment ? "live" : "neutral"}`}>
                 {weeklyAssignment ? "assigned" : "not assigned"}
               </span>
-              <button className="secondary-button" onClick={onToggleWeeklyAssignment}>
+              <Button variant="secondary" onClick={onToggleWeeklyAssignment}>
                 {weeklyAssignment ? "Remove" : "Assign"}
-              </button>
+              </Button>
             </div>
           </div>
         </section>
@@ -299,9 +300,9 @@ export function WorkItemPane({
                     <button onClick={() => onApplyProposal(proposal.id)} disabled={applyDisabled}>
                       {applyDisabled ? "Review only" : "Apply"}
                     </button>
-                    <button className="secondary-button" onClick={() => onDismissProposal(proposal.id)} disabled={dismissDisabled}>
+                    <Button variant="secondary" onClick={() => onDismissProposal(proposal.id)} disabled={dismissDisabled}>
                       Dismiss
-                    </button>
+                    </Button>
                   </div>
                 </div>
               );
@@ -383,8 +384,8 @@ export function DocumentPane({
       <section className="card editor-card">
         <div className="section-header">
           <h3>Edit document</h3>
-          <button
-            className="secondary-button"
+          <Button
+            variant="secondary"
             onClick={() =>
               onSave({
                 work_item_id: form.work_item_id || null,
@@ -398,7 +399,7 @@ export function DocumentPane({
             disabled={saving}
           >
             {saving ? "Saving…" : "Save"}
-          </button>
+          </Button>
         </div>
 
         <div className="field-row">

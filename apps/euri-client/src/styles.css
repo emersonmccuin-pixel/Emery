@@ -1,3 +1,5 @@
+@import "tailwindcss";
+
 /* ===== THEME TOKENS ===== */
 html[data-theme="vaporwave"] {
   /* Background layers */
@@ -493,11 +495,7 @@ html[data-theme="vaporwave"] .sidebar {
   align-items: center;
   gap: var(--space-2);
   width: 100%;
-  background: none;
-  border: none;
   color: var(--text-secondary);
-  cursor: pointer;
-  padding: var(--space-1) var(--space-3);
   border-radius: 0;
   font-size: var(--text-sm);
   text-align: left;
@@ -508,12 +506,10 @@ html[data-theme="vaporwave"] .sidebar {
 
 .sidebar-project-btn:hover {
   color: var(--text-primary);
-  background: var(--surface-hover);
 }
 
 .sidebar-project-btn.active {
   color: var(--color-primary, var(--accent));
-  background: var(--color-primary-dim, var(--accent-muted));
 }
 
 .sidebar-project-initial {
@@ -564,11 +560,7 @@ html[data-theme="vaporwave"] .sidebar {
   align-items: center;
   gap: var(--space-2);
   width: 100%;
-  background: none;
-  border: none;
   color: var(--text-secondary);
-  cursor: pointer;
-  padding: var(--space-1) var(--space-3);
   font-size: var(--text-sm);
   text-align: left;
   white-space: nowrap;
@@ -577,7 +569,6 @@ html[data-theme="vaporwave"] .sidebar {
 
 .sidebar-nav-btn:hover:not(:disabled) {
   color: var(--text-primary);
-  background: var(--surface-hover);
 }
 
 .sidebar-nav-btn:disabled {
@@ -587,7 +578,6 @@ html[data-theme="vaporwave"] .sidebar {
 
 .sidebar-nav-btn.active {
   color: var(--color-primary, var(--accent));
-  background: var(--color-primary-dim, var(--accent-muted));
 }
 
 .sidebar-nav-icon {
@@ -600,15 +590,11 @@ html[data-theme="vaporwave"] .sidebar {
 /* ── Sidebar brand button ── */
 
 .sidebar-brand-btn {
-  background: none;
-  border: none;
   color: var(--text-primary);
-  cursor: pointer;
   font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  padding: 0;
   line-height: 1;
 }
 
@@ -667,13 +653,9 @@ html[data-theme="vaporwave"] .sidebar {
 }
 
 .sidebar-project-link {
-  background: none;
-  border: none;
   color: var(--text-muted);
-  cursor: pointer;
   font-size: var(--text-xs);
   text-align: left;
-  padding: var(--space-1) var(--space-3);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -681,7 +663,6 @@ html[data-theme="vaporwave"] .sidebar {
 
 .sidebar-project-link:hover {
   color: var(--text-primary);
-  background: var(--surface-hover);
 }
 
 /* ── Inline rename input ── */
@@ -1202,31 +1183,12 @@ html[data-theme="vaporwave"] .peek-panel {
 
 .home-new-project-btn {
   font-size: 0.75rem;
-  color: var(--color-primary);
-  background: var(--color-primary-dim);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  padding: 2px 8px;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.home-new-project-btn:hover {
-  background: rgba(0, 229, 255, 0.25);
-  color: var(--color-primary);
 }
 
 /* ── Project create form ── */
 
 .project-create-form {
-  background: var(--bg-surface);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  padding: 12px;
   margin-bottom: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 
 .project-create-form-row {
@@ -1237,18 +1199,7 @@ html[data-theme="vaporwave"] .peek-panel {
 
 .project-create-input {
   flex: 1;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
   font-size: 0.85rem;
-  padding: 5px 8px;
-  outline: none;
-  transition: border-color 0.15s;
-}
-
-.project-create-input:focus {
-  border-color: var(--border-default);
 }
 
 .project-create-path-input {
@@ -1257,24 +1208,7 @@ html[data-theme="vaporwave"] .peek-panel {
 
 .project-create-browse-btn {
   font-size: 0.8rem;
-  background: var(--bg-overlay);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  padding: 4px 10px;
-  cursor: pointer;
   white-space: nowrap;
-  transition: background 0.15s, color 0.15s;
-}
-
-.project-create-browse-btn:hover:not(:disabled) {
-  background: var(--bg-elevated);
-  color: var(--text-primary);
-}
-
-.project-create-browse-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .project-create-form-actions {
@@ -1285,43 +1219,10 @@ html[data-theme="vaporwave"] .peek-panel {
 
 .project-create-submit-btn {
   font-size: 0.8rem;
-  background: var(--color-primary-dim);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  color: var(--color-primary);
-  padding: 4px 12px;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.project-create-submit-btn:hover:not(:disabled) {
-  background: rgba(0, 229, 255, 0.25);
-}
-
-.project-create-submit-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
 }
 
 .project-create-cancel-btn {
   font-size: 0.8rem;
-  background: transparent;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  padding: 4px 12px;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-
-.project-create-cancel-btn:hover:not(:disabled) {
-  background: var(--bg-elevated);
-  color: var(--text-primary);
-}
-
-.project-create-cancel-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 /* ── Focus card enhancements ── */
@@ -1349,21 +1250,18 @@ html[data-theme="vaporwave"] .peek-panel {
 /* ── Pin/unpin button ── */
 
 .focus-card-pin {
-  width: 24px;
-  height: 24px;
+  width: 32px;
+  height: 32px;
   display: grid;
   place-items: center;
   font-size: var(--text-base);
-  background: none;
   color: var(--text-ghost);
-  border-radius: var(--radius-sm);
   flex-shrink: 0;
   padding: 0;
 }
 
 .focus-card-pin:hover {
   color: var(--accent);
-  background: var(--accent-subtle);
 }
 
 .focus-card-pin.active {
@@ -1400,7 +1298,6 @@ html[data-theme="vaporwave"] .peek-panel {
   align-items: center;
   justify-content: space-between;
   padding: 6px var(--space-3);
-  border-radius: var(--radius-sm);
   background: none;
   text-align: left;
   color: var(--text-secondary);
@@ -1549,14 +1446,6 @@ html[data-theme="vaporwave"] .peek-panel {
 /* ── Error banner ── */
 
 .error-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--status-danger-bg);
-  background: var(--status-danger-bg);
   color: var(--status-danger-text);
   font-size: var(--text-base);
 }
@@ -1564,13 +1453,6 @@ html[data-theme="vaporwave"] .peek-panel {
 /* ── Reconnecting / disconnected banners ── */
 
 .reconnecting-banner {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--status-warning-bg);
-  background: var(--status-warning-bg);
   color: var(--status-warning-text);
   font-size: var(--text-base);
 }
@@ -1591,14 +1473,6 @@ html[data-theme="vaporwave"] .peek-panel {
 }
 
 .disconnected-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--status-danger-bg);
-  background: var(--status-danger-bg);
   color: var(--status-danger-text);
   font-size: var(--text-base);
 }
@@ -4297,14 +4171,7 @@ html[data-theme="vaporwave"] .peek-panel {
 }
 
 .project-settings-btn {
-  font-size: 0.75rem;
-  color: var(--text-secondary);
-  opacity: 0.7;
-}
-
-.project-settings-btn:hover {
-  opacity: 1;
-  color: var(--text-primary);
+  flex-shrink: 0;
 }
 
 /* ── Project settings view ── */
@@ -4383,18 +4250,8 @@ html[data-theme="vaporwave"] .peek-panel {
 
 .settings-input {
   flex: 1;
-  padding: 6px 10px;
-  border-radius: var(--radius-sm, 4px);
-  border: 1px solid var(--border-default);
-  background: var(--bg-elevated, var(--surface-overlay));
-  color: var(--text-primary);
   font-size: 0.85rem;
-  outline: none;
   min-width: 0;
-}
-
-.settings-input:focus {
-  border-color: var(--color-primary);
 }
 
 .settings-slug {
@@ -4584,7 +4441,6 @@ html[data-theme="vaporwave"] .peek-panel {
 }
 
 .btn-primary {
-  background: var(--color-primary);
   color: var(--text-on-primary, #000);
 }
 
@@ -4593,12 +4449,10 @@ html[data-theme="vaporwave"] .peek-panel {
 }
 
 .btn-ghost {
-  background: rgba(242, 237, 225, 0.07);
   color: var(--text-secondary);
 }
 
 .btn-ghost:hover:not(:disabled) {
-  background: rgba(242, 237, 225, 0.13);
   color: var(--text-primary);
 }
 
@@ -5068,10 +4922,6 @@ html[data-theme="vaporwave"] .peek-panel {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  padding: 10px 12px;
-  border-radius: var(--radius-sm, 4px);
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-elevated, var(--surface-overlay));
 }
 
 .settings-account-info {
@@ -5134,25 +4984,10 @@ html[data-theme="vaporwave"] .peek-panel {
 .settings-theme-card {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 4px;
-  padding: 12px 16px;
-  border-radius: var(--radius-sm, 4px);
-  border: 2px solid var(--border-subtle);
-  background: var(--bg-elevated, var(--surface-overlay));
-  cursor: pointer;
   text-align: left;
-  transition: border-color 0.15s, background 0.15s;
   min-width: 140px;
-}
-
-.settings-theme-card:hover {
-  border-color: var(--border-default);
-  background: var(--bg-overlay);
-}
-
-.settings-theme-card.active {
-  border-color: var(--color-primary);
-  background: var(--color-primary-dim);
 }
 
 .settings-theme-card-name {
@@ -5179,10 +5014,6 @@ html[data-theme="vaporwave"] .peek-panel {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 12px 14px;
-  border-radius: var(--radius-sm, 4px);
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-elevated, var(--surface-overlay));
 }
 
 .settings-agent-defaults-account-name {
@@ -5193,18 +5024,8 @@ html[data-theme="vaporwave"] .peek-panel {
 
 .settings-select {
   width: 100%;
-  padding: 6px 10px;
-  border-radius: var(--radius-sm, 4px);
-  border: 1px solid var(--border-default);
-  background: var(--bg-elevated, var(--surface-overlay));
-  color: var(--text-primary);
   font-size: 0.85rem;
-  outline: none;
   cursor: pointer;
-}
-
-.settings-select:focus {
-  border-color: var(--color-primary);
 }
 
 /* --- GitHub --- */
@@ -5496,11 +5317,6 @@ html[data-theme="vaporwave"] .peek-panel {
   flex-direction: row;
   align-items: center;
   gap: var(--space-3, 12px);
-  padding: var(--space-3, 12px) var(--space-4, 16px);
-  border-radius: var(--radius-lg, 8px);
-  border: 1px solid var(--status-warning, #ff9f43);
-  background: var(--status-warning-bg, rgba(255, 159, 67, 0.12));
-  color: var(--status-warning-text, #ffcc90);
   margin-bottom: var(--space-3, 12px);
 }
 
@@ -5756,18 +5572,13 @@ html[data-theme="vaporwave"] .peek-panel {
 /* ── Button hierarchy (P2-6) ── */
 .primary-button {
   padding: var(--space-1) var(--space-3);
-  border-radius: var(--radius-md);
-  background: var(--accent-muted);
   color: var(--accent);
   font-size: var(--text-base);
   font-weight: var(--weight-medium);
-  border: 1px solid var(--accent-muted);
-  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .primary-button:hover:not(:disabled) {
-  background: var(--accent);
-  color: var(--surface-base, #0e0b14);
+  filter: brightness(1.06);
 }
 
 .primary-button:disabled {
@@ -6147,4 +5958,384 @@ html[data-theme="vaporwave"] .peek-panel {
   color: var(--text-muted);
   padding: 4px 0;
   font-family: var(--font-sans);
+}
+
+/* ===== CYBERPUNK MIGRATION LAYER ===== */
+
+html[data-theme="cyberpunk"] {
+  --bg-base: #0a0a0f;
+  --bg-surface: #12121a;
+  --bg-elevated: #151523;
+  --bg-overlay: #1c1c2e;
+  --bg-gradient:
+    radial-gradient(circle at 15% 15%, rgba(0, 212, 255, 0.12), transparent 30%),
+    radial-gradient(circle at 85% 18%, rgba(255, 0, 255, 0.11), transparent 28%),
+    radial-gradient(circle at 50% 100%, rgba(0, 255, 136, 0.09), transparent 42%);
+  --surface-base: #0a0a0f;
+  --surface-raised: rgba(18, 18, 26, 0.9);
+  --surface-overlay: rgba(28, 28, 46, 0.88);
+  --surface-sunken: #08080d;
+  --surface-hover: rgba(0, 255, 136, 0.08);
+  --surface-active: rgba(0, 255, 136, 0.12);
+  --text-primary: #e0e0e0;
+  --text-secondary: #9aa0b4;
+  --text-tertiary: #6b7280;
+  --text-muted: #6b7280;
+  --text-ghost: rgba(224, 224, 224, 0.3);
+  --foreground: #e0e0e0;
+  --accent: #00ff88;
+  --accent-hover: #5fffb2;
+  --accent-muted: rgba(0, 255, 136, 0.16);
+  --accent-subtle: rgba(0, 255, 136, 0.08);
+  --accent-secondary: #ff00ff;
+  --accent-tertiary: #00d4ff;
+  --color-primary: #00ff88;
+  --color-primary-dim: rgba(0, 255, 136, 0.16);
+  --color-secondary: #ff00ff;
+  --color-secondary-dim: rgba(255, 0, 255, 0.16);
+  --border-subtle: rgba(42, 42, 58, 0.7);
+  --border-default: rgba(0, 212, 255, 0.22);
+  --border-focus: rgba(0, 255, 136, 0.52);
+  --color-success: #00ff88;
+  --color-warning: #f4ff61;
+  --color-error: #ff3366;
+  --color-info: #00d4ff;
+  --activity-working: #00ff88;
+  --activity-idle: #00d4ff;
+  --activity-waiting: #f4ff61;
+  --activity-error: #ff3366;
+  --activity-starting: #ff00ff;
+  --status-live: #00ff88;
+  --status-live-bg: rgba(0, 255, 136, 0.12);
+  --status-live-text: #7dffbf;
+  --status-pending: #f4ff61;
+  --status-pending-bg: rgba(244, 255, 97, 0.12);
+  --status-pending-text: #f7ff9f;
+  --status-warning: #ff9a3c;
+  --status-warning-bg: rgba(255, 154, 60, 0.12);
+  --status-warning-text: #ffc48c;
+  --status-danger: #ff3366;
+  --status-danger-bg: rgba(255, 51, 102, 0.12);
+  --status-danger-text: #ff8eab;
+  --status-muted: rgba(224, 224, 224, 0.22);
+  --status-muted-bg: rgba(42, 42, 58, 0.45);
+  --status-muted-text: #a7afc4;
+  --input: #12121a;
+  --card: #12121a;
+  --font-sans: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+  --font-mono: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 4px;
+  --radius-xl: 4px;
+  --shadow-default: 0 0 12px rgba(0, 212, 255, 0.08);
+  --shadow-elevated: 0 0 18px rgba(0, 255, 136, 0.12);
+}
+
+html[data-theme="cyberpunk"] body {
+  background:
+    radial-gradient(circle at top, rgba(0, 212, 255, 0.08), transparent 30%),
+    #05060a;
+}
+
+html[data-theme="cyberpunk"] body::before {
+  background:
+    linear-gradient(to bottom, rgba(0, 0, 0, 0.22), transparent 25%, transparent 75%, rgba(0, 0, 0, 0.28)),
+    repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0) 0,
+      rgba(255, 255, 255, 0) 2px,
+      rgba(0, 0, 0, 0.22) 2px,
+      rgba(0, 0, 0, 0.22) 4px
+    );
+  opacity: 0.5;
+}
+
+html[data-theme="cyberpunk"] #root {
+  background-image:
+    linear-gradient(rgba(0, 255, 136, 0.028) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 255, 136, 0.028) 1px, transparent 1px),
+    var(--bg-gradient);
+  background-size: 48px 48px, 48px 48px, auto;
+}
+
+html[data-theme="cyberpunk"] .app-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(0, 212, 255, 0.09), transparent 24%),
+    radial-gradient(circle at 100% 0%, rgba(255, 0, 255, 0.1), transparent 28%),
+    radial-gradient(circle at 50% 100%, rgba(0, 255, 136, 0.08), transparent 30%);
+  z-index: 0;
+}
+
+html[data-theme="cyberpunk"] .topbar,
+html[data-theme="cyberpunk"] .workspace-pane,
+html[data-theme="cyberpunk"] .card,
+html[data-theme="cyberpunk"] .hero-panel,
+html[data-theme="cyberpunk"] .sidebar,
+html[data-theme="cyberpunk"] .peek-panel {
+  border-color: var(--border-default);
+  background: linear-gradient(180deg, rgba(20, 20, 31, 0.92), rgba(10, 10, 15, 0.92));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.02),
+    0 0 20px rgba(0, 212, 255, 0.06);
+}
+
+html[data-theme="cyberpunk"] .topbar,
+html[data-theme="cyberpunk"] .sidebar,
+html[data-theme="cyberpunk"] .peek-panel,
+html[data-theme="cyberpunk"] .focus-card,
+html[data-theme="cyberpunk"] .project-create-form,
+html[data-theme="cyberpunk"] .all-projects-row,
+html[data-theme="cyberpunk"] .empty-pane,
+html[data-theme="cyberpunk"] .setup-banner {
+  clip-path: polygon(0 10px, 10px 0, calc(100% - 10px) 0, 100% 10px, 100% calc(100% - 10px), calc(100% - 10px) 100%, 10px 100%, 0 calc(100% - 10px));
+}
+
+html[data-theme="cyberpunk"] .cityscape-silhouette {
+  display: block;
+  height: 126px;
+  opacity: 0.9;
+  filter: drop-shadow(0 0 14px rgba(0, 212, 255, 0.15));
+}
+
+html[data-theme="cyberpunk"] .brand-block {
+  gap: 10px;
+}
+
+html[data-theme="cyberpunk"] .brand-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+html[data-theme="cyberpunk"] .brand-kicker {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.28em;
+  color: var(--accent-tertiary);
+}
+
+html[data-theme="cyberpunk"] .brand-block h1 {
+  font-family: "Orbitron", "Share Tech Mono", monospace;
+  font-size: 1.15rem;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--foreground);
+  text-shadow: -1px 0 var(--accent-secondary), 1px 0 var(--accent-tertiary), 0 0 14px rgba(0, 255, 136, 0.22);
+}
+
+.cyber-glitch {
+  position: relative;
+  animation: cyber-glitch-jitter 5.5s infinite steps(2);
+}
+
+.cyber-glitch::before,
+.cyber-glitch::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.cyber-glitch::before {
+  color: var(--accent-secondary);
+  transform: translate(-1px, 0);
+  opacity: 0.55;
+  clip-path: inset(0 0 55% 0);
+}
+
+.cyber-glitch::after {
+  color: var(--accent-tertiary);
+  transform: translate(1px, 0);
+  opacity: 0.55;
+  clip-path: inset(48% 0 0 0);
+}
+
+@keyframes cyber-glitch-jitter {
+  0%, 96%, 100% { transform: none; }
+  97% { transform: translate(-1px, 1px) skewX(-4deg); }
+  98% { transform: translate(1px, -1px) skewX(4deg); }
+  99% { transform: translate(-1px, 0); }
+}
+
+html[data-theme="cyberpunk"] .status-chip {
+  border: 1px solid currentColor;
+  border-radius: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.62rem;
+  padding: 4px 8px;
+}
+
+html[data-theme="cyberpunk"] .breadcrumb-bar {
+  padding: 10px 16px 6px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.67rem;
+}
+
+html[data-theme="cyberpunk"] .home-view {
+  padding: 20px 12px 28px;
+}
+
+html[data-theme="cyberpunk"] .home-hero-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(220px, 0.9fr);
+  gap: 18px;
+  margin-bottom: 18px;
+  padding: 20px;
+  border: 1px solid var(--border-default);
+  background:
+    linear-gradient(135deg, rgba(0, 212, 255, 0.08), transparent 36%),
+    linear-gradient(180deg, rgba(15, 16, 24, 0.96), rgba(10, 10, 15, 0.94));
+  box-shadow: 0 0 24px rgba(0, 255, 136, 0.08);
+  clip-path: polygon(0 14px, 14px 0, calc(100% - 14px) 0, 100% 14px, 100% calc(100% - 14px), calc(100% - 14px) 100%, 14px 100%, 0 calc(100% - 14px));
+}
+
+html[data-theme="cyberpunk"] .home-hero-kicker,
+html[data-theme="cyberpunk"] .home-hud-label {
+  display: inline-block;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.28em;
+  color: var(--accent-tertiary);
+}
+
+html[data-theme="cyberpunk"] .home-hero-title {
+  margin: 10px 0 12px;
+  font-family: "Orbitron", "Share Tech Mono", monospace;
+  font-size: clamp(2.2rem, 5vw, 4rem);
+  line-height: 0.98;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+html[data-theme="cyberpunk"] .home-hero-subtitle {
+  max-width: 60ch;
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+html[data-theme="cyberpunk"] .home-hero-hud {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(0, 255, 136, 0.18);
+  background: rgba(7, 9, 13, 0.82);
+}
+
+html[data-theme="cyberpunk"] .home-hud-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(42, 42, 58, 0.8);
+}
+
+html[data-theme="cyberpunk"] .home-hud-row strong {
+  color: var(--accent);
+  font-family: "Orbitron", "Share Tech Mono", monospace;
+  font-size: 1.15rem;
+  text-shadow: 0 0 10px rgba(0, 255, 136, 0.24);
+}
+
+html[data-theme="cyberpunk"] .home-stats-bar {
+  justify-content: space-between;
+  padding: 6px 0 14px;
+}
+
+html[data-theme="cyberpunk"] .home-stat-cluster {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+html[data-theme="cyberpunk"] .home-stat {
+  padding: 4px 8px;
+  border: 1px solid rgba(0, 212, 255, 0.14);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+
+html[data-theme="cyberpunk"] .home-stat-terminal::after {
+  content: "_";
+  margin-left: 6px;
+  color: var(--accent);
+  animation: cyber-blink 1s steps(1) infinite;
+}
+
+@keyframes cyber-blink {
+  50% { opacity: 0; }
+}
+
+html[data-theme="cyberpunk"] .focus-card {
+  border-color: var(--border-default);
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(20, 20, 31, 0.96), rgba(10, 10, 15, 0.96));
+  box-shadow: 0 0 0 1px rgba(0, 212, 255, 0.08), 0 0 22px rgba(0, 255, 136, 0.05);
+}
+
+html[data-theme="cyberpunk"] .focus-card:hover {
+  border-color: var(--accent);
+  background:
+    linear-gradient(180deg, rgba(20, 24, 31, 0.96), rgba(10, 10, 15, 0.96));
+  box-shadow: 0 0 0 1px rgba(0, 255, 136, 0.16), 0 0 28px rgba(0, 255, 136, 0.14);
+  transform: translateY(-1px);
+}
+
+html[data-theme="cyberpunk"] .setup-banner,
+html[data-theme="cyberpunk"] .empty-pane {
+  border: 1px solid var(--border-default);
+  border-radius: 0;
+  background: linear-gradient(180deg, rgba(18, 18, 26, 0.96), rgba(10, 10, 15, 0.96));
+}
+
+html[data-theme="cyberpunk"] .project-create-input,
+html[data-theme="cyberpunk"] .project-create-browse-btn,
+html[data-theme="cyberpunk"] .project-create-submit-btn,
+html[data-theme="cyberpunk"] .project-create-cancel-btn,
+html[data-theme="cyberpunk"] .home-new-project-btn,
+html[data-theme="cyberpunk"] .primary-button,
+html[data-theme="cyberpunk"] .secondary-button,
+html[data-theme="cyberpunk"] .btn-primary,
+html[data-theme="cyberpunk"] .btn-ghost,
+html[data-theme="cyberpunk"] .section-add-btn {
+  border-radius: 0;
+}
+
+html[data-theme="cyberpunk"] .project-create-input {
+  color: var(--accent);
+}
+
+html[data-theme="cyberpunk"] .all-projects-header {
+  color: var(--accent-tertiary);
+  letter-spacing: 0.22em;
+}
+
+html[data-theme="cyberpunk"] .all-projects-row {
+  padding: 2px;
+  border: 1px solid transparent;
+}
+
+html[data-theme="cyberpunk"] .all-projects-row:hover {
+  border-color: var(--border-default);
+  background: rgba(0, 212, 255, 0.04);
+}
+
+@media (max-width: 900px) {
+  html[data-theme="cyberpunk"] .home-hero-panel {
+    grid-template-columns: 1fr;
+  }
 }

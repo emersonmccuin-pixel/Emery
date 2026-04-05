@@ -2,6 +2,8 @@ import { useAppStore } from "./store";
 import { connectionLabel, exportDiagnosticsBundle } from "./lib";
 import { navStore, useNavLayer } from "./nav-store";
 import { newCorrelationId, snapshotClientDiagnostics } from "./diagnostics";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 
 export function Topbar() {
   const connectionEvent = useAppStore((s) => s.connectionEvent);
@@ -28,7 +30,10 @@ export function Topbar() {
   return (
     <header className="topbar">
       <div className="brand-block">
-        <h1>EURI</h1>
+        <div className="brand-copy">
+          <span className="brand-kicker">ops uplink</span>
+          <h1 className="cyber-glitch" data-text="EURI">EURI</h1>
+        </div>
         <span
           className={`connection-dot connection-${connectionState}`}
           title={connectionState}
@@ -36,21 +41,28 @@ export function Topbar() {
       </div>
       <div className="status-strip">
         {selectedProjectId ? (
-          <button
-            className={`status-chip neutral topbar-inbox-btn${isInbox ? " active" : ""}`}
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`topbar-inbox-btn min-h-9 px-3 ${isInbox ? "active" : ""}`}
             onClick={handleInboxClick}
             title="Inbox"
           >
-            inbox{unreadCount > 0 ? <span className="inbox-unread-badge">{unreadCount > 99 ? "99+" : unreadCount}</span> : null}
-          </button>
+            inbox
+            {unreadCount > 0 ? (
+              <span className="inbox-unread-badge">{unreadCount > 99 ? "99+" : unreadCount}</span>
+            ) : null}
+          </Button>
         ) : null}
-        <span className={`status-chip ${connectionLabel(connectionEvent)}`}>
+        <Badge className={`status-chip ${connectionLabel(connectionEvent)}`}>
           {connectionLabel(connectionEvent)}
-        </span>
-        <span className="status-chip neutral">{liveCount} live</span>
+        </Badge>
+        <Badge variant="outline" className="status-chip neutral">{liveCount} live</Badge>
         {bootstrap?.hello.diagnostics_enabled ? (
-          <button
-            className="status-chip neutral"
+          <Button
+            variant="ghost"
+            size="sm"
+            className="min-h-9 px-3"
             onClick={() => {
               const correlationId = newCorrelationId("bundle");
               void exportDiagnosticsBundle(
@@ -62,22 +74,26 @@ export function Topbar() {
             }}
           >
             debug
-          </button>
+          </Button>
         ) : null}
-        <button
-          className="status-chip neutral"
+        <Button
+          variant="ghost"
+          size="sm"
+          className="min-h-9 px-3"
           onClick={() => navStore.goToVault()}
           title="Vault"
         >
           vault
-        </button>
-        <button
-          className="status-chip neutral settings-btn"
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="settings-btn min-h-9 px-3"
           onClick={() => navStore.goToSettings()}
           title="Settings (Ctrl+,)"
         >
           settings
-        </button>
+        </Button>
       </div>
     </header>
   );

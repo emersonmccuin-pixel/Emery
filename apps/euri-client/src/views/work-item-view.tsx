@@ -4,6 +4,7 @@ import { navStore } from "../nav-store";
 import { StatusBadge } from "../components/status-badge";
 import { PlanPicker } from "../components/plan-picker";
 import { WorkItemForm, type WorkItemFormData } from "../components/work-item-form";
+import { Button, Card, CardContent, CardHeader, CardTitle } from "../components/ui";
 import { renderMarkdown } from "../utils/markdown";
 
 function runtimeStateLabel(state: string): string {
@@ -153,6 +154,20 @@ export function WorkItemView({
     ? pastSessions.slice(0, 5)
     : pastSessions;
 
+  const statusAction = workItem.status === "backlog"
+    ? { label: "Move to Active", nextStatus: "in_progress" }
+    : workItem.status === "in_progress"
+      ? { label: "Mark Complete", nextStatus: "done" }
+      : workItem.status === "done"
+        ? { label: "Reopen", nextStatus: "in_progress" }
+        : null;
+
+  const blockAction = workItem.status === "in_progress"
+    ? { label: "Block", nextStatus: "blocked", variant: "secondary" as const }
+    : workItem.status === "blocked"
+      ? { label: "Unblock", nextStatus: "in_progress", variant: "default" as const }
+      : null;
+
   return (
     <div className="content-frame">
     <div className="work-item-detail-view">
@@ -176,59 +191,34 @@ export function WorkItemView({
       {/* Actions bar */}
       {!isEditing ? (
         <div className="wi-actions-bar">
-          <button
-            className="wi-action-btn wi-action-btn--primary"
+          <Button
             onClick={() => void appStore.handleLaunchSessionFromWorkItem(workItemId)}
           >
             Launch Agent
-          </button>
-          <button
-            className="wi-action-btn wi-action-btn--secondary"
+          </Button>
+          <Button
+            variant="secondary"
             onClick={() => navStore.goToNewDocument(projectId, workItemId)}
           >
             New Document
-          </button>
-          {workItem.status === "backlog" ? (
-            <button
-              className="wi-action-btn wi-action-btn--status"
+          </Button>
+          {statusAction ? (
+            <Button
+              variant="ghost"
               disabled={statusTransitioning}
-              onClick={() => void handleStatusTransition("in_progress")}
+              onClick={() => void handleStatusTransition(statusAction.nextStatus)}
             >
-              Move to Active
-            </button>
-          ) : workItem.status === "in_progress" ? (
-            <button
-              className="wi-action-btn wi-action-btn--status"
-              disabled={statusTransitioning}
-              onClick={() => void handleStatusTransition("done")}
-            >
-              Mark Complete
-            </button>
-          ) : workItem.status === "done" ? (
-            <button
-              className="wi-action-btn wi-action-btn--status"
-              disabled={statusTransitioning}
-              onClick={() => void handleStatusTransition("in_progress")}
-            >
-              Reopen
-            </button>
+              {statusAction.label}
+            </Button>
           ) : null}
-          {workItem.status === "in_progress" ? (
-            <button
-              className="wi-action-btn wi-action-btn--block"
+          {blockAction ? (
+            <Button
+              variant={blockAction.variant}
               disabled={statusTransitioning}
-              onClick={() => void handleStatusTransition("blocked")}
+              onClick={() => void handleStatusTransition(blockAction.nextStatus)}
             >
-              Block
-            </button>
-          ) : workItem.status === "blocked" ? (
-            <button
-              className="wi-action-btn wi-action-btn--unblock"
-              disabled={statusTransitioning}
-              onClick={() => void handleStatusTransition("in_progress")}
-            >
-              Unblock
-            </button>
+              {blockAction.label}
+            </Button>
           ) : null}
         </div>
       ) : null}
@@ -246,144 +236,175 @@ export function WorkItemView({
         <>
           {/* Description */}
           {workItem.description ? (
-            <section className="wi-detail-section">
-              <h3>Description</h3>
-              <div
-                className="wi-detail-description"
-                dangerouslySetInnerHTML={{ __html: renderMarkdown(workItem.description) }}
-              />
-            </section>
+            <Card className="wi-detail-section">
+              <CardHeader>
+                <CardTitle>Description</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div
+                  className="wi-detail-description"
+                  dangerouslySetInnerHTML={{ __html: renderMarkdown(workItem.description) }}
+                />
+              </CardContent>
+            </Card>
           ) : null}
 
           {/* Acceptance Criteria */}
           {workItem.acceptance_criteria ? (
-            <section className="wi-detail-section">
-              <h3>Acceptance Criteria</h3>
-              <div
-                className="wi-detail-criteria"
-                dangerouslySetInnerHTML={{ __html: renderMarkdown(workItem.acceptance_criteria) }}
-              />
-            </section>
+            <Card className="wi-detail-section">
+              <CardHeader>
+                <CardTitle>Acceptance Criteria</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div
+                  className="wi-detail-criteria"
+                  dangerouslySetInnerHTML={{ __html: renderMarkdown(workItem.acceptance_criteria) }}
+                />
+              </CardContent>
+            </Card>
           ) : null}
         </>
       )}
 
       {/* Planning */}
-      <section className="wi-detail-section">
-        <h3>Planning</h3>
-        <PlanPicker
-          assignments={assignments}
-          dayCadenceKey={dayCadenceKey}
-          weekCadenceKey={weekCadenceKey}
-          onToggle={(cadenceType, cadenceKey) =>
-            void appStore.handleTogglePlanningAssignment(workItemId, cadenceType, cadenceKey)
-          }
-        />
-      </section>
+      <Card className="wi-detail-section">
+        <CardHeader>
+          <CardTitle>Planning</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <PlanPicker
+            assignments={assignments}
+            dayCadenceKey={dayCadenceKey}
+            weekCadenceKey={weekCadenceKey}
+            onToggle={(cadenceType, cadenceKey) =>
+              void appStore.handleTogglePlanningAssignment(workItemId, cadenceType, cadenceKey)
+            }
+          />
+        </CardContent>
+      </Card>
 
       {/* Live Sessions */}
       {liveSessions.length > 0 ? (
-        <section className="wi-detail-section">
-          <h3>Running Sessions</h3>
-          <div className="wi-session-cards">
-            {liveSessions.map((s) => (
-              <div
-                key={s.id}
-                className="wi-session-card wi-session-card--live clickable"
-                onClick={() => navStore.goToAgent(projectId, s.id)}
-              >
-                <div className="wi-session-card-header">
-                  <span className={`wi-session-live-dot indicator-${s.runtime_state}`} />
-                  <span className="wi-session-card-title">{s.title ?? s.current_mode}</span>
-                  <span className="wi-session-card-state">{s.runtime_state}</span>
+        <Card className="wi-detail-section">
+          <CardHeader>
+            <CardTitle>Running Sessions</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="wi-session-cards">
+              {liveSessions.map((s) => (
+                <div
+                  key={s.id}
+                  className="wi-session-card wi-session-card--live clickable"
+                  onClick={() => navStore.goToAgent(projectId, s.id)}
+                >
+                  <div className="wi-session-card-header">
+                    <span className={`wi-session-live-dot indicator-${s.runtime_state}`} />
+                    <span className="wi-session-card-title">{s.title ?? s.current_mode}</span>
+                    <span className="wi-session-card-state">{s.runtime_state}</span>
+                  </div>
+                  <div className="wi-session-card-meta">
+                    {s.worktree_branch ? (
+                      <span className="wi-session-card-branch">{s.worktree_branch}</span>
+                    ) : null}
+                    <span className="wi-session-card-duration">
+                      {formatDuration(s.started_at, null)}
+                    </span>
+                  </div>
                 </div>
-                <div className="wi-session-card-meta">
-                  {s.worktree_branch ? (
-                    <span className="wi-session-card-branch">{s.worktree_branch}</span>
-                  ) : null}
-                  <span className="wi-session-card-duration">
-                    {formatDuration(s.started_at, null)}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
       ) : null}
 
       {/* Session History */}
       {pastSessions.length > 0 ? (
-        <section className="wi-detail-section">
-          <h3>Session History ({pastSessions.length})</h3>
-          <div className="wi-detail-list">
-            {visiblePastSessions.map((s) => (
-              <div
-                key={s.id}
-                className="wi-detail-list-row clickable"
-                onClick={() => navStore.goToAgent(projectId, s.id)}
-              >
-                <span className={`wi-session-indicator indicator-${s.runtime_state}`} />
-                <span className="wi-session-title">{s.title ?? s.current_mode}</span>
-                <span className="wi-session-branch">{s.worktree_branch ?? ""}</span>
-                <span className="wi-session-exit-status">{runtimeStateLabel(s.runtime_state)}</span>
-                <span className="wi-session-duration">{formatDuration(s.started_at, s.ended_at)}</span>
-              </div>
-            ))}
-          </div>
+        <Card className="wi-detail-section">
+          <CardHeader>
+            <CardTitle>Session History ({pastSessions.length})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="wi-detail-list">
+              {visiblePastSessions.map((s) => (
+                <div
+                  key={s.id}
+                  className="wi-detail-list-row clickable"
+                  onClick={() => navStore.goToAgent(projectId, s.id)}
+                >
+                  <span className={`wi-session-indicator indicator-${s.runtime_state}`} />
+                  <span className="wi-session-title">{s.title ?? s.current_mode}</span>
+                  <span className="wi-session-branch">{s.worktree_branch ?? ""}</span>
+                  <span className="wi-session-exit-status">{runtimeStateLabel(s.runtime_state)}</span>
+                  <span className="wi-session-duration">{formatDuration(s.started_at, s.ended_at)}</span>
+                </div>
+              ))}
+            </div>
           {pastSessions.length > 5 ? (
-            <button
+            <Button
               className="wi-history-toggle"
+              variant="ghost"
               onClick={() => setHistoryCollapsed((c) => !c)}
             >
               {historyCollapsed
                 ? `Show all ${pastSessions.length} sessions`
                 : "Collapse"}
-            </button>
+            </Button>
           ) : null}
-        </section>
+          </CardContent>
+        </Card>
       ) : null}
 
       {/* Linked Sessions (all) — show only if no live and no past separately shown */}
       {liveSessions.length === 0 && pastSessions.length === 0 ? (
-        <section className="wi-detail-section">
-          <h3>Sessions (0)</h3>
-          <p className="section-empty">No sessions linked.</p>
-        </section>
+        <Card className="wi-detail-section">
+          <CardHeader>
+            <CardTitle>Sessions (0)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="section-empty">No sessions linked.</p>
+          </CardContent>
+        </Card>
       ) : null}
 
       {/* Linked Documents */}
-      <section className="wi-detail-section">
-        <h3>Documents ({linkedDocs.length})</h3>
-        {linkedDocs.length === 0 ? (
-          <p className="section-empty">No documents linked.</p>
-        ) : (
-          <div className="wi-detail-list">
-            {linkedDocs.map((d) => (
-              <div
-                key={d.id}
-                className="wi-detail-list-row clickable"
-                onClick={() => navStore.goToDocument(projectId, d.id)}
-              >
-                <span className="wi-doc-type">{d.doc_type}</span>
-                <span className="wi-doc-title">{d.title}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+      <Card className="wi-detail-section">
+        <CardHeader>
+          <CardTitle>Documents ({linkedDocs.length})</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {linkedDocs.length === 0 ? (
+            <p className="section-empty">No documents linked.</p>
+          ) : (
+            <div className="wi-detail-list">
+              {linkedDocs.map((d) => (
+                <div
+                  key={d.id}
+                  className="wi-detail-list-row clickable"
+                  onClick={() => navStore.goToDocument(projectId, d.id)}
+                >
+                  <span className="wi-doc-type">{d.doc_type}</span>
+                  <span className="wi-doc-title">{d.title}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Child Items */}
-      <section className="wi-detail-section">
-        <div className="wi-detail-section-header">
-          <h3>Children ({childItems.length})</h3>
-          <button
+      <Card className="wi-detail-section">
+        <CardHeader className="wi-detail-section-header">
+          <CardTitle>Children ({childItems.length})</CardTitle>
+          <Button
             className="wi-detail-add-child-btn"
+            variant={showAddChildForm ? "ghost" : "secondary"}
             title="Add child work item"
             onClick={() => setShowAddChildForm((v) => !v)}
           >
             {showAddChildForm ? "✕" : "+ Add Child"}
-          </button>
-        </div>
+          </Button>
+        </CardHeader>
+        <CardContent>
         {showAddChildForm ? (
           <WorkItemForm
             mode="create"
@@ -417,17 +438,18 @@ export function WorkItemView({
             ))}
           </div>
         ) : null}
-      </section>
+        </CardContent>
+      </Card>
 
       {/* Footer actions */}
       <div className="wi-detail-actions">
         {!isEditing ? (
-          <button
-            className="secondary-button"
+          <Button
+            variant="secondary"
             onClick={() => appStore.setEditingWorkItemId(workItemId)}
           >
             Edit
-          </button>
+          </Button>
         ) : null}
       </div>
     </div>

@@ -1,6 +1,6 @@
 /**
  * Cityscape — static SVG silhouette fixed to the bottom of the app shell.
- * Renders only in vaporwave theme (hidden via CSS in other themes).
+ * Renders in the neon-forward themes and stays non-interactive.
  * pointer-events: none so it never intercepts clicks.
  */
 export function Cityscape() {

@@ -34,6 +34,8 @@ import { DispatchSheet } from "./dispatch-sheet";
 import { Sidebar } from "./sidebar";
 import { PeekPanel } from "./peek-panel";
 import { Cityscape } from "./components/cityscape";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 
 const SIDEBAR_COLLAPSED_KEY = "euri.sidebar-collapsed";
 
@@ -445,32 +447,39 @@ export default function App() {
         <div className="main-content">
           <Breadcrumb />
           {error ? (
-            <div className="error-banner">
+            <Card className="error-banner">
+              <CardContent className="flex items-center justify-between gap-3 p-3">
               <span>{error}</span>
-              <button className="secondary-button" onClick={() => appStore.clearError()}>
+              <Button variant="ghost" size="sm" onClick={() => appStore.clearError()}>
                 Dismiss
-              </button>
-            </div>
+              </Button>
+              </CardContent>
+            </Card>
           ) : null}
           {connectionState === "reconnecting" ? (
-            <div className="reconnecting-banner">
+            <Card className="reconnecting-banner">
+              <CardContent className="flex items-center gap-2 p-3">
               <span className="reconnecting-spinner" />
               <span>Reconnecting to supervisor...</span>
-            </div>
+              </CardContent>
+            </Card>
           ) : null}
           {connectionState === "disconnected" ? (
-            <div className="disconnected-banner">
+            <Card className="disconnected-banner">
+              <CardContent className="flex items-center justify-between gap-3 p-3">
               <span>Disconnected from supervisor</span>
-              <button
-                className="secondary-button"
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => {
                   appStore.setConnectionState("reconnecting");
                   void appStore.rebootstrap();
                 }}
               >
                 Retry
-              </button>
-            </div>
+              </Button>
+              </CardContent>
+            </Card>
           ) : null}
           <div className="main-content-inner">
             <LayerRouter />

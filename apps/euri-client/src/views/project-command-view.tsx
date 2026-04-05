@@ -7,6 +7,8 @@ import { WorkItemsSection } from "../components/work-items-section";
 import { PlanningSection } from "../components/planning-section";
 import { DocsSection } from "../components/docs-section";
 import { StatusLEDs } from "../components/status-leds";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 
 export function ProjectCommandView({ projectId }: { projectId: string }) {
   const bootstrap = useAppStore((s) => s.bootstrap);
@@ -71,84 +73,88 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
 
   return (
     <div className="content-frame-wide">
-    <div className="project-command-view">
-      {accounts.length === 0 && (
-        <div className="setup-banner">
-          <span className="setup-banner-icon">!</span>
-          <span>No agent accounts configured. Set one up to start dispatching.</span>
-          <button className="primary-button" onClick={() => navStore.goToSettings()}>
-            Configure accounts
-          </button>
-        </div>
-      )}
-      <div className="project-command-topbar">
-        <button
-          className="btn-ghost btn-sm project-settings-btn"
-          onClick={() => navStore.goToProjectSettings(projectId)}
-          title="Project settings"
-        >
-          ⚙ Settings
-        </button>
-        <StatusLEDs status={gitStatus} />
-      </div>
-      <div className="operations-zone">
-        <FleetStrip
-          sessions={projectSessions}
-          workItems={workItems}
-          onZoomIntoAgent={(pid, sid) => navStore.goToAgent(pid, sid)}
-        />
-        <MergeQueueSection
-          entries={mergeQueue}
-          diffs={mergeQueueDiffs}
-          loadingKeys={loadingKeys}
-          onMerge={(id) => void appStore.handleMergeQueueMerge(id, projectId)}
-          onPark={(id) => void appStore.handleMergeQueuePark(id, projectId)}
-          onLoadDiff={(id) => void appStore.handleLoadMergeQueueDiff(id)}
-          onCheckConflicts={(id) => void appStore.handleMergeQueueCheckConflicts(id, projectId)}
-        />
-      </div>
-      <div className="planning-zone">
-        {isLoadingProject && workItems.length === 0 ? (
-          <div className="project-skeleton-placeholder" style={{ padding: "16px 0" }}>
-            <span className="skeleton-line" style={{ width: "60%" }} />
-            <span className="skeleton-line" style={{ width: "80%" }} />
-            <span className="skeleton-line" style={{ width: "45%" }} />
-          </div>
-        ) : null}
-        <PlanningSection
-          viewMode={planningViewMode}
-          onSetViewMode={(mode) => appStore.setPlanningViewMode(mode)}
-          workItems={workItems}
-          assignments={assignments}
-          sessions={projectSessions}
-          onDispatch={(workItemId) => void appStore.handleLaunchSessionFromWorkItem(workItemId)}
-          onNavigateToSession={(sessionId) => navStore.goToAgent(projectId, sessionId)}
-        />
-        {planningViewMode !== "day" && (
-          <WorkItemsSection
-            workItems={filteredWorkItems}
-            selectedIds={selectedWorkItemIds}
-            onToggleSelect={(id) => appStore.toggleWorkItemSelection(id)}
-            onClearSelection={() => appStore.clearWorkItemSelection()}
-            onDispatch={(workItemId) => void appStore.handleLaunchSessionFromWorkItem(workItemId)}
-            onMultiDispatch={() => void appStore.handleMultiDispatch(projectId)}
-            onNavigate={(workItemId) => navStore.goToWorkItem(projectId, workItemId)}
-            assignments={assignments}
-            dayCadenceKey={dayCadenceKey}
-            weekCadenceKey={weekCadenceKey}
-            onPlan={(workItemId, cadenceType, cadenceKey) =>
-              void appStore.handleTogglePlanningAssignment(workItemId, cadenceType, cadenceKey)
-            }
-          />
+      <div className="project-command-view">
+        {accounts.length === 0 && (
+          <Card className="setup-banner">
+            <CardContent className="flex items-center gap-3 p-3">
+              <span className="setup-banner-icon">!</span>
+              <span className="flex-1">No agent accounts configured. Set one up to start dispatching.</span>
+              <Button size="sm" onClick={() => navStore.goToSettings()}>
+                Configure accounts
+              </Button>
+            </CardContent>
+          </Card>
         )}
-        <DocsSection
-          documents={documents}
-          workItems={workItems}
-          onOpen={(docId) => navStore.goToDocument(projectId, docId)}
-          onNew={() => navStore.goToNewDocument(projectId)}
-        />
+        <div className="project-command-topbar">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="project-settings-btn"
+            onClick={() => navStore.goToProjectSettings(projectId)}
+            title="Project settings"
+          >
+            ⚙ Settings
+          </Button>
+          <StatusLEDs status={gitStatus} />
+        </div>
+        <div className="operations-zone">
+          <FleetStrip
+            sessions={projectSessions}
+            workItems={workItems}
+            onZoomIntoAgent={(pid, sid) => navStore.goToAgent(pid, sid)}
+          />
+          <MergeQueueSection
+            entries={mergeQueue}
+            diffs={mergeQueueDiffs}
+            loadingKeys={loadingKeys}
+            onMerge={(id) => void appStore.handleMergeQueueMerge(id, projectId)}
+            onPark={(id) => void appStore.handleMergeQueuePark(id, projectId)}
+            onLoadDiff={(id) => void appStore.handleLoadMergeQueueDiff(id)}
+            onCheckConflicts={(id) => void appStore.handleMergeQueueCheckConflicts(id, projectId)}
+          />
+        </div>
+        <div className="planning-zone">
+          {isLoadingProject && workItems.length === 0 ? (
+            <div className="project-skeleton-placeholder" style={{ padding: "16px 0" }}>
+              <span className="skeleton-line" style={{ width: "60%" }} />
+              <span className="skeleton-line" style={{ width: "80%" }} />
+              <span className="skeleton-line" style={{ width: "45%" }} />
+            </div>
+          ) : null}
+          <PlanningSection
+            viewMode={planningViewMode}
+            onSetViewMode={(mode) => appStore.setPlanningViewMode(mode)}
+            workItems={workItems}
+            assignments={assignments}
+            sessions={projectSessions}
+            onDispatch={(workItemId) => void appStore.handleLaunchSessionFromWorkItem(workItemId)}
+            onNavigateToSession={(sessionId) => navStore.goToAgent(projectId, sessionId)}
+          />
+          {planningViewMode !== "day" && (
+            <WorkItemsSection
+              workItems={filteredWorkItems}
+              selectedIds={selectedWorkItemIds}
+              onToggleSelect={(id) => appStore.toggleWorkItemSelection(id)}
+              onClearSelection={() => appStore.clearWorkItemSelection()}
+              onDispatch={(workItemId) => void appStore.handleLaunchSessionFromWorkItem(workItemId)}
+              onMultiDispatch={() => void appStore.handleMultiDispatch(projectId)}
+              onNavigate={(workItemId) => navStore.goToWorkItem(projectId, workItemId)}
+              assignments={assignments}
+              dayCadenceKey={dayCadenceKey}
+              weekCadenceKey={weekCadenceKey}
+              onPlan={(workItemId, cadenceType, cadenceKey) =>
+                void appStore.handleTogglePlanningAssignment(workItemId, cadenceType, cadenceKey)
+              }
+            />
+          )}
+          <DocsSection
+            documents={documents}
+            workItems={workItems}
+            onOpen={(docId) => navStore.goToDocument(projectId, docId)}
+            onNew={() => navStore.goToNewDocument(projectId)}
+          />
+        </div>
       </div>
-    </div>
     </div>
   );
 }

@@ -2,6 +2,8 @@ import { useMemo } from "react";
 import { navStore, useNavLayer } from "./nav-store";
 import type { NavigationLayer } from "./nav-store";
 import { useAppStore } from "./store";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 type Crumb = { label: string; layer: NavigationLayer };
 
@@ -74,11 +76,16 @@ export function Breadcrumb() {
   return (
     <nav className="breadcrumb-bar">
       {crumbs.map((crumb, i) => (
-        <span key={i} className="breadcrumb-segment">
+        <span key={i} className="breadcrumb-segment flex items-center">
           {i > 0 ? <span className="breadcrumb-sep">›</span> : null}
           {i < crumbs.length - 1 ? (
-            <button
-              className="breadcrumb-link"
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "breadcrumb-link min-h-8 px-2 py-1 text-[11px]",
+                "font-mono tracking-[0.18em] uppercase",
+              )}
               onClick={() => {
                 const l = crumb.layer;
                 if (l.layer === "home") navStore.goHome();
@@ -86,7 +93,7 @@ export function Breadcrumb() {
               }}
             >
               {resolveLabel(crumb)}
-            </button>
+            </Button>
           ) : (
             <span className="breadcrumb-current">{resolveLabel(crumb)}</span>
           )}

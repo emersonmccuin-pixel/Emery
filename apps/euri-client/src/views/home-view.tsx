@@ -4,6 +4,17 @@ import { navStore } from "../nav-store";
 import { pickFolder } from "../lib";
 import type { GitHealthStatus, ProjectSummary, SessionSummary, MergeQueueEntry } from "../types";
 import { StatusLEDs } from "../components/status-leds";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 export function HomeView() {
   const allProjects = useAppStore((s) => s.bootstrap?.projects ?? []);
@@ -59,80 +70,114 @@ export function HomeView() {
 
   return (
     <div className="content-frame">
-    <div className="home-view">
-      {accounts.length === 0 && (
-        <div className="setup-banner">
-          <span className="setup-banner-icon">!</span>
-          <span>No agent accounts configured. Set one up to start dispatching.</span>
-          <button className="primary-button" onClick={() => navStore.goToSettings()}>
-            Configure accounts
-          </button>
+      <div className="home-view">
+        <section className="home-hero-panel">
+          <div className="home-hero-copy">
+            <span className="home-hero-kicker">Neural Command Surface</span>
+            <h2 className="home-hero-title cyber-glitch" data-text="EURI CONTROL GRID">
+              EURI CONTROL GRID
+            </h2>
+            <p className="home-hero-subtitle">
+              Dispatch autonomous agents, monitor live workstreams, and keep every project on a single
+              compromised-looking control plane.
+            </p>
+          </div>
+          <div className="home-hero-hud">
+            <div className="home-hud-row">
+              <span className="home-hud-label">live agents</span>
+              <strong>{sessions.filter((s) => s.live).length}</strong>
+            </div>
+            <div className="home-hud-row">
+              <span className="home-hud-label">tracked projects</span>
+              <strong>{projects.length}</strong>
+            </div>
+            <div className="home-hud-row">
+              <span className="home-hud-label">linked accounts</span>
+              <strong>{accounts.length}</strong>
+            </div>
+          </div>
+        </section>
+
+        {accounts.length === 0 && (
+          <div className="setup-banner">
+            <span className="setup-banner-icon">!</span>
+            <span>No agent accounts configured. Set one up to start dispatching.</span>
+            <Button variant="default" size="sm" onClick={() => navStore.goToSettings()}>
+              Configure accounts
+            </Button>
+          </div>
+        )}
+
+        <div className="home-stats-bar">
+          <div className="home-stat-cluster">
+            <Badge className="home-stat home-stat-terminal">status: uplink stable</Badge>
+            <span className="home-stat">
+              {sessions.filter((s) => s.live).length} agents running
+            </span>
+          </div>
+          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+            {archivedCount > 0 || showArchived ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowArchived((v) => !v)}
+              >
+                {showArchived ? "← Active projects" : `Show archived (${archivedCount})`}
+              </Button>
+            ) : null}
+            {!showArchived ? (
+              <Button
+                variant="terminal"
+                size="sm"
+                className="home-new-project-btn"
+                onClick={() => setShowCreateForm(true)}
+              >
+                + New Project
+              </Button>
+            ) : null}
+          </div>
         </div>
-      )}
-      <div className="home-stats-bar">
-        <span className="home-stat">
-          {sessions.filter((s) => s.live).length} agents running
-        </span>
-        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-          {archivedCount > 0 || showArchived ? (
-            <button
-              className="btn-ghost btn-sm"
-              onClick={() => setShowArchived((v) => !v)}
-            >
-              {showArchived ? "← Active projects" : `Show archived (${archivedCount})`}
-            </button>
-          ) : null}
-          {!showArchived ? (
-            <button
-              className="home-new-project-btn"
-              onClick={() => setShowCreateForm(true)}
-            >
-              + New Project
-            </button>
-          ) : null}
-        </div>
-      </div>
 
-      {showCreateForm ? (
-        <ProjectCreateForm
-          onCreated={handleProjectCreated}
-          onCancel={() => setShowCreateForm(false)}
-        />
-      ) : null}
+        {showCreateForm ? (
+          <ProjectCreateForm
+            onCreated={handleProjectCreated}
+            onCancel={() => setShowCreateForm(false)}
+          />
+        ) : null}
 
-      <FocusCardGrid
-        projects={focusProjects}
-        sessions={sessions}
-        mergeQueueByProject={mergeQueueByProject}
-        projectDetails={projectDetails}
-        gitStatusByRootId={gitStatusByRootId}
-        onNavigate={(id) => navStore.goToProject(id)}
-        onUnpin={(id) => appStore.unpinProject(id)}
-        onReorder={(ids) => appStore.reorderFocus(ids)}
-        showUnpin={focusProjectIds.length > 0}
-      />
-
-      {otherProjects.length > 0 ? (
-        <AllProjectsList
-          projects={otherProjects}
+        <FocusCardGrid
+          projects={focusProjects}
           sessions={sessions}
-          canPin={focusProjectIds.length < maxFocusSlots || focusProjectIds.length === 0}
+          mergeQueueByProject={mergeQueueByProject}
+          projectDetails={projectDetails}
+          gitStatusByRootId={gitStatusByRootId}
           onNavigate={(id) => navStore.goToProject(id)}
-          onPin={(id) => appStore.pinProject(id)}
+          onUnpin={(id) => appStore.unpinProject(id)}
+          onReorder={(ids) => appStore.reorderFocus(ids)}
+          showUnpin={focusProjectIds.length > 0}
         />
-      ) : null}
 
-      {bootstrapping ? (
-        <div className="empty-pane" style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
-          <span className="reconnecting-spinner" />
-          Loading workspace...
-        </div>
-      ) : projects.length === 0 && !showCreateForm ? (
-        <div className="empty-pane">
-          {showArchived ? "No archived projects." : "No projects yet. Create one to get started."}
-        </div>
-      ) : null}
-    </div>
+        {otherProjects.length > 0 ? (
+          <AllProjectsList
+            projects={otherProjects}
+            sessions={sessions}
+            canPin={focusProjectIds.length < maxFocusSlots || focusProjectIds.length === 0}
+            onNavigate={(id) => navStore.goToProject(id)}
+            onPin={(id) => appStore.pinProject(id)}
+          />
+        ) : null}
+
+        {bootstrapping ? (
+          <div className="empty-pane" style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
+            <span className="reconnecting-spinner" />
+            Loading workspace...
+          </div>
+        ) : projects.length === 0 && !showCreateForm ? (
+          <div className="empty-pane">
+            {showArchived ? "No archived projects." : "No projects yet. Create one to get started."}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -189,9 +234,14 @@ function ProjectCreateForm({
   const canSubmit = name.trim().length > 0 && folderPath.trim().length > 0 && !submitting;
 
   return (
-    <div className="project-create-form">
+    <Card className="project-create-form">
+      <CardHeader className="pb-4">
+        <CardTitle>Provision New Project</CardTitle>
+        <CardDescription>Register a workspace root and seed project defaults for EURI.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
       <div className="project-create-form-row">
-        <input
+        <Input
           className="project-create-input"
           type="text"
           placeholder="Project name"
@@ -202,7 +252,7 @@ function ProjectCreateForm({
         />
       </div>
       <div className="project-create-form-row">
-        <input
+        <Input
           className="project-create-input project-create-path-input"
           type="text"
           placeholder="Folder path"
@@ -218,9 +268,9 @@ function ProjectCreateForm({
           }}
           onKeyDown={handleKeyDown}
         />
-        <button className="project-create-browse-btn" onClick={handleBrowse} disabled={submitting}>
+        <Button variant="ghost" size="sm" className="project-create-browse-btn" onClick={handleBrowse} disabled={submitting}>
           Browse
-        </button>
+        </Button>
       </div>
       <div className="project-create-form-row project-create-type-row">
         <span className="project-create-type-label">Project type</span>
@@ -260,18 +310,21 @@ function ProjectCreateForm({
         </label>
       </div>
       <div className="project-create-form-actions">
-        <button
+        <Button
+          variant="terminal"
+          size="sm"
           className="project-create-submit-btn"
           onClick={handleSubmit}
           disabled={!canSubmit}
         >
           {submitting ? "Creating..." : "Create Project"}
-        </button>
-        <button className="project-create-cancel-btn" onClick={onCancel} disabled={submitting}>
+        </Button>
+        <Button variant="ghost" size="sm" className="project-create-cancel-btn" onClick={onCancel} disabled={submitting}>
           Cancel
-        </button>
+        </Button>
       </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -408,8 +461,11 @@ function FocusCard({
       : "idle";
 
   return (
-    <div
-      className={`focus-card focus-card-${status}${isDragOver ? " focus-card-drag-over" : ""}`}
+    <Card
+      className={cn(
+        `focus-card focus-card-${status}${isDragOver ? " focus-card-drag-over" : ""}`,
+        "p-4",
+      )}
       draggable
       onDragStart={onDragStart}
       onDragOver={onDragOver}
@@ -422,13 +478,15 @@ function FocusCard({
           <span className="focus-card-shortcut">Ctrl+{focusIndex + 1}</span>
         </button>
         {showUnpin ? (
-          <button
-            className="focus-card-pin active"
+          <Button
+            variant="ghost"
+            size="icon"
+            className="focus-card-pin active size-8"
             title="Unpin from focus"
             onClick={(e) => { e.stopPropagation(); onUnpin(); }}
           >
             ★
-          </button>
+          </Button>
         ) : null}
       </div>
       <button className="focus-card-body" onClick={onClick}>
@@ -450,13 +508,13 @@ function FocusCard({
           ) : null}
         </div>
         <div className="focus-card-status">
-          <span className={`focus-card-badge focus-card-badge-${status}`}>
+          <Badge className={`focus-card-badge focus-card-badge-${status}`}>
             {status}
-          </span>
+          </Badge>
           <StatusLEDs status={gitStatus} compact />
         </div>
       </button>
-    </div>
+    </Card>
   );
 }
 
@@ -484,23 +542,25 @@ function AllProjectsList({
             (s) => s.project_id === project.id && s.live,
           ).length;
           return (
-            <div key={project.id} className="all-projects-row">
+            <Card key={project.id} className="all-projects-row px-3 py-2">
               <button className="all-projects-link" onClick={() => onNavigate(project.id)}>
                 <span className="all-projects-name">{project.name}</span>
                 {liveCount > 0 ? (
-                  <span className="all-projects-live">{liveCount} live</span>
+                  <Badge className="all-projects-live">{liveCount} live</Badge>
                 ) : null}
               </button>
               {canPin ? (
-                <button
-                  className="focus-card-pin"
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="focus-card-pin size-8"
                   title="Pin to focus"
                   onClick={() => onPin(project.id)}
                 >
                   ☆
-                </button>
+                </Button>
               ) : null}
-            </div>
+            </Card>
           );
         })}
       </div>

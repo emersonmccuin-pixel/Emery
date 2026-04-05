@@ -6,6 +6,7 @@ import type {
   WorkItemSummary,
 } from "./types";
 import { useAppStore, appStore } from "./store";
+import { Button } from "./components/ui";
 
 export function DispatchSheet() {
   const pendingDispatch = useAppStore((s) => s.pendingDispatch);
@@ -196,8 +197,9 @@ function SingleDispatchSheet({
           )}
         </div>
         <div className="dispatch-actions">
-          <button
-            className={`secondary-button${confirmClose ? " dispatch-discard-confirm" : ""}`}
+          <Button
+            className={confirmClose ? "dispatch-discard-confirm" : undefined}
+            variant="secondary"
             onClick={() => {
               if (isDirty && !confirmClose) {
                 setConfirmClose(true);
@@ -208,11 +210,11 @@ function SingleDispatchSheet({
             }}
           >
             {confirmClose ? "Discard changes?" : "Cancel"}
-          </button>
+          </Button>
           {account ? (
-            <button className="secondary-button" onClick={() => onConfirm({ autoWorktree: isExecution, originMode, safetyMode: safetyMode || undefined, model: model || undefined })}>
+            <Button variant="secondary" onClick={() => onConfirm({ autoWorktree: isExecution, originMode, safetyMode: safetyMode || undefined, model: model || undefined })}>
               {isExecution ? "Launch on Branch" : "Launch on Main"}
-            </button>
+            </Button>
           ) : (
             <span className="dispatch-no-accounts">No accounts available. Add one in Settings &gt; Accounts.</span>
           )}
@@ -339,10 +341,10 @@ function MultiDispatchSheet({
         </div>
 
         <div className="dispatch-actions">
-          <button className="secondary-button" onClick={onCancel}>Cancel</button>
-          <button className="secondary-button" onClick={handleConfirm}>
+          <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+          <Button variant="secondary" onClick={handleConfirm}>
             Launch All ({workItems.length} sessions)
-          </button>
+          </Button>
         </div>
       </div>
     </div>

@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { WORK_ITEM_TYPES, WORK_ITEM_STATUSES, PRIORITIES, useAppStore } from "../store";
 import type { WorkItemSummary } from "../types";
+import { Button, Input } from "./ui";
 
 export type WorkItemFormData = {
   title: string;
@@ -62,7 +63,7 @@ export function WorkItemForm({
       {/* Title */}
       <div className="wi-form-field">
         <label className="wi-form-label">Title *</label>
-        <input
+        <Input
           className="wi-form-input"
           type="text"
           value={form.title}
@@ -162,12 +163,12 @@ export function WorkItemForm({
 
       {/* Actions */}
       <div className="wi-form-actions">
-        <button type="submit" className="primary-button" disabled={!canSubmit}>
+        <Button type="submit" disabled={!canSubmit}>
           {loading ? "Saving…" : mode === "create" ? "Create" : "Save"}
-        </button>
-        <button type="button" className="secondary-button" onClick={onCancel}>
+        </Button>
+        <Button type="button" variant="secondary" onClick={onCancel}>
           Cancel
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -228,17 +229,19 @@ function ParentPicker({
           <span className="parent-picker-value">
             {selectedItem.callsign}: {selectedItem.title}
           </span>
-          <button
+          <Button
             type="button"
             className="parent-picker-clear"
+            variant="ghost"
+            size="sm"
             onClick={handleClear}
             title="Clear parent"
           >
             ✕
-          </button>
+          </Button>
         </div>
       ) : (
-        <input
+        <Input
           className="wi-form-input"
           type="text"
           value={query}
@@ -257,10 +260,11 @@ function ParentPicker({
       {open && !selectedItem && filtered.length > 0 && (
         <div className="parent-picker-dropdown">
           {filtered.map((item) => (
-            <button
+            <Button
               key={item.id}
               type="button"
               className="parent-picker-option"
+              variant="ghost"
               onMouseDown={(e) => {
                 e.preventDefault(); // prevent blur before click
                 handleSelect(item);
@@ -268,7 +272,7 @@ function ParentPicker({
             >
               <span className="parent-picker-callsign">{item.callsign}</span>
               <span className="parent-picker-title">{item.title}</span>
-            </button>
+            </Button>
           ))}
         </div>
       )}

@@ -3,7 +3,12 @@ import { appStore, useAppStore } from "./store";
 import { navStore, useNavLayer } from "./nav-store";
 import { ContextMenu, type ContextMenuItem } from "./components/context-menu";
 import { DurationDisplay } from "./components/duration-display";
+import { toastStore } from "./toast-store";
 import type { SessionSummary } from "./types";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 // ── Hooks ──────────────────────────────────────────────────────────────────
 
@@ -54,9 +59,9 @@ function RenameInput({ initialName, onSave, onCancel }: RenameInputProps) {
   }, []);
 
   return (
-    <input
+    <Input
       ref={inputRef}
-      className="sidebar-rename-input"
+      className="sidebar-rename-input h-8 px-2 py-1 text-xs tracking-[0.08em]"
       value={value}
       onChange={(e) => setValue(e.target.value)}
       onKeyDown={(e) => {
@@ -136,7 +141,7 @@ function FleetSection({ collapsed, sessions }: FleetSectionProps) {
     return (
       <div className="sidebar-fleet-collapsed" title={`${runningCount} running`}>
         <span className="sidebar-fleet-dot" />
-        <span className="sidebar-fleet-count-badge">{runningCount}</span>
+        <Badge className="sidebar-fleet-count-badge">{runningCount}</Badge>
       </div>
     );
   }
@@ -166,9 +171,11 @@ function FleetSection({ collapsed, sessions }: FleetSectionProps) {
                   </div>
                 )}
                 {projectSessions.map((session) => (
-                  <button
+                  <Button
                     key={session.id}
-                    className="sidebar-fleet-row"
+                    variant="ghost"
+                    size="sm"
+                    className="sidebar-fleet-row justify-start px-3 py-2"
                     onClick={() => navStore.goToAgent(session.project_id, session.id)}
                     title={session.title ?? "Running session"}
                   >
@@ -177,7 +184,7 @@ function FleetSection({ collapsed, sessions }: FleetSectionProps) {
                       {session.title ?? session.current_mode ?? "Session"}
                     </span>
                     <DurationDisplay startedAt={session.started_at} />
-                  </button>
+                  </Button>
                 ))}
               </li>
             );
@@ -268,11 +275,9 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         danger: true,
         onClick: () => {
           // handleDeleteProject doesn't exist yet — show placeholder toast
-          import("./toast-store").then(({ toastStore }) => {
-            toastStore.addToast({
-              message: "Delete not available yet",
-              type: "info",
-            });
+          toastStore.addToast({
+            message: "Delete not available yet",
+            type: "info",
           });
         },
       },
@@ -292,22 +297,26 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
         {/* Header */}
         <div className="sidebar-header">
           {!collapsed && (
-            <button
-              className="sidebar-brand-btn"
+            <Button
+              variant="ghost"
+              size="sm"
+              className="sidebar-brand-btn min-h-8 px-2 py-1"
               onClick={() => navStore.goHome()}
               title="Go home"
             >
               EURI
-            </button>
+            </Button>
           )}
-          <button
-            className="sidebar-toggle"
+          <Button
+            variant="ghost"
+            size="icon"
+            className="sidebar-toggle size-8"
             onClick={onToggle}
             title={collapsed ? "Expand sidebar (Ctrl+B)" : "Collapse sidebar (Ctrl+B)"}
             aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
             {collapsed ? "›" : "‹"}
-          </button>
+          </Button>
         </div>
 
         {/* Projects section */}
@@ -321,8 +330,13 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
               const isRenaming = renamingProjectId === project.id;
               return (
                 <li key={project.id}>
-                  <button
-                    className={`sidebar-project-btn${isActive ? " active" : ""}`}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={cn(
+                      "sidebar-project-btn justify-start px-3 py-2",
+                      isActive && "active",
+                    )}
                     onClick={() => navStore.goToProject(project.id)}
                     onContextMenu={(e) => openContextMenu(e, project.id, project.name)}
                     title={collapsed ? project.name : undefined}
@@ -344,7 +358,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                         <SessionDots projectId={project.id} sessions={liveSessions} />
                       </>
                     )}
-                  </button>
+                  </Button>
                 </li>
               );
             })}
@@ -353,20 +367,24 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
           {/* All projects / New project links */}
           {!collapsed && (
             <div className="sidebar-project-links">
-              <button
-                className="sidebar-project-link"
+              <Button
+                variant="ghost"
+                size="sm"
+                className="sidebar-project-link justify-start px-3 py-2"
                 onClick={() => navStore.goHome()}
                 title="All projects"
               >
                 All projects
-              </button>
-              <button
-                className="sidebar-project-link"
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="sidebar-project-link justify-start px-3 py-2"
                 onClick={() => navStore.goHome()}
                 title="Create a new project"
               >
                 + New Project
-              </button>
+              </Button>
             </div>
           )}
         </div>
@@ -379,16 +397,20 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
         {/* Bottom nav */}
         <div className="sidebar-bottom">
-          <button
-            className="sidebar-nav-btn"
+          <Button
+            variant="ghost"
+            size="sm"
+            className="sidebar-nav-btn justify-start px-3 py-2"
             disabled
             title="Quick Chat (coming soon)"
           >
             <span className="sidebar-nav-icon">✦</span>
             {!collapsed && <span>Quick Chat</span>}
-          </button>
-          <button
-            className={`sidebar-nav-btn${navLayer.layer === "inbox" ? " active" : ""}`}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`sidebar-nav-btn justify-start px-3 py-2 ${navLayer.layer === "inbox" ? " active" : ""}`}
             onClick={() => {
               if (activeProjectId) navStore.goToInbox(activeProjectId);
             }}
@@ -397,23 +419,27 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
           >
             <span className="sidebar-nav-icon">✉</span>
             {!collapsed && <span>Inbox</span>}
-          </button>
-          <button
-            className={`sidebar-nav-btn${navLayer.layer === "vault" ? " active" : ""}`}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`sidebar-nav-btn justify-start px-3 py-2 ${navLayer.layer === "vault" ? " active" : ""}`}
             onClick={() => navStore.goToVault()}
             title="Vault"
           >
             <span className="sidebar-nav-icon">⬡</span>
             {!collapsed && <span>Vault</span>}
-          </button>
-          <button
-            className={`sidebar-nav-btn${navLayer.layer === "settings" ? " active" : ""}`}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={`sidebar-nav-btn justify-start px-3 py-2 ${navLayer.layer === "settings" ? " active" : ""}`}
             onClick={() => navStore.goToSettings()}
             title="Settings (Ctrl+,)"
           >
             <span className="sidebar-nav-icon">⚙</span>
             {!collapsed && <span>Settings</span>}
-          </button>
+          </Button>
         </div>
       </aside>
 

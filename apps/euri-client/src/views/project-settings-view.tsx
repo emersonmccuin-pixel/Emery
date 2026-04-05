@@ -3,6 +3,10 @@ import { appStore, useAppStore } from "../store";
 import { navStore } from "../nav-store";
 import { pickFolder, listAgentTemplates, createAgentTemplate, updateAgentTemplate, archiveAgentTemplate, updateProject } from "../lib";
 import type { AgentTemplateSummary, ProjectRootSummary } from "../types";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 // ---- Model defaults helpers ----
 
@@ -257,24 +261,28 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
     <div className="project-settings-view">
       <div className="project-settings-header">
         <h2 className="project-settings-title">Project Settings</h2>
-        <button
-          className="btn-ghost btn-sm"
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={() => navStore.goBack()}
         >
           ← Back
-        </button>
+        </Button>
       </div>
 
       <div className="project-settings-body">
         {/* General section */}
-        <section className="settings-section">
-          <h3 className="settings-section-title">General</h3>
+        <Card className="settings-section">
+          <CardHeader>
+            <CardTitle className="settings-section-title">General</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
           <div className="settings-field-group">
             <label className="settings-label" htmlFor="project-name">
               Name
             </label>
             <div className="settings-input-row">
-              <input
+              <Input
                 id="project-name"
                 className="settings-input"
                 type="text"
@@ -288,13 +296,14 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
                 }}
                 placeholder="Project name"
               />
-              <button
-                className="btn-primary btn-sm"
+              <Button
+                variant="terminal"
+                size="sm"
                 onClick={() => void handleSaveName()}
                 disabled={savingName || !nameInput.trim() || nameInput.trim() === displayName}
               >
                 {savingName ? "Saving..." : nameSaved ? "Saved" : "Save"}
-              </button>
+              </Button>
             </div>
           </div>
           <div className="settings-field-group">
@@ -322,20 +331,25 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
                   </option>
                 ))}
               </select>
-              <button
-                className="btn-primary btn-sm"
+              <Button
+                variant="terminal"
+                size="sm"
                 onClick={() => void handleSaveDefaultAccount()}
                 disabled={defaultAccountSaving}
               >
                 {defaultAccountSaving ? "Saving..." : defaultAccountSaved ? "Saved" : "Save"}
-              </button>
+              </Button>
             </div>
           </div>
-        </section>
+          </CardContent>
+        </Card>
 
         {/* Project Instructions section */}
-        <section className="settings-section">
-          <h3 className="settings-section-title">Project Instructions</h3>
+        <Card className="settings-section">
+          <CardHeader>
+            <CardTitle className="settings-section-title">Project Instructions</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
           <p className="settings-section-desc">
             Markdown instructions injected into every agent session for this project.
           </p>
@@ -352,29 +366,36 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
             />
           </div>
           <div className="model-defaults-actions">
-            <button
-              className="btn-primary btn-sm"
+            <Button
+              variant="terminal"
+              size="sm"
               onClick={() => void handleSaveInstructions()}
               disabled={instructionsSaving}
             >
               {instructionsSaving ? "Saving..." : instructionsSaved ? "Saved" : "Save"}
-            </button>
+            </Button>
           </div>
-        </section>
+          </CardContent>
+        </Card>
 
         {/* Roots section */}
-        <section className="settings-section">
+        <Card className="settings-section">
+          <CardHeader>
           <div className="settings-section-header-row">
-            <h3 className="settings-section-title">Project Roots</h3>
-            <button
-              className="section-add-btn"
+            <CardTitle className="settings-section-title">Project Roots</CardTitle>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="section-add-btn size-9"
               onClick={() => void handleAddRoot()}
               disabled={addingRoot}
               title="Add root"
             >
               +
-            </button>
+            </Button>
           </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
 
           {activeRoots.length === 0 ? (
             <div className="settings-empty-roots">No roots configured.</div>
@@ -394,21 +415,27 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
             </div>
           )}
           {addingRoot && <div className="settings-adding-root">Adding root...</div>}
-        </section>
+          </CardContent>
+        </Card>
 
         {/* Agent Templates section */}
-        <section className="settings-section">
+        <Card className="settings-section">
+          <CardHeader>
           <div className="settings-section-header-row">
-            <h3 className="settings-section-title">Agent Templates</h3>
-            <button
-              className="section-add-btn"
+            <CardTitle className="settings-section-title">Agent Templates</CardTitle>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="section-add-btn size-9"
               onClick={() => setShowAddTemplate(true)}
               disabled={showAddTemplate}
               title="Add template"
             >
               +
-            </button>
+            </Button>
           </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
 
           {showAddTemplate && (
             <AddTemplateForm
@@ -437,14 +464,18 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
               ))}
             </div>
           )}
-        </section>
+          </CardContent>
+        </Card>
 
         {/* Model Defaults section */}
-        <section className="settings-section">
-          <h3 className="settings-section-title">Model Defaults</h3>
+        <Card className="settings-section">
+          <CardHeader>
+          <CardTitle className="settings-section-title">Model Defaults</CardTitle>
           <p className="settings-section-desc">
             Override the model used per origin mode. Leave empty to use the global default.
           </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
           <div className="model-defaults-grid">
             {ORIGIN_MODE_LABELS.map(({ key, label }) => (
               <div className="model-defaults-row" key={key}>
@@ -485,19 +516,24 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
             </div>
           </div>
           <div className="model-defaults-actions">
-            <button
-              className="btn-primary btn-sm"
+            <Button
+              variant="terminal"
+              size="sm"
               onClick={() => void handleSaveModelDefaults()}
               disabled={modelDefaultsSaving}
             >
               {modelDefaultsSaving ? "Saving..." : modelDefaultsSaved ? "Saved" : "Save"}
-            </button>
+            </Button>
           </div>
-        </section>
+          </CardContent>
+        </Card>
 
         {/* Danger Zone */}
-        <section className="settings-section settings-danger-zone">
-          <h3 className="settings-section-title settings-danger-zone-title">Danger Zone</h3>
+        <Card className="settings-section settings-danger-zone">
+          <CardHeader>
+          <CardTitle className="settings-section-title settings-danger-zone-title">Danger Zone</CardTitle>
+          </CardHeader>
+          <CardContent>
           <div className="settings-danger-zone-body">
             <div className="settings-danger-zone-item">
               <div className="settings-danger-zone-info">
@@ -507,14 +543,16 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
                   merge queue entries are pending.
                 </span>
               </div>
-              <button
-                className={`btn-sm ${confirmArchive ? "btn-danger" : "btn-ghost"}`}
+              <Button
+                variant="ghost"
+                size="sm"
+                className={cn(confirmArchive && "border-[var(--status-danger)] text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]")}
                 onClick={() => void handleArchive()}
                 disabled={archiving}
                 title={confirmArchive ? "Click again to confirm archive" : "Archive project"}
               >
                 {archiving ? "Archiving..." : confirmArchive ? "Confirm?" : "Archive"}
-              </button>
+              </Button>
             </div>
             <div className="settings-danger-zone-item">
               <div className="settings-danger-zone-info">
@@ -524,17 +562,20 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
                   while sessions are running or merge queue entries are pending.
                 </span>
               </div>
-              <button
-                className={`btn-sm ${confirmDelete ? "btn-danger" : "btn-ghost"}`}
+              <Button
+                variant="ghost"
+                size="sm"
+                className={cn(confirmDelete && "border-[var(--status-danger)] text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]")}
                 onClick={() => void handleDelete()}
                 disabled={deleting}
                 title={confirmDelete ? "Click again to permanently delete" : "Delete project"}
               >
                 {deleting ? "Deleting..." : confirmDelete ? "Confirm delete?" : "Delete"}
-              </button>
+              </Button>
             </div>
           </div>
-        </section>
+          </CardContent>
+        </Card>
       </div>
     </div>
     </div>
@@ -618,7 +659,7 @@ function RootRow({
         )}
         {isGitRepo && editingRemote && (
           <div className="settings-root-remote-edit-row">
-            <input
+            <Input
               className="settings-root-remote-input"
               type="text"
               value={remoteInput}
@@ -630,36 +671,42 @@ function RootRow({
               placeholder="https://github.com/user/repo.git"
               autoFocus
             />
-            <button
-              className="btn-sm btn-primary"
+            <Button
+              variant="terminal"
+              size="sm"
               onClick={() => void handleSaveRemote()}
               disabled={settingRemote || !remoteInput.trim()}
             >
               {settingRemote ? "Saving..." : "Save"}
-            </button>
-            <button
-              className="btn-sm btn-ghost"
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={handleCancelEditRemote}
               disabled={settingRemote}
             >
               Cancel
-            </button>
+            </Button>
           </div>
         )}
       </div>
       <div className="settings-root-actions">
         {!isGitRepo && (
-          <button
-            className="btn-sm btn-ghost settings-root-action-btn"
+          <Button
+            variant="ghost"
+            size="sm"
+            className="settings-root-action-btn"
             onClick={() => void handleGitInit()}
             disabled={initingGit}
             title="Initialize git repository"
           >
             {initingGit ? "Initializing..." : "Git Init"}
-          </button>
+          </Button>
         )}
-        <button
-          className={`btn-sm ${isConfirming ? "btn-danger" : "btn-ghost"}`}
+        <Button
+          variant="ghost"
+          size="sm"
+          className={cn(isConfirming && "border-[var(--status-danger)] text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]")}
           onClick={() => onRemove(root.id)}
           onBlur={() => {
             if (isConfirming) onCancelConfirm();
@@ -668,7 +715,7 @@ function RootRow({
           title={isConfirming ? "Click again to confirm removal" : "Remove root"}
         >
           {removing ? "Removing..." : isConfirming ? "Confirm?" : "Remove"}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -778,28 +825,31 @@ function TemplateRow({
             />
             {error && <div className="field-error">{error}</div>}
             <div className="agent-template-edit-actions">
-              <button
-                className="btn-sm btn-primary"
+              <Button
+                variant="terminal"
+                size="sm"
                 onClick={() => void handleSave()}
                 disabled={saving || !labelInput.trim()}
               >
                 {saving ? "Saving..." : "Save"}
-              </button>
-              <button
-                className="btn-sm btn-ghost"
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => { setEditing(false); setError(null); }}
                 disabled={saving}
               >
                 Cancel
-              </button>
+              </Button>
             </div>
           </div>
         )}
       </div>
       <div className="agent-template-actions">
         {!editing && (
-          <button
-            className="btn-sm btn-ghost"
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => {
               setLabelInput(template.label);
               setModelInput(template.default_model ?? "");
@@ -811,16 +861,18 @@ function TemplateRow({
             }}
           >
             Edit
-          </button>
+          </Button>
         )}
-        <button
-          className={`btn-sm ${confirmArchive ? "btn-danger" : "btn-ghost"}`}
+        <Button
+          variant="ghost"
+          size="sm"
+          className={cn(confirmArchive && "border-[var(--status-danger)] text-[var(--status-danger)] hover:bg-[var(--status-danger-bg)]")}
           onClick={handleArchiveClick}
           onBlur={() => { if (confirmArchive) setConfirmArchive(false); }}
           title={confirmArchive ? "Click again to confirm archive" : "Archive template"}
         >
           {confirmArchive ? "Confirm?" : "Archive"}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -919,16 +971,17 @@ function AddTemplateForm({
         />
         {error && <div className="field-error">{error}</div>}
         <div className="agent-template-edit-actions">
-          <button
-            className="btn-sm btn-primary"
+          <Button
+            variant="terminal"
+            size="sm"
             onClick={() => void handleSave()}
             disabled={saving || !keyInput.trim() || !labelInput.trim()}
           >
             {saving ? "Adding..." : "Add Template"}
-          </button>
-          <button className="btn-sm btn-ghost" onClick={onCancel} disabled={saving}>
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onCancel} disabled={saving}>
             Cancel
-          </button>
+          </Button>
         </div>
       </div>
     </div>

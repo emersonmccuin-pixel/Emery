@@ -2,6 +2,16 @@ import { useEffect, useState } from "react";
 import { appStore, useAppStore } from "../store";
 import { navStore } from "../nav-store";
 import type { AccountSummary } from "../types";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 
 type SettingsTab = "accounts" | "appearance" | "agent-defaults" | "github";
 
@@ -17,36 +27,38 @@ export function SettingsView() {
 
   return (
     <div className="content-frame">
-    <div className="global-settings-view">
-      <div className="global-settings-header">
-        <h2 className="global-settings-title">Settings</h2>
-        <button
-          className="btn-ghost btn-sm"
-          onClick={() => navStore.goBack()}
-        >
-          ← Back
-        </button>
-      </div>
-      <div className="global-settings-body">
-        <nav className="global-settings-sidebar">
+      <div className="global-settings-view">
+        <div className="global-settings-header">
+          <h2 className="global-settings-title">Settings</h2>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navStore.goBack()}
+          >
+            ← Back
+          </Button>
+        </div>
+        <div className="global-settings-body">
+          <nav className="global-settings-sidebar">
           {tabs.map((tab) => (
-            <button
+            <Button
               key={tab.id}
+              variant={activeTab === tab.id ? "default" : "ghost"}
               className={`global-settings-nav-item${activeTab === tab.id ? " active" : ""}`}
               onClick={() => setActiveTab(tab.id)}
             >
               {tab.label}
-            </button>
+            </Button>
           ))}
-        </nav>
-        <div className="global-settings-content">
-          {activeTab === "accounts" && <AccountsSection />}
-          {activeTab === "appearance" && <AppearanceSection />}
-          {activeTab === "agent-defaults" && <AgentDefaultsSection />}
-          {activeTab === "github" && <GitHubSection />}
+          </nav>
+          <div className="global-settings-content">
+            {activeTab === "accounts" && <AccountsSection />}
+            {activeTab === "appearance" && <AppearanceSection />}
+            {activeTab === "agent-defaults" && <AgentDefaultsSection />}
+            {activeTab === "github" && <GitHubSection />}
+          </div>
         </div>
       </div>
-    </div>
     </div>
   );
 }
@@ -75,23 +87,31 @@ function AccountsSection() {
   }
 
   return (
-    <div className="settings-panel">
-      <div className="settings-panel-header-row">
-        <h3 className="settings-section-title">Accounts</h3>
-        <button
-          className="section-add-btn"
-          onClick={() => setShowAddForm((v) => !v)}
-          title="Add account"
-        >
-          +
-        </button>
-      </div>
+    <Card className="settings-panel">
+      <CardHeader>
+        <div className="settings-panel-header-row">
+          <div>
+            <CardTitle className="settings-section-title">Accounts</CardTitle>
+            <CardDescription>Manage the agent accounts available to the dispatcher.</CardDescription>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="section-add-btn size-9"
+            onClick={() => setShowAddForm((v) => !v)}
+            title="Add account"
+          >
+            +
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
 
       {showAddForm && (
         <div className="settings-add-form">
           <div className="settings-field-group">
             <label className="settings-label">Label</label>
-            <input
+            <Input
               className="settings-input"
               type="text"
               value={newLabel}
@@ -106,7 +126,7 @@ function AccountsSection() {
           </div>
           <div className="settings-field-group">
             <label className="settings-label">Binary path (optional)</label>
-            <input
+            <Input
               className="settings-input"
               type="text"
               value={newBinaryPath}
@@ -119,20 +139,22 @@ function AccountsSection() {
             />
           </div>
           <div className="settings-form-actions">
-            <button
-              className="btn-primary btn-sm"
+            <Button
+              variant="terminal"
+              size="sm"
               onClick={() => void handleCreate()}
               disabled={creating || !newLabel.trim()}
             >
               {creating ? "Creating..." : "Create"}
-            </button>
-            <button
-              className="btn-ghost btn-sm"
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setShowAddForm(false)}
               disabled={creating}
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -146,7 +168,8 @@ function AccountsSection() {
           ))}
         </div>
       )}
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -177,11 +200,11 @@ function AccountRow({
   }
 
   return (
-    <div className="settings-account-row">
+    <Card className="settings-account-row p-4">
       <div className="settings-account-info">
         {editing ? (
           <div className="settings-input-row">
-            <input
+            <Input
               className="settings-input"
               type="text"
               value={labelInput}
@@ -195,15 +218,17 @@ function AccountRow({
               }}
               autoFocus
             />
-            <button
-              className="btn-primary btn-sm"
+            <Button
+              variant="terminal"
+              size="sm"
               onClick={() => void handleSaveLabel()}
               disabled={saving || !labelInput.trim()}
             >
               {saving ? "..." : "Save"}
-            </button>
-            <button
-              className="btn-ghost btn-sm"
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => {
                 setLabelInput(account.label);
                 setEditing(false);
@@ -211,13 +236,13 @@ function AccountRow({
               disabled={saving}
             >
               Cancel
-            </button>
+            </Button>
           </div>
         ) : (
           <div className="settings-account-label-row">
             <span className="settings-account-label">{account.label}</span>
             {account.is_default && (
-              <span className="settings-account-default-badge">default</span>
+              <Badge className="settings-account-default-badge">default</Badge>
             )}
           </div>
         )}
@@ -228,39 +253,41 @@ function AccountRow({
       </div>
       <div className="settings-account-actions">
         {!editing && (
-          <button
-            className="btn-ghost btn-sm"
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => setEditing(true)}
             title="Edit label"
           >
             Edit
-          </button>
+          </Button>
         )}
         {!account.is_default && (
-          <button
-            className="btn-ghost btn-sm"
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => void handleSetDefault()}
             disabled={saving}
             title="Set as default"
           >
             Set default
-          </button>
+          </Button>
         )}
       </div>
-    </div>
+    </Card>
   );
 }
 
 // --- Appearance Section ---
 
 const THEMES = [
-  { id: "vaporwave", label: "Vaporwave", description: "Neon purple and cyan on dark" },
+  { id: "cyberpunk", label: "Cyberpunk", description: "Glitched neon HUD with scanlines and acid green" },
   { id: "neutral-dark", label: "Neutral Dark", description: "Clean blue-grey on dark" },
 ] as const;
 
 function AppearanceSection() {
   const [currentTheme, setCurrentTheme] = useState(
-    () => document.documentElement.dataset.theme ?? "vaporwave",
+    () => document.documentElement.dataset.theme ?? "cyberpunk",
   );
 
   function applyTheme(theme: string) {
@@ -270,25 +297,31 @@ function AppearanceSection() {
   }
 
   return (
-    <div className="settings-panel">
-      <h3 className="settings-section-title">Appearance</h3>
+    <Card className="settings-panel">
+      <CardHeader>
+        <CardTitle className="settings-section-title">Appearance</CardTitle>
+        <CardDescription>Choose the active shell palette and visual treatment.</CardDescription>
+      </CardHeader>
+      <CardContent>
       <div className="settings-field-group">
         <label className="settings-label">Theme</label>
         <div className="settings-theme-cards">
           {THEMES.map((theme) => (
-            <button
+            <Button
               key={theme.id}
-              className={`settings-theme-card${currentTheme === theme.id ? " active" : ""}`}
+              variant={currentTheme === theme.id ? "default" : "ghost"}
+              className={`settings-theme-card h-auto flex-col items-start px-4 py-4 ${currentTheme === theme.id ? " active" : ""}`}
               onClick={() => applyTheme(theme.id)}
               data-theme-preview={theme.id}
             >
               <span className="settings-theme-card-name">{theme.label}</span>
               <span className="settings-theme-card-desc">{theme.description}</span>
-            </button>
+            </Button>
           ))}
         </div>
       </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -315,11 +348,14 @@ function AgentDefaultsSection() {
   const accounts: AccountSummary[] = bootstrap?.accounts ?? [];
 
   return (
-    <div className="settings-panel">
-      <h3 className="settings-section-title">Agent Defaults</h3>
-      <p className="settings-section-desc">
+    <Card className="settings-panel">
+      <CardHeader>
+      <CardTitle className="settings-section-title">Agent Defaults</CardTitle>
+      <CardDescription className="settings-section-desc">
         Per-account default model and safety mode. These apply when launching sessions without explicit overrides.
-      </p>
+      </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
       {accounts.length === 0 ? (
         <div className="settings-empty-note">No accounts configured.</div>
       ) : (
@@ -329,7 +365,8 @@ function AgentDefaultsSection() {
           ))}
         </div>
       )}
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -356,7 +393,7 @@ function AgentDefaultsRow({
   }
 
   return (
-    <div className="settings-agent-defaults-row">
+    <Card className="settings-agent-defaults-row p-4">
       <div className="settings-agent-defaults-account-name">{account.label}</div>
       <div className="settings-field-group">
         <label className="settings-label">Default model</label>
@@ -398,15 +435,16 @@ function AgentDefaultsRow({
         )}
       </div>
       <div className="settings-form-actions">
-        <button
-          className="btn-primary btn-sm"
+        <Button
+          variant="terminal"
+          size="sm"
           onClick={() => void handleSave()}
           disabled={saving}
         >
           {saving ? "Saving..." : saved ? "Saved" : "Save"}
-        </button>
+        </Button>
       </div>
-    </div>
+    </Card>
   );
 }
 
@@ -439,17 +477,20 @@ function GitHubSection() {
   }
 
   return (
-    <div className="settings-panel">
-      <h3 className="settings-section-title">GitHub</h3>
-      <p className="settings-section-desc">
+    <Card className="settings-panel">
+      <CardHeader>
+      <CardTitle className="settings-section-title">GitHub</CardTitle>
+      <CardDescription className="settings-section-desc">
         Personal access token for GitHub integration. Stored in browser local storage.
-      </p>
+      </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
       <div className="settings-field-group">
         <label className="settings-label" htmlFor="github-pat">
           Personal Access Token
         </label>
         <div className="settings-input-row">
-          <input
+          <Input
             id="github-pat"
             className="settings-input"
             type={showToken ? "text" : "password"}
@@ -464,27 +505,29 @@ function GitHubSection() {
             placeholder="ghp_..."
             autoComplete="off"
           />
-          <button
-            className="btn-ghost btn-sm"
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => setShowToken((v) => !v)}
             title={showToken ? "Hide token" : "Show token"}
           >
             {showToken ? "Hide" : "Show"}
-          </button>
+          </Button>
         </div>
       </div>
       <div className="settings-form-actions">
-        <button
-          className="btn-primary btn-sm"
+        <Button
+          variant="terminal"
+          size="sm"
           onClick={handleSave}
           disabled={!tokenInput.trim()}
         >
           {saved ? "Saved" : "Save"}
-        </button>
+        </Button>
         {githubToken && (
-          <button className="btn-ghost btn-sm" onClick={handleClear}>
+          <Button variant="ghost" size="sm" onClick={handleClear}>
             Clear
-          </button>
+          </Button>
         )}
       </div>
       {githubToken && (
@@ -492,6 +535,7 @@ function GitHubSection() {
           Token configured.
         </div>
       )}
-    </div>
+      </CardContent>
+    </Card>
   );
 }

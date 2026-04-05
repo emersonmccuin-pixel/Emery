@@ -1,37 +1,108 @@
+import { lazy, Suspense } from "react";
 import { useNavLayer } from "./nav-store";
 import { HomeView } from "./views/home-view";
-import { InboxView } from "./views/inbox-view";
-import { ProjectCommandView } from "./views/project-command-view";
-import { ProjectSettingsView } from "./views/project-settings-view";
-import { AgentView } from "./views/agent-view";
-import { DocumentView } from "./views/document-view";
-import { WorkItemView } from "./views/work-item-view";
-import { SettingsView } from "./views/settings-view";
-import { VaultView } from "./views/vault-view";
+
+const InboxView = lazy(async () => {
+  const module = await import("./views/inbox-view");
+  return { default: module.InboxView };
+});
+
+const ProjectCommandView = lazy(async () => {
+  const module = await import("./views/project-command-view");
+  return { default: module.ProjectCommandView };
+});
+
+const ProjectSettingsView = lazy(async () => {
+  const module = await import("./views/project-settings-view");
+  return { default: module.ProjectSettingsView };
+});
+
+const AgentView = lazy(async () => {
+  const module = await import("./views/agent-view");
+  return { default: module.AgentView };
+});
+
+const DocumentView = lazy(async () => {
+  const module = await import("./views/document-view");
+  return { default: module.DocumentView };
+});
+
+const WorkItemView = lazy(async () => {
+  const module = await import("./views/work-item-view");
+  return { default: module.WorkItemView };
+});
+
+const SettingsView = lazy(async () => {
+  const module = await import("./views/settings-view");
+  return { default: module.SettingsView };
+});
+
+const VaultView = lazy(async () => {
+  const module = await import("./views/vault-view");
+  return { default: module.VaultView };
+});
 
 export function LayerRouter() {
   const layer = useNavLayer();
 
+  if (layer.layer === "home") {
+    return <HomeView />;
+  }
+
   switch (layer.layer) {
-    case "home":
-      return <HomeView />;
     case "inbox":
-      return <InboxView projectId={layer.projectId} />;
+      return (
+        <Suspense fallback={<div className="layer-stub">Loading inbox...</div>}>
+          <InboxView projectId={layer.projectId} />
+        </Suspense>
+      );
     case "project":
-      return <ProjectCommandView projectId={layer.projectId} />;
+      return (
+        <Suspense fallback={<div className="layer-stub">Loading project...</div>}>
+          <ProjectCommandView projectId={layer.projectId} />
+        </Suspense>
+      );
     case "project-settings":
-      return <ProjectSettingsView projectId={layer.projectId} />;
+      return (
+        <Suspense fallback={<div className="layer-stub">Loading settings...</div>}>
+          <ProjectSettingsView projectId={layer.projectId} />
+        </Suspense>
+      );
     case "agent":
-      return <AgentView projectId={layer.projectId} sessionId={layer.sessionId} />;
+      return (
+        <Suspense fallback={<div className="layer-stub">Loading agent...</div>}>
+          <AgentView projectId={layer.projectId} sessionId={layer.sessionId} />
+        </Suspense>
+      );
     case "document":
-      return <DocumentView documentId={layer.documentId} projectId={layer.projectId} />;
+      return (
+        <Suspense fallback={<div className="layer-stub">Loading document...</div>}>
+          <DocumentView documentId={layer.documentId} projectId={layer.projectId} />
+        </Suspense>
+      );
     case "new-document":
-      return <DocumentView documentId="new" projectId={layer.projectId} workItemId={layer.workItemId} />;
+      return (
+        <Suspense fallback={<div className="layer-stub">Loading document...</div>}>
+          <DocumentView documentId="new" projectId={layer.projectId} workItemId={layer.workItemId} />
+        </Suspense>
+      );
     case "work_item":
-      return <WorkItemView projectId={layer.projectId} workItemId={layer.workItemId} />;
+      return (
+        <Suspense fallback={<div className="layer-stub">Loading work item...</div>}>
+          <WorkItemView projectId={layer.projectId} workItemId={layer.workItemId} />
+        </Suspense>
+      );
     case "settings":
-      return <SettingsView />;
+      return (
+        <Suspense fallback={<div className="layer-stub">Loading settings...</div>}>
+          <SettingsView />
+        </Suspense>
+      );
     case "vault":
-      return <VaultView />;
+      return (
+        <Suspense fallback={<div className="layer-stub">Loading vault...</div>}>
+          <VaultView />
+        </Suspense>
+      );
   }
 }
