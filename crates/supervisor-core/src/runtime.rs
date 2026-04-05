@@ -46,6 +46,7 @@ pub struct SessionLaunchRequest {
     pub cwd: PathBuf,
     pub initial_terminal_cols: i64,
     pub initial_terminal_rows: i64,
+    pub env: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -180,6 +181,9 @@ impl SessionRegistry {
         command.cwd(request.cwd.clone());
         for arg in &request.args {
             command.arg(arg);
+        }
+        for (k, v) in &request.env {
+            command.env(k, v);
         }
 
         let mut child = pty_pair.slave.spawn_command(command).map_err(|error| {
