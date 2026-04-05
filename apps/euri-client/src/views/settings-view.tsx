@@ -27,16 +27,16 @@ export function SettingsView() {
   ];
 
   return (
-    <div className="content-frame">
+    <div className="modal-view-settings">
       <div className="global-settings-view">
         <div className="global-settings-header">
           <h2 className="global-settings-title">Settings</h2>
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => navStore.goBack()}
+            onClick={() => navStore.closeModal()}
           >
-            ← Back
+            Close
           </Button>
         </div>
         <div className="global-settings-body">

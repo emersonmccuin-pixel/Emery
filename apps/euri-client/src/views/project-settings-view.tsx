@@ -260,16 +260,16 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
   }
 
   return (
-    <div className="content-frame">
+    <div className="modal-view-settings">
     <div className="project-settings-view">
       <div className="project-settings-header">
         <h2 className="project-settings-title">Project Settings</h2>
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => navStore.goBack()}
+          onClick={() => navStore.closeModal()}
         >
-          ← Back
+          Close
         </Button>
       </div>
 

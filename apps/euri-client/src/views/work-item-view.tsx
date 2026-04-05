@@ -159,7 +159,7 @@ export function WorkItemView({
       : null;
 
   return (
-    <div className="content-frame">
+    <div className="modal-view-wide">
     <div className="work-item-detail-view">
       {/* Header */}
       <header className="wi-detail-header">

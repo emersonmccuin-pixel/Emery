@@ -1,18 +1,36 @@
-import React, { useState, type KeyboardEvent } from "react";
+import React, { lazy, Suspense, useState, type KeyboardEvent } from "react";
 import type {
   WorkItemSummary,
 } from "./types";
 import { useAppStore, appStore } from "./store";
 import { navStore } from "./nav-store";
 import type { ModalLayer } from "./nav-store";
-import { toastStore } from "./toast-store";
 import { pickFolder } from "./lib";
 import { WorkItemForm, type WorkItemFormData } from "./components/work-item-form";
 import { WorkItemModal } from "./components/work-item-modal";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "./components/ui";
+
+const SettingsView = lazy(async () => {
+  const module = await import("./views/settings-view");
+  return { default: module.SettingsView };
+});
+
+const ProjectSettingsView = lazy(async () => {
+  const module = await import("./views/project-settings-view");
+  return { default: module.ProjectSettingsView };
+});
+
+const WorkItemView = lazy(async () => {
+  const module = await import("./views/work-item-view");
+  return { default: module.WorkItemView };
+});
+
+const DocumentView = lazy(async () => {
+  const module = await import("./views/document-view");
+  return { default: module.DocumentView };
+});
 
 // ── Modal Router ──────────────────────────────────────────────────────────
 
@@ -56,6 +74,36 @@ export function ModalRouter({ modal }: { modal: NonNullable<ModalLayer> }) {
           message={modal.message}
           onConfirm={modal.onConfirm}
         />
+      );
+    case "settings":
+      return (
+        <Suspense fallback={<div className="modal-loading">Loading settings...</div>}>
+          <SettingsView />
+        </Suspense>
+      );
+    case "project_settings":
+      return (
+        <Suspense fallback={<div className="modal-loading">Loading settings...</div>}>
+          <ProjectSettingsView projectId={modal.projectId} />
+        </Suspense>
+      );
+    case "work_item":
+      return (
+        <Suspense fallback={<div className="modal-loading">Loading work item...</div>}>
+          <WorkItemView projectId={modal.projectId} workItemId={modal.workItemId} />
+        </Suspense>
+      );
+    case "document":
+      return (
+        <Suspense fallback={<div className="modal-loading">Loading document...</div>}>
+          <DocumentView documentId={modal.documentId} projectId={modal.projectId} />
+        </Suspense>
+      );
+    case "new_document":
+      return (
+        <Suspense fallback={<div className="modal-loading">Loading document...</div>}>
+          <DocumentView documentId="new" projectId={modal.projectId} workItemId={modal.workItemId} />
+        </Suspense>
       );
   }
 }

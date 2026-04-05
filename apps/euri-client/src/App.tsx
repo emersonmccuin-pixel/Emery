@@ -87,12 +87,15 @@ function buildWorkspacePayloadV3(mainNav: NavigationLayer, sidebarCollapsed: boo
 
 // ── Modal Overlay ──────────────────────────────────────────────────────────
 
+const WIDE_MODALS = new Set(["settings", "project_settings", "work_item", "document", "new_document"]);
+
 function ModalOverlay() {
   const modal = useModalLayer();
   if (!modal) return null;
+  const sizeClass = WIDE_MODALS.has(modal.modal) ? "modal-container-wide" : "modal-container";
   return (
     <div className="modal-overlay" onClick={() => navStore.closeModal()}>
-      <div className="modal-container" onClick={(e) => e.stopPropagation()}>
+      <div className={sizeClass} onClick={(e) => e.stopPropagation()}>
         <ModalRouter modal={modal} />
       </div>
     </div>
@@ -184,8 +187,8 @@ export default function App() {
             if (restored.version === 3) {
               // V3: main_navigation, modal always starts closed
               const raw = restored.main_navigation as Record<string, unknown>;
-              // Migrate removed layers (inbox, vault) back to home
-              const removedLayers = ["inbox", "vault"];
+              // Migrate removed layers back to home (these are now modals or deleted)
+              const removedLayers = ["inbox", "vault", "settings", "project-settings", "work_item", "document", "new-document"];
               const layer: NavigationLayer = removedLayers.includes(raw.layer as string)
                 ? { layer: "home" }
                 : (raw as NavigationLayer);
@@ -200,7 +203,7 @@ export default function App() {
             } else if (restored.version === 2) {
               // V2 migration: navigation -> main_navigation
               const rawV2 = restored.navigation as Record<string, unknown>;
-              const removedLayersV2 = ["inbox", "vault"];
+              const removedLayersV2 = ["inbox", "vault", "settings", "project-settings", "work_item", "document", "new-document"];
               const layer: NavigationLayer = removedLayersV2.includes(rawV2.layer as string)
                 ? { layer: "home" }
                 : (rawV2 as NavigationLayer);

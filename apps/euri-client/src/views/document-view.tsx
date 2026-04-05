@@ -168,13 +168,13 @@ export function DocumentView({
 }) {
   if (documentId === "new") {
     return (
-      <div className="content-frame">
+      <div className="modal-view-wide">
         <NewDocumentView projectId={projectId} initialWorkItemId={initialWorkItemId} />
       </div>
     );
   }
   return (
-    <div className="content-frame">
+    <div className="modal-view-wide">
       <ExistingDocumentView documentId={documentId} projectId={projectId} />
     </div>
   );

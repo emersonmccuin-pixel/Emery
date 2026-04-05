@@ -867,6 +867,24 @@ html[data-theme="vaporwave"] .sidebar {
   padding: var(--space-4);
 }
 
+.modal-container-wide {
+  background: var(--surface-base, var(--bg-surface));
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  max-width: 900px;
+  max-height: 85vh;
+  width: 92%;
+  overflow-y: auto;
+  padding: var(--space-4);
+}
+
+/* View wrappers for views rendered inside modals */
+.modal-view-settings,
+.modal-view-wide {
+  /* Reset content-frame sizing — the modal container handles width/height */
+  width: 100%;
+}
+
 /* ── Peek / Modal stubs (Phase 2 placeholders) ── */
 
 .peek-stub,

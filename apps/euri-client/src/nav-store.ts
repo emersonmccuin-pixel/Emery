@@ -5,12 +5,7 @@ import { useSyncExternalStore } from "react";
 export type MainLayer =
   | { layer: "home" }
   | { layer: "project"; projectId: string }
-  | { layer: "agent"; projectId: string; sessionId: string }
-  | { layer: "document"; projectId: string; documentId: string }
-  | { layer: "new-document"; projectId: string; workItemId?: string }
-  | { layer: "work_item"; projectId: string; workItemId: string }
-  | { layer: "project-settings"; projectId: string }
-  | { layer: "settings" };
+  | { layer: "agent"; projectId: string; sessionId: string };
 
 /** Backwards-compatible alias — same shape as before. */
 export type NavigationLayer = MainLayer;
@@ -24,7 +19,12 @@ export type ModalLayer =
   | { modal: "create_work_item"; projectId: string; parentId?: string }
   | { modal: "create_project" }
   | { modal: "work_item_detail"; projectId: string; workItemId: string }
-  | { modal: "confirm"; title: string; message: string; onConfirm: () => void };
+  | { modal: "confirm"; title: string; message: string; onConfirm: () => void }
+  | { modal: "settings" }
+  | { modal: "project_settings"; projectId: string }
+  | { modal: "work_item"; projectId: string; workItemId: string }
+  | { modal: "document"; projectId: string; documentId: string }
+  | { modal: "new_document"; projectId: string; workItemId?: string };
 
 // ── State ──────────────────────────────────────────────────────────────────
 
@@ -84,7 +84,8 @@ export const navStore = {
   },
 
   goToProjectSettings(projectId: string) {
-    navigateMain({ layer: "project-settings", projectId });
+    state = { ...state, modal: { modal: "project_settings", projectId } };
+    emit();
   },
 
   goToAgent(projectId: string, sessionId: string) {
@@ -92,19 +93,23 @@ export const navStore = {
   },
 
   goToDocument(projectId: string, documentId: string) {
-    navigateMain({ layer: "document", projectId, documentId });
+    state = { ...state, modal: { modal: "document", projectId, documentId } };
+    emit();
   },
 
   goToNewDocument(projectId: string, workItemId?: string) {
-    navigateMain({ layer: "new-document", projectId, workItemId });
+    state = { ...state, modal: { modal: "new_document", projectId, workItemId } };
+    emit();
   },
 
   goToWorkItem(projectId: string, workItemId: string) {
-    navigateMain({ layer: "work_item", projectId, workItemId });
+    state = { ...state, modal: { modal: "work_item", projectId, workItemId } };
+    emit();
   },
 
   goToSettings() {
-    navigateMain({ layer: "settings" });
+    state = { ...state, modal: { modal: "settings" } };
+    emit();
   },
 
   goBack() {
@@ -146,26 +151,11 @@ export const navStore = {
       { label: "EURI", layer: { layer: "home" } },
     ];
     const c = state.main;
-    if (c.layer === "settings") {
-      crumbs.push({ label: "settings", layer: c });
-    }
-    if (c.layer === "project" || c.layer === "project-settings" || c.layer === "agent" || c.layer === "document" || c.layer === "new-document" || c.layer === "work_item") {
+    if (c.layer === "project" || c.layer === "agent") {
       crumbs.push({ label: c.projectId, layer: { layer: "project", projectId: c.projectId } });
-    }
-    if (c.layer === "project-settings") {
-      crumbs.push({ label: "settings", layer: c });
     }
     if (c.layer === "agent") {
       crumbs.push({ label: c.sessionId, layer: c });
-    }
-    if (c.layer === "document") {
-      crumbs.push({ label: c.documentId, layer: c });
-    }
-    if (c.layer === "new-document") {
-      crumbs.push({ label: "new document", layer: c });
-    }
-    if (c.layer === "work_item") {
-      crumbs.push({ label: c.workItemId, layer: c });
     }
     return crumbs;
   },

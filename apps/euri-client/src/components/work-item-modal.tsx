@@ -63,10 +63,7 @@ export function WorkItemModal({ projectId, workItemId }: WorkItemModalProps) {
       <div className="modal-actions">
         <Button
           variant="secondary"
-          onClick={() => {
-            navStore.closeModal();
-            navStore.goToWorkItem(projectId, workItemId);
-          }}
+          onClick={() => navStore.goToWorkItem(projectId, workItemId)}
         >
           Full View
         </Button>
