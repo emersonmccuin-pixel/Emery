@@ -104,8 +104,13 @@ export const TerminalSurface = memo(function TerminalSurface({
     });
 
     // Synchronous resize — NOT debounced
+    // Guard: only send resize to the backend if the session is still live.
+    // This prevents a resize event on an ended session from spuriously erroring,
+    // and ensures that ResizeObserver callbacks during tab transitions only target
+    // the session that owns this surface instance.
     const syncResize = () => {
       if (!terminalRef.current || !fitAddonRef.current || !host) return;
+      if (!liveRef.current) return; // session ended — no resize needed
       const w = host.clientWidth;
       const h = host.clientHeight;
       if (w === 0 || h === 0) return;
@@ -117,6 +122,8 @@ export const TerminalSurface = memo(function TerminalSurface({
       if (cols <= 0 || rows <= 0) return;
       if (lastGeometryRef.current && lastGeometryRef.current.cols === cols && lastGeometryRef.current.rows === rows) return;
       lastGeometryRef.current = { cols, rows };
+      // Re-check live after fit() — it may have changed during an async turn
+      if (!liveRef.current) return;
       resizeSession(sessionId, cols, rows, newCorrelationId("surface-resize")).catch(() => {});
     };
 
@@ -136,6 +143,7 @@ export const TerminalSurface = memo(function TerminalSurface({
         for (const chunk of response.replay.chunks) {
           terminal.write(sanitizeTerminalOutput(decodeBase64Utf8(chunk.data)));
         }
+        if (cancelled) return; // check again before subscribing
         await watchLiveSessions([sessionId], newCorrelationId("surface-watch"));
       } catch {
         // session_not_live — terminal stays as read surface
@@ -179,14 +187,27 @@ export const TerminalSurface = memo(function TerminalSurface({
     };
   }, [sessionId]);
 
-  // Focus/blur when live changes
+  // React to live → false transition: detach from the backend subscription,
+  // disable the cursor, and blur the terminal so it becomes read-only.
   useEffect(() => {
     if (live) {
       terminalRef.current?.focus();
     } else {
       terminalRef.current?.blur();
+      // Disable blinking cursor when session ends to reinforce read-only state
+      if (terminalRef.current) {
+        terminalRef.current.options.cursorBlink = false;
+      }
+      // Detach from backend — the session is no longer live so the attachment
+      // serves no purpose and we should free the backend slot.
+      if (attachmentIdRef.current) {
+        const attachmentId = attachmentIdRef.current;
+        attachmentIdRef.current = null;
+        detachSession(sessionId, attachmentId, newCorrelationId("surface-detach-on-end")).catch(() => {});
+        console.debug("[terminal-surface] detached on session end", { sessionId });
+      }
     }
-  }, [live]);
+  }, [live, sessionId]);
 
   return (
     <div

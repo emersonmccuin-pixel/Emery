@@ -15,10 +15,16 @@ export type SessionSnapshot = {
 
 type Listener = () => void;
 
+// Maximum number of ended sessions to keep in memory before pruning.
+// Keeps the most-recently-updated ended sessions for display and drops the rest.
+const MAX_ENDED_SNAPSHOTS = 20;
+
 class SessionStore {
   private snapshots = new Map<string, SessionSnapshot>();
   private listeners = new Set<Listener>();
   private seqState = new Map<string, { lastSeenSeq: number }>();
+  // Track when each ended session snapshot was last updated (unix ms), used for pruning
+  private endedAt = new Map<string, number>();
 
   subscribe = (listener: Listener): (() => void) => {
     this.listeners.add(listener);
@@ -63,6 +69,34 @@ class SessionStore {
 
   clearSeqState(sessionId: string) {
     this.seqState.delete(sessionId);
+  }
+
+  /**
+   * Called when a session exits to release sequence tracking memory.
+   * The snapshot is kept for display but seqState is freed immediately
+   * since no more output will arrive.
+   */
+  onSessionEnded(sessionId: string) {
+    this.seqState.delete(sessionId);
+    this.endedAt.set(sessionId, Date.now());
+    this.pruneEndedSessions();
+  }
+
+  /**
+   * Prune snapshots for ended sessions beyond MAX_ENDED_SNAPSHOTS.
+   * Keeps the most recently ended sessions; discards the oldest.
+   */
+  private pruneEndedSessions() {
+    const ended = [...this.endedAt.entries()];
+    if (ended.length <= MAX_ENDED_SNAPSHOTS) return;
+    // Sort ascending by endedAt timestamp — oldest first
+    ended.sort((a, b) => a[1] - b[1]);
+    const toPrune = ended.slice(0, ended.length - MAX_ENDED_SNAPSHOTS);
+    for (const [sessionId] of toPrune) {
+      console.debug("[session-store] pruning ended session snapshot", { sessionId });
+      this.snapshots.delete(sessionId);
+      this.endedAt.delete(sessionId);
+    }
   }
 
   updateSession(
