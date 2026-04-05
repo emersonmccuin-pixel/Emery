@@ -1060,6 +1060,17 @@ fn wait_for_exit(
                             );
                         }
                     }
+
+                    // Auto-capture inbox entry for all terminal states
+                    if let Err(error) = auto_create_inbox_entry_on_exit(
+                        &databases,
+                        session_id,
+                        &state.runtime_state,
+                    ) {
+                        eprintln!(
+                            "failed to create inbox entry for session {session_id}: {error:#}"
+                        );
+                    }
                 }
                 Err(error) => {
                     eprintln!("failed to finalize runtime for session {session_id}: {error:#}");
@@ -1099,6 +1110,15 @@ fn wait_for_exit(
                 }),
             );
             eprintln!("session {session_id} wait failed: {error}");
+
+            // Auto-capture inbox entry for the failure path
+            if let Err(inbox_error) =
+                auto_create_inbox_entry_on_exit(&databases, session_id, "failed")
+            {
+                eprintln!(
+                    "failed to create inbox entry for session {session_id}: {inbox_error:#}"
+                );
+            }
         }
     }
 }
@@ -1460,6 +1480,104 @@ fn auto_queue_for_merge_on_exit(databases: &DatabaseSet, session_id: &str) -> an
         queued_at: now,
     };
     databases.insert_merge_queue_entry(&record)?;
+
+    Ok(())
+}
+
+/// Standalone function callable from the session watcher thread (which has
+/// `DatabaseSet` but not `SupervisorService`). Creates an inbox entry
+/// summarising what happened when a session exits, regardless of outcome.
+fn auto_create_inbox_entry_on_exit(
+    databases: &DatabaseSet,
+    session_id: &str,
+    runtime_state: &str,
+) -> anyhow::Result<()> {
+    use crate::models::NewInboxEntryRecord;
+
+    let session = databases
+        .get_session(session_id)?
+        .ok_or_else(|| anyhow!("session {} not found", session_id))?;
+
+    let (entry_type, status) = match runtime_state {
+        "exited" => ("session_complete", "success"),
+        "failed" => ("session_failed", "needs_review"),
+        "interrupted" => ("session_interrupted", "needs_review"),
+        other => (other, "needs_review"),
+    };
+
+    let title = session
+        .title
+        .as_deref()
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_string())
+        .unwrap_or_else(|| format!("Session {}", session_id));
+
+    let summary = match runtime_state {
+        "exited" => format!("Session completed successfully: {title}"),
+        "failed" => format!("Session failed and needs review: {title}"),
+        "interrupted" => format!("Session was interrupted: {title}"),
+        other => format!("Session ended with state '{other}': {title}"),
+    };
+
+    // Gather diff stats if there is an associated worktree
+    let (branch_name, diff_stat_json) = if let Some(worktree_id) = session.worktree_id.as_deref() {
+        if let Ok(Some(worktree)) = databases.get_worktree(worktree_id) {
+            let branch = Some(worktree.summary.branch_name.clone());
+
+            let stat_json = if let Some(root_id) = session.project_root_id.as_deref() {
+                if let Ok(Some(root)) = databases.get_project_root(root_id) {
+                    use crate::git;
+                    use std::path::Path;
+                    let git_root =
+                        Path::new(root.git_root_path.as_deref().unwrap_or(&root.path));
+                    let base_ref = worktree.summary.base_ref.as_deref().unwrap_or("main");
+                    git::git_diff_stat(git_root, base_ref, &worktree.summary.branch_name)
+                        .ok()
+                        .and_then(|s| serde_json::to_string(&s).ok())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            (branch, stat_json)
+        } else {
+            (None, None)
+        }
+    } else {
+        (None, None)
+    };
+
+    let now = unix_time_seconds();
+    let metadata_json = serde_json::to_string(&serde_json::json!({
+        "runtime_state": runtime_state,
+        "agent_kind": session.agent_kind,
+        "origin_mode": session.origin_mode,
+        "ended_at": session.ended_at,
+    }))
+    .ok();
+
+    let entry_id = format!("inbox_{}", Uuid::new_v4().simple());
+
+    let record = NewInboxEntryRecord {
+        id: entry_id.clone(),
+        project_id: session.project_id.clone(),
+        session_id: Some(session_id.to_string()),
+        work_item_id: session.work_item_id.clone(),
+        worktree_id: session.worktree_id.clone(),
+        entry_type: entry_type.to_string(),
+        title,
+        summary,
+        status: status.to_string(),
+        branch_name,
+        diff_stat_json,
+        metadata_json,
+        created_at: now,
+        updated_at: now,
+    };
+
+    databases.insert_inbox_entry(&record)?;
 
     Ok(())
 }
