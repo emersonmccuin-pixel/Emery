@@ -130,6 +130,7 @@ export function VaultView() {
   const isUnlocked = lockStatus?.unlocked ?? false;
 
   return (
+    <div className="content-frame">
     <div className="vault-view">
       {/* Header */}
       <div className="vault-header">
@@ -264,6 +265,7 @@ export function VaultView() {
           </div>
         </div>
       )}
+    </div>
     </div>
   );
 }

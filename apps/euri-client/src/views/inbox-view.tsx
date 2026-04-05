@@ -180,6 +180,7 @@ export function InboxView({ projectId }: { projectId: string }) {
   const sortedEntries = [...filteredEntries].sort((a, b) => b.created_at - a.created_at);
 
   return (
+    <div className="content-frame">
     <div className="inbox-view">
       <div className="inbox-header">
         <h2 className="inbox-title">Inbox</h2>
@@ -219,6 +220,7 @@ export function InboxView({ projectId }: { projectId: string }) {
           ))}
         </div>
       )}
+    </div>
     </div>
   );
 }

@@ -154,6 +154,7 @@ export function WorkItemView({
     : pastSessions;
 
   return (
+    <div className="content-frame">
     <div className="work-item-detail-view">
       {/* Header */}
       <header className="wi-detail-header">
@@ -429,6 +430,7 @@ export function WorkItemView({
           </button>
         ) : null}
       </div>
+    </div>
     </div>
   );
 }

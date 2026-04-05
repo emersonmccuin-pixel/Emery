@@ -165,9 +165,17 @@ export function DocumentView({
   workItemId?: string;
 }) {
   if (documentId === "new") {
-    return <NewDocumentView projectId={projectId} initialWorkItemId={initialWorkItemId} />;
+    return (
+      <div className="content-frame">
+        <NewDocumentView projectId={projectId} initialWorkItemId={initialWorkItemId} />
+      </div>
+    );
   }
-  return <ExistingDocumentView documentId={documentId} projectId={projectId} />;
+  return (
+    <div className="content-frame">
+      <ExistingDocumentView documentId={documentId} projectId={projectId} />
+    </div>
+  );
 }
 
 function ExistingDocumentView({

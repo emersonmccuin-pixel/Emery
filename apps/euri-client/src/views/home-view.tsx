@@ -58,6 +58,7 @@ export function HomeView() {
   }
 
   return (
+    <div className="content-frame">
     <div className="home-view">
       {accounts.length === 0 && (
         <div className="setup-banner">
@@ -131,6 +132,7 @@ export function HomeView() {
           {showArchived ? "No archived projects." : "No projects yet. Create one to get started."}
         </div>
       ) : null}
+    </div>
     </div>
   );
 }

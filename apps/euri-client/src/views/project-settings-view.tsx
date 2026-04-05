@@ -240,6 +240,7 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
   }
 
   return (
+    <div className="content-frame">
     <div className="project-settings-view">
       <div className="project-settings-header">
         <h2 className="project-settings-title">Project Settings</h2>
@@ -505,6 +506,7 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
           </div>
         </section>
       </div>
+    </div>
     </div>
   );
 }

@@ -16,6 +16,7 @@ export function SettingsView() {
   ];
 
   return (
+    <div className="content-frame">
     <div className="global-settings-view">
       <div className="global-settings-header">
         <h2 className="global-settings-title">Settings</h2>
@@ -45,6 +46,7 @@ export function SettingsView() {
           {activeTab === "github" && <GitHubSection />}
         </div>
       </div>
+    </div>
     </div>
   );
 }
