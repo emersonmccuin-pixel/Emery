@@ -1,9 +1,7 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   bootstrapShell,
-  connectionLabel,
-  exportDiagnosticsBundle,
   pollEvents,
   saveWorkspace,
   watchLiveSessions,
@@ -15,18 +13,19 @@ import {
   makeClientEvent,
   newCorrelationId,
   recordClientEvent,
-  snapshotClientDiagnostics,
 } from "./diagnostics";
 import type {
   ConnectionStatusEvent,
   SessionOutputEvent,
   SessionStateChangedEvent,
-  WorkspacePayload,
+  WorkspacePayloadV2,
 } from "./types";
 import { appStore, useAppStore } from "./store";
-import { Sidebar } from "./sidebar";
-import { TabStrip } from "./tab-strip";
-import { WorkspaceRouter } from "./workspace-router";
+import { navStore, useNavLayer } from "./nav-store";
+import type { NavigationLayer } from "./nav-store";
+import { Topbar } from "./topbar";
+import { Breadcrumb } from "./breadcrumb";
+import { LayerRouter } from "./layer-router";
 import { DispatchSheet } from "./dispatch-sheet";
 
 function decodeBase64Utf8(base64: string): string {
@@ -35,50 +34,25 @@ function decodeBase64Utf8(base64: string): string {
   return new TextDecoder().decode(bytes);
 }
 
-function buildWorkspacePayload(
-  selectedProjectId: string | null,
-  leftPanel: WorkspacePayload["left_panel"],
-  openResources: WorkspacePayload["open_resources"],
-  activeResourceId: string | null,
-): WorkspacePayload {
+function buildWorkspacePayloadV2(navigation: NavigationLayer): WorkspacePayloadV2 {
   return {
-    version: 1,
-    selected_project_id: selectedProjectId,
-    left_panel: leftPanel,
-    open_resources: openResources,
-    active_resource_id: activeResourceId,
+    version: 2,
+    navigation,
+    focus_project_ids: [],
+    planning_view_mode: appStore.getState().planningViewMode,
   };
 }
 
 export default function App() {
   const bootstrap = useAppStore((s) => s.bootstrap);
-  const selectedProjectId = useAppStore((s) => s.selectedProjectId);
-  const leftPanel = useAppStore((s) => s.leftPanel);
-  const openResources = useAppStore((s) => s.openResources);
-  const activeResourceId = useAppStore((s) => s.activeResourceId);
-  const connectionEvent = useAppStore((s) => s.connectionEvent);
   const error = useAppStore((s) => s.error);
-  const sessions = useAppStore((s) => s.sessions);
-  const workItemsByProject = useAppStore((s) => s.workItemsByProject);
-  const documentsByProject = useAppStore((s) => s.documentsByProject);
   const pendingDispatch = useAppStore((s) => s.pendingDispatch);
   const projectDetails = useAppStore((s) => s.projectDetails);
   const workItemDetails = useAppStore((s) => s.workItemDetails);
+  const navLayer = useNavLayer();
 
   const restoreApplied = useRef(false);
   const persistTimeout = useRef<number | null>(null);
-
-  const liveSessionCount = useMemo(() => sessions.filter((s) => s.live).length, [sessions]);
-
-  const selectedProject = useMemo(
-    () => bootstrap?.projects.find((p) => p.id === selectedProjectId) ?? null,
-    [bootstrap, selectedProjectId],
-  );
-
-  const activeResource = useMemo(
-    () => openResources.find((r) => r.resource_id === activeResourceId) ?? null,
-    [openResources, activeResourceId],
-  );
 
   // --- Bootstrap + event loop ---
   useEffect(() => {
@@ -122,27 +96,28 @@ export default function App() {
           }),
         );
 
-        const restored = payload.workspace?.payload;
-        if (restored && !restoreApplied.current) {
+        if (!restoreApplied.current) {
           restoreApplied.current = true;
-          appStore.setSelectedProjectId(restored.selected_project_id ?? payload.projects[0]?.id ?? null);
-          appStore.setLeftPanel(restored.left_panel === "workbench" ? "workbench" : "sessions");
-          appStore.setOpenResources(restored.open_resources ?? []);
-          appStore.setActiveResourceId(
-            restored.active_resource_id ?? restored.open_resources[0]?.resource_id ?? null,
-          );
-        } else {
-          restoreApplied.current = true;
-          const firstProjectId = payload.projects[0]?.id ?? null;
-          appStore.setSelectedProjectId(firstProjectId);
-          if (firstProjectId) {
-            const homeResource = {
-              resource_type: "project_home" as const,
-              project_id: firstProjectId,
-              resource_id: `project_home:${firstProjectId}`,
-            };
-            appStore.setOpenResources([homeResource]);
-            appStore.setActiveResourceId(homeResource.resource_id);
+          const restored = payload.workspace?.payload;
+          if (restored) {
+            if (restored.version === 2) {
+              const layer = restored.navigation as NavigationLayer;
+              navStore.restore(layer);
+              if (layer.layer === "project" || layer.layer === "agent") {
+                appStore.setSelectedProjectId(layer.projectId);
+              }
+            } else {
+              // V1: derive nav from selected_project_id
+              const projectId = restored.selected_project_id ?? payload.projects[0]?.id ?? null;
+              if (projectId) {
+                navStore.restore({ layer: "project", projectId });
+                appStore.setSelectedProjectId(projectId);
+              } else {
+                navStore.restore({ layer: "home" });
+              }
+            }
+          } else {
+            navStore.restore({ layer: "home" });
           }
         }
 
@@ -172,7 +147,7 @@ export default function App() {
       },
     );
 
-    void connectionListener.then((unlisten) => {
+    void connectionListener.then((unlisten: UnlistenFn) => {
       unlisteners.push(unlisten);
     });
 
@@ -231,11 +206,13 @@ export default function App() {
     };
   }, []);
 
-  // --- Load project reads when selection changes ---
+  // --- Sync selectedProjectId from nav layer, load project data ---
   useEffect(() => {
-    if (!selectedProjectId) return;
-    void appStore.loadProjectReads(selectedProjectId);
-  }, [selectedProjectId]);
+    if (navLayer.layer === "project" || navLayer.layer === "agent") {
+      appStore.setSelectedProjectId(navLayer.projectId);
+      void appStore.loadProjectReads(navLayer.projectId);
+    }
+  }, [navLayer]);
 
   // --- Workspace persistence ---
   useEffect(() => {
@@ -244,37 +221,34 @@ export default function App() {
       window.clearTimeout(persistTimeout.current);
     }
     persistTimeout.current = window.setTimeout(() => {
+      const layer = navStore.getState().current;
       void saveWorkspace(
-        buildWorkspacePayload(
-          selectedProjectId,
-          leftPanel as WorkspacePayload["left_panel"],
-          openResources,
-          activeResourceId,
-        ),
+        buildWorkspacePayloadV2(layer),
         newCorrelationId("workspace-save"),
-      ).catch((invokeError) => appStore.setError(String(invokeError)));
+      ).catch((invokeError: unknown) => appStore.setError(String(invokeError)));
     }, 250);
-  }, [activeResourceId, bootstrap, leftPanel, openResources, selectedProjectId]);
+  }, [bootstrap, navLayer]);
 
-  // --- Auto-load active resource data ---
+  // --- Keyboard shortcuts ---
   useEffect(() => {
-    if (!activeResource) return;
-    if (activeResource.resource_type === "work_item_detail") {
-      void appStore.ensureWorkItemDetail(activeResource.work_item_id);
-      void appStore.ensureReconciliationProposals(activeResource.work_item_id);
-    }
-    if (activeResource.resource_type === "document_detail") {
-      void appStore.ensureDocumentDetail(activeResource.document_id);
-    }
-  }, [activeResource]);
+    function handleKeyDown(e: KeyboardEvent) {
+      const layer = navStore.getState().current;
 
-  // --- Derived state for workspace summary ---
-  const filteredSessions = useMemo(
-    () => sessions.filter((entry) => !selectedProjectId || entry.project_id === selectedProjectId),
-    [selectedProjectId, sessions],
-  );
-  const currentWorkItems = selectedProjectId ? workItemsByProject[selectedProjectId] ?? [] : [];
-  const currentDocuments = selectedProjectId ? documentsByProject[selectedProjectId] ?? [] : [];
+      if (e.key === "Escape") {
+        if (layer.layer !== "home") {
+          navStore.goBack();
+        }
+      }
+
+      if (e.ctrlKey && e.key === "`") {
+        e.preventDefault();
+        navStore.goHome();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   if (!bootstrap) {
     return <div className="app-shell loading-state">{error ?? "Connecting to the supervisor…"}</div>;
@@ -282,66 +256,19 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <div className="brand-block">
-          <h1>EURI</h1>
+      <Topbar />
+      <Breadcrumb />
+      {error ? (
+        <div className="error-banner">
+          <span>{error}</span>
+          <button className="secondary-button" onClick={() => appStore.clearError()}>
+            Dismiss
+          </button>
         </div>
-        <div className="status-strip">
-          <span className={`status-chip ${connectionLabel(connectionEvent)}`}>{connectionLabel(connectionEvent)}</span>
-          <span className="status-chip neutral">{liveSessionCount} live</span>
-          {bootstrap.hello.diagnostics_enabled ? (
-            <button
-              className="status-chip neutral"
-              onClick={() => {
-                const correlationId = newCorrelationId("bundle");
-                const s = appStore.getState();
-                const activeRes = s.openResources.find((r) => r.resource_id === s.activeResourceId) ?? null;
-                const activeSessionId =
-                  activeRes?.resource_type === "session_terminal" ? activeRes.session_id : null;
-                void exportDiagnosticsBundle(
-                  activeSessionId,
-                  activeSessionId ? `session-${activeSessionId}` : "shell",
-                  snapshotClientDiagnostics(),
-                  correlationId,
-                ).catch((invokeError) => appStore.setError(String(invokeError)));
-              }}
-            >
-              debug
-            </button>
-          ) : null}
-        </div>
-      </header>
-
-      <div className="shell-grid">
-        <Sidebar />
-
-        <main className="workspace">
-          <div className="workspace-summary">
-            <strong>{selectedProject?.name ?? "No project selected"}</strong>
-            <div className="summary-stats">
-              <span>{currentWorkItems.length} items</span>
-              <span>{currentDocuments.length} docs</span>
-              <span>{filteredSessions.filter((s) => s.live).length} live</span>
-            </div>
-          </div>
-
-          {error ? (
-            <div className="error-banner">
-              <span>{error}</span>
-              <button className="secondary-button" onClick={() => appStore.clearError()}>
-                Dismiss
-              </button>
-            </div>
-          ) : null}
-
-          <TabStrip />
-
-          <section className="workspace-pane">
-            <WorkspaceRouter />
-          </section>
-        </main>
-      </div>
-
+      ) : null}
+      <main className="layer-viewport">
+        <LayerRouter />
+      </main>
       {pendingDispatch && projectDetails[pendingDispatch.projectId] && workItemDetails[pendingDispatch.workItemId] ? (
         <DispatchSheet
           workItem={workItemDetails[pendingDispatch.workItemId]}

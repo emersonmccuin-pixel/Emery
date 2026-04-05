@@ -47,7 +47,6 @@ import type {
   WorkItemDetail,
   WorkItemSummary,
   WorkflowReconciliationProposalSummary,
-  WorkspaceResource,
 } from "./types";
 
 // --- Constants ---
@@ -65,7 +64,6 @@ export const PRIORITIES = ["", "low", "medium", "high", "urgent"] as const;
 export const DOCUMENT_STATUSES = ["draft", "active", "archived"] as const;
 
 export type PlanningViewMode = "all" | "day" | "week";
-export type LeftPanel = "sessions" | "workbench";
 
 // --- Pure helpers ---
 
@@ -172,42 +170,13 @@ export function sessionTone(session: Pick<SessionSummary, "runtime_state" | "act
   return "muted";
 }
 
-export function resourceLabel(
-  resource: WorkspaceResource,
-  sessions: SessionSummary[],
-  workItems: Record<string, WorkItemDetail>,
-  documents: Record<string, DocumentDetail>,
-  projectName?: string,
-) {
-  if (resource.resource_type === "project_home") {
-    return projectName ? `${projectName}` : "Project";
-  }
-  if (resource.resource_type === "session_terminal") {
-    const session = sessions.find((entry) => entry.id === resource.session_id);
-    return session?.title ?? session?.current_mode ?? "Session";
-  }
-  if (resource.resource_type === "work_item_detail") {
-    return workItems[resource.work_item_id]?.callsign ?? "Work item";
-  }
-  if (resource.resource_type === "document_detail") {
-    return documents[resource.document_id]?.title ?? "Document";
-  }
-  if (resource.resource_type === "merge_queue") {
-    return "Merge queue";
-  }
-  return "Resource";
-}
-
 // --- State shape ---
 
 export type AppState = {
   bootstrap: ShellBootstrap | null;
   sessions: SessionSummary[];
   selectedProjectId: string | null;
-  leftPanel: LeftPanel;
   planningViewMode: PlanningViewMode;
-  openResources: WorkspaceResource[];
-  activeResourceId: string | null;
   projectDetails: Record<string, ProjectDetail>;
   workItemsByProject: Record<string, WorkItemSummary[]>;
   documentsByProject: Record<string, DocumentSummary[]>;
@@ -249,10 +218,7 @@ function initialState(): AppState {
     bootstrap: null,
     sessions: [],
     selectedProjectId: null,
-    leftPanel: "sessions",
     planningViewMode: "all",
-    openResources: [],
-    activeResourceId: null,
     projectDetails: {},
     workItemsByProject: {},
     documentsByProject: {},
@@ -331,20 +297,8 @@ class AppStore {
     this.update({ selectedProjectId: id });
   }
 
-  setLeftPanel(panel: LeftPanel) {
-    this.update({ leftPanel: panel });
-  }
-
   setPlanningViewMode(mode: PlanningViewMode) {
     this.update({ planningViewMode: mode });
-  }
-
-  setOpenResources(resources: WorkspaceResource[]) {
-    this.update({ openResources: resources });
-  }
-
-  setActiveResourceId(id: string | null) {
-    this.update({ activeResourceId: id });
   }
 
   setConnectionEvent(event: ConnectionStatusEvent | null) {
@@ -649,82 +603,6 @@ class AppStore {
     }
   }
 
-  // --- Navigation ---
-
-  async openProject(projectId: string) {
-    this.update({ selectedProjectId: projectId });
-    void this.loadProjectReads(projectId);
-    void this.handleLoadMergeQueue(projectId);
-    const resourceId = `project_home:${projectId}`;
-    const s = this.state;
-    if (!s.openResources.some((r) => r.resource_id === resourceId)) {
-      this.update({
-        openResources: [
-          ...s.openResources,
-          { resource_type: "project_home", project_id: projectId, resource_id: resourceId },
-        ],
-      });
-    }
-    this.update({ activeResourceId: resourceId });
-  }
-
-  openSession(sessionId: string) {
-    const resourceId = `session_terminal:${sessionId}`;
-    const s = this.state;
-    if (!s.openResources.some((r) => r.resource_id === resourceId)) {
-      this.update({
-        openResources: [
-          ...s.openResources,
-          { resource_type: "session_terminal", session_id: sessionId, resource_id: resourceId },
-        ],
-      });
-    }
-    this.update({ activeResourceId: resourceId });
-  }
-
-  openWorkItem(workItemId: string, projectId: string) {
-    void this.loadProjectReads(projectId);
-    void this.ensureWorkItemDetail(workItemId);
-    void this.ensureReconciliationProposals(workItemId);
-    const resourceId = `work_item_detail:${workItemId}`;
-    const s = this.state;
-    if (!s.openResources.some((r) => r.resource_id === resourceId)) {
-      this.update({
-        openResources: [
-          ...s.openResources,
-          { resource_type: "work_item_detail", work_item_id: workItemId, project_id: projectId, resource_id: resourceId },
-        ],
-      });
-    }
-    this.update({ activeResourceId: resourceId });
-  }
-
-  openDocument(documentId: string, projectId: string) {
-    void this.loadProjectReads(projectId);
-    void this.ensureDocumentDetail(documentId);
-    const resourceId = `document_detail:${documentId}`;
-    const s = this.state;
-    if (!s.openResources.some((r) => r.resource_id === resourceId)) {
-      this.update({
-        openResources: [
-          ...s.openResources,
-          { resource_type: "document_detail", document_id: documentId, project_id: projectId, resource_id: resourceId },
-        ],
-      });
-    }
-    this.update({ activeResourceId: resourceId });
-  }
-
-  closeResource(resource: WorkspaceResource) {
-    const s = this.state;
-    const remaining = s.openResources.filter((entry) => entry.resource_id !== resource.resource_id);
-    const nextActive =
-      s.activeResourceId === resource.resource_id
-        ? remaining[remaining.length - 1]?.resource_id ?? null
-        : s.activeResourceId;
-    this.update({ openResources: remaining, activeResourceId: nextActive });
-  }
-
   // --- Action handlers ---
 
   async handleInterruptSession(sessionId: string) {
@@ -798,7 +676,6 @@ class AppStore {
           parent_id: "",
         },
       });
-      this.openWorkItem(detail.id, detail.project_id);
       this.clearError();
     } catch (invokeError) {
       this.update({ error: String(invokeError) });
@@ -960,7 +837,6 @@ class AppStore {
 
       this.applySessionDetail(detail);
       await watchLiveSessions([detail.id], correlationId);
-      this.openSession(detail.id);
       this.clearError();
     } catch (invokeError) {
       this.update({ error: String(invokeError) });
@@ -1001,7 +877,6 @@ class AppStore {
           content_markdown: "",
         },
       });
-      this.openDocument(detail.id, detail.project_id);
       this.clearError();
     } catch (invokeError) {
       this.update({ error: String(invokeError) });
@@ -1100,21 +975,6 @@ class AppStore {
   }
 
   // --- Merge Queue ---
-
-  openMergeQueue(projectId: string) {
-    void this.handleLoadMergeQueue(projectId);
-    const resourceId = `merge_queue:${projectId}`;
-    const s = this.state;
-    if (!s.openResources.some((r) => r.resource_id === resourceId)) {
-      this.update({
-        openResources: [
-          ...s.openResources,
-          { resource_type: "merge_queue" as const, project_id: projectId, resource_id: resourceId },
-        ],
-      });
-    }
-    this.update({ activeResourceId: resourceId });
-  }
 
   async handleLoadMergeQueue(projectId: string) {
     this.setLoading("merge-queue", true);
@@ -1238,10 +1098,6 @@ class AppStore {
     return s.bootstrap?.projects.find((p) => p.id === s.selectedProjectId) ?? null;
   }
 
-  activeResource(): WorkspaceResource | null {
-    const s = this.state;
-    return s.openResources.find((r) => r.resource_id === s.activeResourceId) ?? null;
-  }
 }
 
 export const appStore = new AppStore();

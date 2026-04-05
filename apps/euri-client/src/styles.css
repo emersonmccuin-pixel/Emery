@@ -45,16 +45,14 @@ button {
 .app-shell {
   min-height: 100vh;
   padding: 8px;
-  display: grid;
-  grid-template-rows: auto 1fr;
-  gap: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 /* ── Shared surface styles ── */
 
 .topbar,
-.sidebar,
-.workspace-summary,
 .workspace-pane,
 .card,
 .hero-panel {
@@ -147,33 +145,147 @@ button {
   color: #d8d3ca;
 }
 
-/* ── Shell grid ── */
+/* ── Layer viewport ── */
 
-.shell-grid {
-  display: grid;
-  grid-template-columns: 240px 1fr;
-  gap: 6px;
+.layer-viewport {
+  flex: 1;
   min-height: 0;
-}
-
-/* ── Sidebar ── */
-
-.sidebar {
-  border-radius: 8px;
-  padding: 8px;
   overflow-y: auto;
+  padding: 8px;
 }
 
-.sidebar-tabs {
+/* ── Breadcrumb ── */
+
+.breadcrumb-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 12px;
+  font-size: 0.8rem;
+}
+
+.breadcrumb-sep {
+  color: rgba(242, 237, 225, 0.3);
+  margin: 0 4px;
+}
+
+.breadcrumb-link {
+  background: none;
+  color: rgba(242, 237, 225, 0.6);
+  padding: 2px 4px;
+  border-radius: 3px;
+  font-size: inherit;
+}
+
+.breadcrumb-link:hover {
+  color: #f2ede1;
+  background: rgba(242, 237, 225, 0.08);
+}
+
+.breadcrumb-current {
+  color: #f2ede1;
+  font-weight: 500;
+}
+
+/* ── Home view ── */
+
+.home-view {
+  padding: 16px 8px;
+}
+
+.focus-card-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 4px;
-  margin-bottom: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
 }
 
-.sidebar-tabs-wide {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.focus-card {
+  background: rgba(242, 237, 225, 0.04);
+  border: 1px solid rgba(242, 237, 225, 0.07);
+  border-radius: 10px;
+  padding: 16px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 0.15s, background 0.15s;
 }
+
+.focus-card:hover {
+  border-color: rgba(216, 162, 90, 0.25);
+  background: rgba(242, 237, 225, 0.06);
+}
+
+.focus-card-active {
+  border-color: rgba(90, 180, 130, 0.2);
+}
+
+.focus-card-name {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.focus-card-indicators {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.agent-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #5ab482;
+  margin-right: 3px;
+}
+
+.agent-dot.pulsing {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+.focus-card-merges {
+  font-size: 0.75rem;
+  color: rgba(242, 237, 225, 0.5);
+}
+
+.focus-card-badge {
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.focus-card-badge-active {
+  background: rgba(90, 180, 130, 0.15);
+  color: #5ab482;
+}
+
+.focus-card-badge-queued {
+  background: rgba(216, 162, 90, 0.15);
+  color: #d8a25a;
+}
+
+.focus-card-badge-idle {
+  background: rgba(242, 237, 225, 0.06);
+  color: rgba(242, 237, 225, 0.4);
+}
+
+/* ── Layer stubs ── */
+
+.layer-stub {
+  padding: 32px;
+  text-align: center;
+  color: rgba(242, 237, 225, 0.4);
+}
+
+/* ── Sidebar section headers (kept for compatibility) ── */
 
 .sidebar-tabs button,
 .action-row button,
@@ -183,7 +295,6 @@ button {
   border-radius: 6px;
 }
 
-.sidebar-tabs button,
 .action-row button {
   padding: 5px 8px;
   background: rgba(242, 237, 225, 0.06);
@@ -191,7 +302,6 @@ button {
   font-size: 0.8rem;
 }
 
-.sidebar-tabs button.active,
 .segmented-control button.active,
 .action-row button:hover,
 .session-link:hover {
@@ -218,42 +328,6 @@ button {
   background: rgba(16, 14, 13, 0.92);
   color: inherit;
   font-size: 0.82rem;
-}
-
-/* ── Sidebar section headers ── */
-
-.sidebar-section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 0 2px;
-  margin-top: 4px;
-}
-
-.sidebar-section-label {
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #cdb58f;
-  font-weight: 600;
-}
-
-.sidebar-add-btn {
-  width: 20px;
-  height: 20px;
-  display: grid;
-  place-items: center;
-  border-radius: 4px;
-  background: rgba(242, 237, 225, 0.06);
-  color: #c3bcaf;
-  font-size: 0.85rem;
-  line-height: 1;
-  padding: 0;
-}
-
-.sidebar-add-btn:hover {
-  background: rgba(216, 162, 90, 0.18);
-  color: #f2ede1;
 }
 
 /* ── Panel list (sidebar items) ── */
@@ -330,15 +404,6 @@ button {
   flex-shrink: 0;
 }
 
-/* ── Workspace ── */
-
-.workspace {
-  display: grid;
-  grid-template-rows: auto auto 1fr;
-  gap: 4px;
-  min-height: 0;
-}
-
 /* ── Error banner ── */
 
 .error-banner {
@@ -352,77 +417,6 @@ button {
   background: rgba(199, 92, 85, 0.14);
   color: #ffd3cb;
   font-size: 0.82rem;
-}
-
-/* ── Workspace summary bar ── */
-
-.workspace-summary {
-  border-radius: 8px;
-  padding: 6px 12px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.workspace-summary .eyebrow {
-  font-size: 0.65rem;
-}
-
-.workspace-summary strong {
-  font-size: 0.85rem;
-}
-
-.summary-stats {
-  font-size: 0.75rem;
-  color: #c3bcaf;
-}
-
-/* ── Tab strip ── */
-
-.tab-strip {
-  display: flex;
-  gap: 2px;
-  overflow-x: auto;
-  padding-bottom: 1px;
-}
-
-.tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 10px;
-  background: rgba(242, 237, 225, 0.05);
-  color: #c3bcaf;
-  white-space: nowrap;
-  font-size: 0.8rem;
-  border-radius: 6px 6px 0 0;
-  border-bottom: 2px solid transparent;
-  transition: color 0.1s, border-color 0.1s;
-}
-
-.tab:hover {
-  color: #f2ede1;
-}
-
-.tab.active {
-  color: #f2ede1;
-  background: rgba(216, 162, 90, 0.1);
-  border-bottom-color: #d8a25a;
-  outline: none;
-}
-
-.tab-close {
-  color: #8a8478;
-  font-size: 0.9rem;
-  line-height: 1;
-  padding: 0 2px;
-  border-radius: 3px;
-}
-
-.tab-close:hover {
-  color: #ffb6ab;
-  background: rgba(199, 92, 85, 0.2);
 }
 
 /* ── Workspace pane ── */
