@@ -506,14 +506,13 @@ function AppearanceSection() {
 // --- Agent Defaults Section ---
 
 const SAFETY_MODES = [
-  { value: "", label: "Default", description: "" },
-  { value: "full", label: "Autonomous", description: "Agent can read, write, and execute without confirmation" },
-  { value: "normal", label: "Supervised", description: "Agent asks before destructive operations" },
-  { value: "restricted", label: "Read Only", description: "Agent can read files but cannot write or execute" },
+  { value: "", label: "Cautious (Default)", description: "Agent asks before destructive operations" },
+  { value: "cautious", label: "Cautious", description: "Agent asks before destructive operations" },
+  { value: "yolo", label: "Autonomous (Yolo)", description: "Agent can read, write, and execute without confirmation" },
 ];
 
 const KNOWN_MODELS = [
-  { value: "", label: "Default" },
+  { value: "", label: "Sonnet 4.5 (Default)" },
   { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
   { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
   { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
@@ -563,6 +562,14 @@ function AgentDefaultsRow({
     const val = account.default_model ?? "";
     return val !== "" && !KNOWN_MODELS.some((m) => m.value === val);
   });
+
+  // Sync local state when account data changes (e.g. after a save + refresh)
+  useEffect(() => {
+    const val = account.default_model ?? "";
+    setModelInput(val);
+    setSafetyMode(account.default_safety_mode ?? "");
+    setCustomModelMode(val !== "" && !KNOWN_MODELS.some((m) => m.value === val));
+  }, [account.default_model, account.default_safety_mode]);
 
   const saving = loadingKeys[`update-account:${account.id}`] ?? false;
 
