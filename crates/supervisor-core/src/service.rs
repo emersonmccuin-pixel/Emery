@@ -3949,8 +3949,8 @@ struct ResolvedSafetyConfig {
 fn validate_safety_mode(value: &str) -> Result<String> {
     let normalized = value.trim().to_lowercase();
     match normalized.as_str() {
-        "yolo" | "cautious" => Ok(normalized),
-        _ => Err(anyhow!("safety_mode must be one of: yolo, cautious")),
+        "yolo" | "cautious" | "autonomous" => Ok(normalized),
+        _ => Err(anyhow!("safety_mode must be one of: yolo, cautious, autonomous")),
     }
 }
 

@@ -1610,7 +1610,7 @@ class AppStore {
     }
   }
 
-  async handleCreateAccount(input: { label: string; agent_kind?: string; binary_path?: string | null; config_root?: string | null; is_default?: boolean }) {
+  async handleCreateAccount(input: { label: string; agent_kind?: string; binary_path?: string | null; config_root?: string | null; is_default?: boolean; default_safety_mode?: string | null }) {
     const key = "create-account";
     this.setLoading(key, true);
     try {
