@@ -28,6 +28,14 @@ const APP_MIGRATIONS: &[(&str, &str)] = &[
         "0006_dispatch_group",
         include_str!("migrations/app/0006_dispatch_group.sql"),
     ),
+    (
+        "0007_safety_modes",
+        include_str!("migrations/app/0007_safety_modes.sql"),
+    ),
+    (
+        "0008_project_instructions",
+        include_str!("migrations/app/0008_project_instructions.sql"),
+    ),
 ];
 const KNOWLEDGE_MIGRATIONS: &[(&str, &str)] = &[(
     "0001_initial",

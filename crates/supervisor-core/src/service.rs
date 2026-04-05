@@ -88,6 +88,7 @@ impl SupervisorService {
             sort_order,
             default_account_id,
             settings_json: optional_trimmed(request.settings_json),
+            instructions_md: optional_trimmed(request.instructions_md),
             created_at: now,
             updated_at: now,
         };
@@ -125,6 +126,10 @@ impl SupervisorService {
             Some(value) => optional_trimmed(Some(value)),
             None => existing.settings_json.clone(),
         };
+        let instructions_md = match request.instructions_md {
+            Some(value) => optional_trimmed(Some(value)),
+            None => existing.instructions_md.clone(),
+        };
 
         let record = ProjectUpdateRecord {
             id: existing.id.clone(),
@@ -133,6 +138,7 @@ impl SupervisorService {
             sort_order: request.sort_order.unwrap_or(existing.sort_order),
             default_account_id,
             settings_json,
+            instructions_md,
             updated_at: unix_time_seconds(),
         };
 

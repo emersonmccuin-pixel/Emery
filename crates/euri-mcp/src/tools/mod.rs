@@ -1,3 +1,4 @@
+mod instructions;
 mod merge_queue;
 mod session;
 mod worktree;
@@ -22,6 +23,8 @@ pub fn all_tools() -> Value {
         merge_queue::tool_merge_queue_check(),
         merge_queue::tool_merge_queue_merge(),
         merge_queue::tool_merge_queue_park(),
+        instructions::tool_get_project_instructions(),
+        instructions::tool_set_project_instructions(),
     ])
 }
 
@@ -42,6 +45,8 @@ pub fn call_tool(name: &str, input: Value) -> Result<String> {
         "euri_merge_queue_check" => merge_queue::handle_merge_queue_check(input),
         "euri_merge_queue_merge" => merge_queue::handle_merge_queue_merge(input),
         "euri_merge_queue_park" => merge_queue::handle_merge_queue_park(input),
+        "euri_get_project_instructions" => instructions::handle_get_project_instructions(input),
+        "euri_set_project_instructions" => instructions::handle_set_project_instructions(input),
         _ => Err(anyhow::anyhow!("unknown tool: {}", name)),
     }
 }

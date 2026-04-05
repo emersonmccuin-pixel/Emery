@@ -168,7 +168,7 @@ impl DatabaseSet {
         let connection = open_connection(&self.paths.app_db)?;
         let project = connection
             .query_row(
-                "SELECT id, name, slug, sort_order, default_account_id, settings_json, created_at, updated_at, archived_at, agent_safety_overrides_json
+                "SELECT id, name, slug, sort_order, default_account_id, settings_json, created_at, updated_at, archived_at, agent_safety_overrides_json, instructions_md
                  FROM projects
                  WHERE id = ?1",
                 [project_id],
@@ -184,6 +184,7 @@ impl DatabaseSet {
                         updated_at: row.get(7)?,
                         archived_at: row.get(8)?,
                         agent_safety_overrides_json: row.get(9)?,
+                        instructions_md: row.get(10)?,
                         roots: Vec::new(),
                     })
                 },
@@ -208,10 +209,11 @@ impl DatabaseSet {
                 sort_order,
                 default_account_id,
                 settings_json,
+                instructions_md,
                 created_at,
                 updated_at,
                 archived_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL)",
             params![
                 record.id,
                 record.name,
@@ -219,6 +221,7 @@ impl DatabaseSet {
                 record.sort_order,
                 record.default_account_id,
                 record.settings_json,
+                record.instructions_md,
                 record.created_at,
                 record.updated_at,
             ],
@@ -235,7 +238,8 @@ impl DatabaseSet {
                  sort_order = ?4,
                  default_account_id = ?5,
                  settings_json = ?6,
-                 updated_at = ?7
+                 instructions_md = ?7,
+                 updated_at = ?8
              WHERE id = ?1",
             params![
                 record.id,
@@ -244,6 +248,7 @@ impl DatabaseSet {
                 record.sort_order,
                 record.default_account_id,
                 record.settings_json,
+                record.instructions_md,
                 record.updated_at,
             ],
         )?;
