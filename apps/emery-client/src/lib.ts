@@ -113,6 +113,12 @@ export async function getProject(
   return invoke("get_project", { projectId, correlationId });
 }
 
+export async function listNamespaceSuggestions(
+  correlationId?: string,
+): Promise<string[]> {
+  return invoke("list_namespace_suggestions", { correlationId });
+}
+
 export async function createProject(
   input: {
     name: string;

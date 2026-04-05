@@ -1,11 +1,11 @@
-import React, { lazy, Suspense, useState, type KeyboardEvent } from "react";
+import React, { lazy, Suspense, useState, useEffect, useRef, type KeyboardEvent } from "react";
 import type {
   WorkItemSummary,
 } from "./types";
 import { useAppStore, appStore } from "./store";
 import { navStore } from "./nav-store";
 import type { ModalLayer } from "./nav-store";
-import { pickFolder } from "./lib";
+import { pickFolder, listNamespaceSuggestions } from "./lib";
 import { WorkItemForm, type WorkItemFormData } from "./components/work-item-form";
 import { WorkItemModal } from "./components/work-item-modal";
 import { Button } from "@/components/ui/button";
@@ -590,6 +590,29 @@ function CreateProjectModal() {
   const [wcpNamespace, setWcpNamespace] = useState("");
   const [namespaceError, setNamespaceError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [nsSuggestions, setNsSuggestions] = useState<string[]>([]);
+  const [nsDropdownOpen, setNsDropdownOpen] = useState(false);
+  const [nsHighlight, setNsHighlight] = useState(-1);
+  const nsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    listNamespaceSuggestions().then(setNsSuggestions).catch(() => {});
+  }, []);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (nsRef.current && !nsRef.current.contains(e.target as Node)) {
+        setNsDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const filteredNs = wcpNamespace
+    ? nsSuggestions.filter((s) => s.startsWith(wcpNamespace) && s !== wcpNamespace)
+    : nsSuggestions;
 
   async function handleBrowse() {
     const folder = await pickFolder();
@@ -608,6 +631,14 @@ function CreateProjectModal() {
     const upper = val.toUpperCase().replace(/\s/g, "_");
     setWcpNamespace(upper);
     setNamespaceError(validateNamespaceKey(upper));
+    setNsDropdownOpen(true);
+    setNsHighlight(-1);
+  }
+
+  function handleNsSelect(ns: string) {
+    setWcpNamespace(ns);
+    setNamespaceError(validateNamespaceKey(ns));
+    setNsDropdownOpen(false);
   }
 
   async function handleSubmit() {
@@ -681,24 +712,59 @@ function CreateProjectModal() {
             Browse
           </Button>
         </div>
-        <div className="project-create-form-row project-create-namespace-row">
-          <span className="project-create-type-label">WCP Namespace</span>
-          <Input
-            className="project-create-input project-create-namespace-input"
-            type="text"
-            placeholder="e.g. MYPROJECT (optional)"
-            value={wcpNamespace}
-            onChange={(e) => handleNamespaceChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={submitting}
-            aria-describedby={namespaceError ? "namespace-error" : undefined}
-          />
+        <div className="project-create-form-row project-create-namespace-row" ref={nsRef}>
+          <span className="project-create-type-label">Namespace</span>
+          <div className="project-create-namespace-combo">
+            <Input
+              className="project-create-input project-create-namespace-input"
+              type="text"
+              placeholder="e.g. MYPROJECT (optional)"
+              value={wcpNamespace}
+              onChange={(e) => handleNamespaceChange(e.target.value)}
+              onFocus={() => setNsDropdownOpen(true)}
+              onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
+                if (e.key === "Enter") {
+                  if (nsHighlight >= 0 && nsHighlight < filteredNs.length) {
+                    e.preventDefault();
+                    handleNsSelect(filteredNs[nsHighlight]);
+                  } else {
+                    void handleSubmit();
+                  }
+                } else if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setNsHighlight((h) => Math.min(h + 1, filteredNs.length - 1));
+                } else if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setNsHighlight((h) => Math.max(h - 1, 0));
+                } else if (e.key === "Escape") {
+                  setNsDropdownOpen(false);
+                }
+              }}
+              disabled={submitting}
+              autoComplete="off"
+              aria-describedby={namespaceError ? "namespace-error" : undefined}
+            />
+            {nsDropdownOpen && filteredNs.length > 0 && (
+              <ul className="namespace-suggest-dropdown">
+                {filteredNs.map((ns, i) => (
+                  <li
+                    key={ns}
+                    className={`namespace-suggest-item${i === nsHighlight ? " namespace-suggest-item-active" : ""}`}
+                    onMouseDown={(e) => { e.preventDefault(); handleNsSelect(ns); }}
+                    onMouseEnter={() => setNsHighlight(i)}
+                  >
+                    {ns}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
           {namespaceError ? (
             <span id="namespace-error" className="project-create-namespace-error">{namespaceError}</span>
           ) : wcpNamespace ? (
             <span className="project-create-namespace-hint">Links this project to the <code>{wcpNamespace}</code> namespace in the knowledge store.</span>
           ) : (
-            <span className="project-create-namespace-hint">Optional. Links to a WCP namespace for work items and documents.</span>
+            <span className="project-create-namespace-hint">Optional. Links to a namespace for work items and documents.</span>
           )}
         </div>
         <div className="project-create-form-row project-create-type-row">

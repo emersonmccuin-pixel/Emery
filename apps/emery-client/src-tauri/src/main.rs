@@ -733,6 +733,17 @@ fn get_session(
 }
 
 #[tauri::command]
+fn list_namespace_suggestions(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(&app, "namespace.suggest", json!({}), correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
 fn create_project(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
@@ -1648,6 +1659,7 @@ fn main() {
             get_project,
             get_session,
             create_project,
+            list_namespace_suggestions,
             update_project,
             archive_project,
             delete_project,

@@ -72,6 +72,10 @@ impl SupervisorService {
         self.databases.list_projects()
     }
 
+    pub fn list_namespace_suggestions(&self) -> Result<Vec<String>> {
+        self.databases.list_namespace_suggestions()
+    }
+
     pub fn get_project(&self, project_id: &str) -> Result<Option<ProjectDetail>> {
         self.databases.get_project(project_id)
     }

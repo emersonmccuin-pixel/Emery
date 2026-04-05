@@ -1405,6 +1405,26 @@ impl DatabaseSet {
         )?)
     }
 
+    /// Returns distinct namespace keys from projects.wcp_namespace and
+    /// callsign prefixes (the part before the first hyphen) from work_items.
+    pub fn list_namespace_suggestions(&self) -> Result<Vec<String>> {
+        let connection = open_app_connection_with_knowledge(&self.paths)?;
+        let mut statement = connection.prepare(
+            "SELECT DISTINCT ns FROM (
+                 SELECT wcp_namespace AS ns FROM projects WHERE wcp_namespace IS NOT NULL
+                 UNION
+                 SELECT SUBSTR(callsign, 1, INSTR(callsign, '-') - 1) AS ns
+                 FROM knowledge.work_items
+                 WHERE INSTR(callsign, '-') > 0
+             )
+             WHERE ns IS NOT NULL AND ns != ''
+             ORDER BY ns ASC",
+        )?;
+        let rows = statement.query_map([], |row| row.get(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
     pub fn list_root_work_item_callsigns(&self, project_id: &str) -> Result<Vec<String>> {
         let connection = open_connection(&self.paths.knowledge_db)?;
         let mut statement = connection.prepare(

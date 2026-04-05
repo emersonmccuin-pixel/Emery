@@ -210,6 +210,9 @@ impl SupervisorRpc {
                 Ok(serde_json::to_value(self.system_bootstrap_state()?)?)
             }
             Method::ProjectList => Ok(serde_json::to_value(self.supervisor.list_projects()?)?),
+            Method::NamespaceSuggest => {
+                Ok(serde_json::to_value(self.supervisor.list_namespace_suggestions()?)?)
+            }
             Method::ProjectGet => {
                 let params: ProjectGetParams = serde_json::from_value(params)?;
                 let project = self
