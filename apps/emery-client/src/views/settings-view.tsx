@@ -79,6 +79,7 @@ function AccountsSection() {
   const [newBinaryPath, setNewBinaryPath] = useState("");
   const [newConfigRoot, setNewConfigRoot] = useState("");
   const [newAgentKind, setNewAgentKind] = useState("claude");
+  const [newSafetyMode, setNewSafetyMode] = useState("");
 
   const allAccounts: AccountSummary[] = bootstrap?.accounts ?? [];
   const accounts = allAccounts.filter((a) => a.status !== "disabled");
@@ -91,11 +92,13 @@ function AccountsSection() {
       agent_kind: newAgentKind,
       binary_path: newBinaryPath.trim() || null,
       config_root: newConfigRoot.trim() || null,
+      default_safety_mode: newSafetyMode || null,
     });
     setNewLabel("");
     setNewBinaryPath("");
     setNewConfigRoot("");
     setNewAgentKind("claude");
+    setNewSafetyMode("");
     setShowAddForm(false);
   }
 
@@ -152,6 +155,19 @@ function AccountsSection() {
               <option value="claude">claude</option>
               <option value="codex">codex</option>
               <option value="gemini">gemini</option>
+            </select>
+          </div>
+          <div className="settings-field-group">
+            <label className="settings-label">Safety mode (optional)</label>
+            <select
+              className="settings-input"
+              value={newSafetyMode}
+              onChange={(e) => setNewSafetyMode(e.target.value)}
+            >
+              <option value="">Default</option>
+              <option value="cautious">cautious</option>
+              <option value="autonomous">autonomous</option>
+              <option value="yolo">yolo</option>
             </select>
           </div>
           <div className="settings-field-group">
@@ -234,6 +250,7 @@ function AccountRow({
   const [labelInput, setLabelInput] = useState(account.label);
   const [binaryPathInput, setBinaryPathInput] = useState(account.binary_path ?? "");
   const [configRootInput, setConfigRootInput] = useState(account.config_root ?? "");
+  const [safetyModeInput, setSafetyModeInput] = useState(account.default_safety_mode ?? "");
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const saving = loadingKeys[`update-account:${account.id}`] ?? false;
@@ -245,6 +262,7 @@ function AccountRow({
       label: labelInput.trim(),
       binary_path: binaryPathInput.trim() || null,
       config_root: configRootInput.trim() || null,
+      default_safety_mode: safetyModeInput || null,
     });
     setEditing(false);
   }
@@ -253,6 +271,7 @@ function AccountRow({
     setLabelInput(account.label);
     setBinaryPathInput(account.binary_path ?? "");
     setConfigRootInput(account.config_root ?? "");
+    setSafetyModeInput(account.default_safety_mode ?? "");
     setEditing(false);
   }
 
@@ -309,6 +328,19 @@ function AccountRow({
                   Browse
                 </Button>
               </div>
+            </div>
+            <div className="settings-field-group">
+              <label className="settings-label">Safety mode</label>
+              <select
+                className="settings-input"
+                value={safetyModeInput}
+                onChange={(e) => setSafetyModeInput(e.target.value)}
+              >
+                <option value="">Default</option>
+                <option value="cautious">cautious</option>
+                <option value="autonomous">autonomous</option>
+                <option value="yolo">yolo</option>
+              </select>
             </div>
             <div className="settings-field-group">
               <label className="settings-label">Binary path</label>
