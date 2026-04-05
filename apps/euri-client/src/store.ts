@@ -201,6 +201,11 @@ export function sessionTone(session: Pick<SessionSummary, "runtime_state" | "act
   return "muted";
 }
 
+/** Returns true if any session for the given project needs input. */
+export function projectNeedsAttention(projectId: string, sessions: SessionSummary[]): boolean {
+  return sessions.some(s => s.project_id === projectId && s.activity_state === "needs_input");
+}
+
 // --- State shape ---
 
 export type AppState = {

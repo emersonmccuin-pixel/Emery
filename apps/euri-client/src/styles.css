@@ -706,14 +706,19 @@ html[data-theme="vaporwave"] .sidebar {
   50% { opacity: 0.35; }
 }
 
-/* Attention indicator placeholder — hidden by default, wire logic later */
+/* Attention indicator — shown when a project has sessions needing input */
 .sidebar-attention-dot {
-  display: none; /* will become visible when attention logic is wired */
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--color-warning, #f59e0b);
   flex-shrink: 0;
+  animation: attention-blink 1.5s ease-in-out infinite;
+}
+
+@keyframes attention-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 
 /* ── Project links (All projects, + New) ── */
@@ -989,6 +994,24 @@ html[data-theme="vaporwave"] .sidebar {
   font-size: var(--text-md);
   font-weight: var(--weight-semibold);
   pointer-events: none;
+}
+
+.topbar-back-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  letter-spacing: 0.04em;
+  transition: color 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.topbar-back-btn:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover, rgba(255,255,255,0.06));
 }
 
 .supervisor-dot {

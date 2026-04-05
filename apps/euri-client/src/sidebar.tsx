@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { appStore, useAppStore } from "./store";
+import { appStore, useAppStore, projectNeedsAttention } from "./store";
 import { navStore, useNavLayer } from "./nav-store";
 import { ContextMenu, type ContextMenuItem } from "./components/context-menu";
 import type { SessionSummary } from "./types";
@@ -121,6 +121,7 @@ type ContextMenuState = {
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const projects = useProjects();
   const liveSessions = useLiveSessions();
+  const allSessions = useAppStore((s) => s.sessions);
   const navLayer = useNavLayer();
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
@@ -255,8 +256,9 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                           <span className="sidebar-project-name">{project.name}</span>
                         )}
                         <SessionDots projectId={project.id} sessions={liveSessions} />
-                        {/* Attention indicator placeholder — wire logic later */}
-                        <span className="sidebar-attention-dot" />
+                        {projectNeedsAttention(project.id, allSessions) && (
+                          <span className="sidebar-attention-dot" />
+                        )}
                       </>
                     )}
                   </Button>

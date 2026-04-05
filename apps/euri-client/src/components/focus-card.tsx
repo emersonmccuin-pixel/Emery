@@ -93,7 +93,7 @@ export function FocusCard({ project, sessions }: FocusCardProps) {
               height: 10,
               borderRadius: "50%",
               backgroundColor: "var(--accent, #d4a03c)",
-              animation: "focus-card-blink 1.2s ease-in-out infinite",
+              animation: "attention-blink 1.5s ease-in-out infinite",
             }}
           />
         )}
@@ -171,12 +171,8 @@ export function FocusCard({ project, sessions }: FocusCardProps) {
         </CardContent>
       </Card>
 
-      {/* Inline style for blink animation and hover */}
+      {/* Inline style for hover */}
       <style>{`
-        @keyframes focus-card-blink {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.3; }
-        }
         .focus-card-hoverable:hover {
           border-color: var(--accent, #d4a03c) !important;
           box-shadow: 0 0 0 1px rgba(42,42,58,0.6), 0 0 30px rgba(212, 160, 60, 0.12) !important;
