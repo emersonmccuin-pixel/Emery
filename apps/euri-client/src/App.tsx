@@ -49,6 +49,7 @@ export default function App() {
   const bootstrap = useAppStore((s) => s.bootstrap);
   const error = useAppStore((s) => s.error);
   const focusProjectIds = useAppStore((s) => s.focusProjectIds);
+  const connectionState = useAppStore((s) => s.connectionState);
   const navLayer = useNavLayer();
 
   const restoreApplied = useRef(false);
@@ -126,6 +127,8 @@ export default function App() {
           payload.sessions.filter((entry) => entry.live).map((entry) => entry.id),
           correlationId,
         );
+
+        appStore.setConnectionState("connected");
       } catch (invokeError) {
         appStore.setError(String(invokeError));
       }
@@ -136,6 +139,21 @@ export default function App() {
     const connectionListener = listen<ConnectionStatusEvent>(
       "supervisor://connection",
       (event) => {
+        const prev = appStore.getState().connectionState;
+
+        if (event.payload.state === "connected") {
+          appStore.setConnectionState("connected");
+
+          // If we were disconnected or reconnecting, re-bootstrap to get fresh state
+          if (prev === "disconnected" || prev === "reconnecting") {
+            void appStore.rebootstrap();
+          }
+        } else if (event.payload.state === "reconnecting") {
+          appStore.setConnectionState("reconnecting");
+        } else if (event.payload.state === "disconnected") {
+          appStore.setConnectionState("disconnected");
+        }
+
         appStore.setConnectionEvent(event.payload);
         recordClientEvent(
           makeClientEvent("shell", "connection.status_changed", {
@@ -342,6 +360,26 @@ export default function App() {
           <span>{error}</span>
           <button className="secondary-button" onClick={() => appStore.clearError()}>
             Dismiss
+          </button>
+        </div>
+      ) : null}
+      {connectionState === "reconnecting" ? (
+        <div className="reconnecting-banner">
+          <span className="reconnecting-spinner" />
+          <span>Reconnecting to supervisor...</span>
+        </div>
+      ) : null}
+      {connectionState === "disconnected" ? (
+        <div className="disconnected-banner">
+          <span>Disconnected from supervisor</span>
+          <button
+            className="secondary-button"
+            onClick={() => {
+              appStore.setConnectionState("reconnecting");
+              void appStore.rebootstrap();
+            }}
+          >
+            Retry
           </button>
         </div>
       ) : null}

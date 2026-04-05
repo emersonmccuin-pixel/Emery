@@ -4,6 +4,7 @@ import { newCorrelationId, snapshotClientDiagnostics } from "./diagnostics";
 
 export function Topbar() {
   const connectionEvent = useAppStore((s) => s.connectionEvent);
+  const connectionState = useAppStore((s) => s.connectionState);
   const sessions = useAppStore((s) => s.sessions);
   const bootstrap = useAppStore((s) => s.bootstrap);
 
@@ -13,6 +14,10 @@ export function Topbar() {
     <header className="topbar">
       <div className="brand-block">
         <h1>EURI</h1>
+        <span
+          className={`connection-dot connection-${connectionState}`}
+          title={connectionState}
+        />
       </div>
       <div className="status-strip">
         <span className={`status-chip ${connectionLabel(connectionEvent)}`}>
