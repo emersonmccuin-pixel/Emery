@@ -1518,6 +1518,91 @@ fn archive_agent_template(
         .map_err(error_string)
 }
 
+#[tauri::command]
+fn vault_list(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    scope: Option<String>,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    let params = match scope {
+        Some(s) => json!({ "scope": s }),
+        None => json!({}),
+    };
+    manager
+        .request_value(&app, "vault.list", params, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn vault_set(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    scope: String,
+    key: String,
+    value: String,
+    description: Option<String>,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    let mut params = json!({ "scope": scope, "key": key, "value": value });
+    if let Some(d) = description {
+        params["description"] = json!(d);
+    }
+    manager
+        .request_value(&app, "vault.set", params, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn vault_delete(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(&app, "vault.delete", json!({ "id": id }), correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn vault_unlock(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    duration_minutes: Option<i64>,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    let params = match duration_minutes {
+        Some(d) => json!({ "duration_minutes": d }),
+        None => json!({}),
+    };
+    manager
+        .request_value(&app, "vault.unlock", params, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn vault_lock(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(&app, "vault.lock", json!({}), correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn vault_status(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(&app, "vault.status", json!({}), correlation_id)
+        .map_err(error_string)
+}
+
 fn main() {
     if let Err(error) = debug_dev_server_preflight() {
         eprintln!("{error}");
@@ -1586,7 +1671,13 @@ fn main() {
             list_agent_templates,
             create_agent_template,
             update_agent_template,
-            archive_agent_template
+            archive_agent_template,
+            vault_list,
+            vault_set,
+            vault_delete,
+            vault_unlock,
+            vault_lock,
+            vault_status
         ])
         .run(tauri::generate_context!())
         .expect("failed to run EURI client");
