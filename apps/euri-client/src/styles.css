@@ -4897,3 +4897,37 @@ button {
   gap: 8px;
   margin-top: 4px;
 }
+
+/* ── Setup banner (no accounts configured) ── */
+.setup-banner {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3, 12px);
+  padding: var(--space-3, 12px) var(--space-4, 16px);
+  border-radius: var(--radius-lg, 8px);
+  border: 1px solid var(--status-warning, #ff9f43);
+  background: var(--status-warning-bg, rgba(255, 159, 67, 0.12));
+  color: var(--status-warning-text, #ffcc90);
+  margin-bottom: var(--space-3, 12px);
+}
+
+.setup-banner-icon {
+  font-weight: bold;
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+/* ── Dispatch sheet — no accounts inline message ── */
+.dispatch-no-accounts {
+  font-size: 0.8rem;
+  color: var(--status-warning-text, #ffcc90);
+  align-self: center;
+}
+
+/* ── Field error ── */
+.field-error {
+  font-size: 0.75rem;
+  color: var(--status-danger, #e57373);
+  margin-top: 4px;
+}

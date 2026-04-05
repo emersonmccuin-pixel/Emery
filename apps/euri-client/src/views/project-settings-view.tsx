@@ -545,23 +545,29 @@ function TemplateRow({
   const [editing, setEditing] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [labelInput, setLabelInput] = useState(template.label);
   const [modelInput, setModelInput] = useState(template.default_model ?? "");
   const [originModeInput, setOriginModeInput] = useState(template.origin_mode);
+  const [instructionsMd, setInstructionsMd] = useState(template.instructions_md ?? "");
+  const [stopRulesJson, setStopRulesJson] = useState(template.stop_rules_json ?? "");
 
   async function handleSave() {
     if (!labelInput.trim()) return;
     setSaving(true);
+    setError(null);
     try {
       await updateAgentTemplate(template.id, {
         label: labelInput.trim(),
         default_model: modelInput.trim() || null,
         origin_mode: originModeInput || undefined,
+        instructions_md: instructionsMd.trim() || null,
+        stop_rules_json: stopRulesJson.trim() || null,
       });
       setEditing(false);
       onUpdated();
-    } catch {
-      // leave form open on error
+    } catch (e) {
+      setError(String(e));
     } finally {
       setSaving(false);
     }
@@ -593,24 +599,41 @@ function TemplateRow({
               className="settings-input"
               type="text"
               value={labelInput}
-              onChange={(e) => setLabelInput(e.target.value)}
+              onChange={(e) => { setLabelInput(e.target.value); setError(null); }}
               placeholder="Label"
             />
             <input
               className="settings-input"
               type="text"
               value={modelInput}
-              onChange={(e) => setModelInput(e.target.value)}
+              onChange={(e) => { setModelInput(e.target.value); setError(null); }}
               placeholder="Model (e.g. claude-sonnet-4-5)"
             />
             <select
               className="settings-input agent-template-mode-select"
               value={originModeInput}
-              onChange={(e) => setOriginModeInput(e.target.value)}
+              onChange={(e) => { setOriginModeInput(e.target.value); setError(null); }}
             >
               <option value="code">code</option>
               <option value="chat">chat</option>
             </select>
+            <label className="settings-label">Instructions (markdown)</label>
+            <textarea
+              className="settings-input"
+              value={instructionsMd}
+              onChange={(e) => { setInstructionsMd(e.target.value); setError(null); }}
+              placeholder="Enter instructions for agents using this template..."
+              rows={4}
+            />
+            <label className="settings-label">Stop Rules (JSON array)</label>
+            <textarea
+              className="settings-input"
+              value={stopRulesJson}
+              onChange={(e) => { setStopRulesJson(e.target.value); setError(null); }}
+              placeholder='["No file writes", "Read-only tools only"]'
+              rows={2}
+            />
+            {error && <div className="field-error">{error}</div>}
             <div className="agent-template-edit-actions">
               <button
                 className="btn-sm btn-primary"
@@ -621,7 +644,7 @@ function TemplateRow({
               </button>
               <button
                 className="btn-sm btn-ghost"
-                onClick={() => setEditing(false)}
+                onClick={() => { setEditing(false); setError(null); }}
                 disabled={saving}
               >
                 Cancel
@@ -634,7 +657,15 @@ function TemplateRow({
         {!editing && (
           <button
             className="btn-sm btn-ghost"
-            onClick={() => { setLabelInput(template.label); setModelInput(template.default_model ?? ""); setOriginModeInput(template.origin_mode); setEditing(true); }}
+            onClick={() => {
+              setLabelInput(template.label);
+              setModelInput(template.default_model ?? "");
+              setOriginModeInput(template.origin_mode);
+              setInstructionsMd(template.instructions_md ?? "");
+              setStopRulesJson(template.stop_rules_json ?? "");
+              setError(null);
+              setEditing(true);
+            }}
           >
             Edit
           </button>
@@ -667,11 +698,15 @@ function AddTemplateForm({
   const [labelInput, setLabelInput] = useState("");
   const [originMode, setOriginMode] = useState("code");
   const [modelInput, setModelInput] = useState("");
+  const [instructionsMd, setInstructionsMd] = useState("");
+  const [stopRulesJson, setStopRulesJson] = useState("");
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleSave() {
     if (!keyInput.trim() || !labelInput.trim()) return;
     setSaving(true);
+    setError(null);
     try {
       await createAgentTemplate({
         project_id: projectId,
@@ -679,10 +714,12 @@ function AddTemplateForm({
         label: labelInput.trim(),
         origin_mode: originMode,
         default_model: modelInput.trim() || null,
+        instructions_md: instructionsMd.trim() || null,
+        stop_rules_json: stopRulesJson.trim() || null,
       });
       onSaved();
-    } catch {
-      // leave form open on error
+    } catch (e) {
+      setError(String(e));
     } finally {
       setSaving(false);
     }
@@ -695,7 +732,7 @@ function AddTemplateForm({
           className="settings-input"
           type="text"
           value={keyInput}
-          onChange={(e) => setKeyInput(e.target.value)}
+          onChange={(e) => { setKeyInput(e.target.value); setError(null); }}
           placeholder="Template key (e.g. implementer)"
           autoFocus
         />
@@ -703,13 +740,13 @@ function AddTemplateForm({
           className="settings-input"
           type="text"
           value={labelInput}
-          onChange={(e) => setLabelInput(e.target.value)}
+          onChange={(e) => { setLabelInput(e.target.value); setError(null); }}
           placeholder="Label (e.g. Implementer)"
         />
         <select
           className="settings-input agent-template-mode-select"
           value={originMode}
-          onChange={(e) => setOriginMode(e.target.value)}
+          onChange={(e) => { setOriginMode(e.target.value); setError(null); }}
         >
           <option value="code">code</option>
           <option value="chat">chat</option>
@@ -718,9 +755,26 @@ function AddTemplateForm({
           className="settings-input"
           type="text"
           value={modelInput}
-          onChange={(e) => setModelInput(e.target.value)}
+          onChange={(e) => { setModelInput(e.target.value); setError(null); }}
           placeholder="Model (optional)"
         />
+        <label className="settings-label">Instructions (markdown)</label>
+        <textarea
+          className="settings-input"
+          value={instructionsMd}
+          onChange={(e) => { setInstructionsMd(e.target.value); setError(null); }}
+          placeholder="Enter instructions for agents using this template..."
+          rows={4}
+        />
+        <label className="settings-label">Stop Rules (JSON array)</label>
+        <textarea
+          className="settings-input"
+          value={stopRulesJson}
+          onChange={(e) => { setStopRulesJson(e.target.value); setError(null); }}
+          placeholder='["No file writes", "Read-only tools only"]'
+          rows={2}
+        />
+        {error && <div className="field-error">{error}</div>}
         <div className="agent-template-edit-actions">
           <button
             className="btn-sm btn-primary"

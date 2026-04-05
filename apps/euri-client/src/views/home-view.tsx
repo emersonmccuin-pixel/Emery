@@ -7,12 +7,14 @@ import { StatusLEDs } from "../components/status-leds";
 
 export function HomeView() {
   const projects = useAppStore((s) => s.bootstrap?.projects ?? []);
+  const accounts = useAppStore((s) => s.bootstrap?.accounts ?? []);
   const sessions = useAppStore((s) => s.sessions);
   const mergeQueueByProject = useAppStore((s) => s.mergeQueueByProject);
   const focusProjectIds = useAppStore((s) => s.focusProjectIds);
   const maxFocusSlots = useAppStore((s) => s.maxFocusSlots);
   const projectDetails = useAppStore((s) => s.projectDetails);
   const gitStatusByRootId = useAppStore((s) => s.gitStatusByRootId);
+  const bootstrapping = useAppStore((s) => s.bootstrapping);
   const [showCreateForm, setShowCreateForm] = useState(false);
 
   // Load git status for all visible focus projects on mount
@@ -51,6 +53,15 @@ export function HomeView() {
 
   return (
     <div className="home-view">
+      {accounts.length === 0 && (
+        <div className="setup-banner">
+          <span className="setup-banner-icon">!</span>
+          <span>No agent accounts configured. Set one up to start dispatching.</span>
+          <button className="primary-button" onClick={() => navStore.goToSettings()}>
+            Configure accounts
+          </button>
+        </div>
+      )}
       <div className="home-stats-bar">
         <span className="home-stat">
           {sessions.filter((s) => s.live).length} agents running
@@ -92,7 +103,12 @@ export function HomeView() {
         />
       ) : null}
 
-      {projects.length === 0 && !showCreateForm ? (
+      {bootstrapping ? (
+        <div className="empty-pane" style={{ display: "flex", alignItems: "center", gap: "8px", justifyContent: "center" }}>
+          <span className="reconnecting-spinner" />
+          Loading workspace...
+        </div>
+      ) : projects.length === 0 && !showCreateForm ? (
         <div className="empty-pane">No projects yet. Create one to get started.</div>
       ) : null}
     </div>

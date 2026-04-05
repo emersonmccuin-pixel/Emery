@@ -265,6 +265,7 @@ export function sessionTone(session: Pick<SessionSummary, "runtime_state" | "act
 
 export type AppState = {
   bootstrap: ShellBootstrap | null;
+  bootstrapping: boolean;
   sessions: SessionSummary[];
   selectedProjectId: string | null;
   planningViewMode: PlanningViewMode;
@@ -314,6 +315,7 @@ export type AppState = {
 function initialState(): AppState {
   return {
     bootstrap: null,
+    bootstrapping: true,
     sessions: [],
     selectedProjectId: null,
     planningViewMode: "all",
@@ -394,7 +396,7 @@ class AppStore {
   // --- Low-level setters (used by bootstrap in App.tsx) ---
 
   setBootstrap(bootstrap: ShellBootstrap) {
-    this.update({ bootstrap });
+    this.update({ bootstrap, bootstrapping: false });
   }
 
   setSessions(sessions: SessionSummary[]) {

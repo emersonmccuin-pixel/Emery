@@ -96,7 +96,7 @@ function SingleDispatchSheet({
   const branchName = `euri/${workItem.callsign.toLowerCase()}`;
   const root = project.roots[0] ?? null;
   const isExecution = originMode === "execution";
-  const resolvedDefault = account?.default_safety_mode ?? "cautious";
+  const resolvedDefault = account?.default_safety_mode ?? "full";
   const resolvedDefaultModel = isExecution ? "sonnet" : "opus";
 
   return (
@@ -137,8 +137,9 @@ function SingleDispatchSheet({
             <span className="dispatch-label">Safety Mode</span>
             <select value={safetyMode} onChange={(e) => setSafetyMode(e.target.value)}>
               <option value="">Default ({resolvedDefault})</option>
-              <option value="yolo">YOLO (skip permissions)</option>
-              <option value="cautious">Cautious (confirm each action)</option>
+              <option value="full">Full</option>
+              <option value="permissive">Permissive</option>
+              <option value="none">None</option>
             </select>
           </div>
           <div className="dispatch-row">
@@ -162,9 +163,13 @@ function SingleDispatchSheet({
         </div>
         <div className="dispatch-actions">
           <button className="secondary-button" onClick={onCancel}>Cancel</button>
-          <button className="secondary-button" onClick={() => onConfirm({ autoWorktree: isExecution, originMode, safetyMode: safetyMode || undefined, model: model || undefined })}>
-            {isExecution ? "Launch on Branch" : "Launch on Main"}
-          </button>
+          {account ? (
+            <button className="secondary-button" onClick={() => onConfirm({ autoWorktree: isExecution, originMode, safetyMode: safetyMode || undefined, model: model || undefined })}>
+              {isExecution ? "Launch on Branch" : "Launch on Main"}
+            </button>
+          ) : (
+            <span className="dispatch-no-accounts">No accounts available. Add one in Settings &gt; Accounts.</span>
+          )}
         </div>
       </div>
     </div>
@@ -198,7 +203,7 @@ function MultiDispatchSheet({
   });
   const [safetyMode, setSafetyMode] = useState<string>("");
   const [model, setModel] = useState<string>("");
-  const resolvedDefault = defaultAccount?.default_safety_mode ?? "cautious";
+  const resolvedDefault = defaultAccount?.default_safety_mode ?? "full";
 
   function handleConfirm() {
     const dispatches = workItems.map((item) => {
@@ -264,8 +269,9 @@ function MultiDispatchSheet({
             <span className="dispatch-label">Safety Mode</span>
             <select value={safetyMode} onChange={(e) => setSafetyMode(e.target.value)}>
               <option value="">Default ({resolvedDefault})</option>
-              <option value="yolo">YOLO (skip permissions)</option>
-              <option value="cautious">Cautious (confirm each action)</option>
+              <option value="full">Full</option>
+              <option value="permissive">Permissive</option>
+              <option value="none">None</option>
             </select>
           </div>
           <div className="dispatch-row">
