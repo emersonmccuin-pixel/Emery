@@ -1177,6 +1177,86 @@ fn merge_queue_check_conflicts(
 }
 
 #[tauri::command]
+fn list_inbox_entries(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    project_id: String,
+    status: Option<String>,
+    unread_only: Option<bool>,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    let mut params = json!({ "project_id": project_id });
+    if let Some(s) = status {
+        params["status"] = json!(s);
+    }
+    if let Some(u) = unread_only {
+        params["unread_only"] = json!(u);
+    }
+    manager
+        .request_value(&app, "inbox.list", params, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn get_inbox_entry(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    inbox_entry_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "inbox.get",
+            json!({ "inbox_entry_id": inbox_entry_id }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn update_inbox_entry(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    inbox_entry_id: String,
+    status: Option<String>,
+    read_at: Option<i64>,
+    resolved_at: Option<i64>,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "inbox.update",
+            json!({
+                "inbox_entry_id": inbox_entry_id,
+                "status": status,
+                "read_at": read_at,
+                "resolved_at": resolved_at,
+            }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn count_unread_inbox_entries(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    project_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "inbox.count_unread",
+            json!({ "project_id": project_id }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
 async fn pick_folder(app: AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     let folder = app.dialog().file().blocking_pick_folder();
@@ -1294,6 +1374,10 @@ fn main() {
             merge_queue_park,
             merge_queue_reorder,
             merge_queue_check_conflicts,
+            list_inbox_entries,
+            get_inbox_entry,
+            update_inbox_entry,
+            count_unread_inbox_entries,
             pick_folder,
             create_project_root,
             list_project_roots,

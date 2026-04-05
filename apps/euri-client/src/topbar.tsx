@@ -1,5 +1,6 @@
 import { useAppStore } from "./store";
 import { connectionLabel, exportDiagnosticsBundle } from "./lib";
+import { navStore, useNavLayer } from "./nav-store";
 import { newCorrelationId, snapshotClientDiagnostics } from "./diagnostics";
 
 function toggleTheme() {
@@ -14,8 +15,22 @@ export function Topbar() {
   const connectionState = useAppStore((s) => s.connectionState);
   const sessions = useAppStore((s) => s.sessions);
   const bootstrap = useAppStore((s) => s.bootstrap);
+  const selectedProjectId = useAppStore((s) => s.selectedProjectId);
+  const inboxUnreadCountByProject = useAppStore((s) => s.inboxUnreadCountByProject);
+  const layer = useNavLayer();
 
   const liveCount = sessions.filter((s) => s.live).length;
+  const unreadCount = selectedProjectId ? (inboxUnreadCountByProject[selectedProjectId] ?? 0) : 0;
+  const isInbox = layer.layer === "inbox";
+
+  function handleInboxClick() {
+    if (!selectedProjectId) return;
+    if (isInbox) {
+      navStore.goHome();
+    } else {
+      navStore.goToInbox(selectedProjectId);
+    }
+  }
 
   return (
     <header className="topbar">
@@ -27,6 +42,15 @@ export function Topbar() {
         />
       </div>
       <div className="status-strip">
+        {selectedProjectId ? (
+          <button
+            className={`status-chip neutral topbar-inbox-btn${isInbox ? " active" : ""}`}
+            onClick={handleInboxClick}
+            title="Inbox"
+          >
+            inbox{unreadCount > 0 ? <span className="inbox-unread-badge">{unreadCount}</span> : null}
+          </button>
+        ) : null}
         <span className={`status-chip ${connectionLabel(connectionEvent)}`}>
           {connectionLabel(connectionEvent)}
         </span>
