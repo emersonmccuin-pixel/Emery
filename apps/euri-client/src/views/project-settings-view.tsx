@@ -86,6 +86,7 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
   const [instructionsSaved, setInstructionsSaved] = useState(false);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const [confirmArchive, setConfirmArchive] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [agentTemplates, setAgentTemplates] = useState<AgentTemplateSummary[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const [showAddTemplate, setShowAddTemplate] = useState(false);
@@ -134,6 +135,7 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
   const savingName = loadingKeys[`save-project-name:${projectId}`] ?? false;
   const addingRoot = loadingKeys[`add-project-root:${projectId}`] ?? false;
   const archiving = loadingKeys[`archive-project:${projectId}`] ?? false;
+  const deleting = loadingKeys[`delete-project:${projectId}`] ?? false;
 
   if (!project && !projectSummary) {
     return <div className="empty-pane">Loading project settings...</div>;
@@ -212,6 +214,16 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
     setConfirmArchive(false);
     await appStore.handleArchiveProject(projectId);
     navStore.goHome();
+  }
+
+  async function handleDelete() {
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      setTimeout(() => setConfirmDelete(false), 3000);
+      return;
+    }
+    setConfirmDelete(false);
+    await appStore.handleDeleteProject(projectId);
   }
 
   async function handleSaveModelDefaults() {
@@ -502,6 +514,23 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
                 title={confirmArchive ? "Click again to confirm archive" : "Archive project"}
               >
                 {archiving ? "Archiving..." : confirmArchive ? "Confirm?" : "Archive"}
+              </button>
+            </div>
+            <div className="settings-danger-zone-item">
+              <div className="settings-danger-zone-info">
+                <span className="settings-danger-zone-label">Delete project</span>
+                <span className="settings-danger-zone-description">
+                  Permanently removes this project and all its data. Cannot be undone. Cannot be done
+                  while sessions are running or merge queue entries are pending.
+                </span>
+              </div>
+              <button
+                className={`btn-sm ${confirmDelete ? "btn-danger" : "btn-ghost"}`}
+                onClick={() => void handleDelete()}
+                disabled={deleting}
+                title={confirmDelete ? "Click again to permanently delete" : "Delete project"}
+              >
+                {deleting ? "Deleting..." : confirmDelete ? "Confirm delete?" : "Delete"}
               </button>
             </div>
           </div>

@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import {
   archiveProject,
+  deleteProject,
   bootstrapShell,
   checkDispatchConflicts,
   countUnreadInboxEntries,
@@ -1035,6 +1036,21 @@ class AppStore {
       this.update({ error: String(invokeError) });
     } finally {
       this.setLoading(`archive-project:${projectId}`, false);
+    }
+  }
+
+  async handleDeleteProject(projectId: string) {
+    const correlationId = newCorrelationId("project-delete");
+    this.setLoading(`delete-project:${projectId}`, true);
+    try {
+      await deleteProject(projectId, correlationId);
+      await this.rebootstrap();
+      navStore.goHome();
+      this.clearError();
+    } catch (invokeError) {
+      this.update({ error: String(invokeError) });
+    } finally {
+      this.setLoading(`delete-project:${projectId}`, false);
     }
   }
 

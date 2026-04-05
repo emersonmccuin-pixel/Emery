@@ -452,6 +452,60 @@ impl DatabaseSet {
         Ok(())
     }
 
+    pub fn delete_project(&self, project_id: &str) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        // Delete child records first to satisfy FK constraints, then the project itself.
+        // Order matters: sessions reference worktrees; session_artifacts reference sessions.
+        connection.execute(
+            "DELETE FROM inbox_entries WHERE project_id = ?1",
+            params![project_id],
+        )?;
+        connection.execute(
+            "DELETE FROM merge_queue WHERE project_id = ?1",
+            params![project_id],
+        )?;
+        connection.execute(
+            "DELETE FROM planning_assignments WHERE project_id = ?1",
+            params![project_id],
+        )?;
+        connection.execute(
+            "DELETE FROM workflow_reconciliation_proposals WHERE project_id = ?1",
+            params![project_id],
+        )?;
+        connection.execute(
+            "DELETE FROM session_artifacts WHERE session_id IN (SELECT id FROM sessions WHERE project_id = ?1)",
+            params![project_id],
+        )?;
+        connection.execute(
+            "DELETE FROM sessions WHERE project_id = ?1",
+            params![project_id],
+        )?;
+        connection.execute(
+            "DELETE FROM session_specs WHERE project_id = ?1",
+            params![project_id],
+        )?;
+        connection.execute(
+            "DELETE FROM worktrees WHERE project_id = ?1",
+            params![project_id],
+        )?;
+        connection.execute(
+            "DELETE FROM agent_templates WHERE project_id = ?1",
+            params![project_id],
+        )?;
+        connection.execute(
+            "DELETE FROM project_roots WHERE project_id = ?1",
+            params![project_id],
+        )?;
+        let deleted = connection.execute(
+            "DELETE FROM projects WHERE id = ?1",
+            params![project_id],
+        )?;
+        if deleted == 0 {
+            return Err(anyhow!("project {} was not found", project_id));
+        }
+        Ok(())
+    }
+
     pub fn project_has_live_sessions(&self, project_id: &str) -> Result<bool> {
         let connection = open_connection(&self.paths.app_db)?;
         exists(

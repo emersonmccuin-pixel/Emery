@@ -146,6 +146,13 @@ export async function archiveProject(
   return invoke("archive_project", { projectId, correlationId });
 }
 
+export async function deleteProject(
+  projectId: string,
+  correlationId?: string,
+): Promise<void> {
+  return invoke("delete_project", { projectId, correlationId });
+}
+
 export async function getWorkItem(
   workItemId: string,
   correlationId?: string,

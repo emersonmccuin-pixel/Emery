@@ -16,7 +16,7 @@ pub use diagnostics::{
 };
 pub use models::{
     AccountDetail, AccountSummary, AgentTemplateDetail, AgentTemplateListFilter,
-    AgentTemplateSummary, ArchiveAgentTemplateRequest, ArchiveProjectRequest, ConflictWarning,
+    AgentTemplateSummary, ArchiveAgentTemplateRequest, ArchiveProjectRequest, DeleteProjectRequest, ConflictWarning,
     CreateAccountRequest, CreateAgentTemplateRequest, CreateDiagnosticsBundleRequest,
     CreateDocumentRequest, CreateInboxEntryRequest, CreatePlanningAssignmentRequest,
     CreateProjectRequest, CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
