@@ -3597,9 +3597,9 @@ fn validate_worktree_status(value: &str) -> Result<String> {
 fn validate_work_item_type(value: &str) -> Result<String> {
     let normalized = required_trimmed("work item type", value)?.to_lowercase();
     match normalized.as_str() {
-        "epic" | "task" | "bug" | "feature" | "research" | "support" => Ok(normalized),
+        "epic" | "task" | "bug" | "feature" | "research" | "support" | "spike" | "chore" => Ok(normalized),
         _ => Err(anyhow!(
-            "work item type must be one of: epic, task, bug, feature, research, support"
+            "work item type must be one of: epic, task, bug, feature, research, support, spike, chore"
         )),
     }
 }

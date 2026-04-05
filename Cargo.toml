@@ -5,6 +5,7 @@ members = [
     "crates/supervisor-core",
     "crates/supervisor-ipc",
     "crates/emery-mcp",
+    "crates/wcp-import",
 ]
 resolver = "2"
 
