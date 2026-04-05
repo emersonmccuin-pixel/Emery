@@ -3,6 +3,7 @@ import { appStore, useAppStore, currentDayCadenceKey, currentWeekCadenceKey } fr
 import { navStore } from "../nav-store";
 import { StatusBadge } from "../components/status-badge";
 import { PlanPicker } from "../components/plan-picker";
+import { WorkItemForm, type WorkItemFormData } from "../components/work-item-form";
 
 function renderMarkdownBasic(md: string): string {
   return md
@@ -27,12 +28,22 @@ export function WorkItemView({
   const workItemsByProject = useAppStore((s) => s.workItemsByProject);
   const planningAssignmentsByProject = useAppStore((s) => s.planningAssignmentsByProject);
   const loadingKeys = useAppStore((s) => s.loadingKeys);
+  const editingWorkItemId = useAppStore((s) => s.editingWorkItemId);
 
   const loading = loadingKeys[`work-item-bundle:${workItemId}`] ?? false;
+  const saving = loadingKeys[`save-work-item:${workItemId}`] ?? false;
+  const isEditing = editingWorkItemId === workItemId;
 
   useEffect(() => {
     void appStore.fetchWorkItemBundle(projectId, workItemId);
   }, [projectId, workItemId]);
+
+  // Exit edit mode if we navigate away
+  useEffect(() => {
+    return () => {
+      appStore.setEditingWorkItemId(null);
+    };
+  }, [workItemId]);
 
   const linkedSessions = useMemo(
     () => sessions.filter((s) => s.work_item_id === workItemId),
@@ -64,44 +75,81 @@ export function WorkItemView({
     return <div className="empty-pane">Work item not found.</div>;
   }
 
+  async function handleEditSubmit(data: WorkItemFormData) {
+    await appStore.handleUpdateWorkItem(workItemId, {
+      title: data.title,
+      description: data.description,
+      acceptance_criteria: data.acceptance_criteria || null,
+      work_item_type: data.work_item_type,
+      status: data.status,
+      priority: data.priority || null,
+    });
+    appStore.setEditingWorkItemId(null);
+  }
+
+  const editInitialData: WorkItemFormData = {
+    title: workItem.title,
+    description: workItem.description ?? "",
+    acceptance_criteria: workItem.acceptance_criteria ?? "",
+    work_item_type: workItem.work_item_type,
+    status: workItem.status,
+    priority: workItem.priority ?? "",
+    parent_id: workItem.parent_id ?? "",
+  };
+
   return (
     <div className="work-item-detail-view">
       {/* Header */}
       <header className="wi-detail-header">
         <span className="wi-detail-callsign">{workItem.callsign}</span>
-        <h2 className="wi-detail-title">{workItem.title}</h2>
-        <div className="wi-detail-meta">
-          <StatusBadge status={workItem.status} />
-          {workItem.priority ? (
-            <span className={`wi-detail-priority priority-${workItem.priority}`}>
-              {workItem.priority}
-            </span>
-          ) : null}
-          <span className="wi-detail-type">{workItem.work_item_type}</span>
-        </div>
+        {isEditing ? null : <h2 className="wi-detail-title">{workItem.title}</h2>}
+        {isEditing ? null : (
+          <div className="wi-detail-meta">
+            <StatusBadge status={workItem.status} />
+            {workItem.priority ? (
+              <span className={`wi-detail-priority priority-${workItem.priority}`}>
+                {workItem.priority}
+              </span>
+            ) : null}
+            <span className="wi-detail-type">{workItem.work_item_type}</span>
+          </div>
+        )}
       </header>
 
-      {/* Description */}
-      {workItem.description ? (
-        <section className="wi-detail-section">
-          <h3>Description</h3>
-          <div
-            className="wi-detail-description"
-            dangerouslySetInnerHTML={{ __html: renderMarkdownBasic(workItem.description) }}
-          />
-        </section>
-      ) : null}
+      {/* Edit form */}
+      {isEditing ? (
+        <WorkItemForm
+          mode="edit"
+          initialData={editInitialData}
+          loading={saving}
+          onSubmit={(data) => void handleEditSubmit(data)}
+          onCancel={() => appStore.setEditingWorkItemId(null)}
+        />
+      ) : (
+        <>
+          {/* Description */}
+          {workItem.description ? (
+            <section className="wi-detail-section">
+              <h3>Description</h3>
+              <div
+                className="wi-detail-description"
+                dangerouslySetInnerHTML={{ __html: renderMarkdownBasic(workItem.description) }}
+              />
+            </section>
+          ) : null}
 
-      {/* Acceptance Criteria */}
-      {workItem.acceptance_criteria ? (
-        <section className="wi-detail-section">
-          <h3>Acceptance Criteria</h3>
-          <div
-            className="wi-detail-criteria"
-            dangerouslySetInnerHTML={{ __html: renderMarkdownBasic(workItem.acceptance_criteria) }}
-          />
-        </section>
-      ) : null}
+          {/* Acceptance Criteria */}
+          {workItem.acceptance_criteria ? (
+            <section className="wi-detail-section">
+              <h3>Acceptance Criteria</h3>
+              <div
+                className="wi-detail-criteria"
+                dangerouslySetInnerHTML={{ __html: renderMarkdownBasic(workItem.acceptance_criteria) }}
+              />
+            </section>
+          ) : null}
+        </>
+      )}
 
       {/* Planning */}
       <section className="wi-detail-section">
@@ -182,6 +230,14 @@ export function WorkItemView({
 
       {/* Actions */}
       <div className="wi-detail-actions">
+        {!isEditing ? (
+          <button
+            className="secondary-button"
+            onClick={() => appStore.setEditingWorkItemId(workItemId)}
+          >
+            Edit
+          </button>
+        ) : null}
         <button
           className="secondary-button"
           onClick={() => void appStore.handleLaunchSessionFromWorkItem(workItemId)}

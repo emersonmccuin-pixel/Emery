@@ -288,6 +288,7 @@ export type AppState = {
   focusProjectIds: string[];
   maxFocusSlots: number;
   connectionState: "connecting" | "connected" | "reconnecting" | "disconnected";
+  editingWorkItemId: string | null;
 };
 
 function initialState(): AppState {
@@ -332,6 +333,7 @@ function initialState(): AppState {
     selectedWorkItemIds: [],
     dispatchConflicts: [],
     connectionState: "connecting",
+    editingWorkItemId: null,
   };
 }
 
@@ -479,6 +481,10 @@ class AppStore {
 
   setWorkItemCreateForm(form: AppState["workItemCreateForm"]) {
     this.update({ workItemCreateForm: form });
+  }
+
+  setEditingWorkItemId(id: string | null) {
+    this.update({ editingWorkItemId: id });
   }
 
   setDocumentCreateForm(form: AppState["documentCreateForm"]) {
@@ -872,6 +878,7 @@ class AppStore {
       );
       this.applyWorkItemDetail(detail);
       this.update({
+        showCreateForm: false,
         workItemCreateForm: {
           title: "",
           description: "",
