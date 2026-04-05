@@ -6,6 +6,92 @@
 
 
 /* ═══════════════════════════════════════════════════════════════════
+   DAYLIGHT (LIGHT THEME)
+   ═══════════════════════════════════════════════════════════════════ */
+
+html[data-theme="daylight"] {
+  --bg-base: #f1f5f9;
+  --bg-surface: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-overlay: #ffffff;
+  --bg-gradient: none;
+
+  /* Surfaces */
+  --surface-base: #f1f5f9;
+  --surface-raised: #ffffff;
+  --surface-overlay: #ffffff;
+  --surface-sunken: #e2e8f0;
+  --surface-hover: rgba(0, 0, 0, 0.04);
+  --surface-active: rgba(0, 0, 0, 0.08);
+
+  /* Borders & Dividers */
+  --border-divider: rgba(0, 0, 0, 0.12);
+  --border-subtle: rgba(0, 0, 0, 0.08);
+  --border-default: rgba(0, 0, 0, 0.15);
+  --border-focus: #3b82f6;
+  --bg-header: #f8fafc;
+
+  /* Text */
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-tertiary: #94a3b8;
+  --text-on-primary: #ffffff;
+
+  /* Accents */
+  --accent: #2563eb;
+  --accent-muted: rgba(37, 99, 235, 0.15);
+  --accent-subtle: rgba(37, 99, 235, 0.08);
+
+  /* Status Colors */
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-info: #3b82f6;
+
+  --activity-working: #10b981;
+  --activity-idle: #3b82f6;
+  --activity-waiting: #f59e0b;
+}
+
+html[data-theme="daylight"] body {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+}
+
+html[data-theme="daylight"] .sidebar {
+  background-color: var(--surface-sunken);
+  border-right: 1px solid var(--border-divider);
+}
+
+html[data-theme="daylight"] .topbar {
+  background-color: var(--surface-raised);
+  border-bottom: 1px solid var(--border-divider);
+}
+
+html[data-theme="daylight"] .focus-card {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-divider);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+html[data-theme="daylight"] .focus-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+}
+
+html[data-theme="daylight"] .agent-terminal {
+  background-color: #0f172a; /* Keep terminal dark */
+  color: #f8fafc;
+  border-radius: 4px;
+}
+
+html[data-theme="daylight"] .agent-info-bar {
+  background-color: var(--surface-sunken);
+  border-bottom: 1px solid var(--border-divider);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════
    FALLOUT — Pip-Boy green phosphor CRT
    ═══════════════════════════════════════════════════════════════════ */
 
@@ -1753,4 +1839,559 @@ html[data-theme="mars"] .app-shell::before {
     radial-gradient(ellipse at 40% 85%, rgba(220, 110, 50, 0.06), transparent 35%),
     linear-gradient(180deg, transparent 55%, rgba(200, 80, 30, 0.05) 100%);
   z-index: 0;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   MISSION CONTROL — 1960s NASA console, industrial metal + CRT
+   ═══════════════════════════════════════════════════════════════════ */
+
+html[data-theme="mission-control"] {
+  /* ── surfaces: warm bronze-brown metal panels ── */
+  --bg-base: #141008;
+  --bg-surface: #1c1610;
+  --bg-elevated: #261e14;
+  --bg-overlay: #30261a;
+  --bg-gradient:
+    radial-gradient(ellipse at 50% 30%, rgba(220, 170, 80, 0.1), transparent 55%),
+    radial-gradient(circle at 80% 85%, rgba(180, 140, 60, 0.06), transparent 40%);
+  --surface-base: #141008;
+  --surface-raised: #1c1610;
+  --surface-overlay: #261e14;
+  --surface-sunken: #0a0806;
+  --surface-hover: rgba(220, 180, 100, 0.12);
+  --surface-active: rgba(220, 180, 100, 0.18);
+
+  /* ── text: warm amber readout ── */
+  --text-primary: #e8d8b0;
+  --text-secondary: #c0a878;
+  --text-tertiary: #8a7450;
+  --text-muted: #706040;
+  --text-ghost: rgba(232, 216, 176, 0.22);
+  --foreground: #e8d8b0;
+
+  /* ── accent: bright amber indicator ── */
+  --accent: #e8a820;
+  --accent-hover: #f0c040;
+  --accent-muted: rgba(232, 168, 32, 0.25);
+  --accent-subtle: rgba(232, 168, 32, 0.1);
+  --accent-secondary: #40c070;
+  --accent-tertiary: #d04030;
+  --color-primary: #e8a820;
+  --color-primary-dim: rgba(232, 168, 32, 0.2);
+  --color-secondary: #40c070;
+  --color-secondary-dim: rgba(64, 192, 112, 0.18);
+
+  /* ── borders: heavy bronze panel frames ── */
+  --border-subtle: rgba(180, 150, 90, 0.18);
+  --border-default: rgba(200, 165, 90, 0.3);
+  --border-focus: rgba(232, 168, 32, 0.7);
+  --border-divider: rgba(180, 150, 90, 0.22);
+  --bg-header: rgba(220, 180, 100, 0.08);
+
+  /* ── status: console indicator lights ── */
+  --color-success: #40c070;
+  --color-warning: #e8a820;
+  --color-error: #d04030;
+  --color-info: #4098cc;
+  --activity-working: #40c070;
+  --activity-idle: #4098cc;
+  --activity-waiting: #e8a820;
+  --activity-error: #d04030;
+  --activity-starting: #60d888;
+  --status-live: #40c070;
+  --status-live-bg: rgba(64, 192, 112, 0.16);
+  --status-live-text: #60e090;
+  --status-pending: #e8a820;
+  --status-pending-bg: rgba(232, 168, 32, 0.16);
+  --status-pending-text: #f0c850;
+  --status-warning: #d08020;
+  --status-warning-bg: rgba(208, 128, 32, 0.16);
+  --status-warning-text: #e0a848;
+  --status-danger: #d04030;
+  --status-danger-bg: rgba(208, 64, 48, 0.16);
+  --status-danger-text: #e86858;
+  --status-muted: rgba(180, 150, 90, 0.22);
+  --status-muted-bg: rgba(180, 150, 90, 0.1);
+  --status-muted-text: #8a7450;
+
+  /* ── inputs & cards ── */
+  --input: #120e08;
+  --card: #1c1610;
+
+  /* ── typography: industrial ── */
+  --font-sans: "Share Tech Mono", "IBM Plex Mono", "Consolas", monospace;
+  --font-mono: "Share Tech Mono", "IBM Plex Mono", "Consolas", monospace;
+
+  /* ── radii: machined metal, slightly rounded ── */
+  --radius-sm: 3px;
+  --radius-md: 5px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+
+  /* ── shadows: recessed instrument panels ── */
+  --shadow-default: 0 2px 8px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 220, 140, 0.04);
+  --shadow-elevated: 0 4px 16px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 220, 140, 0.05);
+
+  /* ── neon aliases (used by some components) ── */
+  --neon-pink: #d04030;
+  --neon-pink-muted: rgba(208, 64, 48, 0.15);
+  --neon-purple: #e8a820;
+  --neon-gold: #e8a820;
+  --gradient-bg: var(--bg-gradient);
+}
+
+/* Mission Control: body — warm console room with amber overhead glow */
+html[data-theme="mission-control"] body {
+  background:
+    radial-gradient(ellipse at 50% 20%, rgba(232, 168, 32, 0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 30% 70%, rgba(160, 120, 50, 0.04) 0%, transparent 40%),
+    #141008;
+}
+html[data-theme="mission-control"] body::before {
+  background:
+    linear-gradient(to bottom, rgba(0, 0, 0, 0.2), transparent 8%, transparent 92%, rgba(0, 0, 0, 0.3)),
+    repeating-linear-gradient(0deg, rgba(180, 150, 80, 0.02) 0, rgba(180, 150, 80, 0.02) 1px, transparent 1px, transparent 4px);
+  opacity: 0.7;
+}
+html[data-theme="mission-control"] #root {
+  background-image:
+    radial-gradient(circle at 50% 50%, rgba(232, 168, 32, 0.04) 0%, transparent 60%),
+    var(--bg-gradient);
+}
+
+/* Mission Control: sidebar — brushed bronze instrument rack */
+html[data-theme="mission-control"] .sidebar {
+  background:
+    linear-gradient(180deg,
+      rgba(36, 28, 16, 0.99) 0%,
+      rgba(24, 18, 10, 0.99) 100%);
+  border-right: 3px solid rgba(160, 130, 70, 0.3);
+  box-shadow:
+    inset -1px 0 0 rgba(255, 220, 140, 0.05),
+    inset -8px 0 24px rgba(0, 0, 0, 0.35),
+    2px 0 8px rgba(0, 0, 0, 0.3);
+}
+html[data-theme="mission-control"] .sidebar-header {
+  border-bottom: 2px solid rgba(160, 130, 70, 0.25);
+  background: linear-gradient(180deg, rgba(232, 168, 32, 0.08), transparent);
+}
+html[data-theme="mission-control"] .sidebar-section-label {
+  color: #e8a820;
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  font-size: 0.58rem;
+  text-shadow: 0 0 10px rgba(232, 168, 32, 0.35);
+}
+html[data-theme="mission-control"] .sidebar-project-btn {
+  border-radius: 3px;
+  transition: all 0.08s ease-out;
+}
+html[data-theme="mission-control"] .sidebar-project-btn:active {
+  transform: scale(0.97);
+}
+html[data-theme="mission-control"] .sidebar-project-btn.active {
+  background:
+    linear-gradient(90deg, rgba(232, 168, 32, 0.15), rgba(232, 168, 32, 0.05));
+  border-left: 3px solid #e8a820;
+  box-shadow:
+    inset 0 0 20px rgba(232, 168, 32, 0.08),
+    -3px 0 12px rgba(232, 168, 32, 0.1);
+}
+html[data-theme="mission-control"] .sidebar-project-initial {
+  border: 2px solid rgba(160, 130, 70, 0.35);
+  background:
+    linear-gradient(180deg, rgba(50, 40, 22, 0.9), rgba(30, 24, 14, 0.95));
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.4),
+    0 1px 0 rgba(255, 220, 140, 0.04);
+}
+html[data-theme="mission-control"] .sidebar-nav-btn {
+  border-radius: 3px;
+  transition: all 0.08s ease-out;
+}
+html[data-theme="mission-control"] .sidebar-nav-btn:active {
+  transform: scale(0.96);
+}
+html[data-theme="mission-control"] .sidebar-nav-btn.active {
+  background: rgba(232, 168, 32, 0.12);
+  border: 1px solid rgba(160, 130, 70, 0.3);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+/* Mission Control: topbar — heavy console header with metal texture */
+html[data-theme="mission-control"] .topbar {
+  background:
+    linear-gradient(180deg,
+      rgba(44, 36, 20, 0.99) 0%,
+      rgba(32, 26, 14, 0.98) 50%,
+      rgba(26, 20, 12, 0.99) 100%);
+  border-bottom: 3px solid rgba(160, 130, 70, 0.3);
+  box-shadow:
+    0 3px 16px rgba(0, 0, 0, 0.5),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 220, 140, 0.06);
+}
+html[data-theme="mission-control"] .brand-block h1 {
+  text-shadow: 0 0 16px rgba(232, 168, 32, 0.45), 0 0 40px rgba(232, 168, 32, 0.15);
+  letter-spacing: 0.35em;
+  font-weight: 400;
+}
+
+/* Mission Control: panels — recessed bronze instrument bays */
+html[data-theme="mission-control"] .card,
+html[data-theme="mission-control"] .hero-panel,
+html[data-theme="mission-control"] .peek-panel,
+html[data-theme="mission-control"] .workspace-pane {
+  border: 2px solid rgba(140, 115, 60, 0.3);
+  background:
+    linear-gradient(180deg, rgba(30, 24, 14, 0.97), rgba(18, 14, 8, 0.99));
+  box-shadow:
+    inset 0 2px 8px rgba(0, 0, 0, 0.4),
+    inset 0 -1px 0 rgba(255, 220, 140, 0.03),
+    0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Mission Control: hero — main display console */
+html[data-theme="mission-control"] .home-hero-panel {
+  border: 3px solid rgba(140, 115, 60, 0.35);
+  background:
+    radial-gradient(ellipse at 50% 50%, rgba(232, 168, 32, 0.06), transparent 60%),
+    linear-gradient(180deg, rgba(30, 24, 14, 0.98), rgba(18, 14, 8, 0.99));
+  box-shadow:
+    inset 0 3px 12px rgba(0, 0, 0, 0.45),
+    inset 0 -1px 0 rgba(255, 220, 140, 0.04),
+    0 4px 20px rgba(0, 0, 0, 0.4);
+}
+html[data-theme="mission-control"] .home-hero-title {
+  text-shadow: 0 0 16px rgba(232, 168, 32, 0.4), 0 0 50px rgba(232, 168, 32, 0.15);
+  letter-spacing: 0.3em;
+}
+html[data-theme="mission-control"] .home-hero-hud {
+  border: 2px solid rgba(140, 115, 60, 0.3);
+  background: rgba(12, 10, 6, 0.9);
+  box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.5);
+}
+html[data-theme="mission-control"] .home-hud-row {
+  border-bottom: 1px solid rgba(140, 115, 60, 0.18);
+}
+
+/* Mission Control: focus cards — chunky panel switches */
+html[data-theme="mission-control"] .focus-card {
+  border: 2px solid rgba(140, 115, 60, 0.28);
+  border-radius: 4px;
+  background:
+    linear-gradient(180deg,
+      rgba(42, 34, 20, 0.98) 0%,
+      rgba(26, 20, 12, 0.99) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 220, 140, 0.06),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3),
+    0 3px 6px rgba(0, 0, 0, 0.4);
+  transition: all 0.08s ease-out;
+}
+html[data-theme="mission-control"] .focus-card:hover {
+  border-color: rgba(232, 168, 32, 0.4);
+  background:
+    linear-gradient(180deg,
+      rgba(52, 42, 24, 0.98) 0%,
+      rgba(34, 26, 16, 0.99) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 220, 140, 0.08),
+    0 5px 14px rgba(0, 0, 0, 0.45),
+    0 0 16px rgba(232, 168, 32, 0.08);
+  transform: translateY(-1px);
+}
+html[data-theme="mission-control"] .focus-card:active {
+  transform: translateY(2px);
+  box-shadow:
+    inset 0 3px 6px rgba(0, 0, 0, 0.5),
+    0 0 2px rgba(0, 0, 0, 0.3);
+}
+html[data-theme="mission-control"] .focus-card-name {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+/* Mission Control: inputs — recessed instrument fields */
+html[data-theme="mission-control"] input,
+html[data-theme="mission-control"] select,
+html[data-theme="mission-control"] textarea {
+  background: rgba(12, 10, 6, 0.9) !important;
+  border: 2px solid rgba(140, 115, 60, 0.25) !important;
+  color: #e8d8b0 !important;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.4) !important;
+}
+html[data-theme="mission-control"] input:focus,
+html[data-theme="mission-control"] select:focus,
+html[data-theme="mission-control"] textarea:focus {
+  border-color: rgba(232, 168, 32, 0.55) !important;
+  box-shadow:
+    inset 0 2px 5px rgba(0, 0, 0, 0.4),
+    0 0 10px rgba(232, 168, 32, 0.15) !important;
+}
+
+/* Mission Control: modals — pop-out instrument panels */
+html[data-theme="mission-control"] .modal-container {
+  border: 3px solid rgba(140, 115, 60, 0.4);
+  background:
+    linear-gradient(180deg, rgba(32, 26, 14, 0.99), rgba(18, 14, 8, 0.99));
+  box-shadow:
+    0 0 0 1px rgba(100, 80, 40, 0.2),
+    0 20px 60px rgba(0, 0, 0, 0.7),
+    inset 0 1px 0 rgba(255, 220, 140, 0.05);
+}
+html[data-theme="mission-control"] .modal-title {
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  text-shadow: 0 0 10px rgba(232, 168, 32, 0.3);
+}
+
+/* Mission Control: status chips — instrument labels */
+html[data-theme="mission-control"] .status-chip {
+  border: 1px solid rgba(140, 115, 60, 0.35);
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 0.6rem;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+/* Mission Control: breadcrumb — console path */
+html[data-theme="mission-control"] .breadcrumb-bar {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #c0a878;
+}
+
+/* Mission Control: fleet strip */
+html[data-theme="mission-control"] .fleet-strip {
+  border: 2px solid rgba(140, 115, 60, 0.25);
+  background: rgba(18, 14, 8, 0.95);
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+html[data-theme="mission-control"] .fleet-header {
+  color: #e8a820;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  text-shadow: 0 0 8px rgba(232, 168, 32, 0.3);
+}
+
+/* Mission Control: merge queue badges */
+html[data-theme="mission-control"] .mq-badge {
+  border: 1px solid rgba(140, 115, 60, 0.35);
+  border-radius: 3px;
+  text-transform: uppercase;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+/* Mission Control: toast — alert panel */
+html[data-theme="mission-control"] .toast {
+  border: 2px solid rgba(140, 115, 60, 0.35);
+  background: rgba(28, 22, 12, 0.98);
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 220, 140, 0.04);
+}
+
+/* Mission Control: buttons — mechanical push-buttons with tactile press */
+html[data-theme="mission-control"] button,
+html[data-theme="mission-control"] [role="button"] {
+  clip-path: none !important;
+  border-radius: 4px !important;
+  transition: all 0.06s ease-out !important;
+}
+
+html[data-theme="mission-control"] button:not(.settings-theme-card):not(.sidebar-project-btn):not(.sidebar-nav-btn):not([class*="ghost"]) {
+  background:
+    linear-gradient(180deg,
+      rgba(60, 48, 28, 0.95) 0%,
+      rgba(40, 32, 18, 0.98) 40%,
+      rgba(30, 24, 14, 0.99) 100%) !important;
+  border: 2px solid rgba(140, 115, 60, 0.4) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 220, 140, 0.1),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.3),
+    0 3px 4px rgba(0, 0, 0, 0.5),
+    0 1px 2px rgba(0, 0, 0, 0.4) !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  color: var(--text-primary) !important;
+}
+
+/* Mechanical press — shifts down, shadow collapses like a real button */
+html[data-theme="mission-control"] button:not(.settings-theme-card):not(.sidebar-project-btn):not(.sidebar-nav-btn):active {
+  transform: translateY(3px) !important;
+  box-shadow:
+    inset 0 3px 6px rgba(0, 0, 0, 0.5),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.2),
+    0 0 1px rgba(0, 0, 0, 0.4) !important;
+  background:
+    linear-gradient(180deg,
+      rgba(38, 30, 16, 0.98) 0%,
+      rgba(44, 36, 20, 0.98) 60%,
+      rgba(38, 30, 16, 0.99) 100%) !important;
+}
+
+/* Active/primary buttons get amber indicator glow */
+html[data-theme="mission-control"] button[class*="default"]:not(:active),
+html[data-theme="mission-control"] button[class*="terminal"]:not(:active) {
+  border-color: rgba(232, 168, 32, 0.45) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 220, 140, 0.1),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.3),
+    0 3px 4px rgba(0, 0, 0, 0.5),
+    0 0 12px rgba(232, 168, 32, 0.12) !important;
+}
+
+/* Hover — subtle warm highlight shift */
+html[data-theme="mission-control"] button:not(.settings-theme-card):not(.sidebar-project-btn):not(.sidebar-nav-btn):hover:not(:active) {
+  background:
+    linear-gradient(180deg,
+      rgba(75, 60, 34, 0.95) 0%,
+      rgba(52, 42, 24, 0.98) 40%,
+      rgba(38, 30, 16, 0.99) 100%) !important;
+  border-color: rgba(200, 165, 90, 0.45) !important;
+}
+
+/* Mission Control: CRT terminal bezel — the centerpiece */
+html[data-theme="mission-control"] .terminal-surface {
+  border: 4px solid rgba(120, 95, 50, 0.6);
+  border-radius: 12px;
+  background: #06080a;
+  margin: 8px;
+  box-shadow:
+    /* outer bezel — thick bronze metal rim */
+    0 0 0 3px rgba(90, 72, 38, 0.8),
+    0 0 0 6px rgba(60, 48, 26, 0.7),
+    0 0 0 7px rgba(140, 115, 60, 0.3),
+    0 0 0 10px rgba(40, 32, 18, 0.8),
+    0 0 0 11px rgba(100, 80, 42, 0.2),
+    /* depth shadow */
+    0 6px 30px rgba(0, 0, 0, 0.7),
+    0 2px 8px rgba(0, 0, 0, 0.5),
+    /* inner recess — screen sits inside the bezel */
+    inset 0 0 0 2px rgba(0, 0, 0, 0.6),
+    inset 0 4px 12px rgba(0, 0, 0, 0.6),
+    inset 0 0 40px rgba(0, 0, 0, 0.35),
+    /* phosphor ambient glow — green like the reference */
+    inset 0 0 80px rgba(64, 200, 100, 0.04);
+  position: relative;
+  overflow: hidden;
+}
+
+/* CRT scanline overlay */
+html[data-theme="mission-control"] .terminal-surface::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(0, 0, 0, 0.15) 0,
+      rgba(0, 0, 0, 0.15) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+  border-radius: 8px;
+}
+
+/* CRT vignette — darkened corners like a real tube */
+html[data-theme="mission-control"] .terminal-surface::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 50%,
+    rgba(0, 0, 0, 0.45) 100%
+  );
+  border-radius: 8px;
+}
+
+/* Phosphor glow on live terminal — green screen warmth */
+html[data-theme="mission-control"] .terminal-surface.live {
+  box-shadow:
+    0 0 0 3px rgba(90, 72, 38, 0.8),
+    0 0 0 6px rgba(60, 48, 26, 0.7),
+    0 0 0 7px rgba(140, 115, 60, 0.3),
+    0 0 0 10px rgba(40, 32, 18, 0.8),
+    0 0 0 11px rgba(100, 80, 42, 0.2),
+    0 6px 30px rgba(0, 0, 0, 0.7),
+    0 0 40px rgba(64, 200, 100, 0.06),
+    inset 0 0 0 2px rgba(0, 0, 0, 0.6),
+    inset 0 4px 12px rgba(0, 0, 0, 0.6),
+    inset 0 0 40px rgba(0, 0, 0, 0.35),
+    inset 0 0 100px rgba(64, 200, 100, 0.05);
+}
+
+/* Mission Control: console room ambient — warm amber overhead pool */
+html[data-theme="mission-control"] .app-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 50% 12%, rgba(232, 168, 32, 0.07), transparent 45%),
+    radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.35) 100%);
+  z-index: 0;
+}
+
+/* Mission Control: NASA console ASCII art */
+html[data-theme="mission-control"] .app-shell::after {
+  content:
+    "  \250C\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2510\A"
+    "  \2502  MISSION CTL  \2502\A"
+    "  \2502\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2502\A"
+    "  \2502 TRK  \2588\2588 LOCK \2502\A"
+    "  \2502 TEL  \2588\2591 FAIR \2502\A"
+    "  \2502 COM  \2588\2588 GOOD \2502\A"
+    "  \2502 GNC  \2588\2588 GOOD \2502\A"
+    "  \2502 PWR  \2588\2591 CHK  \2502\A"
+    "  \2502\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2502\A"
+    "  \2502  GO FOR LAUNCH \2502\A"
+    "  \2514\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2500\2518";
+  white-space: pre;
+  position: fixed;
+  bottom: 12px;
+  right: 16px;
+  font-family: "Courier New", monospace;
+  font-size: 9px;
+  line-height: 1.3;
+  color: rgba(232, 168, 32, 0.12);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Mission Control: indicator light dots on session status */
+html[data-theme="mission-control"] .session-dot {
+  border: 2px solid rgba(0, 0, 0, 0.5);
+  box-shadow:
+    inset 0 -1px 2px rgba(0, 0, 0, 0.4),
+    0 0 6px currentColor,
+    0 0 2px currentColor;
+  border-radius: 50%;
+}
+
+/* Mission Control: scrollbar — bronze industrial */
+html[data-theme="mission-control"] ::-webkit-scrollbar {
+  width: 10px;
+  background: rgba(18, 14, 8, 0.9);
+}
+html[data-theme="mission-control"] ::-webkit-scrollbar-thumb {
+  background:
+    linear-gradient(180deg, rgba(120, 95, 50, 0.5), rgba(80, 65, 35, 0.4));
+  border: 1px solid rgba(140, 115, 60, 0.3);
+  border-radius: 3px;
+}
+html[data-theme="mission-control"] ::-webkit-scrollbar-thumb:hover {
+  background:
+    linear-gradient(180deg, rgba(150, 120, 65, 0.6), rgba(120, 95, 50, 0.5));
+}
+html[data-theme="mission-control"] ::-webkit-scrollbar-track {
+  background: rgba(18, 14, 8, 0.6);
+  border-left: 1px solid rgba(140, 115, 60, 0.12);
 }
