@@ -459,6 +459,7 @@ const THEMES = [
   { id: "noir", label: "Noir", description: "Film noir warmth with venetian blind light and gold accents" },
   { id: "amber", label: "Amber Terminal", description: "Classic amber phosphor CRT with dot grid and vignette" },
   { id: "mars", label: "Mars Colony", description: "Dusty red industrial with hab-module readout" },
+  { id: "mission-control", label: "Mission Control", description: "1960s NASA console with industrial bezels and CRT terminal" },
   { id: "neutral-dark", label: "Neutral Dark", description: "Clean blue-grey on dark" },
 ] as const;
 
