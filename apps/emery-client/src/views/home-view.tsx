@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useAppStore } from "../store";
 import { FocusCard } from "../components/focus-card";
 import type { ProjectSummary } from "../types";
@@ -7,6 +7,7 @@ export function HomeView() {
   const allProjects = useAppStore((s) => s.bootstrap?.projects ?? []);
   const sessions = useAppStore((s) => s.sessions);
   const focusProjectIds = useAppStore((s) => s.focusProjectIds);
+  const [filter, setFilter] = useState("");
 
   const focusProjects = useMemo(() => {
     const result: ProjectSummary[] = [];
@@ -16,6 +17,14 @@ export function HomeView() {
     }
     return result;
   }, [allProjects, focusProjectIds]);
+
+  const visibleProjects = useMemo(() => {
+    if (!filter.trim()) return focusProjects;
+    const query = filter.trim().toLowerCase();
+    return focusProjects.filter((p) => p.name.toLowerCase().includes(query));
+  }, [focusProjects, filter]);
+
+  const showSearch = focusProjects.length > 0;
 
   return (
     <div className="content-frame">
@@ -30,25 +39,60 @@ export function HomeView() {
           boxSizing: "border-box",
         }}
       >
-        {focusProjects.length > 0 ? (
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: 20,
-              justifyContent: "center",
-              maxWidth: 1040,
-              width: "100%",
-            }}
-          >
-            {focusProjects.map((project) => (
-              <FocusCard
-                key={project.id}
-                project={project}
-                sessions={sessions}
-              />
-            ))}
+        {showSearch && (
+          <div className="home-search-wrap">
+            <input
+              className="home-search-input"
+              type="text"
+              placeholder="Filter projects…"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              aria-label="Filter projects"
+            />
+            {filter && (
+              <button
+                className="home-search-clear"
+                onClick={() => setFilter("")}
+                aria-label="Clear filter"
+                title="Clear"
+              >
+                ×
+              </button>
+            )}
           </div>
+        )}
+
+        {focusProjects.length > 0 ? (
+          visibleProjects.length > 0 ? (
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 20,
+                justifyContent: "center",
+                maxWidth: 1040,
+                width: "100%",
+              }}
+            >
+              {visibleProjects.map((project) => (
+                <FocusCard
+                  key={project.id}
+                  project={project}
+                  sessions={sessions}
+                />
+              ))}
+            </div>
+          ) : (
+            <p
+              style={{
+                color: "var(--text-muted)",
+                fontSize: "var(--text-sm)",
+                letterSpacing: "0.04em",
+              }}
+            >
+              No projects match "{filter}"
+            </p>
+          )
         ) : (
           <p
             style={{

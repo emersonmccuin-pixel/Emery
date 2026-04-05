@@ -786,6 +786,58 @@ html[data-theme="vaporwave"] .sidebar {
   color: var(--text-primary);
 }
 
+/* ── Sidebar project filter ── */
+
+.sidebar-search-wrap {
+  position: relative;
+  padding: var(--space-1) var(--space-2);
+}
+
+.sidebar-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  padding: var(--space-1) var(--space-2);
+  padding-right: 20px;
+  outline: none;
+  transition: border-color 0.15s ease;
+  letter-spacing: 0.02em;
+}
+
+.sidebar-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.sidebar-search-input:focus {
+  border-color: var(--border-default);
+  box-shadow: 0 0 0 1px var(--color-primary-dim, rgba(130, 80, 220, 0.12));
+}
+
+.sidebar-search-clear {
+  position: absolute;
+  right: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  line-height: 1;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sidebar-search-clear:hover {
+  color: var(--text-primary);
+}
+
 /* ── Inline rename input ── */
 
 .sidebar-rename-input {
@@ -1176,6 +1228,59 @@ html[data-theme="vaporwave"] .sidebar {
 
 .home-view {
   padding: var(--space-4) var(--space-2);
+}
+
+/* ── Home view search/filter ── */
+
+.home-search-wrap {
+  position: relative;
+  width: 100%;
+  max-width: 320px;
+  margin-bottom: var(--space-5);
+}
+
+.home-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  padding: var(--space-2) var(--space-3);
+  padding-right: 28px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.home-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.home-search-input:focus {
+  border-color: var(--border-focus, var(--color-primary));
+  box-shadow: 0 0 0 2px var(--color-primary-dim, rgba(130, 80, 220, 0.15));
+}
+
+.home-search-clear {
+  position: absolute;
+  right: var(--space-2);
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: var(--text-md);
+  line-height: 1;
+  padding: 0 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.home-search-clear:hover {
+  color: var(--text-primary);
 }
 
 .focus-card-grid {
