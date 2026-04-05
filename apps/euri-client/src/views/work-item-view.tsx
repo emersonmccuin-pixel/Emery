@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { appStore, useAppStore, currentDayCadenceKey, currentWeekCadenceKey } from "../store";
 import { navStore } from "../nav-store";
 import { StatusBadge } from "../components/status-badge";
@@ -13,6 +13,18 @@ function renderMarkdownBasic(md: string): string {
     .replace(/\n/g, "<br>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+
+function formatDuration(startedAt: number | null, endedAt: number | null): string {
+  const start = startedAt ?? 0;
+  const end = endedAt ?? Date.now();
+  if (!startedAt) return "—";
+  const ms = end - start;
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes === 0) return `${seconds}s`;
+  return `${minutes}m ${seconds}s`;
 }
 
 export function WorkItemView({
@@ -30,8 +42,11 @@ export function WorkItemView({
   const loadingKeys = useAppStore((s) => s.loadingKeys);
   const editingWorkItemId = useAppStore((s) => s.editingWorkItemId);
 
+  const [historyCollapsed, setHistoryCollapsed] = useState(true);
+
   const loading = loadingKeys[`work-item-bundle:${workItemId}`] ?? false;
   const saving = loadingKeys[`save-work-item:${workItemId}`] ?? false;
+  const statusTransitioning = loadingKeys[`save-work-item:${workItemId}`] ?? false;
   const isEditing = editingWorkItemId === workItemId;
 
   useEffect(() => {
@@ -48,6 +63,16 @@ export function WorkItemView({
   const linkedSessions = useMemo(
     () => sessions.filter((s) => s.work_item_id === workItemId),
     [sessions, workItemId],
+  );
+
+  const liveSessions = useMemo(
+    () => linkedSessions.filter((s) => s.runtime_state === "running" || s.runtime_state === "starting"),
+    [linkedSessions],
+  );
+
+  const pastSessions = useMemo(
+    () => linkedSessions.filter((s) => s.runtime_state !== "running" && s.runtime_state !== "starting"),
+    [linkedSessions],
   );
 
   const linkedDocs = useMemo(
@@ -87,6 +112,17 @@ export function WorkItemView({
     appStore.setEditingWorkItemId(null);
   }
 
+  async function handleStatusTransition(newStatus: string) {
+    await appStore.handleUpdateWorkItem(workItemId, {
+      title: workItem.title,
+      description: workItem.description ?? "",
+      acceptance_criteria: workItem.acceptance_criteria || null,
+      work_item_type: workItem.work_item_type,
+      status: newStatus,
+      priority: workItem.priority || null,
+    });
+  }
+
   const editInitialData: WorkItemFormData = {
     title: workItem.title,
     description: workItem.description ?? "",
@@ -96,6 +132,10 @@ export function WorkItemView({
     priority: workItem.priority ?? "",
     parent_id: workItem.parent_id ?? "",
   };
+
+  const visiblePastSessions = historyCollapsed && pastSessions.length > 5
+    ? pastSessions.slice(0, 5)
+    : pastSessions;
 
   return (
     <div className="work-item-detail-view">
@@ -115,6 +155,49 @@ export function WorkItemView({
           </div>
         )}
       </header>
+
+      {/* Actions bar */}
+      {!isEditing ? (
+        <div className="wi-actions-bar">
+          <button
+            className="wi-action-btn wi-action-btn--primary"
+            onClick={() => void appStore.handleLaunchSessionFromWorkItem(workItemId)}
+          >
+            Dispatch Agent
+          </button>
+          <button
+            className="wi-action-btn wi-action-btn--secondary"
+            onClick={() => navStore.goToNewDocument(projectId, workItemId)}
+          >
+            New Document
+          </button>
+          {workItem.status === "backlog" ? (
+            <button
+              className="wi-action-btn wi-action-btn--status"
+              disabled={statusTransitioning}
+              onClick={() => void handleStatusTransition("in_progress")}
+            >
+              Start
+            </button>
+          ) : workItem.status === "in_progress" ? (
+            <button
+              className="wi-action-btn wi-action-btn--status"
+              disabled={statusTransitioning}
+              onClick={() => void handleStatusTransition("done")}
+            >
+              Done
+            </button>
+          ) : workItem.status === "done" ? (
+            <button
+              className="wi-action-btn wi-action-btn--status"
+              disabled={statusTransitioning}
+              onClick={() => void handleStatusTransition("in_progress")}
+            >
+              Reopen
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* Edit form */}
       {isEditing ? (
@@ -164,14 +247,42 @@ export function WorkItemView({
         />
       </section>
 
-      {/* Linked Sessions */}
-      <section className="wi-detail-section">
-        <h3>Sessions ({linkedSessions.length})</h3>
-        {linkedSessions.length === 0 ? (
-          <p className="section-empty">No sessions linked.</p>
-        ) : (
+      {/* Live Sessions */}
+      {liveSessions.length > 0 ? (
+        <section className="wi-detail-section">
+          <h3>Running Sessions</h3>
+          <div className="wi-session-cards">
+            {liveSessions.map((s) => (
+              <div
+                key={s.id}
+                className="wi-session-card wi-session-card--live clickable"
+                onClick={() => navStore.goToAgent(projectId, s.id)}
+              >
+                <div className="wi-session-card-header">
+                  <span className={`wi-session-live-dot indicator-${s.runtime_state}`} />
+                  <span className="wi-session-card-title">{s.title ?? s.current_mode}</span>
+                  <span className="wi-session-card-state">{s.runtime_state}</span>
+                </div>
+                <div className="wi-session-card-meta">
+                  {s.worktree_branch ? (
+                    <span className="wi-session-card-branch">{s.worktree_branch}</span>
+                  ) : null}
+                  <span className="wi-session-card-duration">
+                    {formatDuration(s.started_at, null)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {/* Session History */}
+      {pastSessions.length > 0 ? (
+        <section className="wi-detail-section">
+          <h3>Session History ({pastSessions.length})</h3>
           <div className="wi-detail-list">
-            {linkedSessions.map((s) => (
+            {visiblePastSessions.map((s) => (
               <div
                 key={s.id}
                 className="wi-detail-list-row clickable"
@@ -180,12 +291,31 @@ export function WorkItemView({
                 <span className={`wi-session-indicator indicator-${s.runtime_state}`} />
                 <span className="wi-session-title">{s.title ?? s.current_mode}</span>
                 <span className="wi-session-branch">{s.worktree_branch ?? ""}</span>
-                <span className="wi-session-state">{s.runtime_state}</span>
+                <span className="wi-session-exit-status">{s.status}</span>
+                <span className="wi-session-duration">{formatDuration(s.started_at, s.ended_at)}</span>
               </div>
             ))}
           </div>
-        )}
-      </section>
+          {pastSessions.length > 5 ? (
+            <button
+              className="wi-history-toggle"
+              onClick={() => setHistoryCollapsed((c) => !c)}
+            >
+              {historyCollapsed
+                ? `Show all ${pastSessions.length} sessions`
+                : "Collapse"}
+            </button>
+          ) : null}
+        </section>
+      ) : null}
+
+      {/* Linked Sessions (all) — show only if no live and no past separately shown */}
+      {liveSessions.length === 0 && pastSessions.length === 0 ? (
+        <section className="wi-detail-section">
+          <h3>Sessions (0)</h3>
+          <p className="section-empty">No sessions linked.</p>
+        </section>
+      ) : null}
 
       {/* Linked Documents */}
       <section className="wi-detail-section">
@@ -228,7 +358,7 @@ export function WorkItemView({
         </section>
       ) : null}
 
-      {/* Actions */}
+      {/* Footer actions */}
       <div className="wi-detail-actions">
         {!isEditing ? (
           <button
@@ -238,12 +368,6 @@ export function WorkItemView({
             Edit
           </button>
         ) : null}
-        <button
-          className="secondary-button"
-          onClick={() => void appStore.handleLaunchSessionFromWorkItem(workItemId)}
-        >
-          Dispatch Session
-        </button>
       </div>
     </div>
   );

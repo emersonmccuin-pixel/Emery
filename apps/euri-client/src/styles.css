@@ -3375,6 +3375,171 @@ button {
   border-top: 1px solid var(--border-subtle);
 }
 
+/* ── Work item actions bar ── */
+
+.wi-actions-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  border: 1px solid var(--border-subtle);
+}
+
+.wi-action-btn {
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-base);
+  cursor: pointer;
+  border: none;
+  transition: opacity 0.15s, background 0.15s;
+  white-space: nowrap;
+}
+
+.wi-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.wi-action-btn--primary {
+  background: var(--accent);
+  color: var(--bg-base, #000);
+  font-weight: var(--weight-semibold);
+}
+
+.wi-action-btn--primary:hover:not(:disabled) {
+  opacity: 0.85;
+}
+
+.wi-action-btn--secondary {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+.wi-action-btn--secondary:hover:not(:disabled) {
+  background: var(--border-subtle);
+}
+
+.wi-action-btn--status {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  margin-left: auto;
+}
+
+.wi-action-btn--status:hover:not(:disabled) {
+  background: var(--accent-muted);
+}
+
+/* ── Live session cards ── */
+
+.wi-session-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wi-session-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-hover);
+}
+
+.wi-session-card--live {
+  border-color: var(--status-live);
+  background: var(--status-live-bg);
+}
+
+.wi-session-card.clickable:hover {
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+.wi-session-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wi-session-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: pulse-live 2s ease-in-out infinite;
+}
+
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.wi-session-card-title {
+  flex: 1;
+  font-size: var(--text-base);
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+}
+
+.wi-session-card-state {
+  font-size: 0.72rem;
+  color: var(--status-live-text);
+  text-transform: capitalize;
+}
+
+.wi-session-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-left: 16px;
+}
+
+.wi-session-card-branch {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+}
+
+.wi-session-card-duration {
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+}
+
+/* ── Session history extras ── */
+
+.wi-session-exit-status {
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+  text-transform: capitalize;
+}
+
+.wi-session-duration {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  min-width: 48px;
+  text-align: right;
+}
+
+.wi-history-toggle {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 0.78rem;
+  cursor: pointer;
+  padding: 4px 0;
+  text-align: left;
+}
+
+.wi-history-toggle:hover {
+  text-decoration: underline;
+}
+
 /* ── Work item form ── */
 
 .wi-form {
