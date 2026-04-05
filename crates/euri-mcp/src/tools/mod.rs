@@ -1,6 +1,7 @@
 mod instructions;
 mod merge_queue;
 mod session;
+mod vault;
 mod worktree;
 
 use anyhow::Result;
@@ -25,6 +26,12 @@ pub fn all_tools() -> Value {
         merge_queue::tool_merge_queue_park(),
         instructions::tool_get_project_instructions(),
         instructions::tool_set_project_instructions(),
+        vault::tool_vault_status(),
+        vault::tool_vault_unlock(),
+        vault::tool_vault_lock(),
+        vault::tool_vault_list(),
+        vault::tool_vault_set(),
+        vault::tool_vault_delete(),
     ])
 }
 
@@ -47,6 +54,12 @@ pub fn call_tool(name: &str, input: Value) -> Result<String> {
         "euri_merge_queue_park" => merge_queue::handle_merge_queue_park(input),
         "euri_get_project_instructions" => instructions::handle_get_project_instructions(input),
         "euri_set_project_instructions" => instructions::handle_set_project_instructions(input),
+        "euri_vault_status" => vault::handle_vault_status(input),
+        "euri_vault_unlock" => vault::handle_vault_unlock(input),
+        "euri_vault_lock" => vault::handle_vault_lock(input),
+        "euri_vault_list" => vault::handle_vault_list(input),
+        "euri_vault_set" => vault::handle_vault_set(input),
+        "euri_vault_delete" => vault::handle_vault_delete(input),
         _ => Err(anyhow::anyhow!("unknown tool: {}", name)),
     }
 }

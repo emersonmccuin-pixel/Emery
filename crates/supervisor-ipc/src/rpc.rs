@@ -9,7 +9,7 @@ use supervisor_core::{
     CreateAccountRequest, CreateAgentTemplateRequest, CreateDiagnosticsBundleRequest,
     CreateDocumentRequest, CreatePlanningAssignmentRequest, CreateProjectRequest,
     CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest,
-    CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
+    CreateVaultEntryRequest, CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
     DeletePlanningAssignmentRequest, DiagnosticContext, DocumentListFilter,
     GitInitProjectRootRequest, InboxEntryListFilter, MergeQueueCheckConflictsParams,
     MergeQueueGetDiffParams, MergeQueueGetParams, MergeQueueListFilter, MergeQueueMergeParams,
@@ -29,7 +29,8 @@ use crate::protocol::{
     ProjectGetParams, ProjectRootGitStatusParams, ProjectRootListParams, RequestEnvelope,
     ResponseEnvelope, SessionAttachParams, SessionControlParams, SessionDetachParams,
     SessionGetParams, SessionInputParams, SessionResizeParams, SessionSpecGetParams,
-    SessionWatchParams, SubscriptionCloseParams, SubscriptionOpenParams, WorkItemGetParams,
+    SessionWatchParams, SubscriptionCloseParams, SubscriptionOpenParams, VaultAuditLogParams,
+    VaultDeleteParams, VaultListParams, VaultSetParams, VaultUnlockParams, WorkItemGetParams,
     WorkflowReconciliationProposalGetParams, WorkspaceStateGetParams, WorktreeGetParams,
 };
 
@@ -696,6 +697,48 @@ impl SupervisorRpc {
                     self.supervisor.archive_agent_template(request)?,
                 )?)
             }
+            Method::VaultList => {
+                let params: VaultListParams = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.vault_list_entries(params.scope.as_deref())?,
+                )?)
+            }
+            Method::VaultSet => {
+                let params: VaultSetParams = serde_json::from_value(params)?;
+                let request = CreateVaultEntryRequest {
+                    scope: params.scope,
+                    key: params.key,
+                    value: params.value,
+                    description: params.description,
+                };
+                Ok(serde_json::to_value(
+                    self.supervisor.vault_set_entry(request, "user")?,
+                )?)
+            }
+            Method::VaultDelete => {
+                let params: VaultDeleteParams = serde_json::from_value(params)?;
+                self.supervisor.vault_delete_entry(&params.id, "user")?;
+                Ok(json!({ "success": true }))
+            }
+            Method::VaultUnlock => {
+                let params: VaultUnlockParams = serde_json::from_value(params)?;
+                self.supervisor.vault_unlock(params.duration_minutes);
+                Ok(serde_json::to_value(self.supervisor.vault_lock_state())?)
+            }
+            Method::VaultLock => {
+                self.supervisor.vault_lock();
+                Ok(serde_json::to_value(self.supervisor.vault_lock_state())?)
+            }
+            Method::VaultStatus => {
+                Ok(serde_json::to_value(self.supervisor.vault_lock_state())?)
+            }
+            Method::VaultAuditLog => {
+                let params: VaultAuditLogParams = serde_json::from_value(params)?;
+                let limit = params.limit.unwrap_or(100);
+                Ok(serde_json::to_value(
+                    self.supervisor.vault_list_audit(params.entry_id.as_deref(), limit)?,
+                )?)
+            }
             Method::SubscriptionOpen => {
                 let params: SubscriptionOpenParams = serde_json::from_value(params)?;
                 self.open_subscription(params, connection)
@@ -921,6 +964,13 @@ impl SupervisorRpc {
                 Method::AgentTemplateCreate.as_str(),
                 Method::AgentTemplateUpdate.as_str(),
                 Method::AgentTemplateArchive.as_str(),
+                Method::VaultList.as_str(),
+                Method::VaultSet.as_str(),
+                Method::VaultDelete.as_str(),
+                Method::VaultUnlock.as_str(),
+                Method::VaultLock.as_str(),
+                Method::VaultStatus.as_str(),
+                Method::VaultAuditLog.as_str(),
             ],
             app_data_root: self.supervisor.paths().root.display().to_string(),
             ipc_endpoint: self.ipc_endpoint.clone(),

@@ -78,6 +78,13 @@ pub enum Method {
     AgentTemplateCreate,
     AgentTemplateUpdate,
     AgentTemplateArchive,
+    VaultList,
+    VaultSet,
+    VaultDelete,
+    VaultUnlock,
+    VaultLock,
+    VaultStatus,
+    VaultAuditLog,
 }
 
 impl Method {
@@ -158,6 +165,13 @@ impl Method {
             Self::AgentTemplateCreate => "agent_template.create",
             Self::AgentTemplateUpdate => "agent_template.update",
             Self::AgentTemplateArchive => "agent_template.archive",
+            Self::VaultList => "vault.list",
+            Self::VaultSet => "vault.set",
+            Self::VaultDelete => "vault.delete",
+            Self::VaultUnlock => "vault.unlock",
+            Self::VaultLock => "vault.lock",
+            Self::VaultStatus => "vault.status",
+            Self::VaultAuditLog => "vault.audit_log",
         }
     }
 }
@@ -246,6 +260,13 @@ impl TryFrom<&str> for Method {
             "agent_template.create" => Ok(Self::AgentTemplateCreate),
             "agent_template.update" => Ok(Self::AgentTemplateUpdate),
             "agent_template.archive" => Ok(Self::AgentTemplateArchive),
+            "vault.list" => Ok(Self::VaultList),
+            "vault.set" => Ok(Self::VaultSet),
+            "vault.delete" => Ok(Self::VaultDelete),
+            "vault.unlock" => Ok(Self::VaultUnlock),
+            "vault.lock" => Ok(Self::VaultLock),
+            "vault.status" => Ok(Self::VaultStatus),
+            "vault.audit_log" => Ok(Self::VaultAuditLog),
             _ => Err(()),
         }
     }
@@ -271,6 +292,35 @@ pub struct SessionWatchParams {
     pub session_ids: Vec<String>,
     /// Timeout in seconds. Default 60. Max 300.
     pub timeout_seconds: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct VaultListParams {
+    pub scope: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct VaultSetParams {
+    pub scope: String,
+    pub key: String,
+    pub value: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct VaultDeleteParams {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct VaultUnlockParams {
+    pub duration_minutes: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct VaultAuditLogParams {
+    pub entry_id: Option<String>,
+    pub limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
