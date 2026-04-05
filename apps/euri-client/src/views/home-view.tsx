@@ -1,7 +1,6 @@
-import { type DragEvent, type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { appStore, useAppStore } from "../store";
 import { navStore } from "../nav-store";
-import { pickFolder } from "../lib";
 import type { GitHealthStatus, ProjectSummary, SessionSummary, MergeQueueEntry } from "../types";
 import { StatusLEDs } from "../components/status-leds";
 import { Badge } from "@/components/ui/badge";
@@ -9,11 +8,7 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 export function HomeView() {
@@ -26,7 +21,6 @@ export function HomeView() {
   const projectDetails = useAppStore((s) => s.projectDetails);
   const gitStatusByRootId = useAppStore((s) => s.gitStatusByRootId);
   const bootstrapping = useAppStore((s) => s.bootstrapping);
-  const [showCreateForm, setShowCreateForm] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
 
   const projects = showArchived
@@ -62,11 +56,6 @@ export function HomeView() {
     const others = projects.filter((p) => !focusSet.has(p.id));
     return { focusProjects: focus, otherProjects: others };
   }, [projects, focusProjectIds, maxFocusSlots]);
-
-  function handleProjectCreated(projectId: string) {
-    setShowCreateForm(false);
-    navStore.goToProject(projectId);
-  }
 
   return (
     <div className="content-frame">
@@ -130,20 +119,13 @@ export function HomeView() {
                 variant="terminal"
                 size="sm"
                 className="home-new-project-btn"
-                onClick={() => setShowCreateForm(true)}
+                onClick={() => navStore.openModal({ modal: "create_project" })}
               >
                 + New Project
               </Button>
             ) : null}
           </div>
         </div>
-
-        {showCreateForm ? (
-          <ProjectCreateForm
-            onCreated={handleProjectCreated}
-            onCancel={() => setShowCreateForm(false)}
-          />
-        ) : null}
 
         <FocusCardGrid
           projects={focusProjects}
@@ -172,159 +154,13 @@ export function HomeView() {
             <span className="reconnecting-spinner" />
             Loading workspace...
           </div>
-        ) : projects.length === 0 && !showCreateForm ? (
+        ) : projects.length === 0 ? (
           <div className="empty-pane">
             {showArchived ? "No archived projects." : "No projects yet. Create one to get started."}
           </div>
         ) : null}
       </div>
     </div>
-  );
-}
-
-// --- ProjectCreateForm ---
-
-const PROJECT_TYPES = [
-  { value: "", label: "General" },
-  { value: "coding", label: "Coding" },
-  { value: "research", label: "Research" },
-] as const;
-
-function ProjectCreateForm({
-  onCreated,
-  onCancel,
-}: {
-  onCreated: (projectId: string) => void;
-  onCancel: () => void;
-}) {
-  const [name, setName] = useState("");
-  const [folderPath, setFolderPath] = useState("");
-  const [initGit, setInitGit] = useState(false);
-  const [projectType, setProjectType] = useState<string>("");
-  const [submitting, setSubmitting] = useState(false);
-
-  async function handleBrowse() {
-    const folder = await pickFolder();
-    if (folder) {
-      setFolderPath(folder);
-      if (!name) {
-        const parts = folder.replace(/\\/g, "/").split("/");
-        const folderName = parts[parts.length - 1] || folder;
-        setName(folderName);
-      }
-    }
-  }
-
-  async function handleSubmit() {
-    if (!name.trim() || !folderPath.trim() || submitting) return;
-    setSubmitting(true);
-    const typeValue = projectType || null;
-    const projectId = await appStore.handleCreateProject(name.trim(), folderPath.trim(), initGit, typeValue);
-    setSubmitting(false);
-    if (projectId) {
-      onCreated(projectId);
-    }
-  }
-
-  function handleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter") void handleSubmit();
-    if (e.key === "Escape") onCancel();
-  }
-
-  const canSubmit = name.trim().length > 0 && folderPath.trim().length > 0 && !submitting;
-
-  return (
-    <Card className="project-create-form">
-      <CardHeader className="pb-4">
-        <CardTitle>Provision New Project</CardTitle>
-        <CardDescription>Register a workspace root and seed project defaults for EURI.</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-      <div className="project-create-form-row">
-        <Input
-          className="project-create-input"
-          type="text"
-          placeholder="Project name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={handleKeyDown}
-          autoFocus
-        />
-      </div>
-      <div className="project-create-form-row">
-        <Input
-          className="project-create-input project-create-path-input"
-          type="text"
-          placeholder="Folder path"
-          value={folderPath}
-          onChange={(e) => {
-            const val = e.target.value;
-            setFolderPath(val);
-            if (!name) {
-              const parts = val.replace(/\\/g, "/").split("/");
-              const segment = parts[parts.length - 1];
-              if (segment) setName(segment);
-            }
-          }}
-          onKeyDown={handleKeyDown}
-        />
-        <Button variant="ghost" size="sm" className="project-create-browse-btn" onClick={handleBrowse} disabled={submitting}>
-          Browse
-        </Button>
-      </div>
-      <div className="project-create-form-row project-create-type-row">
-        <span className="project-create-type-label">Project type</span>
-        <div className="project-type-selector" role="radiogroup" aria-label="Project type">
-          {PROJECT_TYPES.map((pt) => (
-            <label key={pt.value} className={`project-type-option${projectType === pt.value ? " project-type-option-selected" : ""}`}>
-              <input
-                type="radio"
-                name="project-type"
-                value={pt.value}
-                checked={projectType === pt.value}
-                onChange={() => setProjectType(pt.value)}
-                disabled={submitting}
-                className="project-type-radio"
-              />
-              {pt.label}
-            </label>
-          ))}
-        </div>
-        {projectType && (
-          <span className="project-type-hint">
-            {projectType === "coding" ? "Auto-provisions planner, architect, implementer, reviewer templates" :
-             projectType === "research" ? "Auto-provisions researcher, analyst, writer templates" : ""}
-          </span>
-        )}
-      </div>
-      <div className="project-create-form-row project-create-checkbox-row">
-        <label className="project-create-checkbox-label">
-          <input
-            type="checkbox"
-            className="project-create-checkbox"
-            checked={initGit}
-            onChange={(e) => setInitGit(e.target.checked)}
-            disabled={submitting}
-          />
-          Initialize git repository
-        </label>
-      </div>
-      <div className="project-create-form-actions">
-        <Button
-          variant="terminal"
-          size="sm"
-          className="project-create-submit-btn"
-          onClick={handleSubmit}
-          disabled={!canSubmit}
-        >
-          {submitting ? "Creating..." : "Create Project"}
-        </Button>
-        <Button variant="ghost" size="sm" className="project-create-cancel-btn" onClick={onCancel} disabled={submitting}>
-          Cancel
-        </Button>
-      </div>
-      </CardContent>
-    </Card>
   );
 }
 

@@ -1282,6 +1282,70 @@ html[data-theme="vaporwave"] .peek-panel {
   word-break: break-all;
 }
 
+/* ── Modal content styles ── */
+
+.modal-title {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: var(--space-3);
+}
+
+.modal-subtitle {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  margin-bottom: var(--space-4);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.modal-loading {
+  padding: var(--space-4);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.modal-dispatch {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.modal-create-work-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-create-project {
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-form-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.modal-confirm {
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-confirm-message {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  margin-bottom: var(--space-2);
+  line-height: 1.5;
+}
+
 /* ── Shared surface styles ── */
 
 .topbar,

@@ -1230,6 +1230,7 @@ class AppStore {
     }
 
     this.update({ pendingDispatch: { mode: "single", workItemId, projectId: s.selectedProjectId, originMode: "execution" } });
+    navStore.openModal({ modal: "dispatch_single", projectId: s.selectedProjectId, workItemId, originMode: "execution" });
   }
 
   cancelDispatch() {
@@ -1259,6 +1260,7 @@ class AppStore {
         dispatchConflicts: result.warnings,
         pendingDispatch: { mode: "multi", workItemIds: ids, projectId },
       });
+      navStore.openModal({ modal: "dispatch_multi", projectId, workItemIds: ids });
     } catch (err) {
       this.update({ error: String(err) });
     }
