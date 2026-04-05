@@ -10,6 +10,7 @@ import { StatusLEDs } from "../components/status-leds";
 
 export function ProjectCommandView({ projectId }: { projectId: string }) {
   const bootstrap = useAppStore((s) => s.bootstrap);
+  const accounts = useAppStore((s) => s.bootstrap?.accounts ?? []);
   const sessions = useAppStore((s) => s.sessions);
   const workItemsByProject = useAppStore((s) => s.workItemsByProject);
   const documentsByProject = useAppStore((s) => s.documentsByProject);
@@ -69,6 +70,15 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
 
   return (
     <div className="project-command-view">
+      {accounts.length === 0 && (
+        <div className="setup-banner">
+          <span className="setup-banner-icon">!</span>
+          <span>No agent accounts configured. Set one up to start dispatching.</span>
+          <button className="primary-button" onClick={() => navStore.goToSettings()}>
+            Configure accounts
+          </button>
+        </div>
+      )}
       <div className="project-command-topbar">
         <button
           className="btn-ghost btn-sm project-settings-btn"
