@@ -13,22 +13,26 @@ export function ProjectHome({
   sessions,
   workItems,
   documents,
+  mergeQueueCount,
   saving,
   onSaveProject,
   onOpenSession,
   onOpenWorkItem,
   onOpenDocument,
+  onOpenMergeQueue,
 }: {
   project: ShellBootstrap["projects"][number] | null;
   accounts: AccountSummary[];
   sessions: SessionSummary[];
   workItems: WorkItemSummary[];
   documents: DocumentSummary[];
+  mergeQueueCount: number;
   saving: boolean;
   onSaveProject: (input: { name: string; slug: string; default_account_id: string }) => void;
   onOpenSession: (sessionId: string) => void;
   onOpenWorkItem: (workItemId: string, projectId: string) => void;
   onOpenDocument: (documentId: string, projectId: string) => void;
+  onOpenMergeQueue: () => void;
 }) {
   const [form, setForm] = useState({ name: "", slug: "", default_account_id: "" });
 
@@ -63,6 +67,15 @@ export function ProjectHome({
                 <span className="list-meta"><span className="indicator live" />{session.title ?? session.current_mode}</span>
               </button>
             ))}
+          </section>
+        ) : null}
+
+        {mergeQueueCount > 0 ? (
+          <section className="card session-card-list">
+            <h3>Merge queue</h3>
+            <button className="session-link" onClick={onOpenMergeQueue}>
+              {mergeQueueCount} branch{mergeQueueCount !== 1 ? "es" : ""} ready to merge
+            </button>
           </section>
         ) : null}
 

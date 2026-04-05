@@ -15,20 +15,21 @@ use crate::models::{
     CreateProjectRequest, CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
     CreateWorkItemRequest, CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
     DeletePlanningAssignmentRequest, DocumentDetail, DocumentListFilter, DocumentSummary,
-    DocumentUpdateRecord, GetWorkspaceStateRequest, NewAccountRecord, NewDocumentRecord,
-    NewPlanningAssignmentRecord, NewProjectRecord, NewProjectRootRecord, NewSessionRecord,
-    NewSessionSpecRecord, NewWorkItemRecord, NewWorkflowReconciliationProposalRecord,
-    NewWorktreeRecord, PlanningAssignmentDetail, PlanningAssignmentListFilter,
-    PlanningAssignmentSummary, PlanningAssignmentUpdateRecord, ProjectDetail, ProjectRootSummary,
-    ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord, RemoveProjectRootRequest,
-    SessionArtifactRecord, SessionAttachResponse, SessionDetachResponse, SessionDetail,
-    SessionListFilter, SessionOutputEvent, SessionSpecDetail, SessionSpecListFilter,
-    SessionSpecSummary, SessionSpecUpdateRecord, SessionStateChangedEvent, SessionSummary,
-    UpdateAccountRequest, UpdateDocumentRequest, UpdatePlanningAssignmentRequest,
-    UpdateProjectRequest, UpdateProjectRootRequest, UpdateSessionSpecRequest,
-    UpdateWorkItemRequest, UpdateWorkflowReconciliationProposalRequest,
-    UpdateWorkspaceStateRequest, UpdateWorktreeRequest, WorkItemDetail, WorkItemListFilter,
-    WorkItemSummary, WorkItemUpdateRecord, WorkflowReconciliationProposalDetail,
+    DocumentUpdateRecord, GetWorkspaceStateRequest, MergeQueueEntry, MergeQueueListFilter,
+    NewAccountRecord, NewDocumentRecord, NewMergeQueueRecord, NewPlanningAssignmentRecord,
+    NewProjectRecord, NewProjectRootRecord, NewSessionRecord, NewSessionSpecRecord,
+    NewWorkItemRecord, NewWorkflowReconciliationProposalRecord, NewWorktreeRecord,
+    PlanningAssignmentDetail, PlanningAssignmentListFilter, PlanningAssignmentSummary,
+    PlanningAssignmentUpdateRecord, ProjectDetail, ProjectRootSummary, ProjectRootUpdateRecord,
+    ProjectSummary, ProjectUpdateRecord, RemoveProjectRootRequest, SessionArtifactRecord,
+    SessionAttachResponse, SessionDetachResponse, SessionDetail, SessionListFilter,
+    SessionOutputEvent, SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary,
+    SessionSpecUpdateRecord, SessionStateChangedEvent, SessionSummary, UpdateAccountRequest,
+    UpdateDocumentRequest, UpdatePlanningAssignmentRequest, UpdateProjectRequest,
+    UpdateProjectRootRequest, UpdateSessionSpecRequest, UpdateWorkItemRequest,
+    UpdateWorkflowReconciliationProposalRequest, UpdateWorkspaceStateRequest,
+    UpdateWorktreeRequest, WorkItemDetail, WorkItemListFilter, WorkItemSummary,
+    WorkItemUpdateRecord, WorkflowReconciliationProposalDetail,
     WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
     WorkflowReconciliationProposalUpdateRecord, WorkspaceStateRecord, WorktreeDetail,
     WorktreeListFilter, WorktreeSummary, WorktreeUpdateRecord,
@@ -2253,6 +2254,200 @@ impl SupervisorService {
         payload: Value,
     ) -> Result<()> {
         self.diagnostics.record(subsystem, event, context, payload)
+    }
+
+    // --- Merge Queue ---
+
+    pub fn auto_queue_for_merge(&self, session_id: &str) -> Result<Option<String>> {
+        let session = self
+            .databases
+            .get_session(session_id)?
+            .ok_or_else(|| anyhow!("session {} not found", session_id))?;
+
+        let worktree_id = match session.worktree_id.as_deref() {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+
+        let worktree = self
+            .databases
+            .get_worktree(worktree_id)?
+            .ok_or_else(|| anyhow!("worktree {} not found", worktree_id))?;
+
+        let root = self
+            .databases
+            .get_project_root(&worktree.summary.project_root_id)?
+            .ok_or_else(|| anyhow!("project root not found"))?;
+
+        let git_root = Path::new(
+            root.git_root_path
+                .as_deref()
+                .unwrap_or(&root.path),
+        );
+
+        let has_uncommitted = !git::git_status(Path::new(&worktree.summary.path))?
+            .trim()
+            .is_empty();
+
+        let base_ref = worktree.summary.base_ref.as_deref().unwrap_or("main");
+        let diff_stat = git::git_diff_stat(git_root, base_ref, &worktree.summary.branch_name).ok();
+
+        let now = unix_time_seconds();
+        let entry_id = format!("mq_{}", Uuid::new_v4().simple());
+        let position = self
+            .databases
+            .next_merge_queue_position(&session.project_id)?;
+
+        let record = NewMergeQueueRecord {
+            id: entry_id.clone(),
+            project_id: session.project_id.clone(),
+            session_id: session_id.to_string(),
+            worktree_id: worktree_id.to_string(),
+            branch_name: worktree.summary.branch_name.clone(),
+            base_ref: base_ref.to_string(),
+            position,
+            status: if has_uncommitted {
+                "pending".to_string()
+            } else {
+                "ready".to_string()
+            },
+            diff_stat_json: diff_stat
+                .as_ref()
+                .map(|s| serde_json::to_string(s).unwrap_or_default()),
+            conflict_files_json: None,
+            has_uncommitted_changes: has_uncommitted,
+            queued_at: now,
+        };
+        self.databases.insert_merge_queue_entry(&record)?;
+
+        Ok(Some(entry_id))
+    }
+
+    pub fn list_merge_queue(&self, filter: MergeQueueListFilter) -> Result<Vec<MergeQueueEntry>> {
+        self.databases.list_merge_queue(&filter)
+    }
+
+    pub fn get_merge_queue_entry(&self, id: &str) -> Result<Option<MergeQueueEntry>> {
+        self.databases.get_merge_queue_entry(id)
+    }
+
+    pub fn get_merge_queue_diff(&self, id: &str) -> Result<String> {
+        let entry = self
+            .databases
+            .get_merge_queue_entry(id)?
+            .ok_or_else(|| anyhow!("merge queue entry {} not found", id))?;
+
+        let worktree = self
+            .databases
+            .get_worktree(&entry.worktree_id)?
+            .ok_or_else(|| anyhow!("worktree {} not found", entry.worktree_id))?;
+        let root = self
+            .databases
+            .get_project_root(&worktree.summary.project_root_id)?
+            .ok_or_else(|| anyhow!("project root not found"))?;
+        let git_root = Path::new(
+            root.git_root_path
+                .as_deref()
+                .unwrap_or(&root.path),
+        );
+
+        git::git_diff(git_root, &entry.base_ref, &entry.branch_name)
+    }
+
+    pub fn execute_merge(&self, id: &str) -> Result<()> {
+        let entry = self
+            .databases
+            .get_merge_queue_entry(id)?
+            .ok_or_else(|| anyhow!("merge queue entry {} not found", id))?;
+
+        if entry.status != "ready" {
+            return Err(anyhow!(
+                "cannot merge entry with status '{}' — must be 'ready'",
+                entry.status
+            ));
+        }
+
+        self.databases
+            .update_merge_queue_status(id, "merging", None)?;
+
+        let worktree = self
+            .databases
+            .get_worktree(&entry.worktree_id)?
+            .ok_or_else(|| anyhow!("worktree {} not found", entry.worktree_id))?;
+        let root = self
+            .databases
+            .get_project_root(&worktree.summary.project_root_id)?
+            .ok_or_else(|| anyhow!("project root not found"))?;
+        let git_root = Path::new(
+            root.git_root_path
+                .as_deref()
+                .unwrap_or(&root.path),
+        );
+
+        match git::git_merge(git_root, &entry.branch_name) {
+            Ok(_) => {
+                let now = unix_time_seconds();
+                self.databases
+                    .update_merge_queue_status(id, "merged", Some(now))?;
+                self.databases
+                    .update_worktree_status(&entry.worktree_id, "merged", now)?;
+                let _ = git::git_worktree_remove(git_root, Path::new(&worktree.summary.path));
+                let _ = git::git_branch_delete(git_root, &entry.branch_name);
+                Ok(())
+            }
+            Err(err) => {
+                self.databases
+                    .update_merge_queue_status(id, "conflict", None)?;
+                Err(err)
+            }
+        }
+    }
+
+    pub fn park_merge_entry(&self, id: &str) -> Result<()> {
+        self.databases
+            .update_merge_queue_status(id, "parked", None)
+    }
+
+    pub fn reorder_merge_queue(&self, project_id: &str, ordered_ids: &[String]) -> Result<()> {
+        self.databases
+            .reorder_merge_queue(project_id, ordered_ids)
+    }
+
+    pub fn check_merge_conflicts(&self, id: &str) -> Result<Vec<String>> {
+        let entry = self
+            .databases
+            .get_merge_queue_entry(id)?
+            .ok_or_else(|| anyhow!("merge queue entry {} not found", id))?;
+
+        let worktree = self
+            .databases
+            .get_worktree(&entry.worktree_id)?
+            .ok_or_else(|| anyhow!("worktree {} not found", entry.worktree_id))?;
+        let root = self
+            .databases
+            .get_project_root(&worktree.summary.project_root_id)?
+            .ok_or_else(|| anyhow!("project root not found"))?;
+        let git_root = Path::new(
+            root.git_root_path
+                .as_deref()
+                .unwrap_or(&root.path),
+        );
+
+        let conflicts = git::git_merge_dry_run(git_root, &entry.branch_name)?;
+
+        let conflict_json = serde_json::to_string(&conflicts)?;
+        self.databases
+            .update_merge_queue_conflict_files(id, &conflict_json)?;
+
+        if conflicts.is_empty() {
+            self.databases
+                .update_merge_queue_status(id, "ready", None)?;
+        } else {
+            self.databases
+                .update_merge_queue_status(id, "conflict", None)?;
+        }
+
+        Ok(conflicts)
     }
 }
 

@@ -5,15 +5,20 @@ import {
   createSession,
   createWorkItem,
   deletePlanningAssignment,
+  getMergeQueueDiff,
   getProject,
   getSession,
   getDocument,
   getWorkItem,
   interruptSession,
   listDocuments,
+  listMergeQueue,
   listPlanningAssignments,
   listWorkflowReconciliationProposals,
   listWorkItems,
+  mergeQueueCheckConflicts,
+  mergeQueueMerge,
+  mergeQueuePark,
   terminateSession,
   updateDocument,
   updateProject,
@@ -31,6 +36,7 @@ import type {
   ConnectionStatusEvent,
   DocumentDetail,
   DocumentSummary,
+  MergeQueueEntry,
   PlanningAssignmentSummary,
   ProjectDetail,
   ProjectSummary,
@@ -186,6 +192,9 @@ export function resourceLabel(
   if (resource.resource_type === "document_detail") {
     return documents[resource.document_id]?.title ?? "Document";
   }
+  if (resource.resource_type === "merge_queue") {
+    return "Merge queue";
+  }
   return "Resource";
 }
 
@@ -206,6 +215,8 @@ export type AppState = {
   workItemDetails: Record<string, WorkItemDetail>;
   documentDetails: Record<string, DocumentDetail>;
   reconciliationByWorkItem: Record<string, WorkflowReconciliationProposalSummary[]>;
+  mergeQueueByProject: Record<string, MergeQueueEntry[]>;
+  mergeQueueDiffs: Record<string, string>;
   connectionEvent: ConnectionStatusEvent | null;
   loadingKeys: Record<string, boolean>;
   error: string | null;
@@ -249,6 +260,8 @@ function initialState(): AppState {
     workItemDetails: {},
     documentDetails: {},
     reconciliationByWorkItem: {},
+    mergeQueueByProject: {},
+    mergeQueueDiffs: {},
     connectionEvent: null,
     loadingKeys: {},
     error: null,
@@ -641,6 +654,7 @@ class AppStore {
   async openProject(projectId: string) {
     this.update({ selectedProjectId: projectId });
     void this.loadProjectReads(projectId);
+    void this.handleLoadMergeQueue(projectId);
     const resourceId = `project_home:${projectId}`;
     const s = this.state;
     if (!s.openResources.some((r) => r.resource_id === resourceId)) {
@@ -1082,6 +1096,87 @@ class AppStore {
       this.update({ error: String(invokeError) });
     } finally {
       this.setLoading(`proposal-action:${proposal.id}`, false);
+    }
+  }
+
+  // --- Merge Queue ---
+
+  openMergeQueue(projectId: string) {
+    void this.handleLoadMergeQueue(projectId);
+    const resourceId = `merge_queue:${projectId}`;
+    const s = this.state;
+    if (!s.openResources.some((r) => r.resource_id === resourceId)) {
+      this.update({
+        openResources: [
+          ...s.openResources,
+          { resource_type: "merge_queue" as const, project_id: projectId, resource_id: resourceId },
+        ],
+      });
+    }
+    this.update({ activeResourceId: resourceId });
+  }
+
+  async handleLoadMergeQueue(projectId: string) {
+    this.setLoading("merge-queue", true);
+    try {
+      const entries = await listMergeQueue(projectId);
+      this.update({
+        mergeQueueByProject: { ...this.state.mergeQueueByProject, [projectId]: entries },
+      });
+    } catch (invokeError) {
+      this.update({ error: String(invokeError) });
+    } finally {
+      this.setLoading("merge-queue", false);
+    }
+  }
+
+  async handleMergeQueueMerge(entryId: string, projectId: string) {
+    this.setLoading(`merge:${entryId}`, true);
+    try {
+      await mergeQueueMerge(entryId);
+      await this.handleLoadMergeQueue(projectId);
+      this.clearError();
+    } catch (invokeError) {
+      this.update({ error: String(invokeError) });
+    } finally {
+      this.setLoading(`merge:${entryId}`, false);
+    }
+  }
+
+  async handleMergeQueuePark(entryId: string, projectId: string) {
+    try {
+      await mergeQueuePark(entryId);
+      await this.handleLoadMergeQueue(projectId);
+      this.clearError();
+    } catch (invokeError) {
+      this.update({ error: String(invokeError) });
+    }
+  }
+
+  async handleLoadMergeQueueDiff(entryId: string) {
+    this.setLoading(`merge-diff:${entryId}`, true);
+    try {
+      const result = await getMergeQueueDiff(entryId);
+      this.update({
+        mergeQueueDiffs: { ...this.state.mergeQueueDiffs, [entryId]: result.diff },
+      });
+    } catch (invokeError) {
+      this.update({ error: String(invokeError) });
+    } finally {
+      this.setLoading(`merge-diff:${entryId}`, false);
+    }
+  }
+
+  async handleMergeQueueCheckConflicts(entryId: string, projectId: string) {
+    this.setLoading(`merge-conflicts:${entryId}`, true);
+    try {
+      await mergeQueueCheckConflicts(entryId);
+      await this.handleLoadMergeQueue(projectId);
+      this.clearError();
+    } catch (invokeError) {
+      this.update({ error: String(invokeError) });
+    } finally {
+      this.setLoading(`merge-conflicts:${entryId}`, false);
     }
   }
 

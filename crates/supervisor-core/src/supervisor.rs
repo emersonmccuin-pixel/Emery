@@ -10,18 +10,18 @@ use crate::models::{
     CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
     CreateWorkItemRequest, CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
     DeletePlanningAssignmentRequest, DocumentDetail, DocumentListFilter, DocumentSummary,
-    GetWorkspaceStateRequest, PlanningAssignmentDetail, PlanningAssignmentListFilter,
-    PlanningAssignmentSummary, ProjectDetail, ProjectRootSummary, ProjectSummary,
-    RemoveProjectRootRequest, SessionAttachResponse, SessionDetachResponse, SessionDetail,
-    SessionListFilter, SessionOutputEvent, SessionSpecDetail, SessionSpecListFilter,
-    SessionSpecSummary, SessionStateChangedEvent, SessionSummary, UpdateAccountRequest,
-    UpdateDocumentRequest, UpdatePlanningAssignmentRequest, UpdateProjectRequest,
-    UpdateProjectRootRequest, UpdateSessionSpecRequest, UpdateWorkItemRequest,
-    UpdateWorkflowReconciliationProposalRequest, UpdateWorkspaceStateRequest,
-    UpdateWorktreeRequest, WorkItemDetail, WorkItemListFilter, WorkItemSummary,
-    WorkflowReconciliationProposalDetail, WorkflowReconciliationProposalListFilter,
-    WorkflowReconciliationProposalSummary, WorkspaceStateRecord, WorktreeDetail,
-    WorktreeListFilter, WorktreeSummary,
+    GetWorkspaceStateRequest, MergeQueueEntry, MergeQueueListFilter, PlanningAssignmentDetail,
+    PlanningAssignmentListFilter, PlanningAssignmentSummary, ProjectDetail, ProjectRootSummary,
+    ProjectSummary, RemoveProjectRootRequest, SessionAttachResponse, SessionDetachResponse,
+    SessionDetail, SessionListFilter, SessionOutputEvent, SessionSpecDetail,
+    SessionSpecListFilter, SessionSpecSummary, SessionStateChangedEvent, SessionSummary,
+    UpdateAccountRequest, UpdateDocumentRequest, UpdatePlanningAssignmentRequest,
+    UpdateProjectRequest, UpdateProjectRootRequest, UpdateSessionSpecRequest,
+    UpdateWorkItemRequest, UpdateWorkflowReconciliationProposalRequest,
+    UpdateWorkspaceStateRequest, UpdateWorktreeRequest, WorkItemDetail, WorkItemListFilter,
+    WorkItemSummary, WorkflowReconciliationProposalDetail,
+    WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
+    WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary,
 };
 use crate::runtime::SessionRegistry;
 use crate::service::SupervisorService;
@@ -381,6 +381,36 @@ impl Supervisor {
         request: CreateDiagnosticsBundleRequest,
     ) -> Result<DiagnosticsBundleResult> {
         self.service.export_diagnostics_bundle(request)
+    }
+
+    // --- Merge Queue ---
+
+    pub fn list_merge_queue(&self, filter: MergeQueueListFilter) -> Result<Vec<MergeQueueEntry>> {
+        self.service.list_merge_queue(filter)
+    }
+
+    pub fn get_merge_queue_entry(&self, id: &str) -> Result<Option<MergeQueueEntry>> {
+        self.service.get_merge_queue_entry(id)
+    }
+
+    pub fn get_merge_queue_diff(&self, id: &str) -> Result<String> {
+        self.service.get_merge_queue_diff(id)
+    }
+
+    pub fn execute_merge(&self, id: &str) -> Result<()> {
+        self.service.execute_merge(id)
+    }
+
+    pub fn park_merge_entry(&self, id: &str) -> Result<()> {
+        self.service.park_merge_entry(id)
+    }
+
+    pub fn reorder_merge_queue(&self, project_id: &str, ordered_ids: &[String]) -> Result<()> {
+        self.service.reorder_merge_queue(project_id, ordered_ids)
+    }
+
+    pub fn check_merge_conflicts(&self, id: &str) -> Result<Vec<String>> {
+        self.service.check_merge_conflicts(id)
     }
 }
 

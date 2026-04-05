@@ -10,6 +10,8 @@ use supervisor_core::{
     CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest,
     CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
     DeletePlanningAssignmentRequest, DiagnosticContext, DocumentListFilter,
+    MergeQueueCheckConflictsParams, MergeQueueGetDiffParams, MergeQueueGetParams,
+    MergeQueueListFilter, MergeQueueMergeParams, MergeQueueParkParams, MergeQueueReorderParams,
     PlanningAssignmentListFilter, RemoveProjectRootRequest, SessionListFilter,
     SessionSpecListFilter, Supervisor, UpdateAccountRequest, UpdateDocumentRequest,
     UpdatePlanningAssignmentRequest, UpdateProjectRequest, UpdateProjectRootRequest,
@@ -543,6 +545,57 @@ impl SupervisorRpc {
                 self.supervisor.terminate_session(&params.session_id)?;
                 Ok(json!({ "accepted": true }))
             }
+            Method::MergeQueueList => {
+                let filter: MergeQueueListFilter = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.list_merge_queue(filter)?,
+                )?)
+            }
+            Method::MergeQueueGet => {
+                let params: MergeQueueGetParams = serde_json::from_value(params)?;
+                let entry = self
+                    .supervisor
+                    .get_merge_queue_entry(&params.merge_queue_id)?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "merge queue entry {} was not found",
+                            params.merge_queue_id
+                        )
+                    })?;
+                Ok(serde_json::to_value(entry)?)
+            }
+            Method::MergeQueueGetDiff => {
+                let params: MergeQueueGetDiffParams = serde_json::from_value(params)?;
+                let diff = self
+                    .supervisor
+                    .get_merge_queue_diff(&params.merge_queue_id)?;
+                Ok(json!({ "diff": diff }))
+            }
+            Method::MergeQueueMerge => {
+                let params: MergeQueueMergeParams = serde_json::from_value(params)?;
+                self.supervisor
+                    .execute_merge(&params.merge_queue_id)?;
+                Ok(json!({ "ok": true }))
+            }
+            Method::MergeQueuePark => {
+                let params: MergeQueueParkParams = serde_json::from_value(params)?;
+                self.supervisor
+                    .park_merge_entry(&params.merge_queue_id)?;
+                Ok(json!({ "ok": true }))
+            }
+            Method::MergeQueueReorder => {
+                let params: MergeQueueReorderParams = serde_json::from_value(params)?;
+                self.supervisor
+                    .reorder_merge_queue(&params.project_id, &params.ordered_ids)?;
+                Ok(json!({ "ok": true }))
+            }
+            Method::MergeQueueCheckConflicts => {
+                let params: MergeQueueCheckConflictsParams = serde_json::from_value(params)?;
+                let conflicts = self
+                    .supervisor
+                    .check_merge_conflicts(&params.merge_queue_id)?;
+                Ok(json!({ "conflicts": conflicts }))
+            }
             Method::SubscriptionOpen => {
                 let params: SubscriptionOpenParams = serde_json::from_value(params)?;
                 self.open_subscription(params, connection)
@@ -736,6 +789,13 @@ impl SupervisorRpc {
                 Method::SessionTerminate.as_str(),
                 Method::SubscriptionOpen.as_str(),
                 Method::SubscriptionClose.as_str(),
+                Method::MergeQueueList.as_str(),
+                Method::MergeQueueGet.as_str(),
+                Method::MergeQueueGetDiff.as_str(),
+                Method::MergeQueueMerge.as_str(),
+                Method::MergeQueuePark.as_str(),
+                Method::MergeQueueReorder.as_str(),
+                Method::MergeQueueCheckConflicts.as_str(),
             ],
             app_data_root: self.supervisor.paths().root.display().to_string(),
             ipc_endpoint: self.ipc_endpoint.clone(),
@@ -829,6 +889,8 @@ fn classify_error(error: anyhow::Error) -> ErrorBody {
             "workflow_reconciliation_proposal_not_found"
         } else if message.contains("workspace_state ") {
             "workspace_state_not_found"
+        } else if message.contains("merge queue entry ") {
+            "merge_queue_entry_not_found"
         } else if message.contains("session spec ") {
             "session_spec_not_found"
         } else if message.contains("session ") {

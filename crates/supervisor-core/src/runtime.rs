@@ -978,6 +978,17 @@ fn wait_for_exit(
                             "exit_code": exit_code,
                         }),
                     );
+
+                    // Auto-queue worktree branches for merge
+                    if state.runtime_state == "exited" {
+                        if let Err(error) =
+                            auto_queue_for_merge_on_exit(&databases, session_id)
+                        {
+                            eprintln!(
+                                "failed to auto-queue merge for session {session_id}: {error:#}"
+                            );
+                        }
+                    }
                 }
                 Err(error) => {
                     eprintln!("failed to finalize runtime for session {session_id}: {error:#}");
@@ -1259,4 +1270,67 @@ fn encode_terminal_chunk(sequence: u64, timestamp: i64, payload: &[u8]) -> Encod
         encoding: "base64",
         data: base64::engine::general_purpose::STANDARD.encode(payload),
     }
+}
+
+/// Standalone function callable from the session watcher thread (which has
+/// `DatabaseSet` but not `SupervisorService`). Checks if the exited session
+/// used a worktree and, if so, queues the branch for merge review.
+fn auto_queue_for_merge_on_exit(databases: &DatabaseSet, session_id: &str) -> anyhow::Result<()> {
+    use crate::git;
+    use crate::models::NewMergeQueueRecord;
+    use std::path::Path;
+
+    let session = databases
+        .get_session(session_id)?
+        .ok_or_else(|| anyhow!("session {} not found", session_id))?;
+
+    let worktree_id = match session.worktree_id.as_deref() {
+        Some(id) => id,
+        None => return Ok(()), // no worktree — nothing to queue
+    };
+
+    let worktree = databases
+        .get_worktree(worktree_id)?
+        .ok_or_else(|| anyhow!("worktree {} not found", worktree_id))?;
+
+    let root = databases
+        .get_project_root(&worktree.summary.project_root_id)?
+        .ok_or_else(|| anyhow!("project root not found"))?;
+
+    let git_root = Path::new(root.git_root_path.as_deref().unwrap_or(&root.path));
+
+    let has_uncommitted = !git::git_status(Path::new(&worktree.summary.path))?
+        .trim()
+        .is_empty();
+
+    let base_ref = worktree.summary.base_ref.as_deref().unwrap_or("main");
+    let diff_stat = git::git_diff_stat(git_root, base_ref, &worktree.summary.branch_name).ok();
+
+    let now = unix_time_seconds();
+    let entry_id = format!("mq_{}", Uuid::new_v4().simple());
+    let position = databases.next_merge_queue_position(&session.project_id)?;
+
+    let record = NewMergeQueueRecord {
+        id: entry_id,
+        project_id: session.project_id.clone(),
+        session_id: session_id.to_string(),
+        worktree_id: worktree_id.to_string(),
+        branch_name: worktree.summary.branch_name.clone(),
+        base_ref: base_ref.to_string(),
+        position,
+        status: if has_uncommitted {
+            "pending".to_string()
+        } else {
+            "ready".to_string()
+        },
+        diff_stat_json: diff_stat
+            .as_ref()
+            .map(|s| serde_json::to_string(s).unwrap_or_default()),
+        conflict_files_json: None,
+        has_uncommitted_changes: has_uncommitted,
+        queued_at: now,
+    };
+    databases.insert_merge_queue_entry(&record)?;
+
+    Ok(())
 }

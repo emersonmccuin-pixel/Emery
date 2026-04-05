@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { appStore, useAppStore, planningAssignmentForKey, currentDayCadenceKey, currentWeekCadenceKey } from "./store";
+import { MergeQueue } from "./merge-queue";
 import { ProjectHome } from "./project-home";
 import { SessionPane } from "./session-pane";
 import { DocumentPane, WorkItemPane } from "./workbench";
@@ -15,6 +16,8 @@ export function WorkspaceRouter() {
   const workItemDetails = useAppStore((s) => s.workItemDetails);
   const documentDetails = useAppStore((s) => s.documentDetails);
   const reconciliationByWorkItem = useAppStore((s) => s.reconciliationByWorkItem);
+  const mergeQueueByProject = useAppStore((s) => s.mergeQueueByProject);
+  const mergeQueueDiffs = useAppStore((s) => s.mergeQueueDiffs);
   const loadingKeys = useAppStore((s) => s.loadingKeys);
 
   const dayCadenceKey = useMemo(() => currentDayCadenceKey(), []);
@@ -34,11 +37,13 @@ export function WorkspaceRouter() {
         sessions={sessions.filter((entry) => entry.project_id === activeResource.project_id)}
         workItems={workItemsByProject[activeResource.project_id] ?? []}
         documents={documentsByProject[activeResource.project_id] ?? []}
+        mergeQueueCount={(mergeQueueByProject[activeResource.project_id] ?? []).filter((e) => e.status !== "merged").length}
         saving={Boolean(loadingKeys[`save-project:${activeResource.project_id}`])}
         onSaveProject={(input) => void appStore.handleUpdateProject(activeResource.project_id, input)}
         onOpenSession={(id) => appStore.openSession(id)}
         onOpenWorkItem={(id, pid) => appStore.openWorkItem(id, pid)}
         onOpenDocument={(id, pid) => appStore.openDocument(id, pid)}
+        onOpenMergeQueue={() => appStore.openMergeQueue(activeResource.project_id)}
       />
     );
   }
@@ -103,6 +108,21 @@ export function WorkspaceRouter() {
         onDismissProposal={(proposalId) =>
           void appStore.handleDismissProposal(activeResource.work_item_id, proposalId)
         }
+      />
+    );
+  }
+
+  if (activeResource.resource_type === "merge_queue") {
+    return (
+      <MergeQueue
+        entries={mergeQueueByProject[activeResource.project_id] ?? []}
+        diffs={mergeQueueDiffs}
+        loading={Boolean(loadingKeys["merge-queue"])}
+        loadingKeys={loadingKeys}
+        onMerge={(id) => void appStore.handleMergeQueueMerge(id, activeResource.project_id)}
+        onPark={(id) => void appStore.handleMergeQueuePark(id, activeResource.project_id)}
+        onLoadDiff={(id) => void appStore.handleLoadMergeQueueDiff(id)}
+        onCheckConflicts={(id) => void appStore.handleMergeQueueCheckConflicts(id, activeResource.project_id)}
       />
     );
   }
