@@ -941,6 +941,8 @@ pub struct CreateSessionRequest {
     pub restore_policy: Option<String>,
     pub initial_terminal_cols: Option<i64>,
     pub initial_terminal_rows: Option<i64>,
+    #[serde(default)]
+    pub auto_worktree: bool,
 }
 
 #[derive(Debug, Clone)]

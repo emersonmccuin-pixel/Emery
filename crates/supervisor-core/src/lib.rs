@@ -1,5 +1,6 @@
 mod bootstrap;
 mod diagnostics;
+mod git;
 mod models;
 mod runtime;
 mod schema;

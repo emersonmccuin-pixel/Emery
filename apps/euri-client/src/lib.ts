@@ -283,6 +283,7 @@ export async function createSession(
     restore_policy?: string;
     initial_terminal_cols?: number;
     initial_terminal_rows?: number;
+    auto_worktree?: boolean;
   },
   correlationId?: string,
 ): Promise<SessionDetail> {

@@ -27,6 +27,7 @@ import { appStore, useAppStore } from "./store";
 import { Sidebar } from "./sidebar";
 import { TabStrip } from "./tab-strip";
 import { WorkspaceRouter } from "./workspace-router";
+import { DispatchSheet } from "./dispatch-sheet";
 
 function decodeBase64Utf8(base64: string): string {
   const binary = atob(base64);
@@ -60,6 +61,9 @@ export default function App() {
   const sessions = useAppStore((s) => s.sessions);
   const workItemsByProject = useAppStore((s) => s.workItemsByProject);
   const documentsByProject = useAppStore((s) => s.documentsByProject);
+  const pendingDispatch = useAppStore((s) => s.pendingDispatch);
+  const projectDetails = useAppStore((s) => s.projectDetails);
+  const workItemDetails = useAppStore((s) => s.workItemDetails);
 
   const restoreApplied = useRef(false);
   const persistTimeout = useRef<number | null>(null);
@@ -337,6 +341,20 @@ export default function App() {
           </section>
         </main>
       </div>
+
+      {pendingDispatch && projectDetails[pendingDispatch.projectId] && workItemDetails[pendingDispatch.workItemId] ? (
+        <DispatchSheet
+          workItem={workItemDetails[pendingDispatch.workItemId]}
+          project={projectDetails[pendingDispatch.projectId]}
+          account={
+            bootstrap?.accounts.find(
+              (a) => a.id === projectDetails[pendingDispatch.projectId].default_account_id,
+            ) ?? bootstrap?.accounts[0] ?? null
+          }
+          onConfirm={(opts) => void appStore.confirmDispatch(opts)}
+          onCancel={() => appStore.cancelDispatch()}
+        />
+      ) : null}
     </div>
   );
 }

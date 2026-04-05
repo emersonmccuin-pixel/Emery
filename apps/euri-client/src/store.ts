@@ -227,6 +227,10 @@ export type AppState = {
     work_item_id: string;
     content_markdown: string;
   };
+  pendingDispatch: {
+    workItemId: string;
+    projectId: string;
+  } | null;
 };
 
 function initialState(): AppState {
@@ -266,6 +270,7 @@ function initialState(): AppState {
       work_item_id: "",
       content_markdown: "",
     },
+    pendingDispatch: null,
   };
 }
 
@@ -863,8 +868,8 @@ class AppStore {
       return;
     }
 
+    // Pre-fetch project + work item so the dispatch sheet has data, then show it
     const correlationId = newCorrelationId("work-item-session");
-    this.setLoading(`launch-session:${workItemId}`, true);
     try {
       const project =
         s.projectDetails[s.selectedProjectId] ?? (await getProject(s.selectedProjectId, correlationId));
@@ -873,6 +878,34 @@ class AppStore {
       const workItem =
         s.workItemDetails[workItemId] ?? (await getWorkItem(workItemId, correlationId));
       this.applyWorkItemDetail(workItem);
+    } catch (invokeError) {
+      this.update({ error: String(invokeError) });
+      return;
+    }
+
+    this.update({ pendingDispatch: { workItemId, projectId: s.selectedProjectId } });
+  }
+
+  cancelDispatch() {
+    this.update({ pendingDispatch: null });
+  }
+
+  async confirmDispatch(opts: { autoWorktree: boolean }) {
+    const dispatch = this.state.pendingDispatch;
+    if (!dispatch) return;
+
+    const { workItemId, projectId } = dispatch;
+    this.update({ pendingDispatch: null });
+
+    const correlationId = newCorrelationId("work-item-session");
+    this.setLoading(`launch-session:${workItemId}`, true);
+    try {
+      const s = this.state;
+      const project = s.projectDetails[projectId];
+      if (!project) throw new Error("Project detail not loaded.");
+
+      const workItem = s.workItemDetails[workItemId];
+      if (!workItem) throw new Error("Work item detail not loaded.");
 
       const account =
         s.bootstrap?.accounts.find((entry) => entry.id === project.default_account_id) ??
@@ -889,7 +922,7 @@ class AppStore {
 
       const detail = await createSession(
         {
-          project_id: s.selectedProjectId,
+          project_id: projectId,
           project_root_id: root.id,
           worktree_id: null,
           work_item_id: workItemId,
@@ -906,6 +939,7 @@ class AppStore {
           restore_policy: "reattach",
           initial_terminal_cols: 120,
           initial_terminal_rows: 40,
+          auto_worktree: opts.autoWorktree,
         },
         correlationId,
       );

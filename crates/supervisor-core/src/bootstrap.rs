@@ -10,6 +10,7 @@ pub struct AppPaths {
     pub app_db: PathBuf,
     pub knowledge_db: PathBuf,
     pub sessions_dir: PathBuf,
+    pub worktrees_dir: PathBuf,
     pub logs_dir: PathBuf,
     pub backups_dir: PathBuf,
     pub cache_dir: PathBuf,
@@ -34,6 +35,7 @@ impl AppPaths {
             app_db: root.join("app.db"),
             knowledge_db: root.join("knowledge.db"),
             sessions_dir: root.join("sessions"),
+            worktrees_dir: root.join("worktrees"),
             logs_dir: root.join("logs"),
             backups_dir: root.join("backups"),
             cache_dir: root.join("cache"),
@@ -47,6 +49,7 @@ impl AppPaths {
         for dir in [
             &self.root,
             &self.sessions_dir,
+            &self.worktrees_dir,
             &self.logs_dir,
             &self.backups_dir,
             &self.cache_dir,
