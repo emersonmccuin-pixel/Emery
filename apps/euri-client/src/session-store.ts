@@ -95,3 +95,36 @@ export function useSessionSnapshot(sessionId: string): SessionSnapshot | undefin
     () => sessionStore.getSnapshot(sessionId),
   );
 }
+
+export type DisplayState =
+  | "starting"
+  | "actively_working"
+  | "idle_live"
+  | "waiting_for_input"
+  | "stopping"
+  | "ended"
+  | "error";
+
+export function deriveDisplayState(snap: SessionSnapshot): DisplayState {
+  if (snap.runtime_state === "failed") return "error";
+  if (!snap.live) return "ended";
+  if (snap.runtime_state === "stopping") return "stopping";
+  if (snap.runtime_state === "starting") return "starting";
+
+  if (snap.runtime_state === "running") {
+    switch (snap.activity_state) {
+      case "working": return "actively_working";
+      case "needs_input": return "waiting_for_input";
+      case "idle":
+      default: return "idle_live";
+    }
+  }
+
+  return "ended";
+}
+
+export function useDisplayState(sessionId: string): DisplayState {
+  const snap = useSessionSnapshot(sessionId);
+  if (!snap) return "ended";
+  return deriveDisplayState(snap);
+}
