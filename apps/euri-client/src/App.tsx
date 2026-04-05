@@ -38,7 +38,7 @@ function buildWorkspacePayloadV2(navigation: NavigationLayer): WorkspacePayloadV
   return {
     version: 2,
     navigation,
-    focus_project_ids: [],
+    focus_project_ids: appStore.getState().focusProjectIds,
     planning_view_mode: appStore.getState().planningViewMode,
   };
 }
@@ -49,6 +49,7 @@ export default function App() {
   const pendingDispatch = useAppStore((s) => s.pendingDispatch);
   const projectDetails = useAppStore((s) => s.projectDetails);
   const workItemDetails = useAppStore((s) => s.workItemDetails);
+  const focusProjectIds = useAppStore((s) => s.focusProjectIds);
   const navLayer = useNavLayer();
 
   const restoreApplied = useRef(false);
@@ -106,6 +107,7 @@ export default function App() {
               if (layer.layer === "project" || layer.layer === "agent") {
                 appStore.setSelectedProjectId(layer.projectId);
               }
+              appStore.setFocusProjectIds(restored.focus_project_ids ?? []);
             } else {
               // V1: derive nav from selected_project_id
               const projectId = restored.selected_project_id ?? payload.projects[0]?.id ?? null;
@@ -228,7 +230,7 @@ export default function App() {
         newCorrelationId("workspace-save"),
       ).catch((invokeError: unknown) => appStore.setError(String(invokeError)));
     }, 250);
-  }, [bootstrap, navLayer]);
+  }, [bootstrap, navLayer, focusProjectIds]);
 
   // --- Keyboard shortcuts ---
   const lastEscapeRef = useRef<number>(0);
@@ -256,6 +258,22 @@ export default function App() {
       if (e.ctrlKey && e.key === "`") {
         e.preventDefault();
         navStore.goHome();
+      }
+
+      if (e.ctrlKey && e.key >= "1" && e.key <= "5") {
+        e.preventDefault();
+        const index = parseInt(e.key, 10) - 1;
+        const focusIds = appStore.getState().focusProjectIds;
+        const projects = appStore.getState().bootstrap?.projects ?? [];
+        const effectiveFocus = focusIds.length > 0
+          ? focusIds
+          : projects.slice(0, appStore.getState().maxFocusSlots).map((p) => p.id);
+        if (index < effectiveFocus.length) {
+          const projectId = effectiveFocus[index];
+          if (projects.some((p) => p.id === projectId)) {
+            navStore.goToProject(projectId);
+          }
+        }
       }
     }
 

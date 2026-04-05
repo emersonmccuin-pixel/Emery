@@ -279,6 +279,130 @@ button {
   color: rgba(242, 237, 225, 0.4);
 }
 
+/* ── Home stats bar ── */
+
+.home-stats-bar {
+  padding: 4px 0 8px;
+}
+
+.home-stat {
+  font-size: 0.75rem;
+  color: rgba(242, 237, 225, 0.35);
+}
+
+/* ── Focus card enhancements ── */
+
+.focus-card {
+  position: relative;
+  cursor: grab;
+}
+
+.focus-card:active {
+  cursor: grabbing;
+}
+
+.focus-card-drag-over {
+  border-color: rgba(216, 162, 90, 0.5);
+  background: rgba(216, 162, 90, 0.06);
+}
+
+.focus-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.focus-card-body {
+  background: none;
+  text-align: left;
+  padding: 0;
+  width: 100%;
+  color: inherit;
+}
+
+.focus-card-shortcut {
+  font-size: 0.65rem;
+  color: rgba(242, 237, 225, 0.2);
+  margin-left: 8px;
+}
+
+/* ── Pin/unpin button ── */
+
+.focus-card-pin {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  font-size: 0.85rem;
+  background: none;
+  color: rgba(242, 237, 225, 0.2);
+  border-radius: 4px;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.focus-card-pin:hover {
+  color: #d8a25a;
+  background: rgba(216, 162, 90, 0.1);
+}
+
+.focus-card-pin.active {
+  color: #d8a25a;
+}
+
+/* ── All projects section ── */
+
+.all-projects-section {
+  margin-top: 16px;
+}
+
+.all-projects-header {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(242, 237, 225, 0.35);
+  margin: 0 0 8px;
+}
+
+.all-projects-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.all-projects-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.all-projects-link {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: none;
+  text-align: left;
+  color: rgba(242, 237, 225, 0.7);
+  transition: background 0.1s;
+}
+
+.all-projects-link:hover {
+  background: rgba(242, 237, 225, 0.05);
+  color: #f2ede1;
+}
+
+.all-projects-name {
+  font-size: 0.85rem;
+}
+
+.all-projects-live {
+  font-size: 0.7rem;
+  color: #5ab482;
+}
+
 /* ── Layer stubs ── */
 
 .layer-stub {

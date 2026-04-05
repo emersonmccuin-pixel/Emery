@@ -211,6 +211,8 @@ export type AppState = {
     workItemId: string;
     projectId: string;
   } | null;
+  focusProjectIds: string[];
+  maxFocusSlots: number;
 };
 
 function initialState(): AppState {
@@ -250,6 +252,8 @@ function initialState(): AppState {
       content_markdown: "",
     },
     pendingDispatch: null,
+    focusProjectIds: [],
+    maxFocusSlots: 3,
   };
 }
 
@@ -307,6 +311,39 @@ class AppStore {
 
   setError(error: string) {
     this.update({ error });
+  }
+
+  setFocusProjectIds(ids: string[]) {
+    this.update({ focusProjectIds: ids });
+  }
+
+  setMaxFocusSlots(max: number) {
+    const clamped = Math.max(1, Math.min(5, max));
+    let focus = this.state.focusProjectIds;
+    if (focus.length > clamped) {
+      focus = focus.slice(0, clamped);
+    }
+    this.update({ maxFocusSlots: clamped, focusProjectIds: focus });
+  }
+
+  pinProject(projectId: string) {
+    if (this.state.focusProjectIds.includes(projectId)) return;
+    if (this.state.focusProjectIds.length >= this.state.maxFocusSlots) {
+      this.update({ error: `Focus full — unpin a project first (max ${this.state.maxFocusSlots})` });
+      return;
+    }
+    this.update({ focusProjectIds: [...this.state.focusProjectIds, projectId] });
+  }
+
+  unpinProject(projectId: string) {
+    this.update({
+      focusProjectIds: this.state.focusProjectIds.filter((id) => id !== projectId),
+    });
+  }
+
+  reorderFocus(orderedIds: string[]) {
+    const valid = orderedIds.filter((id) => this.state.focusProjectIds.includes(id));
+    this.update({ focusProjectIds: valid });
   }
 
   setShowCreateForm(mode: false | "work" | "doc") {
