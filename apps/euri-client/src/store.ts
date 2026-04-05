@@ -184,6 +184,30 @@ export function currentWeekCadenceKey(now = new Date()) {
   return `${date.getUTCFullYear()}-W${String(weekNumber).padStart(2, "0")}`;
 }
 
+export function weekDaysFromKey(weekKey: string): string[] {
+  const [yearStr, weekPart] = weekKey.split("-W");
+  const year = parseInt(yearStr);
+  const week = parseInt(weekPart);
+  // ISO week 1 is the week containing Jan 4
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const jan4Day = jan4.getUTCDay() || 7; // 1=Mon … 7=Sun
+  const monday = new Date(jan4);
+  monday.setUTCDate(jan4.getUTCDate() - (jan4Day - 1) + (week - 1) * 7);
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(monday);
+    d.setUTCDate(monday.getUTCDate() + i);
+    return d.toISOString().slice(0, 10);
+  });
+}
+
+export function weekKeyOffset(baseWeekKey: string, offset: number): string {
+  if (offset === 0) return baseWeekKey;
+  const dates = weekDaysFromKey(baseWeekKey);
+  const monday = new Date(dates[0] + "T12:00:00Z");
+  monday.setUTCDate(monday.getUTCDate() + offset * 7);
+  return currentWeekCadenceKey(monday);
+}
+
 export function planningAssignmentForKey(
   assignments: PlanningAssignmentSummary[],
   workItemId: string,

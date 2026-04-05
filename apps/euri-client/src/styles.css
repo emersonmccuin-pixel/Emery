@@ -2163,6 +2163,220 @@ button {
   margin-top: 2px;
 }
 
+/* ── Weekly planner ── */
+.planning-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.week-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+}
+
+.week-nav-btn {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  background: transparent;
+  color: rgba(242, 237, 225, 0.45);
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.week-nav-btn:hover {
+  background: rgba(242, 237, 225, 0.1);
+  color: rgba(242, 237, 225, 0.85);
+}
+
+.week-nav-label {
+  font-size: 0.75rem;
+  color: rgba(242, 237, 225, 0.5);
+  font-family: "IBM Plex Mono", monospace;
+  flex: 1;
+}
+
+.weekly-planner {
+  margin-top: 8px;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+.weekly-planner-empty {
+  margin-top: 10px;
+  padding: 12px;
+  font-size: 0.8rem;
+  color: rgba(242, 237, 225, 0.4);
+  text-align: center;
+}
+
+.weekly-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr) 1.2fr;
+  gap: 4px;
+  min-width: 700px;
+}
+
+.weekly-col {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.weekly-col-today > .weekly-col-header {
+  background: rgba(81, 133, 143, 0.18);
+  border-radius: 4px 4px 0 0;
+}
+
+.weekly-col-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 4px 5px;
+  border-bottom: 1px solid rgba(242, 237, 225, 0.08);
+  margin-bottom: 2px;
+}
+
+.weekly-col-today .weekly-col-day {
+  color: #51858f;
+}
+
+.weekly-col-day {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(242, 237, 225, 0.5);
+}
+
+.weekly-col-date {
+  font-size: 0.68rem;
+  font-family: "IBM Plex Mono", monospace;
+  color: rgba(242, 237, 225, 0.3);
+  margin-top: 1px;
+}
+
+.weekly-col-unscheduled .weekly-col-day {
+  font-size: 0.65rem;
+  letter-spacing: 0.03em;
+}
+
+.weekly-col-items {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.weekly-item {
+  display: flex;
+  border-radius: 5px;
+  background: rgba(242, 237, 225, 0.04);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.weekly-item:hover {
+  background: rgba(242, 237, 225, 0.07);
+}
+
+.weekly-item-done {
+  opacity: 0.45;
+}
+
+.weekly-item-edge {
+  flex-shrink: 0;
+  width: 3px;
+  align-self: stretch;
+}
+
+.weekly-item-body {
+  flex: 1;
+  padding: 5px 5px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.weekly-item-top {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.weekly-item-session-placeholder {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+}
+
+.weekly-item-callsign {
+  font-size: 0.65rem;
+  font-family: "IBM Plex Mono", monospace;
+  color: rgba(242, 237, 225, 0.4);
+  flex-shrink: 0;
+}
+
+.weekly-item-status {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.weekly-item-title {
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  color: rgba(242, 237, 225, 0.85);
+}
+
+.weekly-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 2px;
+}
+
+.weekly-item-dispatch-btn {
+  font-size: 0.65rem;
+  padding: 1px 5px;
+  background: rgba(216, 162, 90, 0.15);
+  color: #d8a25a;
+  border-radius: 3px;
+}
+
+.weekly-item-dispatch-btn:hover {
+  background: rgba(216, 162, 90, 0.28);
+}
+
+.weekly-item-remove-btn {
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  background: transparent;
+  color: rgba(242, 237, 225, 0.2);
+  border-radius: 3px;
+  line-height: 1;
+  margin-left: auto;
+}
+
+.weekly-item-remove-btn:hover {
+  background: rgba(199, 80, 80, 0.18);
+  color: #c75050;
+}
+
 /* ── Docs section ── */
 .docs-section .doc-group {
   margin-bottom: 8px;
