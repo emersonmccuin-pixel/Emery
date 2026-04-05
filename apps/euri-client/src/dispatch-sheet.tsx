@@ -93,14 +93,30 @@ function SingleDispatchSheet({
 }) {
   const [safetyMode, setSafetyMode] = useState<string>("");
   const [model, setModel] = useState<string>("");
+  const [confirmClose, setConfirmClose] = useState(false);
   const branchName = `euri/${workItem.callsign.toLowerCase()}`;
   const root = project.roots[0] ?? null;
   const isExecution = originMode === "execution";
   const resolvedDefault = account?.default_safety_mode ?? "full";
   const resolvedDefaultModel = isExecution ? "sonnet" : "opus";
 
+  const isDirty = safetyMode !== "" || model !== "";
+
+  function handleBackdropClick() {
+    if (!isDirty) {
+      onCancel();
+      return;
+    }
+    if (confirmClose) {
+      onCancel();
+    } else {
+      setConfirmClose(true);
+      setTimeout(() => setConfirmClose(false), 3000);
+    }
+  }
+
   return (
-    <div className="dispatch-overlay" onClick={onCancel}>
+    <div className="dispatch-overlay" onClick={handleBackdropClick}>
       <div className="dispatch-sheet" onClick={(e: React.MouseEvent<HTMLDivElement>) => e.stopPropagation()}>
         <h3>Launch Session</h3>
         <div className="dispatch-details">
@@ -162,7 +178,19 @@ function SingleDispatchSheet({
           )}
         </div>
         <div className="dispatch-actions">
-          <button className="secondary-button" onClick={onCancel}>Cancel</button>
+          <button
+            className={`secondary-button${confirmClose ? " dispatch-discard-confirm" : ""}`}
+            onClick={() => {
+              if (isDirty && !confirmClose) {
+                setConfirmClose(true);
+                setTimeout(() => setConfirmClose(false), 3000);
+              } else {
+                onCancel();
+              }
+            }}
+          >
+            {confirmClose ? "Discard changes?" : "Cancel"}
+          </button>
           {account ? (
             <button className="secondary-button" onClick={() => onConfirm({ autoWorktree: isExecution, originMode, safetyMode: safetyMode || undefined, model: model || undefined })}>
               {isExecution ? "Launch on Branch" : "Launch on Main"}

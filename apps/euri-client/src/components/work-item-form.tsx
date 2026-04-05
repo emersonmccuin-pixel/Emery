@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { WORK_ITEM_TYPES, WORK_ITEM_STATUSES, PRIORITIES } from "../store";
+import { useRef, useState } from "react";
+import { WORK_ITEM_TYPES, WORK_ITEM_STATUSES, PRIORITIES, useAppStore } from "../store";
+import type { WorkItemSummary } from "../types";
 
 export type WorkItemFormData = {
   title: string;
@@ -15,6 +16,8 @@ type WorkItemFormProps = {
   mode: "create" | "edit";
   initialData?: Partial<WorkItemFormData>;
   loading?: boolean;
+  /** When set, the parent is pre-locked (e.g. "Add Child" context) and the picker is read-only */
+  lockedParentLabel?: string;
   onSubmit: (data: WorkItemFormData) => void;
   onCancel: () => void;
 };
@@ -33,6 +36,7 @@ export function WorkItemForm({
   mode,
   initialData,
   loading = false,
+  lockedParentLabel,
   onSubmit,
   onCancel,
 }: WorkItemFormProps) {
@@ -119,16 +123,17 @@ export function WorkItemForm({
         </select>
       </div>
 
-      {/* Parent ID */}
+      {/* Parent */}
       <div className="wi-form-field">
-        <label className="wi-form-label">Parent ID</label>
-        <input
-          className="wi-form-input"
-          type="text"
-          value={form.parent_id}
-          onChange={(e) => set("parent_id", e.target.value)}
-          placeholder="Optional parent work item ID"
-        />
+        <label className="wi-form-label">Parent</label>
+        {lockedParentLabel ? (
+          <span className="wi-form-parent-locked">{lockedParentLabel}</span>
+        ) : (
+          <ParentPicker
+            value={form.parent_id}
+            onChange={(id) => set("parent_id", id)}
+          />
+        )}
       </div>
 
       {/* Description */}
@@ -165,5 +170,108 @@ export function WorkItemForm({
         </button>
       </div>
     </form>
+  );
+}
+
+// --- ParentPicker ---
+
+function ParentPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const workItemsByProject = useAppStore((s) => s.workItemsByProject);
+  const selectedProjectId = useAppStore((s) => s.selectedProjectId);
+  const workItemDetails = useAppStore((s) => s.workItemDetails);
+
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const allItems: WorkItemSummary[] = selectedProjectId
+    ? (workItemsByProject[selectedProjectId] ?? [])
+    : [];
+
+  const selectedItem = value
+    ? (workItemDetails[value] ?? allItems.find((i) => i.id === value) ?? null)
+    : null;
+
+  const filtered = allItems
+    .filter((item) => {
+      if (!query.trim()) return true;
+      const q = query.toLowerCase();
+      return (
+        item.callsign.toLowerCase().includes(q) ||
+        item.title.toLowerCase().includes(q)
+      );
+    })
+    .slice(0, 10);
+
+  function handleSelect(item: WorkItemSummary) {
+    onChange(item.id);
+    setQuery("");
+    setOpen(false);
+  }
+
+  function handleClear() {
+    onChange("");
+    setQuery("");
+    setOpen(false);
+  }
+
+  return (
+    <div className="parent-picker" ref={containerRef}>
+      {selectedItem ? (
+        <div className="parent-picker-selected">
+          <span className="parent-picker-value">
+            {selectedItem.callsign}: {selectedItem.title}
+          </span>
+          <button
+            type="button"
+            className="parent-picker-clear"
+            onClick={handleClear}
+            title="Clear parent"
+          >
+            ✕
+          </button>
+        </div>
+      ) : (
+        <input
+          className="wi-form-input"
+          type="text"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => {
+            // Delay so click on dropdown option registers first
+            setTimeout(() => setOpen(false), 150);
+          }}
+          placeholder="Search by callsign or title…"
+        />
+      )}
+      {open && !selectedItem && filtered.length > 0 && (
+        <div className="parent-picker-dropdown">
+          {filtered.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className="parent-picker-option"
+              onMouseDown={(e) => {
+                e.preventDefault(); // prevent blur before click
+                handleSelect(item);
+              }}
+            >
+              <span className="parent-picker-callsign">{item.callsign}</span>
+              <span className="parent-picker-title">{item.title}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

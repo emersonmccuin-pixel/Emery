@@ -3,6 +3,7 @@ import type { PlanningAssignmentSummary, WorkItemSummary } from "../types";
 import { WorkItemRow } from "./work-item-row";
 import { WorkItemForm, type WorkItemFormData } from "./work-item-form";
 import { appStore, useAppStore } from "../store";
+import { navStore } from "../nav-store";
 
 type WorkItemsSectionProps = {
   workItems: WorkItemSummary[];
@@ -62,9 +63,14 @@ export function WorkItemsSection({
     return map;
   }, [assignments]);
 
-  function handleFormSubmit(data: WorkItemFormData) {
+  const selectedProjectId = useAppStore((s) => s.selectedProjectId);
+
+  async function handleFormSubmit(data: WorkItemFormData) {
     appStore.setWorkItemCreateForm(data);
-    void appStore.handleCreateWorkItem();
+    const newId = await appStore.handleCreateWorkItem();
+    if (newId && selectedProjectId) {
+      navStore.goToWorkItem(selectedProjectId, newId);
+    }
   }
 
   function handleFormCancel() {

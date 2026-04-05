@@ -36,6 +36,7 @@ export type ProjectDetail = {
   project_type: string | null;
   model_defaults_json: string | null;
   settings_json: string | null;
+  instructions_md: string | null;
   created_at: number;
   updated_at: number;
   archived_at: number | null;

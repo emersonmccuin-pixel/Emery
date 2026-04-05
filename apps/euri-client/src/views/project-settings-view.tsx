@@ -77,6 +77,12 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
 
   const [nameInput, setNameInput] = useState("");
   const [nameSaved, setNameSaved] = useState(false);
+  const [defaultAccountId, setDefaultAccountId] = useState<string>("");
+  const [defaultAccountSaving, setDefaultAccountSaving] = useState(false);
+  const [defaultAccountSaved, setDefaultAccountSaved] = useState(false);
+  const [instructionsMd, setInstructionsMd] = useState("");
+  const [instructionsSaving, setInstructionsSaving] = useState(false);
+  const [instructionsSaved, setInstructionsSaved] = useState(false);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [agentTemplates, setAgentTemplates] = useState<AgentTemplateSummary[]>([]);
@@ -108,6 +114,18 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     if (project) {
+      setDefaultAccountId(project.default_account_id ?? "");
+    }
+  }, [project?.default_account_id]);
+
+  useEffect(() => {
+    if (project) {
+      setInstructionsMd(project.instructions_md ?? "");
+    }
+  }, [project?.instructions_md]);
+
+  useEffect(() => {
+    if (project) {
       setModelDefaults(parseModelDefaults(project.model_defaults_json));
     }
   }, [project?.model_defaults_json]);
@@ -133,6 +151,40 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
     await appStore.handleUpdateProjectName(projectId, nameInput.trim());
     setNameSaved(true);
     setTimeout(() => setNameSaved(false), 2000);
+  }
+
+  async function handleSaveDefaultAccount() {
+    setDefaultAccountSaved(false);
+    setDefaultAccountSaving(true);
+    try {
+      const detail = await updateProject(projectId, {
+        default_account_id: defaultAccountId || null,
+      });
+      appStore.applyProjectDetail(detail);
+      setDefaultAccountSaved(true);
+      setTimeout(() => setDefaultAccountSaved(false), 2000);
+    } catch {
+      // leave state as-is on error
+    } finally {
+      setDefaultAccountSaving(false);
+    }
+  }
+
+  async function handleSaveInstructions() {
+    setInstructionsSaved(false);
+    setInstructionsSaving(true);
+    try {
+      const detail = await updateProject(projectId, {
+        instructions_md: instructionsMd.trim() || null,
+      });
+      appStore.applyProjectDetail(detail);
+      setInstructionsSaved(true);
+      setTimeout(() => setInstructionsSaved(false), 2000);
+    } catch {
+      // leave state as-is on error
+    } finally {
+      setInstructionsSaving(false);
+    }
   }
 
   async function handleAddRoot() {
@@ -234,6 +286,65 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
           <div className="settings-field-group">
             <label className="settings-label">Slug</label>
             <span className="settings-slug">{displaySlug}</span>
+          </div>
+          <div className="settings-field-group">
+            <label className="settings-label" htmlFor="project-default-account">
+              Default Account
+            </label>
+            <div className="settings-input-row">
+              <select
+                id="project-default-account"
+                className="settings-input"
+                value={defaultAccountId}
+                onChange={(e) => {
+                  setDefaultAccountId(e.target.value);
+                  setDefaultAccountSaved(false);
+                }}
+              >
+                <option value="">-- none (use first available) --</option>
+                {(bootstrap?.accounts ?? []).map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="btn-primary btn-sm"
+                onClick={() => void handleSaveDefaultAccount()}
+                disabled={defaultAccountSaving}
+              >
+                {defaultAccountSaving ? "Saving..." : defaultAccountSaved ? "Saved" : "Save"}
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {/* Project Instructions section */}
+        <section className="settings-section">
+          <h3 className="settings-section-title">Project Instructions</h3>
+          <p className="settings-section-desc">
+            Markdown instructions injected into every agent session for this project.
+          </p>
+          <div className="settings-field-group">
+            <textarea
+              className="settings-input"
+              value={instructionsMd}
+              onChange={(e) => {
+                setInstructionsMd(e.target.value);
+                setInstructionsSaved(false);
+              }}
+              placeholder="Enter project-level instructions for agents..."
+              rows={8}
+            />
+          </div>
+          <div className="model-defaults-actions">
+            <button
+              className="btn-primary btn-sm"
+              onClick={() => void handleSaveInstructions()}
+              disabled={instructionsSaving}
+            >
+              {instructionsSaving ? "Saving..." : instructionsSaved ? "Saved" : "Save"}
+            </button>
           </div>
         </section>
 

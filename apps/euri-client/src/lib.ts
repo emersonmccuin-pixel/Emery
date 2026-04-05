@@ -129,6 +129,7 @@ export async function updateProject(
     slug?: string;
     default_account_id?: string | null;
     model_defaults_json?: string | null;
+    instructions_md?: string | null;
   },
   correlationId?: string,
 ): Promise<ProjectDetail> {
