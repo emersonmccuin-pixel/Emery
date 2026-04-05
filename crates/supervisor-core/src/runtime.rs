@@ -17,6 +17,7 @@ use crate::models::{
     EncodedTerminalChunk, ReplaySnapshot, SessionOutputEvent, SessionRuntimeView,
     SessionStateChangedEvent,
 };
+use crate::output_filter::OutputFilter;
 use crate::store::DatabaseSet;
 
 const DEFAULT_REPLAY_LIMIT_BYTES: usize = 128 * 1024;
@@ -240,10 +241,12 @@ impl SessionRegistry {
         let output_registry = self.clone();
         let output_databases = databases.clone();
         let output_session_id = request.session_id.clone();
+        let output_diagnostics = self.diagnostics.clone();
         thread::spawn(move || {
             if let Err(error) = pump_output(
                 output_registry,
                 output_databases,
+                output_diagnostics,
                 &output_session_id,
                 reader,
             ) {
@@ -913,10 +916,13 @@ enum ActivityMonitorStatus {
 fn pump_output(
     registry: SessionRegistry,
     databases: DatabaseSet,
+    diagnostics: DiagnosticsHub,
     session_id: &str,
     mut reader: Box<dyn Read + Send>,
 ) -> Result<()> {
     let mut buffer = [0_u8; OUTPUT_CHUNK_SIZE];
+    let mut filter = OutputFilter::new();
+
     loop {
         let read = match reader.read(&mut buffer) {
             Ok(read) => read,
@@ -925,12 +931,35 @@ fn pump_output(
         };
 
         if read == 0 {
+            // Session ended — flush any buffered partial sequence.
+            let tail = filter.flush();
+            if !tail.is_empty() {
+                let now = unix_time_seconds();
+                registry.record_output(session_id, now, &tail)?;
+                databases.record_session_output(session_id, now)?;
+            }
             return Ok(());
         }
 
-        let now = unix_time_seconds();
-        registry.record_output(session_id, now, &buffer[..read])?;
-        databases.record_session_output(session_id, now)?;
+        let result = filter.filter(&buffer[..read]);
+
+        for seq in &result.stripped {
+            let _ = diagnostics.record(
+                "output_filter",
+                "sequence.stripped",
+                DiagnosticContext {
+                    session_id: Some(session_id.to_string()),
+                    ..DiagnosticContext::default()
+                },
+                serde_json::json!({ "hex": seq }),
+            );
+        }
+
+        if !result.output.is_empty() {
+            let now = unix_time_seconds();
+            registry.record_output(session_id, now, &result.output)?;
+            databases.record_session_output(session_id, now)?;
+        }
     }
 }
 

@@ -19,13 +19,30 @@ function decodeBase64Utf8(base64: string): string {
   return new TextDecoder().decode(bytes);
 }
 
+// Client-side defense-in-depth: strip OSC sequences that should have been
+// removed server-side but may slip through on replay or during reconnection.
+// Matches OSC 0/2 (window title) and OSC 52 (clipboard write), terminated
+// by BEL (0x07) or ST (ESC \).
+const DANGEROUS_OSC_RE = /\x1b\](?:0|2|52);[^\x07\x1b]*(?:\x07|\x1b\\)/g;
+
+function sanitizeTerminalOutput(data: string): string {
+  const stripped = data.replace(DANGEROUS_OSC_RE, "");
+  if (stripped.length !== data.length) {
+    console.debug("[terminal-surface] stripped OSC sequence(s)", {
+      originalLength: data.length,
+      strippedLength: stripped.length,
+    });
+  }
+  return stripped;
+}
+
 // Global registry so the poll loop can write directly to xterm without React
 const terminalInstances = new Map<string, Terminal>();
 
 export function directWriteToTerminal(sessionId: string, data: string) {
   const terminal = terminalInstances.get(sessionId);
   if (terminal) {
-    terminal.write(data);
+    terminal.write(sanitizeTerminalOutput(data));
   }
 }
 
@@ -117,7 +134,7 @@ export const TerminalSurface = memo(function TerminalSurface({
         attachmentIdRef.current = response.attachment_id;
         terminal.reset();
         for (const chunk of response.replay.chunks) {
-          terminal.write(decodeBase64Utf8(chunk.data));
+          terminal.write(sanitizeTerminalOutput(decodeBase64Utf8(chunk.data)));
         }
         await watchLiveSessions([sessionId], newCorrelationId("surface-watch"));
       } catch {
