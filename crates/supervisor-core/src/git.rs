@@ -4,6 +4,96 @@ use std::process::Command;
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 
+// ── Dependency symlinking ─────────────────────────────────────────────────────
+
+/// Symlinks common dependency directories from a project root into a new worktree.
+///
+/// Detects which dependency dirs to link based on marker files in the source
+/// tree. Only links directories that exist in the source and are absent in the
+/// target. Scans up to depth 2 (immediate subdirectories) for nested packages.
+///
+/// Symlink failures are returned as warnings rather than errors — the caller
+/// should log them but not fail worktree creation.
+pub fn symlink_dependencies(
+    source_root: &Path,
+    worktree_root: &Path,
+) -> (Vec<String>, Vec<String>) {
+    let mut linked = Vec::new();
+    let mut warnings = Vec::new();
+
+    // Depth 1: the root itself
+    symlink_deps_at_depth(source_root, worktree_root, &mut linked, &mut warnings);
+
+    // Depth 2: immediate subdirectories
+    if let Ok(entries) = std::fs::read_dir(source_root) {
+        for entry in entries.flatten() {
+            let subdir = entry.path();
+            if !subdir.is_dir() {
+                continue;
+            }
+            // Skip hidden dirs and common non-package dirs
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with('.') || name_str == "node_modules" || name_str == "target" {
+                continue;
+            }
+            let relative = subdir.strip_prefix(source_root).unwrap_or(&subdir);
+            let worktree_subdir = worktree_root.join(relative);
+            symlink_deps_at_depth(&subdir, &worktree_subdir, &mut linked, &mut warnings);
+        }
+    }
+
+    (linked, warnings)
+}
+
+fn symlink_deps_at_depth(
+    source_dir: &Path,
+    worktree_dir: &Path,
+    linked: &mut Vec<String>,
+    warnings: &mut Vec<String>,
+) {
+    // node_modules — if package.json exists at this level
+    if source_dir.join("package.json").exists() {
+        let nm_source = source_dir.join("node_modules");
+        let nm_target = worktree_dir.join("node_modules");
+        if nm_source.is_dir() && !nm_target.exists() {
+            let label = format!("{}/node_modules", source_dir.display());
+            match create_dir_symlink(&nm_source, &nm_target) {
+                Ok(()) => linked.push(label),
+                Err(e) => warnings.push(format!("symlink {}: {}", label, e)),
+            }
+        }
+    }
+
+    // Python virtual environments — if requirements.txt or pyproject.toml exists
+    let has_python = source_dir.join("requirements.txt").exists()
+        || source_dir.join("pyproject.toml").exists();
+    if has_python {
+        for venv_name in &[".venv", "venv"] {
+            let venv_source = source_dir.join(venv_name);
+            let venv_target = worktree_dir.join(venv_name);
+            if venv_source.is_dir() && !venv_target.exists() {
+                let label = format!("{}/{}", source_dir.display(), venv_name);
+                match create_dir_symlink(&venv_source, &venv_target) {
+                    Ok(()) => linked.push(label),
+                    Err(e) => warnings.push(format!("symlink {}: {}", label, e)),
+                }
+            }
+        }
+    }
+}
+
+/// Platform-specific directory symlink / junction creation.
+#[cfg(windows)]
+fn create_dir_symlink(source: &Path, target: &Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_dir(source, target)
+}
+
+#[cfg(unix)]
+fn create_dir_symlink(source: &Path, target: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(source, target)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiffStat {
     pub files_changed: usize,

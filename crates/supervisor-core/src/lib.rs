@@ -1,6 +1,6 @@
 mod bootstrap;
 mod diagnostics;
-mod git;
+pub mod git;
 mod models;
 mod output_filter;
 mod runtime;
