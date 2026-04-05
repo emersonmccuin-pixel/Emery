@@ -101,6 +101,12 @@ export function HomeView() {
 
 // --- ProjectCreateForm ---
 
+const PROJECT_TYPES = [
+  { value: "", label: "General" },
+  { value: "coding", label: "Coding" },
+  { value: "research", label: "Research" },
+] as const;
+
 function ProjectCreateForm({
   onCreated,
   onCancel,
@@ -111,6 +117,7 @@ function ProjectCreateForm({
   const [name, setName] = useState("");
   const [folderPath, setFolderPath] = useState("");
   const [initGit, setInitGit] = useState(false);
+  const [projectType, setProjectType] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
 
   async function handleBrowse() {
@@ -128,7 +135,8 @@ function ProjectCreateForm({
   async function handleSubmit() {
     if (!name.trim() || !folderPath.trim() || submitting) return;
     setSubmitting(true);
-    const projectId = await appStore.handleCreateProject(name.trim(), folderPath.trim(), initGit);
+    const typeValue = projectType || null;
+    const projectId = await appStore.handleCreateProject(name.trim(), folderPath.trim(), initGit, typeValue);
     setSubmitting(false);
     if (projectId) {
       onCreated(projectId);
@@ -168,6 +176,31 @@ function ProjectCreateForm({
         <button className="project-create-browse-btn" onClick={handleBrowse} disabled={submitting}>
           Browse
         </button>
+      </div>
+      <div className="project-create-form-row project-create-type-row">
+        <span className="project-create-type-label">Project type</span>
+        <div className="project-type-selector" role="radiogroup" aria-label="Project type">
+          {PROJECT_TYPES.map((pt) => (
+            <label key={pt.value} className={`project-type-option${projectType === pt.value ? " project-type-option-selected" : ""}`}>
+              <input
+                type="radio"
+                name="project-type"
+                value={pt.value}
+                checked={projectType === pt.value}
+                onChange={() => setProjectType(pt.value)}
+                disabled={submitting}
+                className="project-type-radio"
+              />
+              {pt.label}
+            </label>
+          ))}
+        </div>
+        {projectType && (
+          <span className="project-type-hint">
+            {projectType === "coding" ? "Auto-provisions planner, architect, implementer, reviewer templates" :
+             projectType === "research" ? "Auto-provisions researcher, analyst, writer templates" : ""}
+          </span>
+        )}
       </div>
       <div className="project-create-form-row project-create-checkbox-row">
         <label className="project-create-checkbox-label">

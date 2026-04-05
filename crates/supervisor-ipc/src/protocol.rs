@@ -74,6 +74,10 @@ pub enum Method {
     InboxGet,
     InboxUpdate,
     InboxCountUnread,
+    AgentTemplateList,
+    AgentTemplateCreate,
+    AgentTemplateUpdate,
+    AgentTemplateArchive,
 }
 
 impl Method {
@@ -150,6 +154,10 @@ impl Method {
             Self::InboxGet => "inbox.get",
             Self::InboxUpdate => "inbox.update",
             Self::InboxCountUnread => "inbox.count_unread",
+            Self::AgentTemplateList => "agent_template.list",
+            Self::AgentTemplateCreate => "agent_template.create",
+            Self::AgentTemplateUpdate => "agent_template.update",
+            Self::AgentTemplateArchive => "agent_template.archive",
         }
     }
 }
@@ -234,6 +242,10 @@ impl TryFrom<&str> for Method {
             "inbox.get" => Ok(Self::InboxGet),
             "inbox.update" => Ok(Self::InboxUpdate),
             "inbox.count_unread" => Ok(Self::InboxCountUnread),
+            "agent_template.list" => Ok(Self::AgentTemplateList),
+            "agent_template.create" => Ok(Self::AgentTemplateCreate),
+            "agent_template.update" => Ok(Self::AgentTemplateUpdate),
+            "agent_template.archive" => Ok(Self::AgentTemplateArchive),
             _ => Err(()),
         }
     }
@@ -417,6 +429,7 @@ pub struct SubscriptionOpenParams {
 pub struct SubscriptionCloseParams {
     pub subscription_id: String,
 }
+
 
 impl ResponseEnvelope {
     pub fn success(request_id: String, result: Value) -> Self {

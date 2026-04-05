@@ -44,6 +44,10 @@ const APP_MIGRATIONS: &[(&str, &str)] = &[
         "0010_inbox",
         include_str!("migrations/app/0010_inbox.sql"),
     ),
+    (
+        "0011_agent_templates",
+        include_str!("migrations/app/0011_agent_templates.sql"),
+    ),
 ];
 const KNOWLEDGE_MIGRATIONS: &[(&str, &str)] = &[(
     "0001_initial",

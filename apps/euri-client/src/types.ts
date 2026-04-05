@@ -4,6 +4,7 @@ export type ProjectSummary = {
   slug: string;
   sort_order: number;
   default_account_id: string | null;
+  project_type: string | null;
   root_count: number;
   live_session_count: number;
   created_at: number;
@@ -31,11 +32,31 @@ export type ProjectDetail = {
   slug: string;
   sort_order: number;
   default_account_id: string | null;
+  project_type: string | null;
   settings_json: string | null;
   created_at: number;
   updated_at: number;
   archived_at: number | null;
   roots: ProjectRootSummary[];
+};
+
+export type AgentTemplateSummary = {
+  id: string;
+  project_id: string;
+  template_key: string;
+  label: string;
+  origin_mode: string;
+  default_model: string | null;
+  instructions_md: string | null;
+  stop_rules_json: string | null;
+  sort_order: number;
+  created_at: number;
+  updated_at: number;
+  archived_at: number | null;
+};
+
+export type AgentTemplateDetail = {
+  summary: AgentTemplateSummary;
 };
 
 export type AccountSummary = {

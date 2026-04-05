@@ -1452,6 +1452,72 @@ fn get_project_root_git_status(
         .map_err(error_string)
 }
 
+#[tauri::command]
+fn list_agent_templates(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    project_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "agent_template.list",
+            json!({ "project_id": project_id }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn create_agent_template(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    input: Value,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(&app, "agent_template.create", input, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn update_agent_template(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    agent_template_id: String,
+    input: Value,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    let mut payload = input;
+    if let Some(object) = payload.as_object_mut() {
+        object.insert(
+            "agent_template_id".to_string(),
+            Value::String(agent_template_id),
+        );
+    }
+    manager
+        .request_value(&app, "agent_template.update", payload, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn archive_agent_template(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    agent_template_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "agent_template.archive",
+            json!({ "agent_template_id": agent_template_id }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
 fn main() {
     if let Err(error) = debug_dev_server_preflight() {
         eprintln!("{error}");
@@ -1516,7 +1582,11 @@ fn main() {
             get_account,
             create_account,
             update_account,
-            get_project_root_git_status
+            get_project_root_git_status,
+            list_agent_templates,
+            create_agent_template,
+            update_agent_template,
+            archive_agent_template
         ])
         .run(tauri::generate_context!())
         .expect("failed to run EURI client");

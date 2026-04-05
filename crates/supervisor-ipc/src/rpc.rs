@@ -5,33 +5,32 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use supervisor_core::{
-    ArchiveProjectRequest, ConflictWarning, CreateAccountRequest, CreateDiagnosticsBundleRequest, CreateDocumentRequest,
-    CreatePlanningAssignmentRequest, CreateProjectRequest, CreateProjectRootRequest,
-    CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest,
+    AgentTemplateListFilter, ArchiveAgentTemplateRequest, ArchiveProjectRequest, ConflictWarning,
+    CreateAccountRequest, CreateAgentTemplateRequest, CreateDiagnosticsBundleRequest,
+    CreateDocumentRequest, CreatePlanningAssignmentRequest, CreateProjectRequest,
+    CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest,
     CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
     DeletePlanningAssignmentRequest, DiagnosticContext, DocumentListFilter,
-    InboxEntryListFilter, MergeQueueCheckConflictsParams, MergeQueueGetDiffParams,
-    MergeQueueGetParams, MergeQueueListFilter, MergeQueueMergeParams, MergeQueueParkParams,
-    MergeQueueReorderParams, OutputOrResync, PlanningAssignmentListFilter,
-    GitInitProjectRootRequest, SetProjectRootRemoteRequest,
-    RemoveProjectRootRequest, SessionListFilter, SessionSpecListFilter, Supervisor,
-    UpdateAccountRequest, UpdateDocumentRequest, UpdateInboxEntryRequest,
-    UpdatePlanningAssignmentRequest, UpdateProjectRequest, UpdateProjectRootRequest,
-    UpdateSessionSpecRequest, UpdateWorkItemRequest, UpdateWorkflowReconciliationProposalRequest,
-    UpdateWorkspaceStateRequest, UpdateWorktreeRequest, WorkItemListFilter,
-    WorkflowReconciliationProposalListFilter, WorktreeListFilter,
+    GitInitProjectRootRequest, InboxEntryListFilter, MergeQueueCheckConflictsParams,
+    MergeQueueGetDiffParams, MergeQueueGetParams, MergeQueueListFilter, MergeQueueMergeParams,
+    MergeQueueParkParams, MergeQueueReorderParams, OutputOrResync, PlanningAssignmentListFilter,
+    RemoveProjectRootRequest, SessionListFilter, SessionSpecListFilter, SetProjectRootRemoteRequest,
+    Supervisor, UpdateAccountRequest, UpdateAgentTemplateRequest, UpdateDocumentRequest,
+    UpdateInboxEntryRequest, UpdatePlanningAssignmentRequest, UpdateProjectRequest,
+    UpdateProjectRootRequest, UpdateSessionSpecRequest, UpdateWorkItemRequest,
+    UpdateWorkflowReconciliationProposalRequest, UpdateWorkspaceStateRequest, UpdateWorktreeRequest,
+    WorkItemListFilter, WorkflowReconciliationProposalListFilter, WorktreeListFilter,
 };
 
 
 use crate::protocol::{
-    AccountGetParams, CheckDispatchConflictsParams, DiagnosticsExportBundleParams,
-    DocumentGetParams, ErrorBody, EventEnvelope, HelloResult, InboxCountUnreadParams,
-    InboxGetParams, Method, ProjectGetParams, ProjectRootGitStatusParams, ProjectRootListParams,
-    RequestEnvelope, ResponseEnvelope, SessionAttachParams, SessionControlParams,
-    SessionDetachParams, SessionGetParams, SessionInputParams, SessionResizeParams,
-    SessionSpecGetParams, SessionWatchParams, SubscriptionCloseParams, SubscriptionOpenParams,
-    WorkItemGetParams, WorkflowReconciliationProposalGetParams, WorkspaceStateGetParams,
-    WorktreeGetParams,
+    AccountGetParams, CheckDispatchConflictsParams, DiagnosticsExportBundleParams, DocumentGetParams,
+    ErrorBody, EventEnvelope, HelloResult, InboxCountUnreadParams, InboxGetParams, Method,
+    ProjectGetParams, ProjectRootGitStatusParams, ProjectRootListParams, RequestEnvelope,
+    ResponseEnvelope, SessionAttachParams, SessionControlParams, SessionDetachParams,
+    SessionGetParams, SessionInputParams, SessionResizeParams, SessionSpecGetParams,
+    SessionWatchParams, SubscriptionCloseParams, SubscriptionOpenParams, WorkItemGetParams,
+    WorkflowReconciliationProposalGetParams, WorkspaceStateGetParams, WorktreeGetParams,
 };
 
 const PROTOCOL_VERSION: &str = "1";
@@ -673,6 +672,30 @@ impl SupervisorRpc {
                 let count = self.supervisor.count_unread_inbox_entries(params.project_id.as_deref())?;
                 Ok(json!({ "count": count }))
             }
+            Method::AgentTemplateList => {
+                let filter: AgentTemplateListFilter = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.list_agent_templates(filter)?,
+                )?)
+            }
+            Method::AgentTemplateCreate => {
+                let request: CreateAgentTemplateRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.create_agent_template(request)?,
+                )?)
+            }
+            Method::AgentTemplateUpdate => {
+                let request: UpdateAgentTemplateRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.update_agent_template(request)?,
+                )?)
+            }
+            Method::AgentTemplateArchive => {
+                let request: ArchiveAgentTemplateRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.archive_agent_template(request)?,
+                )?)
+            }
             Method::SubscriptionOpen => {
                 let params: SubscriptionOpenParams = serde_json::from_value(params)?;
                 self.open_subscription(params, connection)
@@ -890,6 +913,14 @@ impl SupervisorRpc {
                 Method::SessionCreateBatch.as_str(),
                 Method::SessionCheckDispatchConflicts.as_str(),
                 Method::SessionWatch.as_str(),
+                Method::InboxList.as_str(),
+                Method::InboxGet.as_str(),
+                Method::InboxUpdate.as_str(),
+                Method::InboxCountUnread.as_str(),
+                Method::AgentTemplateList.as_str(),
+                Method::AgentTemplateCreate.as_str(),
+                Method::AgentTemplateUpdate.as_str(),
+                Method::AgentTemplateArchive.as_str(),
             ],
             app_data_root: self.supervisor.paths().root.display().to_string(),
             ipc_endpoint: self.ipc_endpoint.clone(),

@@ -8,21 +8,22 @@ use serde_json::Value;
 use crate::bootstrap::AppPaths;
 use crate::git;
 use crate::models::{
-    AccountDetail, AccountSummary, AccountUpdateRecord, DocumentDetail, DocumentListFilter,
+    AccountDetail, AccountSummary, AccountUpdateRecord, AgentTemplateDetail, AgentTemplateListFilter,
+    AgentTemplateSummary, AgentTemplateUpdateRecord, DocumentDetail, DocumentListFilter,
     DocumentSummary, DocumentUpdateRecord, InboxEntryDetail, InboxEntryListFilter,
     InboxEntrySummary, InboxEntryUpdateRecord, MergeQueueEntry, MergeQueueListFilter,
-    NewAccountRecord, NewDocumentRecord, NewInboxEntryRecord, NewMergeQueueRecord,
-    NewPlanningAssignmentRecord, NewProjectRecord, NewProjectRootRecord, NewSessionRecord,
-    NewSessionSpecRecord, NewWorkItemRecord, NewWorkflowReconciliationProposalRecord,
-    NewWorktreeRecord, PlanningAssignmentDetail, PlanningAssignmentListFilter,
-    PlanningAssignmentSummary, PlanningAssignmentUpdateRecord, ProjectDetail, ProjectRootSummary,
-    ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord, SessionArtifactRecord,
-    SessionListFilter, SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary,
-    SessionSpecUpdateRecord, SessionSummary, UpdateWorkspaceStateRequest, WorkItemDetail,
-    WorkItemListFilter, WorkItemSummary, WorkItemUpdateRecord, WorkflowReconciliationProposalDetail,
-    WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
-    WorkflowReconciliationProposalUpdateRecord, WorkspaceStateRecord, WorktreeDetail,
-    WorktreeListFilter, WorktreeSummary, WorktreeUpdateRecord,
+    NewAccountRecord, NewAgentTemplateRecord, NewDocumentRecord, NewInboxEntryRecord,
+    NewMergeQueueRecord, NewPlanningAssignmentRecord, NewProjectRecord, NewProjectRootRecord,
+    NewSessionRecord, NewSessionSpecRecord, NewWorkItemRecord,
+    NewWorkflowReconciliationProposalRecord, NewWorktreeRecord, PlanningAssignmentDetail,
+    PlanningAssignmentListFilter, PlanningAssignmentSummary, PlanningAssignmentUpdateRecord,
+    ProjectDetail, ProjectRootSummary, ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord,
+    SessionArtifactRecord, SessionListFilter, SessionSpecDetail, SessionSpecListFilter,
+    SessionSpecSummary, SessionSpecUpdateRecord, SessionSummary, UpdateWorkspaceStateRequest,
+    WorkItemDetail, WorkItemListFilter, WorkItemSummary, WorkItemUpdateRecord,
+    WorkflowReconciliationProposalDetail, WorkflowReconciliationProposalListFilter,
+    WorkflowReconciliationProposalSummary, WorkflowReconciliationProposalUpdateRecord,
+    WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary, WorktreeUpdateRecord,
 };
 use crate::schema::{migrate_app_db, migrate_knowledge_db};
 
@@ -129,6 +130,7 @@ impl DatabaseSet {
                 p.slug,
                 p.sort_order,
                 p.default_account_id,
+                p.project_type,
                 p.created_at,
                 p.updated_at,
                 p.archived_at,
@@ -142,7 +144,7 @@ impl DatabaseSet {
               AND s.status = 'active'
               AND s.runtime_state IN ('starting', 'running', 'stopping')
              GROUP BY
-                p.id, p.name, p.slug, p.sort_order, p.default_account_id, p.created_at, p.updated_at, p.archived_at
+                p.id, p.name, p.slug, p.sort_order, p.default_account_id, p.project_type, p.created_at, p.updated_at, p.archived_at
              ORDER BY p.sort_order ASC, p.created_at ASC",
         )?;
 
@@ -153,11 +155,12 @@ impl DatabaseSet {
                 slug: row.get(2)?,
                 sort_order: row.get(3)?,
                 default_account_id: row.get(4)?,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
-                archived_at: row.get(7)?,
-                root_count: row.get(8)?,
-                live_session_count: row.get(9)?,
+                project_type: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+                archived_at: row.get(8)?,
+                root_count: row.get(9)?,
+                live_session_count: row.get(10)?,
             })
         })?;
 
@@ -169,7 +172,7 @@ impl DatabaseSet {
         let connection = open_connection(&self.paths.app_db)?;
         let project = connection
             .query_row(
-                "SELECT id, name, slug, sort_order, default_account_id, settings_json, created_at, updated_at, archived_at, agent_safety_overrides_json, instructions_md
+                "SELECT id, name, slug, sort_order, default_account_id, settings_json, created_at, updated_at, archived_at, agent_safety_overrides_json, instructions_md, project_type
                  FROM projects
                  WHERE id = ?1",
                 [project_id],
@@ -186,6 +189,7 @@ impl DatabaseSet {
                         archived_at: row.get(8)?,
                         agent_safety_overrides_json: row.get(9)?,
                         instructions_md: row.get(10)?,
+                        project_type: row.get(11)?,
                         roots: Vec::new(),
                     })
                 },
@@ -209,18 +213,20 @@ impl DatabaseSet {
                 slug,
                 sort_order,
                 default_account_id,
+                project_type,
                 settings_json,
                 instructions_md,
                 created_at,
                 updated_at,
                 archived_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL)",
             params![
                 record.id,
                 record.name,
                 record.slug,
                 record.sort_order,
                 record.default_account_id,
+                record.project_type,
                 record.settings_json,
                 record.instructions_md,
                 record.created_at,
@@ -238,9 +244,10 @@ impl DatabaseSet {
                  slug = ?3,
                  sort_order = ?4,
                  default_account_id = ?5,
-                 settings_json = ?6,
-                 instructions_md = ?7,
-                 updated_at = ?8
+                 project_type = ?6,
+                 settings_json = ?7,
+                 instructions_md = ?8,
+                 updated_at = ?9
              WHERE id = ?1",
             params![
                 record.id,
@@ -248,6 +255,7 @@ impl DatabaseSet {
                 record.slug,
                 record.sort_order,
                 record.default_account_id,
+                record.project_type,
                 record.settings_json,
                 record.instructions_md,
                 record.updated_at,
@@ -2817,6 +2825,104 @@ impl DatabaseSet {
         )?;
         Ok(count)
     }
+
+    // --- Agent Templates ---
+
+    pub fn insert_agent_template(&self, record: &NewAgentTemplateRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "INSERT INTO agent_templates (
+                id, project_id, template_key, label, origin_mode, default_model,
+                instructions_md, stop_rules_json, sort_order, created_at, updated_at, archived_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL)",
+            params![
+                record.id,
+                record.project_id,
+                record.template_key,
+                record.label,
+                record.origin_mode,
+                record.default_model,
+                record.instructions_md,
+                record.stop_rules_json,
+                record.sort_order,
+                record.created_at,
+                record.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_agent_template(&self, id: &str) -> Result<Option<AgentTemplateDetail>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection
+            .query_row(
+                "SELECT id, project_id, template_key, label, origin_mode, default_model,
+                        instructions_md, stop_rules_json, sort_order, created_at, updated_at, archived_at
+                 FROM agent_templates WHERE id = ?1",
+                [id],
+                map_agent_template_detail,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn list_agent_templates(
+        &self,
+        filter: &AgentTemplateListFilter,
+    ) -> Result<Vec<AgentTemplateSummary>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let include_archived = filter.include_archived.unwrap_or(false);
+        let sql = if include_archived {
+            "SELECT id, project_id, template_key, label, origin_mode, default_model,
+                    instructions_md, stop_rules_json, sort_order, created_at, updated_at, archived_at
+             FROM agent_templates WHERE project_id = ?1
+             ORDER BY sort_order ASC, created_at ASC"
+        } else {
+            "SELECT id, project_id, template_key, label, origin_mode, default_model,
+                    instructions_md, stop_rules_json, sort_order, created_at, updated_at, archived_at
+             FROM agent_templates WHERE project_id = ?1 AND archived_at IS NULL
+             ORDER BY sort_order ASC, created_at ASC"
+        };
+        let mut statement = connection.prepare(sql)?;
+        let rows = statement.query_map([&filter.project_id], map_agent_template_summary)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+
+    pub fn update_agent_template(&self, record: &AgentTemplateUpdateRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let updated = connection.execute(
+            "UPDATE agent_templates
+             SET template_key = ?2, label = ?3, origin_mode = ?4, default_model = ?5,
+                 instructions_md = ?6, stop_rules_json = ?7, sort_order = ?8,
+                 updated_at = ?9, archived_at = ?10
+             WHERE id = ?1",
+            params![
+                record.id,
+                record.template_key,
+                record.label,
+                record.origin_mode,
+                record.default_model,
+                record.instructions_md,
+                record.stop_rules_json,
+                record.sort_order,
+                record.updated_at,
+                record.archived_at,
+            ],
+        )?;
+        if updated == 0 {
+            return Err(anyhow!("agent_template {} was not found", record.id));
+        }
+        Ok(())
+    }
+
+    pub fn next_agent_template_sort_order(&self, project_id: &str) -> Result<i64> {
+        let connection = open_connection(&self.paths.app_db)?;
+        Ok(connection.query_row(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM agent_templates WHERE project_id = ?1",
+            [project_id],
+            |row| row.get(0),
+        )?)
+    }
 }
 
 fn open_connection(path: &Path) -> Result<Connection> {
@@ -3162,5 +3268,28 @@ fn map_inbox_entry_summary(row: &Row<'_>) -> rusqlite::Result<InboxEntrySummary>
 fn map_inbox_entry_detail(row: &Row<'_>) -> rusqlite::Result<InboxEntryDetail> {
     Ok(InboxEntryDetail {
         summary: map_inbox_entry_summary(row)?,
+    })
+}
+
+fn map_agent_template_summary(row: &Row<'_>) -> rusqlite::Result<AgentTemplateSummary> {
+    Ok(AgentTemplateSummary {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        template_key: row.get(2)?,
+        label: row.get(3)?,
+        origin_mode: row.get(4)?,
+        default_model: row.get(5)?,
+        instructions_md: row.get(6)?,
+        stop_rules_json: row.get(7)?,
+        sort_order: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+        archived_at: row.get(11)?,
+    })
+}
+
+fn map_agent_template_detail(row: &Row<'_>) -> rusqlite::Result<AgentTemplateDetail> {
+    Ok(AgentTemplateDetail {
+        summary: map_agent_template_summary(row)?,
     })
 }

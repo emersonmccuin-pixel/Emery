@@ -869,10 +869,10 @@ class AppStore {
     }
   }
 
-  async handleCreateProject(name: string, folderPath: string, initGit = false): Promise<string | null> {
+  async handleCreateProject(name: string, folderPath: string, initGit = false, projectType?: string | null): Promise<string | null> {
     const correlationId = newCorrelationId("project-create");
     try {
-      const project = await createProject({ name }, correlationId);
+      const project = await createProject({ name, project_type: projectType ?? null }, correlationId);
       const root = await createProjectRoot(
         {
           project_id: project.id,
