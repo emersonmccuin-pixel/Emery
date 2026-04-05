@@ -1326,6 +1326,41 @@ fn remove_project_root(
         .map_err(error_string)
 }
 
+#[tauri::command]
+fn git_init_project_root(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    root_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "project_root.git_init",
+            json!({ "project_root_id": root_id }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn set_project_root_remote(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    root_id: String,
+    remote_url: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "project_root.set_remote",
+            json!({ "project_root_id": root_id, "remote_url": remote_url }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
 fn main() {
     if let Err(error) = debug_dev_server_preflight() {
         eprintln!("{error}");
@@ -1382,7 +1417,9 @@ fn main() {
             create_project_root,
             list_project_roots,
             update_project_root,
-            remove_project_root
+            remove_project_root,
+            git_init_project_root,
+            set_project_root_remote
         ])
         .run(tauri::generate_context!())
         .expect("failed to run EURI client");

@@ -195,6 +195,87 @@ pub fn git_is_repo(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Initialize a git repository at `path` with an empty initial commit.
+pub fn git_init(path: &Path) -> Result<()> {
+    let init_output = Command::new("git")
+        .current_dir(path)
+        .args(["init"])
+        .output()
+        .context("failed to run git init")?;
+    if !init_output.status.success() {
+        return Err(anyhow!(
+            "git init failed: {}",
+            String::from_utf8_lossy(&init_output.stderr)
+        ));
+    }
+
+    let commit_output = Command::new("git")
+        .current_dir(path)
+        .args(["commit", "--allow-empty", "-m", "Initial commit"])
+        .output()
+        .context("failed to run git commit --allow-empty")?;
+    if !commit_output.status.success() {
+        return Err(anyhow!(
+            "git initial commit failed: {}",
+            String::from_utf8_lossy(&commit_output.stderr)
+        ));
+    }
+
+    Ok(())
+}
+
+/// Add a remote named `origin` to the repository at `path`.
+/// Falls back to `set-url` if the remote already exists.
+pub fn git_remote_add(path: &Path, url: &str) -> Result<()> {
+    let output = Command::new("git")
+        .current_dir(path)
+        .args(["remote", "add", "origin", url])
+        .output()
+        .context("failed to run git remote add")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // If origin already exists, update its URL instead
+        if stderr.contains("already exists") {
+            return git_remote_set_url(path, url);
+        }
+        return Err(anyhow!("git remote add failed: {}", stderr));
+    }
+
+    Ok(())
+}
+
+/// Update the URL of the `origin` remote for the repository at `path`.
+pub fn git_remote_set_url(path: &Path, url: &str) -> Result<()> {
+    let output = Command::new("git")
+        .current_dir(path)
+        .args(["remote", "set-url", "origin", url])
+        .output()
+        .context("failed to run git remote set-url")?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "git remote set-url failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
+/// Get the URL of the `origin` remote for the repository at `path`.
+/// Returns `None` if no origin remote exists or if the path is not a git repo.
+pub fn git_remote_get_url(path: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .current_dir(path)
+        .args(["remote", "get-url", "origin"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if url.is_empty() { None } else { Some(url) }
+}
+
 /// Get the working tree status (short format) for a path.
 pub fn git_status(path: &Path) -> Result<String> {
     let output = Command::new("git")

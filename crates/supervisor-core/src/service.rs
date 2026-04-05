@@ -23,7 +23,8 @@ use crate::models::{
     NewSessionSpecRecord, NewWorkItemRecord, NewWorkflowReconciliationProposalRecord,
     NewWorktreeRecord, PlanningAssignmentDetail, PlanningAssignmentListFilter,
     PlanningAssignmentSummary, PlanningAssignmentUpdateRecord, ProjectDetail, ProjectRootSummary,
-    ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord, RemoveProjectRootRequest,
+    ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord, GitInitProjectRootRequest,
+    SetProjectRootRemoteRequest, RemoveProjectRootRequest,
     SessionArtifactRecord, SessionAttachResponse, SessionDetachResponse, SessionDetail,
     SessionListFilter, SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary,
     SessionSpecUpdateRecord, SessionStateChangedEvent, SessionSummary, SessionWatchResponse,
@@ -162,7 +163,6 @@ impl SupervisorService {
 
         let label = required_trimmed("project root label", &request.label)?;
         let path = absolute_path_string("project root path", &request.path)?;
-        let git_root_path = optional_absolute_path("git root path", request.git_root_path)?;
         let root_kind = validate_root_kind(&request.root_kind)?;
 
         if self
@@ -175,6 +175,29 @@ impl SupervisorService {
                 path
             ));
         }
+
+        // Auto-detect git root path and remote URL if not provided
+        let path_ref = std::path::Path::new(&path);
+        let git_root_path = match optional_absolute_path("git root path", request.git_root_path)? {
+            Some(p) => Some(p),
+            None => {
+                if git::git_is_repo(path_ref) {
+                    Some(path.clone())
+                } else {
+                    None
+                }
+            }
+        };
+        let remote_url = match optional_trimmed(request.remote_url) {
+            Some(url) => Some(url),
+            None => {
+                if git_root_path.is_some() {
+                    git::git_remote_get_url(path_ref)
+                } else {
+                    None
+                }
+            }
+        };
 
         let sort_order = match request.sort_order {
             Some(sort_order) => sort_order,
@@ -191,7 +214,7 @@ impl SupervisorService {
             label,
             path,
             git_root_path,
-            remote_url: optional_trimmed(request.remote_url),
+            remote_url,
             root_kind,
             sort_order,
             created_at: now,
@@ -274,6 +297,88 @@ impl SupervisorService {
 
         self.databases
             .archive_project_root(&existing.id, unix_time_seconds())?;
+        self.databases
+            .get_project_root(&existing.id)?
+            .ok_or_else(|| anyhow!("project root {} was not found", existing.id))
+    }
+
+    pub fn git_init_project_root(
+        &self,
+        request: GitInitProjectRootRequest,
+    ) -> Result<ProjectRootSummary> {
+        let existing = self
+            .databases
+            .get_project_root(&request.project_root_id)?
+            .ok_or_else(|| anyhow!("project root {} was not found", request.project_root_id))?;
+
+        let path = std::path::Path::new(&existing.path);
+
+        if !path.exists() {
+            return Err(anyhow!("project root path does not exist: {}", existing.path));
+        }
+
+        if git::git_is_repo(path) {
+            return Err(anyhow!(
+                "project root {} is already a git repository",
+                existing.path
+            ));
+        }
+
+        git::git_init(path)?;
+
+        // Update the record to reflect git_root_path
+        let record = ProjectRootUpdateRecord {
+            id: existing.id.clone(),
+            label: existing.label.clone(),
+            path: existing.path.clone(),
+            git_root_path: Some(existing.path.clone()),
+            remote_url: existing.remote_url.clone(),
+            root_kind: existing.root_kind.clone(),
+            sort_order: existing.sort_order,
+            updated_at: unix_time_seconds(),
+        };
+        self.databases.update_project_root(&record)?;
+        self.databases
+            .get_project_root(&existing.id)?
+            .ok_or_else(|| anyhow!("project root {} was not found", existing.id))
+    }
+
+    pub fn set_project_root_remote(
+        &self,
+        request: SetProjectRootRemoteRequest,
+    ) -> Result<ProjectRootSummary> {
+        let existing = self
+            .databases
+            .get_project_root(&request.project_root_id)?
+            .ok_or_else(|| anyhow!("project root {} was not found", request.project_root_id))?;
+
+        let path = std::path::Path::new(&existing.path);
+
+        if !git::git_is_repo(path) {
+            return Err(anyhow!(
+                "project root {} is not a git repository",
+                existing.path
+            ));
+        }
+
+        let remote_url = request.remote_url.trim().to_string();
+        if remote_url.is_empty() {
+            return Err(anyhow!("remote URL must not be empty"));
+        }
+
+        git::git_remote_add(path, &remote_url)?;
+
+        let record = ProjectRootUpdateRecord {
+            id: existing.id.clone(),
+            label: existing.label.clone(),
+            path: existing.path.clone(),
+            git_root_path: existing.git_root_path.clone(),
+            remote_url: Some(remote_url),
+            root_kind: existing.root_kind.clone(),
+            sort_order: existing.sort_order,
+            updated_at: unix_time_seconds(),
+        };
+        self.databases.update_project_root(&record)?;
         self.databases
             .get_project_root(&existing.id)?
             .ok_or_else(|| anyhow!("project root {} was not found", existing.id))
