@@ -1614,6 +1614,17 @@ impl SupervisorService {
 
         git::git_worktree_add(git_root_path, &branch_name, &worktree_path)?;
 
+        // Auto-symlink dependency directories (node_modules, .venv, etc.)
+        // Failures are logged as warnings but do not abort worktree creation.
+        let (linked, sym_warnings) =
+            git::symlink_dependencies(git_root_path, &worktree_path);
+        if !linked.is_empty() {
+            eprintln!("worktree symlinks created: {}", linked.join(", "));
+        }
+        for w in &sym_warnings {
+            eprintln!("worktree symlink warning: {}", w);
+        }
+
         let base_ref = git::git_current_branch(git_root_path)
             .unwrap_or_else(|_| "HEAD".to_string());
         let head_commit = git::git_head_commit(&worktree_path)?;

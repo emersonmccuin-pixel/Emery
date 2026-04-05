@@ -4,6 +4,7 @@ use std::process::Command;
 use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
 
+use supervisor_core::git::symlink_dependencies;
 use supervisor_core::AppPaths;
 
 use crate::rpc_client::RpcClient;
@@ -103,6 +104,10 @@ pub fn handle_worktree_create(input: Value) -> Result<String> {
     // Create the git worktree
     git_worktree_add(Path::new(git_root), &branch_name, &worktree_path)?;
 
+    // Auto-symlink dependency directories (node_modules, .venv, etc.)
+    // Failures are reported as warnings in the output but do not abort creation.
+    let (linked, sym_warnings) = symlink_dependencies(Path::new(git_root), &worktree_path);
+
     // Capture head commit
     let head_commit = git_head_commit(&worktree_path).ok();
 
@@ -125,10 +130,18 @@ pub fn handle_worktree_create(input: Value) -> Result<String> {
 
     let worktree_id = result["id"].as_str().unwrap_or("?");
     let path = result["path"].as_str().unwrap_or(worktree_path.to_str().unwrap_or("?"));
-    Ok(format!(
+
+    let mut out = format!(
         "Created worktree `{}` at `{}`\nID: {}",
         branch_name, path, worktree_id
-    ))
+    );
+    if !linked.is_empty() {
+        out.push_str(&format!("\nSymlinked: {}", linked.join(", ")));
+    }
+    for w in &sym_warnings {
+        out.push_str(&format!("\nSymlink warning: {}", w));
+    }
+    Ok(out)
 }
 
 pub fn handle_worktree_list(input: Value) -> Result<String> {
