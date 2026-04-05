@@ -6477,6 +6477,41 @@ html[data-theme="cyberpunk"] .all-projects-row:hover {
   flex-shrink: 0;
 }
 
+.pd-refresh-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.pd-refresh-icon {
+  font-size: 16px;
+  line-height: 1;
+  display: block;
+  transition: transform 0.2s ease;
+}
+
+.pd-refresh-btn:hover:not(:disabled) .pd-refresh-icon {
+  transform: rotate(45deg);
+}
+
+.pd-refresh-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: pd-spin 0.6s linear infinite;
+}
+
+@keyframes pd-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* ── Stats line ── */
 
 .pd-stats-line {

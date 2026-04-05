@@ -337,6 +337,20 @@ export function ProjectDetailView({ projectId }: { projectId: string }) {
           </div>
 
           <div className="pd-header-actions">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="pd-refresh-btn"
+              title="Refresh work items and documents"
+              disabled={isLoadingProject}
+              onClick={() => void appStore.loadProjectReads(projectId, true)}
+            >
+              {isLoadingProject ? (
+                <span className="pd-refresh-spinner" />
+              ) : (
+                <span className="pd-refresh-icon">↻</span>
+              )}
+            </Button>
             {dispatchSession ? (
               <Button
                 variant="secondary"

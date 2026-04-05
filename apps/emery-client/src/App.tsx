@@ -384,7 +384,7 @@ export default function App() {
   useEffect(() => {
     if (navProjectId) {
       appStore.setSelectedProjectId(navProjectId);
-      void appStore.loadProjectReads(navProjectId);
+      void appStore.loadProjectReads(navProjectId, true);
       void appStore.handleLoadMergeQueue(navProjectId);
     }
   }, [navProjectId]);
