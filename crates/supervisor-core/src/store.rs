@@ -9,16 +9,17 @@ use crate::bootstrap::AppPaths;
 use crate::git;
 use crate::models::{
     AccountDetail, AccountSummary, AccountUpdateRecord, DocumentDetail, DocumentListFilter,
-    DocumentSummary, DocumentUpdateRecord, MergeQueueEntry, MergeQueueListFilter,
-    NewAccountRecord, NewDocumentRecord, NewMergeQueueRecord, NewPlanningAssignmentRecord,
-    NewProjectRecord, NewProjectRootRecord, NewSessionRecord, NewSessionSpecRecord,
-    NewWorkItemRecord, NewWorkflowReconciliationProposalRecord, NewWorktreeRecord,
-    PlanningAssignmentDetail, PlanningAssignmentListFilter, PlanningAssignmentSummary,
-    PlanningAssignmentUpdateRecord, ProjectDetail, ProjectRootSummary, ProjectRootUpdateRecord,
-    ProjectSummary, ProjectUpdateRecord, SessionArtifactRecord, SessionListFilter,
-    SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary, SessionSpecUpdateRecord,
-    SessionSummary, UpdateWorkspaceStateRequest, WorkItemDetail, WorkItemListFilter,
-    WorkItemSummary, WorkItemUpdateRecord, WorkflowReconciliationProposalDetail,
+    DocumentSummary, DocumentUpdateRecord, InboxEntryDetail, InboxEntryListFilter,
+    InboxEntrySummary, InboxEntryUpdateRecord, MergeQueueEntry, MergeQueueListFilter,
+    NewAccountRecord, NewDocumentRecord, NewInboxEntryRecord, NewMergeQueueRecord,
+    NewPlanningAssignmentRecord, NewProjectRecord, NewProjectRootRecord, NewSessionRecord,
+    NewSessionSpecRecord, NewWorkItemRecord, NewWorkflowReconciliationProposalRecord,
+    NewWorktreeRecord, PlanningAssignmentDetail, PlanningAssignmentListFilter,
+    PlanningAssignmentSummary, PlanningAssignmentUpdateRecord, ProjectDetail, ProjectRootSummary,
+    ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord, SessionArtifactRecord,
+    SessionListFilter, SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary,
+    SessionSpecUpdateRecord, SessionSummary, UpdateWorkspaceStateRequest, WorkItemDetail,
+    WorkItemListFilter, WorkItemSummary, WorkItemUpdateRecord, WorkflowReconciliationProposalDetail,
     WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
     WorkflowReconciliationProposalUpdateRecord, WorkspaceStateRecord, WorktreeDetail,
     WorktreeListFilter, WorktreeSummary, WorktreeUpdateRecord,
@@ -2608,6 +2609,162 @@ impl DatabaseSet {
         )?;
         Ok(())
     }
+
+    // --- Inbox ---
+
+    pub fn insert_inbox_entry(&self, record: &NewInboxEntryRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "INSERT INTO inbox_entries (
+                id, project_id, session_id, work_item_id, worktree_id,
+                entry_type, title, summary, status, branch_name,
+                diff_stat_json, metadata_json, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![
+                record.id,
+                record.project_id,
+                record.session_id,
+                record.work_item_id,
+                record.worktree_id,
+                record.entry_type,
+                record.title,
+                record.summary,
+                record.status,
+                record.branch_name,
+                record.diff_stat_json,
+                record.metadata_json,
+                record.created_at,
+                record.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_inbox_entry(&self, id: &str) -> Result<Option<InboxEntryDetail>> {
+        let connection = open_app_connection_with_knowledge(&self.paths)?;
+        connection
+            .query_row(
+                "SELECT
+                    ie.id, ie.project_id, ie.session_id, ie.work_item_id, ie.worktree_id,
+                    ie.entry_type, ie.title, ie.summary, ie.status, ie.branch_name,
+                    ie.diff_stat_json, ie.metadata_json, ie.read_at, ie.resolved_at,
+                    ie.created_at, ie.updated_at,
+                    s.title AS session_title,
+                    wi.callsign AS work_item_callsign
+                 FROM inbox_entries ie
+                 LEFT JOIN sessions s ON s.id = ie.session_id
+                 LEFT JOIN knowledge.work_items wi ON wi.id = ie.work_item_id
+                 WHERE ie.id = ?1",
+                [id],
+                map_inbox_entry_detail,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn list_inbox_entries(
+        &self,
+        filter: &InboxEntryListFilter,
+    ) -> Result<Vec<InboxEntrySummary>> {
+        let connection = open_app_connection_with_knowledge(&self.paths)?;
+        let mut sql = String::from(
+            "SELECT
+                ie.id, ie.project_id, ie.session_id, ie.work_item_id, ie.worktree_id,
+                ie.entry_type, ie.title, ie.summary, ie.status, ie.branch_name,
+                ie.diff_stat_json, ie.metadata_json, ie.read_at, ie.resolved_at,
+                ie.created_at, ie.updated_at,
+                s.title AS session_title,
+                wi.callsign AS work_item_callsign
+             FROM inbox_entries ie
+             LEFT JOIN sessions s ON s.id = ie.session_id
+             LEFT JOIN knowledge.work_items wi ON wi.id = ie.work_item_id
+             WHERE ie.project_id = ?1",
+        );
+        let mut values: Vec<String> = vec![filter.project_id.clone()];
+
+        if let Some(ref status) = filter.status {
+            sql.push_str(&format!(" AND ie.status = ?{}", values.len() + 1));
+            values.push(status.clone());
+        }
+        if let Some(ref entry_type) = filter.entry_type {
+            sql.push_str(&format!(" AND ie.entry_type = ?{}", values.len() + 1));
+            values.push(entry_type.clone());
+        }
+        if filter.unread_only.unwrap_or(false) {
+            sql.push_str(" AND ie.read_at IS NULL");
+        }
+
+        sql.push_str(" ORDER BY ie.created_at DESC");
+
+        if let Some(limit) = filter.limit {
+            sql.push_str(&format!(" LIMIT {}", limit));
+        }
+
+        let mut statement = connection.prepare(&sql)?;
+        let rows =
+            statement.query_map(params_from_iter(values.iter()), map_inbox_entry_summary)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn update_inbox_entry(&self, record: &InboxEntryUpdateRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let mut parts: Vec<String> = vec!["updated_at = ?2".to_string()];
+        let mut idx = 3usize;
+
+        if record.status.is_some() {
+            parts.push(format!("status = ?{idx}"));
+            idx += 1;
+        }
+        if record.read_at.is_some() {
+            parts.push(format!("read_at = ?{idx}"));
+            idx += 1;
+        }
+        if record.resolved_at.is_some() {
+            parts.push(format!("resolved_at = ?{idx}"));
+            let _ = idx; // suppress unused warning
+        }
+
+        let sql = format!(
+            "UPDATE inbox_entries SET {} WHERE id = ?1",
+            parts.join(", ")
+        );
+
+        // Build params dynamically using rusqlite's raw execute
+        let mut raw_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        raw_params.push(Box::new(record.id.clone()));
+        raw_params.push(Box::new(record.updated_at));
+        if let Some(ref status) = record.status {
+            raw_params.push(Box::new(status.clone()));
+        }
+        if let Some(read_at) = record.read_at {
+            raw_params.push(Box::new(read_at));
+        }
+        if let Some(resolved_at) = record.resolved_at {
+            raw_params.push(Box::new(resolved_at));
+        }
+
+        let updated = connection.execute(
+            &sql,
+            rusqlite::params_from_iter(raw_params.iter().map(|p| p.as_ref())),
+        )?;
+
+        if updated == 0 {
+            return Err(anyhow!("inbox entry {} was not found", record.id));
+        }
+        Ok(())
+    }
+
+    pub fn count_unread_inbox_entries(&self, project_id: &str) -> Result<i64> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let count: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM inbox_entries
+             WHERE project_id = ?1 AND read_at IS NULL AND resolved_at IS NULL",
+            [project_id],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
 }
 
 fn open_connection(path: &Path) -> Result<Connection> {
@@ -2924,5 +3081,34 @@ fn map_merge_queue_entry(row: &Row<'_>) -> rusqlite::Result<MergeQueueEntry> {
         merged_at: row.get(12)?,
         session_title: row.get(13)?,
         work_item_callsign: row.get(14)?,
+    })
+}
+
+fn map_inbox_entry_summary(row: &Row<'_>) -> rusqlite::Result<InboxEntrySummary> {
+    Ok(InboxEntrySummary {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        session_id: row.get(2)?,
+        work_item_id: row.get(3)?,
+        worktree_id: row.get(4)?,
+        entry_type: row.get(5)?,
+        title: row.get(6)?,
+        summary: row.get(7)?,
+        status: row.get(8)?,
+        branch_name: row.get(9)?,
+        diff_stat_json: row.get(10)?,
+        metadata_json: row.get(11)?,
+        read_at: row.get(12)?,
+        resolved_at: row.get(13)?,
+        created_at: row.get(14)?,
+        updated_at: row.get(15)?,
+        session_title: row.get(16)?,
+        work_item_callsign: row.get(17)?,
+    })
+}
+
+fn map_inbox_entry_detail(row: &Row<'_>) -> rusqlite::Result<InboxEntryDetail> {
+    Ok(InboxEntryDetail {
+        summary: map_inbox_entry_summary(row)?,
     })
 }
