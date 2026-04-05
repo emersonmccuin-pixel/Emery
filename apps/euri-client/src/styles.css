@@ -1175,35 +1175,6 @@ button {
   min-height: 0;
 }
 
-/* ── /btw Panel Rail ── */
-
-.btw-rail {
-  width: 24px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding-top: 8px;
-  background: var(--surface-hover);
-  border-left: 1px solid var(--border-subtle);
-  cursor: default;
-}
-
-.btw-icon {
-  width: 20px;
-  height: 20px;
-  display: grid;
-  place-items: center;
-  font-size: 0.7rem;
-  color: var(--text-ghost);
-  border: 1px solid var(--border-subtle);
-  border-radius: 4px;
-}
-
-.btw-rail:hover .btw-icon {
-  color: var(--text-tertiary);
-  border-color: var(--border-default);
-}
 
 /* ── Agent Controls ── */
 

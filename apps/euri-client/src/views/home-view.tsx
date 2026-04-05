@@ -169,9 +169,16 @@ function ProjectCreateForm({
           type="text"
           placeholder="Folder path"
           value={folderPath}
-          onChange={(e) => setFolderPath(e.target.value)}
+          onChange={(e) => {
+            const val = e.target.value;
+            setFolderPath(val);
+            if (!name) {
+              const parts = val.replace(/\\/g, "/").split("/");
+              const segment = parts[parts.length - 1];
+              if (segment) setName(segment);
+            }
+          }}
           onKeyDown={handleKeyDown}
-          readOnly
         />
         <button className="project-create-browse-btn" onClick={handleBrowse} disabled={submitting}>
           Browse

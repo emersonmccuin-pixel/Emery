@@ -118,6 +118,15 @@ function InboxEntryRow({
               {entry.work_item_callsign ?? "open item"}
             </button>
           )}
+          {entry.session_id && (
+            <button
+              className="inbox-action-btn inbox-action-link"
+              onClick={() => navStore.goToAgent(projectId, entry.session_id!)}
+              title="View session"
+            >
+              view session
+            </button>
+          )}
         </div>
       </div>
       {expanded && (

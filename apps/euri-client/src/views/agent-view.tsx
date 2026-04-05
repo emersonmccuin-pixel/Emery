@@ -5,10 +5,9 @@ import { useSessionSnapshot } from "../session-store";
 import { AgentInfoBar } from "../components/agent-info-bar";
 import { AgentTerminal } from "../components/agent-terminal";
 import { AgentControls } from "../components/agent-controls";
-import { BtwPanel } from "../components/btw-panel";
 
 export function AgentView({
-  projectId: _projectId,
+  projectId,
   sessionId,
 }: {
   projectId: string;
@@ -57,11 +56,12 @@ export function AgentView({
         needsInputReason={sessionSnapshot.needs_input_reason}
         live={live}
         endedAt={sessionSummary?.ended_at ?? null}
+        projectId={projectId}
+        workItemId={sessionSummary?.work_item_id ?? null}
       />
 
       <div className="agent-terminal-area">
         <AgentTerminal sessionId={sessionId} live={live} />
-        <BtwPanel />
       </div>
 
       <AgentControls

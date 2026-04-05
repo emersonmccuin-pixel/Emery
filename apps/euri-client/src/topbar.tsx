@@ -19,7 +19,7 @@ export function Topbar() {
   function handleInboxClick() {
     if (!selectedProjectId) return;
     if (isInbox) {
-      navStore.goHome();
+      navStore.goToProject(selectedProjectId);
     } else {
       navStore.goToInbox(selectedProjectId);
     }
