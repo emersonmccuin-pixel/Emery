@@ -1073,3 +1073,15 @@ pub struct MergeQueueReorderParams {
 pub struct MergeQueueCheckConflictsParams {
     pub merge_queue_id: String,
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionWatchResponse {
+    /// The session that changed state (first one to fire), empty string on timeout.
+    pub session_id: String,
+    pub runtime_state: String,
+    pub status: String,
+    pub activity_state: String,
+    pub needs_input_reason: Option<String>,
+    /// True if the timeout expired with no state change.
+    pub timed_out: bool,
+}

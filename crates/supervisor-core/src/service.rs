@@ -24,7 +24,8 @@ use crate::models::{
     ProjectSummary, ProjectUpdateRecord, RemoveProjectRootRequest, SessionArtifactRecord,
     SessionAttachResponse, SessionDetachResponse, SessionDetail, SessionListFilter,
     SessionOutputEvent, SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary,
-    SessionSpecUpdateRecord, SessionStateChangedEvent, SessionSummary, UpdateAccountRequest,
+    SessionSpecUpdateRecord, SessionStateChangedEvent, SessionSummary, SessionWatchResponse,
+    UpdateAccountRequest,
     UpdateDocumentRequest, UpdatePlanningAssignmentRequest, UpdateProjectRequest,
     UpdateProjectRootRequest, UpdateSessionSpecRequest, UpdateWorkItemRequest,
     UpdateWorkflowReconciliationProposalRequest, UpdateWorkspaceStateRequest,
@@ -1595,6 +1596,119 @@ impl SupervisorService {
     ) -> Result<()> {
         self.registry
             .unsubscribe_state_changes(session_id, subscription_id)
+    }
+
+    /// Block until any of the given sessions emits a state change, or timeout.
+    /// Returns the state change event for the first session that fires.
+    pub fn watch_sessions(
+        &self,
+        session_ids: Vec<String>,
+        timeout_seconds: u64,
+    ) -> Result<SessionWatchResponse> {
+        use std::sync::mpsc::TryRecvError;
+
+        if session_ids.is_empty() {
+            return Err(anyhow!("session_ids must not be empty"));
+        }
+
+        let timeout = std::cmp::min(timeout_seconds, 300);
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_secs(timeout);
+
+        // Subscribe to state changes for all requested sessions
+        let mut subscriptions: Vec<(
+            String,
+            String,
+            std::sync::mpsc::Receiver<SessionStateChangedEvent>,
+        )> = Vec::new();
+
+        for sid in &session_ids {
+            if self.get_session(sid)?.is_none() {
+                return Err(anyhow!("session {} not found", sid));
+            }
+            match self.subscribe_session_state_changed(sid) {
+                Ok((sub_id, rx)) => {
+                    subscriptions.push((sid.clone(), sub_id, rx));
+                }
+                Err(_) => {
+                    // Session may have already ended — return its current state immediately
+                    if let Some(detail) = self.get_session(sid)? {
+                        for (s, sub_id, _) in &subscriptions {
+                            let _ = self.unsubscribe_session_state_changed(s, sub_id);
+                        }
+                        return Ok(SessionWatchResponse {
+                            session_id: sid.clone(),
+                            runtime_state: detail.summary.runtime_state,
+                            status: detail.summary.status,
+                            activity_state: detail.summary.activity_state,
+                            needs_input_reason: detail.summary.needs_input_reason,
+                            timed_out: false,
+                        });
+                    }
+                }
+            }
+        }
+
+        if subscriptions.is_empty() {
+            return Err(anyhow!(
+                "no watchable sessions — all sessions may have already ended"
+            ));
+        }
+
+        let poll_interval = std::time::Duration::from_millis(100);
+        loop {
+            for (sid, _sub_id, rx) in &subscriptions {
+                match rx.try_recv() {
+                    Ok(event) => {
+                        for (s, sub_id, _) in &subscriptions {
+                            let _ = self.unsubscribe_session_state_changed(s, sub_id);
+                        }
+                        return Ok(SessionWatchResponse {
+                            session_id: event.session_id,
+                            runtime_state: event.runtime_state,
+                            status: event.status,
+                            activity_state: event.activity_state,
+                            needs_input_reason: event.needs_input_reason,
+                            timed_out: false,
+                        });
+                    }
+                    Err(TryRecvError::Empty) => continue,
+                    Err(TryRecvError::Disconnected) => {
+                        // Channel closed — session ended; return its final state
+                        for (s, sub_id, _) in &subscriptions {
+                            let _ = self.unsubscribe_session_state_changed(s, sub_id);
+                        }
+                        if let Some(detail) = self.get_session(sid)? {
+                            return Ok(SessionWatchResponse {
+                                session_id: sid.clone(),
+                                runtime_state: detail.summary.runtime_state,
+                                status: detail.summary.status,
+                                activity_state: detail.summary.activity_state,
+                                needs_input_reason: detail.summary.needs_input_reason,
+                                timed_out: false,
+                            });
+                        }
+                        return Err(anyhow!("session {} disappeared", sid));
+                    }
+                }
+            }
+
+            if std::time::Instant::now() >= deadline {
+                for (s, sub_id, _) in &subscriptions {
+                    let _ = self.unsubscribe_session_state_changed(s, sub_id);
+                }
+                return Ok(SessionWatchResponse {
+                    session_id: String::new(),
+                    runtime_state: String::new(),
+                    status: String::new(),
+                    activity_state: String::new(),
+                    needs_input_reason: None,
+                    timed_out: true,
+                });
+            }
+
+            std::thread::sleep(poll_interval);
+        }
     }
 
     pub fn export_diagnostics_bundle(
