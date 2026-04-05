@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 
@@ -23,7 +24,7 @@ use crate::models::{
     MergeQueueEntry, MergeQueueListFilter, NewAccountRecord, NewAgentTemplateRecord,
     NewDocumentRecord, NewInboxEntryRecord, NewMergeQueueRecord, NewPlanningAssignmentRecord,
     NewProjectRecord, NewProjectRootRecord, NewSessionRecord, NewSessionSpecRecord,
-    NewWorkItemRecord, NewWorkflowReconciliationProposalRecord, NewWorktreeRecord,
+    NewVaultAuditRecord, NewWorkItemRecord, NewWorkflowReconciliationProposalRecord, NewWorktreeRecord,
     PlanningAssignmentDetail, PlanningAssignmentListFilter, PlanningAssignmentSummary,
     PlanningAssignmentUpdateRecord, ProjectDetail, ProjectRootSummary, ProjectRootUpdateRecord,
     ProjectSummary, ProjectUpdateRecord, RemoveProjectRootRequest,
@@ -41,12 +42,14 @@ use crate::models::{
 };
 use crate::runtime::{SessionLaunchRequest, SessionRegistry, SessionRuntimeRegistration};
 use crate::store::DatabaseSet;
+use crate::vault::VaultService;
 
 #[derive(Debug, Clone)]
 pub struct SupervisorService {
     databases: DatabaseSet,
     registry: SessionRegistry,
     diagnostics: DiagnosticsHub,
+    vault: VaultService,
 }
 
 impl SupervisorService {
@@ -54,11 +57,13 @@ impl SupervisorService {
         databases: DatabaseSet,
         registry: SessionRegistry,
         diagnostics: DiagnosticsHub,
+        vault: VaultService,
     ) -> Self {
         Self {
             databases,
             registry,
             diagnostics,
+            vault,
         }
     }
 
@@ -1714,6 +1719,53 @@ impl SupervisorService {
             return Err(error);
         }
 
+        // Resolve vault environment variables for this session.
+        // Values are only injected when the vault is unlocked. If the vault is locked
+        // but has credentials stored for this project (global or project scope), we
+        // return an error rather than silently dropping credentials. If the vault is
+        // locked and has no entries for this project, we proceed with no env injection.
+        let vault_env: HashMap<String, String> = if self.vault.is_unlocked() {
+            let env = self.vault.resolve_env_for_session(&spec_record.project_id)?;
+            if !env.is_empty() {
+                let key_names: Vec<&str> = env.keys().map(|k| k.as_str()).collect();
+                let details_json = serde_json::to_string(&key_names).ok();
+                let audit_now = unix_time_seconds();
+                let _ = self.databases.insert_vault_audit(&NewVaultAuditRecord {
+                    id: Uuid::new_v4().to_string(),
+                    entry_id: None,
+                    action: "inject".to_string(),
+                    actor: session_id.clone(),
+                    details_json,
+                    created_at: audit_now,
+                });
+            }
+            env
+        } else {
+            // Vault is locked — check if there are any credentials for this project
+            // (global scope or project-specific scope). If so, surface an error.
+            let global_count = self
+                .databases
+                .list_vault_entry_rows(Some("global"))
+                .unwrap_or_default()
+                .len();
+            let project_count = self
+                .databases
+                .list_vault_entry_rows(Some(&spec_record.project_id))
+                .unwrap_or_default()
+                .len();
+            if global_count + project_count > 0 {
+                let failed_at = unix_time_seconds();
+                let _ = self.registry.mark_launch_failed(&session_id, failed_at);
+                let _ = self
+                    .databases
+                    .mark_session_failed_to_start(&session_id, failed_at);
+                return Err(anyhow!(
+                    "Vault is locked. Unlock before dispatching sessions that need credentials."
+                ));
+            }
+            HashMap::new()
+        };
+
         let launch = SessionLaunchRequest {
             session_id: session_id.clone(),
             command: spec_record.command.clone(),
@@ -1721,6 +1773,7 @@ impl SupervisorService {
             cwd: PathBuf::from(&record.cwd),
             initial_terminal_cols: spec_record.initial_terminal_cols,
             initial_terminal_rows: spec_record.initial_terminal_rows,
+            env: vault_env,
         };
 
         if let Err(error) = self.registry.launch_session(self.databases.clone(), launch) {

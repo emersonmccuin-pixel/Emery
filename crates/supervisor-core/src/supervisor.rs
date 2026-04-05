@@ -49,9 +49,9 @@ impl Supervisor {
         databases.reconcile_interrupted_sessions(unix_time_seconds())?;
         let diagnostics = DiagnosticsHub::from_env(&paths)?;
         let registry = SessionRegistry::new(diagnostics.clone());
-        let service =
-            SupervisorService::new(databases.clone(), registry.clone(), diagnostics.clone());
         let vault = VaultService::new(databases.clone());
+        let service =
+            SupervisorService::new(databases.clone(), registry.clone(), diagnostics.clone(), vault.clone());
         let supervisor = Self {
             databases,
             registry,
