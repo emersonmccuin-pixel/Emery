@@ -11,6 +11,7 @@ import type { ModalLayer } from "./nav-store";
 import { toastStore } from "./toast-store";
 import { pickFolder } from "./lib";
 import { WorkItemForm, type WorkItemFormData } from "./components/work-item-form";
+import { WorkItemModal } from "./components/work-item-modal";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -44,6 +45,13 @@ export function ModalRouter({ modal }: { modal: NonNullable<ModalLayer> }) {
       );
     case "create_project":
       return <CreateProjectModal />;
+    case "work_item_detail":
+      return (
+        <WorkItemModal
+          projectId={modal.projectId}
+          workItemId={modal.workItemId}
+        />
+      );
     case "confirm":
       return (
         <ConfirmModal

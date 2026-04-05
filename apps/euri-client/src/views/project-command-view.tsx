@@ -1,11 +1,14 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { appStore, useAppStore } from "../store";
 import { navStore } from "../nav-store";
 import { MergeQueueSection } from "../components/merge-queue-section";
 import { WorkItemsSection } from "../components/work-items-section";
 import { DocsSection } from "../components/docs-section";
+import { AgentTerminal } from "../components/agent-terminal";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+
+type TabId = "terminal" | "work-items";
 
 export function ProjectCommandView({ projectId }: { projectId: string }) {
   const bootstrap = useAppStore((s) => s.bootstrap);
@@ -16,8 +19,10 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
   const mergeQueueDiffs = useAppStore((s) => s.mergeQueueDiffs);
   const loadingKeys = useAppStore((s) => s.loadingKeys);
   const projectDetails = useAppStore((s) => s.projectDetails);
-
+  const sessions = useAppStore((s) => s.sessions);
   const selectedWorkItemIds = useAppStore((s) => s.selectedWorkItemIds);
+
+  const [activeTab, setActiveTab] = useState<TabId>("terminal");
 
   // Load git status on mount when project detail is available
   useEffect(() => {
@@ -31,6 +36,16 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
   const workItems = workItemsByProject[projectId] ?? [];
   const documents = documentsByProject[projectId] ?? [];
   const mergeQueue = mergeQueueByProject[projectId] ?? [];
+
+  // Find the dispatch session for this project (running/starting, no worktree branch)
+  const dispatchSession = useMemo(() => {
+    return sessions.find(
+      (s) =>
+        s.project_id === projectId &&
+        !s.worktree_branch &&
+        (s.runtime_state === "running" || s.runtime_state === "starting"),
+    ) ?? null;
+  }, [sessions, projectId]);
 
   if (!project) {
     return <div className="empty-pane">Project not found.</div>;
@@ -50,7 +65,22 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
             </CardContent>
           </Card>
         )}
-        <div className="project-command-topbar">
+
+        {/* Tab bar */}
+        <div className="project-tab-bar">
+          <button
+            className={`project-tab${activeTab === "terminal" ? " project-tab-active" : ""}`}
+            onClick={() => setActiveTab("terminal")}
+          >
+            Terminal
+          </button>
+          <button
+            className={`project-tab${activeTab === "work-items" ? " project-tab-active" : ""}`}
+            onClick={() => setActiveTab("work-items")}
+          >
+            Work Items
+          </button>
+          <div className="project-tab-spacer" />
           <Button
             variant="ghost"
             size="sm"
@@ -58,45 +88,78 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
             onClick={() => navStore.goToProjectSettings(projectId)}
             title="Project settings"
           >
-            ⚙ Settings
+            Settings
           </Button>
         </div>
-        <div className="operations-zone">
-          <MergeQueueSection
-            entries={mergeQueue}
-            diffs={mergeQueueDiffs}
-            loadingKeys={loadingKeys}
-            onMerge={(id) => void appStore.handleMergeQueueMerge(id, projectId)}
-            onPark={(id) => void appStore.handleMergeQueuePark(id, projectId)}
-            onLoadDiff={(id) => void appStore.handleLoadMergeQueueDiff(id)}
-            onCheckConflicts={(id) => void appStore.handleMergeQueueCheckConflicts(id, projectId)}
-            onPeekDiff={() => {/* removed — peek panel deleted */}}
-          />
-        </div>
-        <div className="planning-zone">
-          {isLoadingProject && workItems.length === 0 ? (
-            <div className="project-skeleton-placeholder" style={{ padding: "16px 0" }}>
-              <span className="skeleton-line" style={{ width: "60%" }} />
-              <span className="skeleton-line" style={{ width: "80%" }} />
-              <span className="skeleton-line" style={{ width: "45%" }} />
-            </div>
-          ) : null}
-          <WorkItemsSection
-            workItems={workItems}
-            selectedIds={selectedWorkItemIds}
-            onToggleSelect={(id) => appStore.toggleWorkItemSelection(id)}
-            onClearSelection={() => appStore.clearWorkItemSelection()}
-            onDispatch={(workItemId) => void appStore.handleLaunchSessionFromWorkItem(workItemId)}
-            onMultiDispatch={() => void appStore.handleMultiDispatch(projectId)}
-            onNavigate={(workItemId) => navStore.goToWorkItem(projectId, workItemId)}
-          />
-          <DocsSection
-            documents={documents}
-            workItems={workItems}
-            onOpen={(docId) => navStore.goToDocument(projectId, docId)}
-            onNew={() => navStore.goToNewDocument(projectId)}
-          />
-        </div>
+
+        {/* Terminal tab */}
+        {activeTab === "terminal" && (
+          <div className="project-terminal-tab">
+            {dispatchSession ? (
+              <div className="project-terminal-area">
+                <AgentTerminal sessionId={dispatchSession.id} live={dispatchSession.live} />
+              </div>
+            ) : (
+              <div className="project-terminal-empty">
+                <p>No dispatch session running.</p>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    // Navigate to settings to set up dispatch or show info
+                    navStore.goToProjectSettings(projectId);
+                  }}
+                >
+                  Configure dispatch
+                </Button>
+              </div>
+            )}
+
+            {/* Merge queue always visible under terminal */}
+            {mergeQueue.length > 0 && (
+              <div className="operations-zone">
+                <MergeQueueSection
+                  entries={mergeQueue}
+                  diffs={mergeQueueDiffs}
+                  loadingKeys={loadingKeys}
+                  onMerge={(id) => void appStore.handleMergeQueueMerge(id, projectId)}
+                  onPark={(id) => void appStore.handleMergeQueuePark(id, projectId)}
+                  onLoadDiff={(id) => void appStore.handleLoadMergeQueueDiff(id)}
+                  onCheckConflicts={(id) => void appStore.handleMergeQueueCheckConflicts(id, projectId)}
+                  onPeekDiff={() => {/* removed */}}
+                />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Work Items tab */}
+        {activeTab === "work-items" && (
+          <div className="project-work-items-tab">
+            {isLoadingProject && workItems.length === 0 ? (
+              <div className="project-skeleton-placeholder" style={{ padding: "16px 0" }}>
+                <span className="skeleton-line" style={{ width: "60%" }} />
+                <span className="skeleton-line" style={{ width: "80%" }} />
+                <span className="skeleton-line" style={{ width: "45%" }} />
+              </div>
+            ) : null}
+            <WorkItemsSection
+              workItems={workItems}
+              selectedIds={selectedWorkItemIds}
+              onToggleSelect={(id) => appStore.toggleWorkItemSelection(id)}
+              onClearSelection={() => appStore.clearWorkItemSelection()}
+              onDispatch={(workItemId) => void appStore.handleLaunchSessionFromWorkItem(workItemId)}
+              onMultiDispatch={() => void appStore.handleMultiDispatch(projectId)}
+              onNavigate={(workItemId) => navStore.goToWorkItem(projectId, workItemId)}
+            />
+            <DocsSection
+              documents={documents}
+              workItems={workItems}
+              onOpen={(docId) => navStore.goToDocument(projectId, docId)}
+              onNew={() => navStore.goToNewDocument(projectId)}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

@@ -31,6 +31,7 @@ import { Topbar } from "./topbar";
 import { LayerRouter } from "./layer-router";
 import { ModalRouter } from "./modals";
 import { Sidebar } from "./sidebar";
+import { RightPanel } from "./components/right-panel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -524,6 +525,7 @@ export default function App() {
             <LayerRouter />
           </div>
         </div>
+        {navProjectId ? <RightPanel projectId={navProjectId} /> : null}
       </div>
       <ModalOverlay />
       <ToastStack />

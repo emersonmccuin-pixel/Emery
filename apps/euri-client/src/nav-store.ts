@@ -23,6 +23,7 @@ export type ModalLayer =
   | { modal: "dispatch_multi"; projectId: string; workItemIds: string[] }
   | { modal: "create_work_item"; projectId: string; parentId?: string }
   | { modal: "create_project" }
+  | { modal: "work_item_detail"; projectId: string; workItemId: string }
   | { modal: "confirm"; title: string; message: string; onConfirm: () => void };
 
 // ── State ──────────────────────────────────────────────────────────────────
