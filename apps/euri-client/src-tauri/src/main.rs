@@ -966,6 +966,40 @@ fn create_session(
 }
 
 #[tauri::command]
+fn create_session_batch(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    input: Vec<Value>,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "session.create_batch",
+            json!({ "requests": input }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn check_dispatch_conflicts(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    work_item_ids: Vec<String>,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "session.check_dispatch_conflicts",
+            json!({ "work_item_ids": work_item_ids }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
 fn get_document(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
@@ -1178,6 +1212,8 @@ fn main() {
             list_workflow_reconciliation_proposals,
             update_workflow_reconciliation_proposal,
             create_session,
+            create_session_batch,
+            check_dispatch_conflicts,
             export_diagnostics_bundle,
             poll_events,
             list_merge_queue,

@@ -4,7 +4,11 @@ import { WorkItemRow } from "./work-item-row";
 
 type WorkItemsSectionProps = {
   workItems: WorkItemSummary[];
+  selectedIds: string[];
+  onToggleSelect: (workItemId: string) => void;
+  onClearSelection: () => void;
   onDispatch: (workItemId: string) => void;
+  onMultiDispatch: () => void;
 };
 
 const STATUS_GROUPS = [
@@ -14,7 +18,14 @@ const STATUS_GROUPS = [
   { key: "backlog", label: "Backlog" },
 ] as const;
 
-export function WorkItemsSection({ workItems, onDispatch }: WorkItemsSectionProps) {
+export function WorkItemsSection({
+  workItems,
+  selectedIds,
+  onToggleSelect,
+  onClearSelection,
+  onDispatch,
+  onMultiDispatch,
+}: WorkItemsSectionProps) {
   const grouped = useMemo(() => {
     const groups: Record<string, WorkItemSummary[]> = {};
     for (const item of workItems) {
@@ -37,6 +48,19 @@ export function WorkItemsSection({ workItems, onDispatch }: WorkItemsSectionProp
   return (
     <section className="project-section work-items-section">
       <h3>Work Items</h3>
+
+      {selectedIds.length >= 2 ? (
+        <div className="multi-dispatch-bar">
+          <span className="multi-dispatch-count">{selectedIds.length} items selected</span>
+          <button className="multi-dispatch-btn" onClick={onMultiDispatch}>
+            Dispatch {selectedIds.length} in parallel
+          </button>
+          <button className="multi-dispatch-clear" onClick={onClearSelection}>
+            Clear
+          </button>
+        </div>
+      ) : null}
+
       {STATUS_GROUPS.map(({ key, label }) => {
         const items = grouped[key];
         if (!items || items.length === 0) return null;
@@ -50,6 +74,8 @@ export function WorkItemsSection({ workItems, onDispatch }: WorkItemsSectionProp
               <WorkItemRow
                 key={item.id}
                 workItem={item}
+                selected={selectedIds.includes(item.id)}
+                onToggleSelect={() => onToggleSelect(item.id)}
                 onDispatch={() => onDispatch(item.id)}
               />
             ))}
@@ -66,6 +92,8 @@ export function WorkItemsSection({ workItems, onDispatch }: WorkItemsSectionProp
             <WorkItemRow
               key={item.id}
               workItem={item}
+              selected={selectedIds.includes(item.id)}
+              onToggleSelect={() => onToggleSelect(item.id)}
               onDispatch={() => onDispatch(item.id)}
             />
           ))}

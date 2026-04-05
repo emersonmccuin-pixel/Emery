@@ -809,7 +809,15 @@ pub struct SessionSummary {
     pub created_at: i64,
     pub updated_at: i64,
     pub archived_at: Option<i64>,
+    pub dispatch_group: Option<String>,
     pub live: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ConflictWarning {
+    pub item_a: String,
+    pub item_b: String,
+    pub overlapping_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -947,6 +955,7 @@ pub struct CreateSessionRequest {
     pub initial_terminal_rows: Option<i64>,
     #[serde(default)]
     pub auto_worktree: bool,
+    pub dispatch_group: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -973,6 +982,7 @@ pub struct NewSessionRecord {
     pub started_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
+    pub dispatch_group: Option<String>,
 }
 
 #[derive(Debug, Clone)]

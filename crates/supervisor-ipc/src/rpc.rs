@@ -5,7 +5,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use supervisor_core::{
-    CreateAccountRequest, CreateDiagnosticsBundleRequest, CreateDocumentRequest,
+    ConflictWarning, CreateAccountRequest, CreateDiagnosticsBundleRequest, CreateDocumentRequest,
     CreatePlanningAssignmentRequest, CreateProjectRequest, CreateProjectRootRequest,
     CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest,
     CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
@@ -21,12 +21,13 @@ use supervisor_core::{
 };
 
 use crate::protocol::{
-    AccountGetParams, DiagnosticsExportBundleParams, DocumentGetParams, ErrorBody, EventEnvelope,
-    HelloResult, Method, ProjectGetParams, ProjectRootListParams, RequestEnvelope,
-    ResponseEnvelope, SessionAttachParams, SessionControlParams, SessionDetachParams,
-    SessionGetParams, SessionInputParams, SessionResizeParams, SessionSpecGetParams,
-    SubscriptionCloseParams, SubscriptionOpenParams, WorkItemGetParams,
-    WorkflowReconciliationProposalGetParams, WorkspaceStateGetParams, WorktreeGetParams,
+    AccountGetParams, CheckDispatchConflictsParams, DiagnosticsExportBundleParams,
+    DocumentGetParams, ErrorBody, EventEnvelope, HelloResult, Method, ProjectGetParams,
+    ProjectRootListParams, RequestEnvelope, ResponseEnvelope, SessionAttachParams,
+    SessionControlParams, SessionDetachParams, SessionGetParams, SessionInputParams,
+    SessionResizeParams, SessionSpecGetParams, SubscriptionCloseParams, SubscriptionOpenParams,
+    WorkItemGetParams, WorkflowReconciliationProposalGetParams, WorkspaceStateGetParams,
+    WorktreeGetParams,
 };
 
 const PROTOCOL_VERSION: &str = "1";
@@ -596,6 +597,20 @@ impl SupervisorRpc {
                     .check_merge_conflicts(&params.merge_queue_id)?;
                 Ok(json!({ "conflicts": conflicts }))
             }
+            Method::SessionCreateBatch => {
+                let requests: Vec<CreateSessionRequest> = serde_json::from_value(
+                    params.get("requests").cloned().unwrap_or_default(),
+                )?;
+                let sessions = self.supervisor.create_session_batch(requests)?;
+                Ok(serde_json::to_value(sessions)?)
+            }
+            Method::SessionCheckDispatchConflicts => {
+                let params: CheckDispatchConflictsParams = serde_json::from_value(params)?;
+                let warnings: Vec<ConflictWarning> = self
+                    .supervisor
+                    .check_dispatch_conflicts(&params.work_item_ids)?;
+                Ok(json!({ "warnings": warnings }))
+            }
             Method::SubscriptionOpen => {
                 let params: SubscriptionOpenParams = serde_json::from_value(params)?;
                 self.open_subscription(params, connection)
@@ -796,6 +811,8 @@ impl SupervisorRpc {
                 Method::MergeQueuePark.as_str(),
                 Method::MergeQueueReorder.as_str(),
                 Method::MergeQueueCheckConflicts.as_str(),
+                Method::SessionCreateBatch.as_str(),
+                Method::SessionCheckDispatchConflicts.as_str(),
             ],
             app_data_root: self.supervisor.paths().root.display().to_string(),
             ipc_endpoint: self.ipc_endpoint.clone(),

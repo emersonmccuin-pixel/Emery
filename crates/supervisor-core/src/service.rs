@@ -1232,6 +1232,7 @@ impl SupervisorService {
             request.cwd = worktree_path;
         }
 
+        let dispatch_group = request.dispatch_group.clone();
         let spec_record = self.build_session_spec_record(None, request.into(), now)?;
         if let Some(worktree_id) = spec_record.worktree_id.as_deref() {
             if self
@@ -1284,6 +1285,7 @@ impl SupervisorService {
             started_at: None,
             created_at: now,
             updated_at: now,
+            dispatch_group,
         };
 
         let insert_result =
@@ -1344,6 +1346,57 @@ impl SupervisorService {
             }),
         )?;
         Ok(detail)
+    }
+
+    pub fn create_session_batch(
+        &self,
+        requests: Vec<CreateSessionRequest>,
+    ) -> Result<Vec<SessionDetail>> {
+        let dispatch_group = format!("dg_{}", Uuid::new_v4().simple());
+        let mut results = Vec::new();
+
+        for mut req in requests {
+            req.dispatch_group = Some(dispatch_group.clone());
+            let detail = self.create_session(req)?;
+            results.push(detail);
+        }
+
+        Ok(results)
+    }
+
+    pub fn check_dispatch_conflicts(
+        &self,
+        work_item_ids: &[String],
+    ) -> Result<Vec<crate::models::ConflictWarning>> {
+        let mut file_sets: Vec<(String, Vec<String>)> = Vec::new();
+
+        for id in work_item_ids {
+            if let Some(item) = self.databases.get_work_item(id)? {
+                let files = extract_file_paths(&item.summary.description);
+                file_sets.push((item.summary.callsign.clone(), files));
+            }
+        }
+
+        let mut warnings = Vec::new();
+        for i in 0..file_sets.len() {
+            for j in (i + 1)..file_sets.len() {
+                let overlap: Vec<String> = file_sets[i]
+                    .1
+                    .iter()
+                    .filter(|f| file_sets[j].1.contains(f))
+                    .cloned()
+                    .collect();
+                if !overlap.is_empty() {
+                    warnings.push(crate::models::ConflictWarning {
+                        item_a: file_sets[i].0.clone(),
+                        item_b: file_sets[j].0.clone(),
+                        overlapping_files: overlap,
+                    });
+                }
+            }
+        }
+
+        Ok(warnings)
     }
 
     fn auto_create_worktree_for_session(
@@ -2953,6 +3006,21 @@ impl From<CreateSessionRequest> for SessionSpecDraft {
             context_bundle_ref: None,
         }
     }
+}
+
+/// Best-effort extraction of file paths from markdown text.
+/// Looks for tokens containing a slash and a dot (file extension) that look like paths.
+fn extract_file_paths(text: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    for word in text.split_whitespace() {
+        let word = word.trim_matches(|c| matches!(c, '`' | '"' | '\'' | '(' | ')' | '[' | ']' | ',' | ';' | ':'));
+        if word.contains('/') && word.contains('.') && !word.starts_with("http") && !word.starts_with("//") {
+            paths.push(word.to_string());
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    paths
 }
 
 impl From<CreateSessionSpecRequest> for SessionSpecDraft {

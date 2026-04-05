@@ -124,12 +124,23 @@ export type SessionSummary = {
   created_at: number;
   updated_at: number;
   archived_at: number | null;
+  dispatch_group: string | null;
   live: boolean;
 };
 
 export type SessionDetail = {
   runtime: SessionRuntimeView | null;
 } & SessionSummary;
+
+export type ConflictWarning = {
+  item_a: string;
+  item_b: string;
+  overlapping_files: string[];
+};
+
+export type PendingDispatch =
+  | { mode: "single"; workItemId: string; projectId: string }
+  | { mode: "multi"; workItemIds: string[]; projectId: string };
 
 export type EncodedTerminalChunk = {
   sequence: number;

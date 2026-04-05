@@ -13,9 +13,9 @@ pub use diagnostics::{
     DiagnosticContext, DiagnosticsBundleRequest, DiagnosticsBundleResult, DiagnosticsHub,
 };
 pub use models::{
-    AccountDetail, AccountSummary, CreateAccountRequest, CreateDiagnosticsBundleRequest,
-    CreateDocumentRequest, CreatePlanningAssignmentRequest, CreateProjectRequest,
-    CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
+    AccountDetail, AccountSummary, ConflictWarning, CreateAccountRequest,
+    CreateDiagnosticsBundleRequest, CreateDocumentRequest, CreatePlanningAssignmentRequest,
+    CreateProjectRequest, CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
     CreateWorkItemRequest, CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
     DeletePlanningAssignmentRequest, DocumentDetail, DocumentListFilter, DocumentSummary,
     EncodedTerminalChunk, GetWorkspaceStateRequest, MergeQueueCheckConflictsParams,

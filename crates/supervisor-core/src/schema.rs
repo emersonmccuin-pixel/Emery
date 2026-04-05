@@ -24,6 +24,10 @@ const APP_MIGRATIONS: &[(&str, &str)] = &[
         "0005_merge_queue",
         include_str!("migrations/app/0005_merge_queue.sql"),
     ),
+    (
+        "0006_dispatch_group",
+        include_str!("migrations/app/0006_dispatch_group.sql"),
+    ),
 ];
 const KNOWLEDGE_MIGRATIONS: &[(&str, &str)] = &[(
     "0001_initial",

@@ -46,9 +46,6 @@ function buildWorkspacePayloadV2(navigation: NavigationLayer): WorkspacePayloadV
 export default function App() {
   const bootstrap = useAppStore((s) => s.bootstrap);
   const error = useAppStore((s) => s.error);
-  const pendingDispatch = useAppStore((s) => s.pendingDispatch);
-  const projectDetails = useAppStore((s) => s.projectDetails);
-  const workItemDetails = useAppStore((s) => s.workItemDetails);
   const navLayer = useNavLayer();
 
   const restoreApplied = useRef(false);
@@ -282,19 +279,7 @@ export default function App() {
       <main className="layer-viewport">
         <LayerRouter />
       </main>
-      {pendingDispatch && projectDetails[pendingDispatch.projectId] && workItemDetails[pendingDispatch.workItemId] ? (
-        <DispatchSheet
-          workItem={workItemDetails[pendingDispatch.workItemId]}
-          project={projectDetails[pendingDispatch.projectId]}
-          account={
-            bootstrap?.accounts.find(
-              (a) => a.id === projectDetails[pendingDispatch.projectId].default_account_id,
-            ) ?? bootstrap?.accounts[0] ?? null
-          }
-          onConfirm={(opts) => void appStore.confirmDispatch(opts)}
-          onCancel={() => appStore.cancelDispatch()}
-        />
-      ) : null}
+      <DispatchSheet />
     </div>
   );
 }
