@@ -13,6 +13,7 @@ type MergeQueueSectionProps = {
   onPark: (id: string) => void;
   onLoadDiff: (id: string) => void;
   onCheckConflicts: (id: string) => void;
+  onPeekDiff?: (id: string) => void;
 };
 
 export function MergeQueueSection({
@@ -23,6 +24,7 @@ export function MergeQueueSection({
   onPark,
   onLoadDiff,
   onCheckConflicts,
+  onPeekDiff,
 }: MergeQueueSectionProps) {
   const sorted = [...entries].sort(
     (a, b) => (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99) || a.position - b.position,
@@ -52,6 +54,7 @@ export function MergeQueueSection({
               onPark={() => onPark(entry.id)}
               onLoadDiff={() => onLoadDiff(entry.id)}
               onCheckConflicts={() => onCheckConflicts(entry.id)}
+              onPeekDiff={onPeekDiff ? () => onPeekDiff(entry.id) : undefined}
             />
           ))}
         </div>

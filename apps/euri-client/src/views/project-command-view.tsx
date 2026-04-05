@@ -111,6 +111,7 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
             onPark={(id) => void appStore.handleMergeQueuePark(id, projectId)}
             onLoadDiff={(id) => void appStore.handleLoadMergeQueueDiff(id)}
             onCheckConflicts={(id) => void appStore.handleMergeQueueCheckConflicts(id, projectId)}
+            onPeekDiff={(id) => navStore.openPeek({ peek: "merge_diff", projectId, entryId: id })}
           />
         </div>
         <div className="planning-zone">
@@ -138,7 +139,7 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
               onClearSelection={() => appStore.clearWorkItemSelection()}
               onDispatch={(workItemId) => void appStore.handleLaunchSessionFromWorkItem(workItemId)}
               onMultiDispatch={() => void appStore.handleMultiDispatch(projectId)}
-              onNavigate={(workItemId) => navStore.goToWorkItem(projectId, workItemId)}
+              onNavigate={(workItemId) => navStore.openPeek({ peek: "work_item", projectId, workItemId })}
               assignments={assignments}
               dayCadenceKey={dayCadenceKey}
               weekCadenceKey={weekCadenceKey}

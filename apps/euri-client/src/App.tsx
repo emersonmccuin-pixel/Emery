@@ -24,7 +24,7 @@ import type {
 } from "./types";
 import { appStore, useAppStore } from "./store";
 import { navStore, useNavLayer, usePeekLayer, useModalLayer } from "./nav-store";
-import type { NavigationLayer, PeekLayer, ModalLayer } from "./nav-store";
+import type { NavigationLayer, ModalLayer } from "./nav-store";
 import { toastStore, useToastStore } from "./toast-store";
 import type { Toast } from "./toast-store";
 import { Topbar } from "./topbar";
@@ -33,6 +33,7 @@ import { LayerRouter } from "./layer-router";
 import { DispatchSheet } from "./dispatch-sheet";
 import { Sidebar } from "./sidebar";
 import { PeekPanel } from "./peek-panel";
+import { PeekRouter } from "./peek-router";
 import { Cityscape } from "./components/cityscape";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -85,55 +86,6 @@ function buildWorkspacePayloadV3(mainNav: NavigationLayer, sidebarCollapsed: boo
     planning_view_mode: appStore.getState().planningViewMode,
     sidebar_collapsed: sidebarCollapsed,
   };
-}
-
-// ── Peek Router (stub content for Phase 3) ─────────────────────────────────
-
-function PeekRouter({ peek }: { peek: NonNullable<PeekLayer> }) {
-  switch (peek.peek) {
-    case "work_item":
-      return (
-        <div className="peek-stub">
-          <div className="peek-stub-type">Work Item</div>
-          <div className="peek-stub-id">{peek.workItemId}</div>
-        </div>
-      );
-    case "inbox":
-      return (
-        <div className="peek-stub">
-          <div className="peek-stub-type">Inbox</div>
-          <div className="peek-stub-id">{peek.projectId}</div>
-        </div>
-      );
-    case "document":
-      return (
-        <div className="peek-stub">
-          <div className="peek-stub-type">Document</div>
-          <div className="peek-stub-id">{peek.documentId}</div>
-        </div>
-      );
-    case "session_detail":
-      return (
-        <div className="peek-stub">
-          <div className="peek-stub-type">Session Detail</div>
-          <div className="peek-stub-id">{peek.sessionId}</div>
-        </div>
-      );
-    case "merge_diff":
-      return (
-        <div className="peek-stub">
-          <div className="peek-stub-type">Merge Diff</div>
-          <div className="peek-stub-id">{peek.entryId}</div>
-        </div>
-      );
-    case "project_settings":
-      return (
-        <div className="peek-stub">
-          <div className="peek-stub-type">Project Settings</div>
-          <div className="peek-stub-id">{peek.projectId}</div>
-        </div>
-      );
-  }
 }
 
 // ── Modal Router (stub content for Phase 4) ────────────────────────────────

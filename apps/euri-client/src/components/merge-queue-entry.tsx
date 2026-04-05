@@ -14,6 +14,7 @@ type MergeQueueEntryProps = {
   onPark: () => void;
   onLoadDiff: () => void;
   onCheckConflicts: () => void;
+  onPeekDiff?: () => void;
 };
 
 export function MergeQueueEntry({
@@ -26,10 +27,15 @@ export function MergeQueueEntry({
   onPark,
   onLoadDiff,
   onCheckConflicts,
+  onPeekDiff,
 }: MergeQueueEntryProps) {
   const [expanded, setExpanded] = useState(false);
 
   function toggleExpand() {
+    if (onPeekDiff) {
+      onPeekDiff();
+      return;
+    }
     if (!expanded && diff === undefined) onLoadDiff();
     setExpanded(!expanded);
   }

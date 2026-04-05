@@ -534,12 +534,14 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             size="sm"
             className={`sidebar-nav-btn justify-start px-3 py-2 ${navLayer.layer === "inbox" ? " active" : ""}`}
             onClick={() => {
-              if (activeProjectId) navStore.goToInbox(activeProjectId);
+              if (activeProjectId) {
+                navStore.openPeek({ peek: "inbox", projectId: activeProjectId });
+              }
             }}
             disabled={!activeProjectId}
             title="Inbox"
           >
-            <span className="sidebar-nav-icon">✉</span>
+            <span className="sidebar-nav-icon">&#x2709;</span>
             {!collapsed && <span>Inbox</span>}
           </Button>
           <Button
