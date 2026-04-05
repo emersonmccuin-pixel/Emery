@@ -26,6 +26,7 @@ pub struct ProjectDetail {
     pub default_account_id: Option<String>,
     pub settings_json: Option<String>,
     pub agent_safety_overrides_json: Option<String>,
+    pub instructions_md: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
     pub archived_at: Option<i64>,
@@ -221,6 +222,7 @@ pub struct CreateProjectRequest {
     pub sort_order: Option<i64>,
     pub default_account_id: Option<String>,
     pub settings_json: Option<String>,
+    pub instructions_md: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -231,6 +233,7 @@ pub struct UpdateProjectRequest {
     pub sort_order: Option<i64>,
     pub default_account_id: Option<String>,
     pub settings_json: Option<String>,
+    pub instructions_md: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -522,6 +525,7 @@ pub struct NewProjectRecord {
     pub sort_order: i64,
     pub default_account_id: Option<String>,
     pub settings_json: Option<String>,
+    pub instructions_md: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -534,6 +538,7 @@ pub struct ProjectUpdateRecord {
     pub sort_order: i64,
     pub default_account_id: Option<String>,
     pub settings_json: Option<String>,
+    pub instructions_md: Option<String>,
     pub updated_at: i64,
 }
 

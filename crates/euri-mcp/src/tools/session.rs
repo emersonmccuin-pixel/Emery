@@ -23,7 +23,9 @@ pub fn tool_session_create() -> Value {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Extra CLI args to append after the standard flags (optional)"
-                }
+                },
+                "round_instructions": { "type": "string", "description": "Instructions from the current dispatch round (ephemeral, from dispatcher conversation)" },
+                "instructions":       { "type": "string", "description": "Per-session instructions (from template or dispatcher override)" }
             },
             "required": ["project_id", "worktree_id", "account_id"]
         }
@@ -50,11 +52,13 @@ pub fn tool_session_create_batch() -> Value {
                             "prompt":       { "type": "string" },
                             "origin_mode":  { "type": "string" },
                             "title":        { "type": "string" },
-                            "args":         { "type": "array", "items": { "type": "string" } }
+                            "args":         { "type": "array", "items": { "type": "string" } },
+                            "instructions": { "type": "string", "description": "Per-session instructions (from template or override)" }
                         },
                         "required": ["project_id", "worktree_id", "account_id"]
                     }
-                }
+                },
+                "round_instructions": { "type": "string", "description": "Instructions applied to all sessions in this batch" }
             },
             "required": ["sessions"]
         }
@@ -156,6 +160,39 @@ pub fn handle_session_create(input: Value) -> Result<String> {
         .ok_or_else(|| anyhow!("worktree missing branch_name"))?
         .to_string();
 
+    // ── Instruction injection ────────────────────────────────────────────────────
+    // Three-tier merge: project defaults + round instructions + per-session instructions
+    {
+        let mut instruction_parts: Vec<String> = Vec::new();
+
+        // 1. Project-level instructions
+        let project = rpc.call("project.get", json!({ "project_id": project_id }))?;
+        if let Some(project_instructions) = project["instructions_md"].as_str() {
+            if !project_instructions.is_empty() {
+                instruction_parts.push(project_instructions.to_string());
+            }
+        }
+
+        // 2. Round-level instructions (ephemeral, from dispatcher conversation)
+        if let Some(round_instructions) = input["round_instructions"].as_str() {
+            if !round_instructions.is_empty() {
+                instruction_parts.push(round_instructions.to_string());
+            }
+        }
+
+        // 3. Per-session instructions (from template or dispatcher override)
+        if let Some(session_instructions) = input["instructions"].as_str() {
+            if !session_instructions.is_empty() {
+                instruction_parts.push(session_instructions.to_string());
+            }
+        }
+
+        if !instruction_parts.is_empty() {
+            let merged = instruction_parts.join("\n\n---\n\n");
+            write_instructions_file(&worktree_path, &merged)?;
+        }
+    }
+
     // Build args list
     let mut args = vec!["--dangerously-skip-permissions".to_string()];
     if let Some(ref p) = prompt {
@@ -205,6 +242,13 @@ pub fn handle_session_create_batch(input: Value) -> Result<String> {
 
     let mut rpc = RpcClient::connect()?;
 
+    // Round-level instructions (shared across all sessions in this batch)
+    let round_instructions = input["round_instructions"].as_str().map(str::to_string);
+
+    // Cache project instructions to avoid N+1 RPC calls (keyed by project_id)
+    let mut project_instructions_cache: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
+
     // Resolve each worktree and build session params
     let mut session_params: Vec<Value> = Vec::with_capacity(sessions_input.len());
     for entry in &sessions_input {
@@ -225,6 +269,43 @@ pub fn handle_session_create_batch(input: Value) -> Result<String> {
             .as_str()
             .ok_or_else(|| anyhow!("worktree {} missing path", worktree_id))?
             .to_string();
+
+        // ── Instruction injection ────────────────────────────────────────────
+        {
+            // Fetch project instructions once per unique project_id
+            if !project_instructions_cache.contains_key(&project_id) {
+                let project = rpc.call("project.get", json!({ "project_id": project_id }))?;
+                let pi = project["instructions_md"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string);
+                project_instructions_cache.insert(project_id.clone(), pi);
+            }
+
+            let mut instruction_parts: Vec<String> = Vec::new();
+
+            // 1. Project-level
+            if let Some(Some(pi)) = project_instructions_cache.get(&project_id) {
+                instruction_parts.push(pi.clone());
+            }
+            // 2. Round-level
+            if let Some(ref ri) = round_instructions {
+                if !ri.is_empty() {
+                    instruction_parts.push(ri.clone());
+                }
+            }
+            // 3. Per-session
+            if let Some(si) = entry["instructions"].as_str() {
+                if !si.is_empty() {
+                    instruction_parts.push(si.to_string());
+                }
+            }
+
+            if !instruction_parts.is_empty() {
+                let merged = instruction_parts.join("\n\n---\n\n");
+                write_instructions_file(&worktree_path, &merged)?;
+            }
+        }
 
         let mut args = vec!["--dangerously-skip-permissions".to_string()];
         if let Some(ref p) = prompt {
@@ -404,4 +485,16 @@ fn required_str(input: &Value, key: &str) -> Result<String> {
         .as_str()
         .map(str::to_string)
         .ok_or_else(|| anyhow!("missing required field: {}", key))
+}
+
+fn write_instructions_file(worktree_path: &str, instructions: &str) -> Result<()> {
+    let claude_dir = std::path::Path::new(worktree_path).join(".claude");
+    std::fs::create_dir_all(&claude_dir)
+        .map_err(|e| anyhow!("failed to create .claude dir: {}", e))?;
+
+    let file_path = claude_dir.join("instructions.md");
+    std::fs::write(&file_path, instructions)
+        .map_err(|e| anyhow!("failed to write instructions.md: {}", e))?;
+
+    Ok(())
 }
