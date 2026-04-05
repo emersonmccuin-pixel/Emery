@@ -26,11 +26,12 @@ use supervisor_core::{
 use crate::protocol::{
     AccountGetParams, CheckDispatchConflictsParams, DiagnosticsExportBundleParams,
     DocumentGetParams, ErrorBody, EventEnvelope, HelloResult, InboxCountUnreadParams,
-    InboxGetParams, Method, ProjectGetParams, ProjectRootListParams, RequestEnvelope,
-    ResponseEnvelope, SessionAttachParams, SessionControlParams, SessionDetachParams,
-    SessionGetParams, SessionInputParams, SessionResizeParams, SessionSpecGetParams,
-    SessionWatchParams, SubscriptionCloseParams, SubscriptionOpenParams, WorkItemGetParams,
-    WorkflowReconciliationProposalGetParams, WorkspaceStateGetParams, WorktreeGetParams,
+    InboxGetParams, Method, ProjectGetParams, ProjectRootGitStatusParams, ProjectRootListParams,
+    RequestEnvelope, ResponseEnvelope, SessionAttachParams, SessionControlParams,
+    SessionDetachParams, SessionGetParams, SessionInputParams, SessionResizeParams,
+    SessionSpecGetParams, SessionWatchParams, SubscriptionCloseParams, SubscriptionOpenParams,
+    WorkItemGetParams, WorkflowReconciliationProposalGetParams, WorkspaceStateGetParams,
+    WorktreeGetParams,
 };
 
 const PROTOCOL_VERSION: &str = "1";
@@ -271,6 +272,13 @@ impl SupervisorRpc {
                 let request: SetProjectRootRemoteRequest = serde_json::from_value(params)?;
                 Ok(serde_json::to_value(
                     self.supervisor.set_project_root_remote(request)?,
+                )?)
+            }
+            Method::ProjectRootGitStatus => {
+                let params: ProjectRootGitStatusParams = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor
+                        .get_project_root_git_status(&params.project_root_id)?,
                 )?)
             }
             Method::AccountList => Ok(serde_json::to_value(self.supervisor.list_accounts()?)?),
@@ -829,6 +837,7 @@ impl SupervisorRpc {
                 Method::ProjectRootRemove.as_str(),
                 Method::ProjectRootGitInit.as_str(),
                 Method::ProjectRootSetRemote.as_str(),
+                Method::ProjectRootGitStatus.as_str(),
                 Method::AccountList.as_str(),
                 Method::AccountGet.as_str(),
                 Method::AccountCreate.as_str(),

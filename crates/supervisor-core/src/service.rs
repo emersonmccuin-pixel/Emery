@@ -37,6 +37,7 @@ use crate::models::{
     WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
     WorkflowReconciliationProposalUpdateRecord, WorkspaceStateRecord, WorktreeDetail,
     WorktreeListFilter, WorktreeSummary, WorktreeUpdateRecord,
+    GitHealthStatus,
 };
 use crate::runtime::{SessionLaunchRequest, SessionRegistry, SessionRuntimeRegistration};
 use crate::store::DatabaseSet;
@@ -382,6 +383,44 @@ impl SupervisorService {
         self.databases
             .get_project_root(&existing.id)?
             .ok_or_else(|| anyhow!("project root {} was not found", existing.id))
+    }
+
+    pub fn get_project_root_git_status(
+        &self,
+        project_root_id: &str,
+    ) -> Result<Option<GitHealthStatus>> {
+        let root = match self.databases.get_project_root(project_root_id)? {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+
+        let path = std::path::Path::new(&root.path);
+        if !git::git_is_repo(path) {
+            return Ok(None);
+        }
+
+        let status_output = git::git_status(path)?;
+        let is_clean = status_output.trim().is_empty();
+
+        let has_remote = git::git_has_remote(path).unwrap_or(false);
+
+        let (is_pushed, is_behind) = if has_remote {
+            let pushed = git::git_is_pushed(path).unwrap_or(None);
+            let behind = git::git_is_behind_remote(path).unwrap_or(None);
+            (pushed, behind)
+        } else {
+            (None, None)
+        };
+
+        let last_sync_at = git::git_last_fetch_timestamp(path).unwrap_or(None);
+
+        Ok(Some(GitHealthStatus {
+            has_remote,
+            is_clean,
+            is_pushed,
+            is_behind,
+            last_sync_at,
+        }))
     }
 
     pub fn archive_project(&self, request: ArchiveProjectRequest) -> Result<ProjectDetail> {

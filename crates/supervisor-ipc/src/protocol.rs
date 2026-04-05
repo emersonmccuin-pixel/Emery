@@ -17,6 +17,7 @@ pub enum Method {
     ProjectRootRemove,
     ProjectRootGitInit,
     ProjectRootSetRemote,
+    ProjectRootGitStatus,
     AccountList,
     AccountGet,
     AccountCreate,
@@ -92,6 +93,7 @@ impl Method {
             Self::ProjectRootRemove => "project_root.remove",
             Self::ProjectRootGitInit => "project_root.git_init",
             Self::ProjectRootSetRemote => "project_root.set_remote",
+            Self::ProjectRootGitStatus => "project_root.git_status",
             Self::AccountList => "account.list",
             Self::AccountGet => "account.get",
             Self::AccountCreate => "account.create",
@@ -171,6 +173,7 @@ impl TryFrom<&str> for Method {
             "project_root.remove" => Ok(Self::ProjectRootRemove),
             "project_root.git_init" => Ok(Self::ProjectRootGitInit),
             "project_root.set_remote" => Ok(Self::ProjectRootSetRemote),
+            "project_root.git_status" => Ok(Self::ProjectRootGitStatus),
             "account.list" => Ok(Self::AccountList),
             "account.get" => Ok(Self::AccountGet),
             "account.create" => Ok(Self::AccountCreate),
@@ -309,6 +312,11 @@ pub struct HelloResult {
     pub app_data_root: String,
     pub ipc_endpoint: String,
     pub diagnostics_enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProjectRootGitStatusParams {
+    pub project_root_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

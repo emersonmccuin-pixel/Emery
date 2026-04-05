@@ -1435,6 +1435,23 @@ fn update_account(
         .map_err(error_string)
 }
 
+#[tauri::command]
+fn get_project_root_git_status(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    root_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "project_root.git_status",
+            json!({ "project_root_id": root_id }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
 fn main() {
     if let Err(error) = debug_dev_server_preflight() {
         eprintln!("{error}");
@@ -1498,7 +1515,8 @@ fn main() {
             list_accounts,
             get_account,
             create_account,
-            update_account
+            update_account,
+            get_project_root_git_status
         ])
         .run(tauri::generate_context!())
         .expect("failed to run EURI client");

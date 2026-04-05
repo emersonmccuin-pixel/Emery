@@ -276,6 +276,102 @@ pub fn git_remote_get_url(path: &Path) -> Option<String> {
     if url.is_empty() { None } else { Some(url) }
 }
 
+/// Check if a git repo at `path` has at least one remote configured.
+pub fn git_has_remote(path: &Path) -> Result<bool> {
+    let output = Command::new("git")
+        .current_dir(path)
+        .args(["remote"])
+        .output()
+        .context("failed to run git remote")?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "git remote failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let out = String::from_utf8_lossy(&output.stdout);
+    Ok(!out.trim().is_empty())
+}
+
+/// Compare HEAD with upstream (`@{u}`). Returns `None` if no upstream is configured.
+pub fn git_is_pushed(path: &Path) -> Result<Option<bool>> {
+    let output = Command::new("git")
+        .current_dir(path)
+        .args(["rev-list", "--count", "HEAD..@{u}"])
+        .output()
+        .context("failed to run git rev-list for push check")?;
+    if !output.status.success() {
+        // No upstream configured
+        return Ok(None);
+    }
+    let count_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let ahead: u64 = count_str.parse().unwrap_or(0);
+
+    let output2 = Command::new("git")
+        .current_dir(path)
+        .args(["rev-list", "--count", "@{u}..HEAD"])
+        .output()
+        .context("failed to run git rev-list for ahead check")?;
+    if !output2.status.success() {
+        return Ok(None);
+    }
+    let ahead_str = String::from_utf8_lossy(&output2.stdout).trim().to_string();
+    let local_ahead: u64 = ahead_str.parse().unwrap_or(0);
+
+    // "pushed" means local has no commits ahead of remote
+    Ok(Some(local_ahead == 0 && ahead == 0 || local_ahead == 0))
+}
+
+/// Returns the number of commits the remote is ahead of HEAD. Returns `None` if no upstream.
+pub fn git_is_behind_remote(path: &Path) -> Result<Option<bool>> {
+    let output = Command::new("git")
+        .current_dir(path)
+        .args(["rev-list", "--count", "HEAD..@{u}"])
+        .output()
+        .context("failed to run git rev-list for behind check")?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let count_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let behind: u64 = count_str.parse().unwrap_or(0);
+    Ok(Some(behind > 0))
+}
+
+/// Read the mtime of FETCH_HEAD as Unix epoch seconds. Returns `None` if not found.
+pub fn git_last_fetch_timestamp(path: &Path) -> Result<Option<i64>> {
+    // Locate .git directory
+    let git_dir_output = Command::new("git")
+        .current_dir(path)
+        .args(["rev-parse", "--git-dir"])
+        .output()
+        .context("failed to run git rev-parse --git-dir")?;
+    if !git_dir_output.status.success() {
+        return Ok(None);
+    }
+    let git_dir = String::from_utf8_lossy(&git_dir_output.stdout).trim().to_string();
+
+    let git_dir_path = if std::path::Path::new(&git_dir).is_absolute() {
+        std::path::PathBuf::from(&git_dir)
+    } else {
+        path.join(&git_dir)
+    };
+
+    let fetch_head = git_dir_path.join("FETCH_HEAD");
+    if !fetch_head.exists() {
+        return Ok(None);
+    }
+
+    let metadata = std::fs::metadata(&fetch_head).context("failed to stat FETCH_HEAD")?;
+    let modified = metadata
+        .modified()
+        .context("failed to get mtime of FETCH_HEAD")?;
+    let epoch = modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    Ok(Some(epoch))
+}
+
 /// Get the working tree status (short format) for a path.
 pub fn git_status(path: &Path) -> Result<String> {
     let output = Command::new("git")

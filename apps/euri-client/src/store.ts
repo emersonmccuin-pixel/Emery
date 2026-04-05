@@ -99,6 +99,7 @@ import type {
   ConnectionStatusEvent,
   DocumentDetail,
   DocumentSummary,
+  GitHealthStatus,
   MergeQueueEntry,
   PendingDispatch,
   PlanningAssignmentSummary,
@@ -113,6 +114,7 @@ import type {
   WorkflowReconciliationProposalSummary,
 } from "./types";
 import type { InboxEntrySummary } from "./lib";
+import { getProjectRootGitStatus } from "./lib";
 
 // --- Constants ---
 
@@ -277,6 +279,7 @@ export type AppState = {
   mergeQueueDiffs: Record<string, string>;
   inboxEntriesByProject: Record<string, InboxEntrySummary[]>;
   inboxUnreadCountByProject: Record<string, number>;
+  gitStatusByRootId: Record<string, GitHealthStatus>;
   connectionEvent: ConnectionStatusEvent | null;
   loadingKeys: Record<string, boolean>;
   error: string | null;
@@ -325,6 +328,7 @@ function initialState(): AppState {
     mergeQueueDiffs: {},
     inboxEntriesByProject: {},
     inboxUnreadCountByProject: {},
+    gitStatusByRootId: {},
     connectionEvent: null,
     loadingKeys: {},
     error: null,
@@ -1481,6 +1485,25 @@ class AppStore {
   }
 
   // --- Merge Queue ---
+
+  async loadGitStatus(projectId: string) {
+    const detail = this.state.projectDetails[projectId];
+    if (!detail) return;
+
+    const activeRoot = detail.roots.find((r) => r.archived_at === null && r.git_root_path);
+    if (!activeRoot) return;
+
+    try {
+      const status = await getProjectRootGitStatus(activeRoot.id);
+      if (status) {
+        this.update({
+          gitStatusByRootId: { ...this.state.gitStatusByRootId, [activeRoot.id]: status },
+        });
+      }
+    } catch {
+      // Gracefully degrade — git status is informational only
+    }
+  }
 
   async handleLoadMergeQueue(projectId: string) {
     this.setLoading("merge-queue", true);

@@ -24,6 +24,7 @@ use crate::models::{
     WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
     WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary,
     InboxEntrySummary, InboxEntryDetail, InboxEntryListFilter, UpdateInboxEntryRequest,
+    GitHealthStatus,
 };
 use crate::runtime::SessionRegistry;
 use crate::service::SupervisorService;
@@ -158,6 +159,13 @@ impl Supervisor {
         request: SetProjectRootRemoteRequest,
     ) -> Result<ProjectRootSummary> {
         self.service.set_project_root_remote(request)
+    }
+
+    pub fn get_project_root_git_status(
+        &self,
+        project_root_id: &str,
+    ) -> Result<Option<GitHealthStatus>> {
+        self.service.get_project_root_git_status(project_root_id)
     }
 
     pub fn list_accounts(&self) -> Result<Vec<AccountSummary>> {

@@ -96,6 +96,15 @@ pub struct WorktreeDetail {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct GitHealthStatus {
+    pub has_remote: bool,
+    pub is_clean: bool,
+    pub is_pushed: Option<bool>,
+    pub is_behind: Option<bool>,
+    pub last_sync_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SessionSpecSummary {
     pub id: String,
     pub project_id: String,
