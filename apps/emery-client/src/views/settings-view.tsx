@@ -511,13 +511,30 @@ const SAFETY_MODES = [
   { value: "yolo", label: "Autonomous (Yolo)", description: "Agent can read, write, and execute without confirmation" },
 ];
 
-const KNOWN_MODELS = [
-  { value: "", label: "Sonnet 4.5 (Default)" },
-  { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
-  { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
-  { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
-  { value: "claude-sonnet-4-5-20250514", label: "Claude Sonnet 4.5" },
-];
+const KNOWN_MODELS_BY_KIND: Record<string, Array<{ value: string; label: string }>> = {
+  claude: [
+    { value: "", label: "Sonnet 4.5 (Default)" },
+    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+    { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
+    { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+    { value: "claude-sonnet-4-5-20250514", label: "Claude Sonnet 4.5" },
+  ],
+  codex: [
+    { value: "", label: "Codex Mini (Default)" },
+    { value: "codex-mini-latest", label: "Codex Mini" },
+    { value: "o4-mini", label: "o4-mini" },
+    { value: "o3", label: "o3" },
+  ],
+  gemini: [
+    { value: "", label: "Gemini 2.5 Pro (Default)" },
+    { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+    { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+  ],
+};
+
+function getKnownModels(agentKind: string): Array<{ value: string; label: string }> {
+  return KNOWN_MODELS_BY_KIND[agentKind] ?? KNOWN_MODELS_BY_KIND["claude"];
+}
 
 function AgentDefaultsSection() {
   const bootstrap = useAppStore((s) => s.bootstrap);
@@ -555,12 +572,13 @@ function AgentDefaultsRow({
   account: AccountSummary;
   loadingKeys: Record<string, boolean>;
 }) {
+  const knownModels = getKnownModels(account.agent_kind);
   const [modelInput, setModelInput] = useState(account.default_model ?? "");
   const [safetyMode, setSafetyMode] = useState(account.default_safety_mode ?? "");
   const [saved, setSaved] = useState(false);
   const [customModelMode, setCustomModelMode] = useState(() => {
     const val = account.default_model ?? "";
-    return val !== "" && !KNOWN_MODELS.some((m) => m.value === val);
+    return val !== "" && !knownModels.some((m) => m.value === val);
   });
 
   // Sync local state when account data changes (e.g. after a save + refresh)
@@ -568,8 +586,8 @@ function AgentDefaultsRow({
     const val = account.default_model ?? "";
     setModelInput(val);
     setSafetyMode(account.default_safety_mode ?? "");
-    setCustomModelMode(val !== "" && !KNOWN_MODELS.some((m) => m.value === val));
-  }, [account.default_model, account.default_safety_mode]);
+    setCustomModelMode(val !== "" && !knownModels.some((m) => m.value === val));
+  }, [account.default_model, account.default_safety_mode, knownModels]);
 
   const saving = loadingKeys[`update-account:${account.id}`] ?? false;
 
@@ -623,7 +641,7 @@ function AgentDefaultsRow({
             value={modelInput}
             onChange={handleModelSelectChange}
           >
-            {KNOWN_MODELS.map((m) => (
+            {knownModels.map((m) => (
               <option key={m.value} value={m.value}>
                 {m.label}
               </option>
