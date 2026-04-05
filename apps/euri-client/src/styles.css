@@ -4846,3 +4846,54 @@ button {
   border: 1px dashed var(--border-default);
   background: var(--bg-elevated, var(--surface-overlay));
 }
+
+/* --- Model Defaults (project settings) --- */
+
+.model-defaults-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.model-defaults-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.model-defaults-row-default {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle, var(--border-default));
+}
+
+.model-defaults-mode-label {
+  width: 110px;
+  flex-shrink: 0;
+  font-size: 0.83rem;
+  color: var(--text-secondary);
+}
+
+.model-defaults-select {
+  flex: 1;
+  max-width: 200px;
+  padding: 5px 8px;
+  font-size: 0.83rem;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--border-default);
+  background: var(--bg-input, var(--surface-raised));
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.model-defaults-select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.model-defaults-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}

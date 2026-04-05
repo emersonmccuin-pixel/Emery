@@ -48,6 +48,10 @@ const APP_MIGRATIONS: &[(&str, &str)] = &[
         "0011_agent_templates",
         include_str!("migrations/app/0011_agent_templates.sql"),
     ),
+    (
+        "0012_model_defaults",
+        include_str!("migrations/app/0012_model_defaults.sql"),
+    ),
 ];
 const KNOWLEDGE_MIGRATIONS: &[(&str, &str)] = &[(
     "0001_initial",

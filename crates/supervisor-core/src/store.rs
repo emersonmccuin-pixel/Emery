@@ -131,6 +131,7 @@ impl DatabaseSet {
                 p.sort_order,
                 p.default_account_id,
                 p.project_type,
+                p.model_defaults_json,
                 p.created_at,
                 p.updated_at,
                 p.archived_at,
@@ -144,7 +145,7 @@ impl DatabaseSet {
               AND s.status = 'active'
               AND s.runtime_state IN ('starting', 'running', 'stopping')
              GROUP BY
-                p.id, p.name, p.slug, p.sort_order, p.default_account_id, p.project_type, p.created_at, p.updated_at, p.archived_at
+                p.id, p.name, p.slug, p.sort_order, p.default_account_id, p.project_type, p.model_defaults_json, p.created_at, p.updated_at, p.archived_at
              ORDER BY p.sort_order ASC, p.created_at ASC",
         )?;
 
@@ -156,11 +157,12 @@ impl DatabaseSet {
                 sort_order: row.get(3)?,
                 default_account_id: row.get(4)?,
                 project_type: row.get(5)?,
-                created_at: row.get(6)?,
-                updated_at: row.get(7)?,
-                archived_at: row.get(8)?,
-                root_count: row.get(9)?,
-                live_session_count: row.get(10)?,
+                model_defaults_json: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+                archived_at: row.get(9)?,
+                root_count: row.get(10)?,
+                live_session_count: row.get(11)?,
             })
         })?;
 
@@ -172,7 +174,7 @@ impl DatabaseSet {
         let connection = open_connection(&self.paths.app_db)?;
         let project = connection
             .query_row(
-                "SELECT id, name, slug, sort_order, default_account_id, settings_json, created_at, updated_at, archived_at, agent_safety_overrides_json, instructions_md, project_type
+                "SELECT id, name, slug, sort_order, default_account_id, settings_json, created_at, updated_at, archived_at, agent_safety_overrides_json, instructions_md, project_type, model_defaults_json
                  FROM projects
                  WHERE id = ?1",
                 [project_id],
@@ -190,6 +192,7 @@ impl DatabaseSet {
                         agent_safety_overrides_json: row.get(9)?,
                         instructions_md: row.get(10)?,
                         project_type: row.get(11)?,
+                        model_defaults_json: row.get(12)?,
                         roots: Vec::new(),
                     })
                 },
@@ -214,12 +217,13 @@ impl DatabaseSet {
                 sort_order,
                 default_account_id,
                 project_type,
+                model_defaults_json,
                 settings_json,
                 instructions_md,
                 created_at,
                 updated_at,
                 archived_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL)",
             params![
                 record.id,
                 record.name,
@@ -227,6 +231,7 @@ impl DatabaseSet {
                 record.sort_order,
                 record.default_account_id,
                 record.project_type,
+                record.model_defaults_json,
                 record.settings_json,
                 record.instructions_md,
                 record.created_at,
@@ -245,9 +250,10 @@ impl DatabaseSet {
                  sort_order = ?4,
                  default_account_id = ?5,
                  project_type = ?6,
-                 settings_json = ?7,
-                 instructions_md = ?8,
-                 updated_at = ?9
+                 model_defaults_json = ?7,
+                 settings_json = ?8,
+                 instructions_md = ?9,
+                 updated_at = ?10
              WHERE id = ?1",
             params![
                 record.id,
@@ -256,6 +262,7 @@ impl DatabaseSet {
                 record.sort_order,
                 record.default_account_id,
                 record.project_type,
+                record.model_defaults_json,
                 record.settings_json,
                 record.instructions_md,
                 record.updated_at,
