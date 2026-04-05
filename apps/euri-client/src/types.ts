@@ -394,3 +394,27 @@ export type GitHealthStatus = {
   is_behind: boolean | null;
   last_sync_at: number | null;
 };
+
+export type VaultEntry = {
+  id: string;
+  scope: string;
+  key: string;
+  description: string | null;
+  created_at: number;
+  updated_at: number;
+};
+
+export type VaultLockStatus = {
+  unlocked: boolean;
+  unlocked_at: number | null;
+  unlock_expires_at: number | null;
+};
+
+export type VaultAuditEntry = {
+  id: string;
+  action: string;
+  actor: string | null;
+  key: string;
+  scope: string;
+  timestamp: number;
+};
