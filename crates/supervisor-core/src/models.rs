@@ -60,6 +60,7 @@ pub struct AccountSummary {
     pub status: String,
     pub default_safety_mode: Option<String>,
     pub default_launch_args_json: Option<String>,
+    pub default_model: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -274,6 +275,7 @@ pub struct CreateAccountRequest {
     pub status: Option<String>,
     pub default_safety_mode: Option<String>,
     pub default_launch_args: Option<Vec<String>>,
+    pub default_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -288,6 +290,7 @@ pub struct UpdateAccountRequest {
     pub status: Option<String>,
     pub default_safety_mode: Option<String>,
     pub default_launch_args: Option<Vec<String>>,
+    pub default_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -580,6 +583,7 @@ pub struct NewAccountRecord {
     pub status: String,
     pub default_safety_mode: Option<String>,
     pub default_launch_args_json: Option<String>,
+    pub default_model: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -596,6 +600,7 @@ pub struct AccountUpdateRecord {
     pub status: String,
     pub default_safety_mode: Option<String>,
     pub default_launch_args_json: Option<String>,
+    pub default_model: Option<String>,
     pub updated_at: i64,
 }
 
@@ -1020,6 +1025,7 @@ pub struct CreateSessionRequest {
     pub dispatch_group: Option<String>,
     pub safety_mode: Option<String>,
     pub extra_args: Option<Vec<String>>,
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone)]

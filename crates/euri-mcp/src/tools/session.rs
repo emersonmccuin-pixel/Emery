@@ -25,7 +25,8 @@ pub fn tool_session_create() -> Value {
                     "description": "Extra CLI args to append after the standard flags (optional)"
                 },
                 "round_instructions": { "type": "string", "description": "Instructions from the current dispatch round (ephemeral, from dispatcher conversation)" },
-                "instructions":       { "type": "string", "description": "Per-session instructions (from template or dispatcher override)" }
+                "instructions":       { "type": "string", "description": "Per-session instructions (from template or dispatcher override)" },
+                "model":              { "type": "string", "description": "Model override for this session (e.g. 'opus', 'sonnet'). If omitted, resolved from origin_mode defaults." }
             },
             "required": ["project_id", "worktree_id", "account_id"]
         }
@@ -53,7 +54,8 @@ pub fn tool_session_create_batch() -> Value {
                             "origin_mode":  { "type": "string" },
                             "title":        { "type": "string" },
                             "args":         { "type": "array", "items": { "type": "string" } },
-                            "instructions": { "type": "string", "description": "Per-session instructions (from template or override)" }
+                            "instructions": { "type": "string", "description": "Per-session instructions (from template or override)" },
+                            "model":        { "type": "string", "description": "Model override for this session (e.g. 'opus', 'sonnet'). If omitted, resolved from origin_mode defaults." }
                         },
                         "required": ["project_id", "worktree_id", "account_id"]
                     }
@@ -142,6 +144,7 @@ pub fn handle_session_create(input: Value) -> Result<String> {
     let prompt = input["prompt"].as_str().map(str::to_string);
     let origin_mode = input["origin_mode"].as_str().unwrap_or("execution").to_string();
     let title = input["title"].as_str().map(str::to_string);
+    let model = input["model"].as_str().map(str::to_string);
     let extra_args: Vec<String> = input["args"]
         .as_array()
         .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
@@ -219,6 +222,9 @@ pub fn handle_session_create(input: Value) -> Result<String> {
     if let Some(ref t) = title {
         params["title"] = json!(t);
     }
+    if let Some(ref m) = model {
+        params["model"] = json!(m);
+    }
 
     let result = rpc.call("session.create", params)?;
 
@@ -259,6 +265,7 @@ pub fn handle_session_create_batch(input: Value) -> Result<String> {
         let prompt = entry["prompt"].as_str().map(str::to_string);
         let origin_mode = entry["origin_mode"].as_str().unwrap_or("execution").to_string();
         let title = entry["title"].as_str().map(str::to_string);
+        let model = entry["model"].as_str().map(str::to_string);
         let extra_args: Vec<String> = entry["args"]
             .as_array()
             .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
@@ -330,6 +337,9 @@ pub fn handle_session_create_batch(input: Value) -> Result<String> {
         }
         if let Some(ref t) = title {
             params["title"] = json!(t);
+        }
+        if let Some(ref m) = model {
+            params["model"] = json!(m);
         }
 
         session_params.push(params);

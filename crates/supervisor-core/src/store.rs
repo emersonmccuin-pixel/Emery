@@ -437,7 +437,8 @@ impl DatabaseSet {
                 created_at,
                 updated_at,
                 default_safety_mode,
-                default_launch_args_json
+                default_launch_args_json,
+                default_model
              FROM accounts
              ORDER BY is_default DESC, agent_kind ASC, label COLLATE NOCASE ASC, created_at ASC",
         )?;
@@ -463,7 +464,8 @@ impl DatabaseSet {
                     created_at,
                     updated_at,
                     default_safety_mode,
-                    default_launch_args_json
+                    default_launch_args_json,
+                    default_model
                  FROM accounts
                  WHERE id = ?1",
                 [account_id],
@@ -497,9 +499,10 @@ impl DatabaseSet {
                 status,
                 default_safety_mode,
                 default_launch_args_json,
+                default_model,
                 created_at,
                 updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 record.id,
                 record.agent_kind,
@@ -511,6 +514,7 @@ impl DatabaseSet {
                 record.status,
                 record.default_safety_mode,
                 record.default_launch_args_json,
+                record.default_model,
                 record.created_at,
                 record.updated_at,
             ],
@@ -544,7 +548,8 @@ impl DatabaseSet {
                  status = ?8,
                  default_safety_mode = ?9,
                  default_launch_args_json = ?10,
-                 updated_at = ?11
+                 default_model = ?11,
+                 updated_at = ?12
              WHERE id = ?1",
             params![
                 record.id,
@@ -557,6 +562,7 @@ impl DatabaseSet {
                 record.status,
                 record.default_safety_mode,
                 record.default_launch_args_json,
+                record.default_model,
                 record.updated_at,
             ],
         )?;
@@ -2702,6 +2708,7 @@ fn map_account_summary(row: &Row<'_>) -> rusqlite::Result<AccountSummary> {
         updated_at: row.get(9)?,
         default_safety_mode: row.get(10)?,
         default_launch_args_json: row.get(11)?,
+        default_model: row.get(12)?,
     })
 }
 

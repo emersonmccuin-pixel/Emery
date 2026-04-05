@@ -313,6 +313,7 @@ impl SupervisorService {
             status: validate_account_status(request.status.as_deref().unwrap_or("ready"))?,
             default_safety_mode,
             default_launch_args_json,
+            default_model: request.default_model,
             created_at: now,
             updated_at: now,
         };
@@ -351,6 +352,10 @@ impl SupervisorService {
             Some(args) => Some(serde_json::to_string(&args)?),
             None => existing.summary.default_launch_args_json.clone(),
         };
+        let default_model = match request.default_model {
+            Some(m) => Some(m),
+            None => existing.summary.default_model.clone(),
+        };
         let record = AccountUpdateRecord {
             id: existing.summary.id.clone(),
             agent_kind,
@@ -370,6 +375,7 @@ impl SupervisorService {
             is_default: request.is_default.unwrap_or(existing.summary.is_default),
             default_safety_mode,
             default_launch_args_json,
+            default_model,
             status: match request.status.as_deref() {
                 Some(status) => validate_account_status(status)?,
                 None => existing.summary.status.clone(),
@@ -1265,6 +1271,47 @@ impl SupervisorService {
         Ok(ResolvedSafetyConfig { mode, extra_args })
     }
 
+    fn resolve_model(
+        &self,
+        account_id: &str,
+        project_id: &str,
+        agent_kind: &str,
+        origin_mode: &str,
+        session_model: Option<&str>,
+    ) -> Result<Option<String>> {
+        // 1. Start with origin_mode defaults
+        let default = match origin_mode {
+            "planning" | "research" => Some("opus".to_string()),
+            "execution" | "follow_up" => Some("sonnet".to_string()),
+            _ => None,
+        };
+
+        // 2. Account-level override
+        let account = self.databases.get_account(account_id)?
+            .ok_or_else(|| anyhow!("account {} was not found", account_id))?;
+        let mut model = account.summary.default_model.or(default);
+
+        // 3. Project-level override
+        if let Some(project) = self.databases.get_project(project_id)? {
+            if let Some(overrides_json) = &project.agent_safety_overrides_json {
+                if let Ok(overrides) = serde_json::from_str::<serde_json::Value>(overrides_json) {
+                    if let Some(agent_config) = overrides.get(agent_kind) {
+                        if let Some(m) = agent_config.get("model").and_then(|v| v.as_str()) {
+                            model = Some(m.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Session-level override (highest priority)
+        if let Some(session_model) = session_model {
+            model = Some(session_model.to_string());
+        }
+
+        Ok(model)
+    }
+
     pub fn get_session(&self, session_id: &str) -> Result<Option<SessionDetail>> {
         let Some(summary) = self.databases.get_session(session_id)? else {
             return Ok(None);
@@ -1323,6 +1370,23 @@ impl SupervisorService {
         for arg in &safety.extra_args {
             if !request.args.contains(arg) {
                 request.args.push(arg.clone());
+            }
+        }
+
+        // Resolve and inject model (claude-code only)
+        if request.agent_kind == "claude-code" {
+            let resolved_model = self.resolve_model(
+                &request.account_id,
+                &request.project_id,
+                &request.agent_kind,
+                &request.origin_mode,
+                request.model.as_deref(),
+            )?;
+            if let Some(ref model) = resolved_model {
+                if !request.args.iter().any(|a| a == "--model") {
+                    request.args.push("--model".to_string());
+                    request.args.push(model.clone());
+                }
             }
         }
 
