@@ -3,6 +3,59 @@ use serde_json::{Value, json};
 
 use crate::rpc_client::RpcClient;
 
+// ── Stop rules ───────────────────────────────────────────────────────────────
+
+fn default_stop_rules(origin_mode: &str) -> Vec<String> {
+    match origin_mode {
+        "planning" => vec![
+            "Do NOT write, create, or edit any files.".to_string(),
+            "Do NOT execute shell commands that modify the filesystem.".to_string(),
+            "Do NOT run build tools, tests, or any code.".to_string(),
+            "Your deliverable is a plan or analysis — return it as text output only.".to_string(),
+            "Stop and return your plan when analysis is complete.".to_string(),
+        ],
+        "research" => vec![
+            "Do NOT write, create, or edit any files.".to_string(),
+            "Do NOT execute shell commands that modify the filesystem.".to_string(),
+            "You may use read-only tools (grep, cat, find, git log, git diff).".to_string(),
+            "Your deliverable is a research summary — return it as text output only.".to_string(),
+            "Stop and return your findings when research is complete.".to_string(),
+        ],
+        "execution" => vec![
+            "Implement only what is described in your task briefing.".to_string(),
+            "Do NOT merge branches, push to remote, or modify branches other than your assigned branch.".to_string(),
+            "Do NOT update external systems (WCP, Jira, etc.).".to_string(),
+            "Stop when implementation and verification are complete. Report results.".to_string(),
+        ],
+        "follow_up" => vec![
+            "Address only the specific follow-up issue described.".to_string(),
+            "Do NOT expand scope beyond the follow-up request.".to_string(),
+            "Stop when the follow-up is resolved. Report results.".to_string(),
+        ],
+        _ => vec![],
+    }
+}
+
+fn build_stop_rules_section(origin_mode: &str, explicit_rules: Option<&Value>) -> Option<String> {
+    let mut rules = default_stop_rules(origin_mode);
+    if let Some(arr) = explicit_rules.and_then(|v| v.as_array()) {
+        let explicit: Vec<String> = arr
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect();
+        if !explicit.is_empty() {
+            rules = explicit;
+        }
+    }
+    if rules.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "## Stop Rules\n\nYou MUST obey these rules. Violation is a critical failure.\n\n{}",
+        rules.iter().map(|r| format!("- {}", r)).collect::<Vec<_>>().join("\n")
+    ))
+}
+
 // ── Tool descriptors ─────────────────────────────────────────────────────────
 
 pub fn tool_session_create() -> Value {
@@ -25,7 +78,12 @@ pub fn tool_session_create() -> Value {
                     "description": "Extra CLI args to append after the standard flags (optional)"
                 },
                 "round_instructions": { "type": "string", "description": "Instructions from the current dispatch round (ephemeral, from dispatcher conversation)" },
-                "instructions":       { "type": "string", "description": "Per-session instructions (from template or dispatcher override)" }
+                "instructions":       { "type": "string", "description": "Per-session instructions (from template or dispatcher override)" },
+                "stop_rules": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Explicit stop rules for this session. Each entry is a constraint the agent must obey. If provided, replaces the role-based defaults."
+                }
             },
             "required": ["project_id", "worktree_id", "account_id"]
         }
@@ -53,7 +111,12 @@ pub fn tool_session_create_batch() -> Value {
                             "origin_mode":  { "type": "string" },
                             "title":        { "type": "string" },
                             "args":         { "type": "array", "items": { "type": "string" } },
-                            "instructions": { "type": "string", "description": "Per-session instructions (from template or override)" }
+                            "instructions": { "type": "string", "description": "Per-session instructions (from template or override)" },
+                            "stop_rules": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "description": "Explicit stop rules for this session. Each entry is a constraint the agent must obey. If provided, replaces the role-based defaults."
+                            }
                         },
                         "required": ["project_id", "worktree_id", "account_id"]
                     }
@@ -187,6 +250,11 @@ pub fn handle_session_create(input: Value) -> Result<String> {
             }
         }
 
+        // 4. Stop rules — role-based defaults, optionally overridden by explicit rules
+        if let Some(stop_rules_md) = build_stop_rules_section(&origin_mode, input.get("stop_rules")) {
+            instruction_parts.push(stop_rules_md);
+        }
+
         if !instruction_parts.is_empty() {
             let merged = instruction_parts.join("\n\n---\n\n");
             write_instructions_file(&worktree_path, &merged)?;
@@ -299,6 +367,11 @@ pub fn handle_session_create_batch(input: Value) -> Result<String> {
                 if !si.is_empty() {
                     instruction_parts.push(si.to_string());
                 }
+            }
+
+            // 4. Stop rules — role-based defaults, optionally overridden by explicit rules
+            if let Some(stop_rules_md) = build_stop_rules_section(&origin_mode, entry.get("stop_rules")) {
+                instruction_parts.push(stop_rules_md);
             }
 
             if !instruction_parts.is_empty() {

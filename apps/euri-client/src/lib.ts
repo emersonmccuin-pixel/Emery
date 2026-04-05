@@ -288,6 +288,7 @@ export async function createSession(
     auto_worktree?: boolean;
     safety_mode?: string;
     extra_args?: string[];
+    stop_rules?: string[];
   },
   correlationId?: string,
 ): Promise<SessionDetail> {
