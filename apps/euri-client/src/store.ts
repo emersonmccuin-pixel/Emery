@@ -1085,6 +1085,69 @@ class AppStore {
     this.update({ pendingDispatch: null });
   }
 
+  async handleLaunchDispatcher(projectId: string) {
+    const loadKey = `dispatch:${projectId}`;
+    this.setLoading(loadKey, true);
+    const correlationId = newCorrelationId("launch-dispatcher");
+    try {
+      const project =
+        this.state.projectDetails[projectId] ?? (await getProject(projectId, correlationId));
+      this.applyProjectDetail(project);
+
+      const account =
+        this.state.bootstrap?.accounts.find((a) => a.id === project.default_account_id) ??
+        this.state.bootstrap?.accounts[0] ??
+        null;
+      if (!account) {
+        throw new Error("No account configured. Add one in Settings first.");
+      }
+
+      const root = project.roots[0] ?? null;
+      if (!root) {
+        throw new Error("Project needs at least one root before launching.");
+      }
+
+      const detail = await createSession(
+        {
+          project_id: projectId,
+          project_root_id: root.id,
+          worktree_id: null,
+          work_item_id: null,
+          account_id: account.id,
+          agent_kind: account.agent_kind,
+          cwd: root.path,
+          command: account.binary_path ?? account.agent_kind,
+          args: [],
+          env_preset_ref: account.env_preset_ref,
+          origin_mode: "dispatch",
+          current_mode: "dispatch",
+          title: `${project.name} — Dispatcher`,
+          title_policy: "manual",
+          restore_policy: "reattach",
+          initial_terminal_cols: 120,
+          initial_terminal_rows: 40,
+          auto_worktree: false,
+          safety_mode: "full",
+          model: "opus",
+        },
+        correlationId,
+      );
+
+      this.applySessionDetail(detail);
+      await watchLiveSessions([detail.id], correlationId);
+      this.clearError();
+
+      toastStore.addToast({
+        type: "success",
+        message: `Dispatcher launched for ${project.name}`,
+      });
+    } catch (err) {
+      this.update({ error: String(err) });
+    } finally {
+      this.setLoading(loadKey, false);
+    }
+  }
+
   toggleWorkItemSelection(workItemId: string) {
     const current = this.state.selectedWorkItemIds;
     const next = current.includes(workItemId)

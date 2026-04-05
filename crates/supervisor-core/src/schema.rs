@@ -56,6 +56,10 @@ const APP_MIGRATIONS: &[(&str, &str)] = &[
         "0013_vault",
         include_str!("migrations/app/0013_vault.sql"),
     ),
+    (
+        "0014_wcp_namespace",
+        include_str!("migrations/app/0014_wcp_namespace.sql"),
+    ),
 ];
 const KNOWLEDGE_MIGRATIONS: &[(&str, &str)] = &[(
     "0001_initial",

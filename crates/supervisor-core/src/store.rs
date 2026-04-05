@@ -134,6 +134,7 @@ impl DatabaseSet {
                 p.default_account_id,
                 p.project_type,
                 p.model_defaults_json,
+                p.wcp_namespace,
                 p.created_at,
                 p.updated_at,
                 p.archived_at,
@@ -147,7 +148,7 @@ impl DatabaseSet {
               AND s.status = 'active'
               AND s.runtime_state IN ('starting', 'running', 'stopping')
              GROUP BY
-                p.id, p.name, p.slug, p.sort_order, p.default_account_id, p.project_type, p.model_defaults_json, p.created_at, p.updated_at, p.archived_at
+                p.id, p.name, p.slug, p.sort_order, p.default_account_id, p.project_type, p.model_defaults_json, p.wcp_namespace, p.created_at, p.updated_at, p.archived_at
              ORDER BY p.sort_order ASC, p.created_at ASC",
         )?;
 
@@ -160,11 +161,12 @@ impl DatabaseSet {
                 default_account_id: row.get(4)?,
                 project_type: row.get(5)?,
                 model_defaults_json: row.get(6)?,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
-                archived_at: row.get(9)?,
-                root_count: row.get(10)?,
-                live_session_count: row.get(11)?,
+                wcp_namespace: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+                archived_at: row.get(10)?,
+                root_count: row.get(11)?,
+                live_session_count: row.get(12)?,
             })
         })?;
 
@@ -176,7 +178,7 @@ impl DatabaseSet {
         let connection = open_connection(&self.paths.app_db)?;
         let project = connection
             .query_row(
-                "SELECT id, name, slug, sort_order, default_account_id, settings_json, created_at, updated_at, archived_at, agent_safety_overrides_json, instructions_md, project_type, model_defaults_json
+                "SELECT id, name, slug, sort_order, default_account_id, settings_json, created_at, updated_at, archived_at, agent_safety_overrides_json, instructions_md, project_type, model_defaults_json, wcp_namespace, dispatch_item_callsign
                  FROM projects
                  WHERE id = ?1",
                 [project_id],
@@ -195,6 +197,8 @@ impl DatabaseSet {
                         instructions_md: row.get(10)?,
                         project_type: row.get(11)?,
                         model_defaults_json: row.get(12)?,
+                        wcp_namespace: row.get(13)?,
+                        dispatch_item_callsign: row.get(14)?,
                         roots: Vec::new(),
                     })
                 },
@@ -255,7 +259,9 @@ impl DatabaseSet {
                  model_defaults_json = ?7,
                  settings_json = ?8,
                  instructions_md = ?9,
-                 updated_at = ?10
+                 wcp_namespace = ?10,
+                 dispatch_item_callsign = ?11,
+                 updated_at = ?12
              WHERE id = ?1",
             params![
                 record.id,
@@ -267,6 +273,8 @@ impl DatabaseSet {
                 record.model_defaults_json,
                 record.settings_json,
                 record.instructions_md,
+                record.wcp_namespace,
+                record.dispatch_item_callsign,
                 record.updated_at,
             ],
         )?;

@@ -183,6 +183,14 @@ impl SupervisorService {
             Some(value) => optional_trimmed(Some(value)),
             None => existing.model_defaults_json.clone(),
         };
+        let wcp_namespace = match request.wcp_namespace {
+            Some(value) => optional_trimmed(Some(value)),
+            None => existing.wcp_namespace.clone(),
+        };
+        let dispatch_item_callsign = match request.dispatch_item_callsign {
+            Some(value) => optional_trimmed(Some(value)),
+            None => existing.dispatch_item_callsign.clone(),
+        };
 
         let record = ProjectUpdateRecord {
             id: existing.id.clone(),
@@ -192,6 +200,8 @@ impl SupervisorService {
             default_account_id,
             project_type,
             model_defaults_json,
+            wcp_namespace,
+            dispatch_item_callsign,
             settings_json,
             instructions_md,
             updated_at: unix_time_seconds(),
@@ -1531,7 +1541,7 @@ impl SupervisorService {
     ) -> Result<Option<String>> {
         // 1. Start with origin_mode defaults
         let default = match origin_mode {
-            "planning" | "research" => Some("opus".to_string()),
+            "planning" | "research" | "dispatch" => Some("opus".to_string()),
             "execution" | "follow_up" => Some("sonnet".to_string()),
             _ => None,
         };
@@ -1596,7 +1606,7 @@ impl SupervisorService {
 
         // Enforce origin_mode → location rules
         match request.origin_mode.as_str() {
-            "planning" | "research" => {
+            "planning" | "research" | "dispatch" => {
                 if request.auto_worktree {
                     return Err(anyhow!(
                         "origin_mode '{}' must run on project root — auto_worktree is not allowed",
@@ -1616,6 +1626,53 @@ impl SupervisorService {
                 }
             }
             _ => {}
+        }
+
+        // One-dispatcher-per-project guard
+        if request.origin_mode == "dispatch" {
+            let filter = SessionListFilter {
+                project_id: Some(request.project_id.clone()),
+                status: Some("active".to_string()),
+                runtime_state: None,
+                work_item_id: None,
+                limit: None,
+            };
+            let existing_sessions = self.databases.list_sessions(&filter)?;
+            let has_active_dispatch = existing_sessions.iter().any(|s| {
+                s.origin_mode == "dispatch"
+                    && (s.runtime_state == "starting" || s.runtime_state == "running")
+            });
+            if has_active_dispatch {
+                return Err(anyhow!(
+                    "A dispatch session is already running for this project"
+                ));
+            }
+        }
+
+        // Write dispatcher guard (PreToolUse hooks that block code writing)
+        if request.origin_mode == "dispatch" {
+            write_dispatcher_guard(&request.cwd)?;
+        }
+
+        // Build and write dispatcher instructions
+        if request.origin_mode == "dispatch" {
+            let project = self.databases.get_project(&request.project_id)?;
+            let (project_name, wcp_ns, dispatch_item, project_instr) = match &project {
+                Some(p) => (
+                    p.name.as_str(),
+                    p.wcp_namespace.as_deref(),
+                    p.dispatch_item_callsign.as_deref(),
+                    p.instructions_md.as_deref(),
+                ),
+                None => ("Unknown", None, None, None),
+            };
+            let instructions = build_dispatcher_instructions(
+                project_name,
+                wcp_ns,
+                dispatch_item,
+                project_instr,
+            );
+            write_instructions_file(&request.cwd, &instructions)?;
         }
 
         // Resolve safety configuration and inject CLI args
@@ -3711,9 +3768,9 @@ fn required_document_content(value: &str) -> Result<String> {
 fn validate_session_mode(value: &str) -> Result<String> {
     let normalized = required_trimmed("session mode", value)?.to_lowercase();
     match normalized.as_str() {
-        "ad_hoc" | "planning" | "research" | "execution" | "follow_up" => Ok(normalized),
+        "ad_hoc" | "planning" | "research" | "execution" | "follow_up" | "dispatch" => Ok(normalized),
         _ => Err(anyhow!(
-            "session mode must be one of: ad_hoc, planning, research, execution, follow_up"
+            "session mode must be one of: ad_hoc, planning, research, execution, follow_up, dispatch"
         )),
     }
 }
@@ -3973,6 +4030,104 @@ fn extract_file_paths(text: &str) -> Vec<String> {
     paths.sort();
     paths.dedup();
     paths
+}
+
+fn write_instructions_file(dir_path: &str, instructions: &str) -> Result<()> {
+    let claude_dir = std::path::Path::new(dir_path).join(".claude");
+    std::fs::create_dir_all(&claude_dir)
+        .map_err(|e| anyhow!("failed to create .claude dir: {}", e))?;
+
+    let file_path = claude_dir.join("instructions.md");
+    std::fs::write(&file_path, instructions)
+        .map_err(|e| anyhow!("failed to write instructions.md: {}", e))?;
+
+    Ok(())
+}
+
+fn build_dispatcher_instructions(
+    project_name: &str,
+    wcp_namespace: Option<&str>,
+    dispatch_item_callsign: Option<&str>,
+    project_instructions: Option<&str>,
+) -> String {
+    let ns_display = wcp_namespace.unwrap_or("not yet linked — run wcp_namespaces to find/create");
+    let item_display = dispatch_item_callsign.unwrap_or("create after linking namespace");
+
+    let mut parts: Vec<String> = Vec::new();
+
+    // 1. Project-level instructions (if any)
+    if let Some(pi) = project_instructions {
+        if !pi.trim().is_empty() {
+            parts.push(pi.to_string());
+        }
+    }
+
+    // 2. Dispatcher identity template
+    parts.push(format!(r#"# Dispatcher Agent — {project_name}
+
+You are the dispatcher for **{project_name}**. You coordinate work — you do NOT write code directly.
+
+## Your Namespace
+WCP namespace: `{ns_display}`
+Coordination item: `{item_display}`
+
+## Available Tools
+- **wcp_*** — Work item management (create, update, comment, search)
+- **euri_*** — Session management (worktree_create, session_create, session_watch, merge_queue)
+
+## Session Start Checklist
+1. `wcp_namespaces` — discover namespaces
+2. `wcp_list(namespace: "{ns_display}")` — find in-progress work
+3. `euri_worktree_list(project_id)` — check active worktrees
+4. `euri_session_list(project_id)` — check running sessions
+5. `euri_merge_queue_list(project_id)` — check pending merges
+
+## Lifecycle
+1. **Plan** — read coordination item for project context, identify work to dispatch
+2. **Dispatch** — create worktrees, build briefings, launch builder sessions
+3. **Monitor** — watch sessions, check WCP comments for builder reports
+4. **Merge** — review diffs, merge clean entries, park conflicts
+5. **Cleanup** — remove merged worktrees, update coordination item
+
+## Communication
+- Builders report via `wcp_comment` on their work items
+- You track status on the coordination item and individual items
+- If a builder is blocked, they'll comment — check regularly"#));
+
+    parts.join("\n\n---\n\n")
+}
+
+fn write_dispatcher_guard(project_root: &str) -> Result<()> {
+    let claude_dir = std::path::Path::new(project_root).join(".claude");
+    std::fs::create_dir_all(&claude_dir)
+        .map_err(|e| anyhow!("failed to create .claude dir: {}", e))?;
+
+    // Node.js inline script that blocks code-writing tools for dispatcher sessions
+    let node_script = r#"const i=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));const t=i.tool_name||'';if(['Edit','Write','MultiEdit','NotebookEdit'].includes(t)){process.stdout.write(JSON.stringify({continue:false,stopReason:'Dispatchers do not write code. Create a work item and dispatch a builder session instead.'}));process.exit(0);}if(t==='Bash'){const cmd=(i.tool_input||{}).command||'';const wp=['echo>','cat>','>','mv ','cp ','rm ','mkdir ','touch ','chmod ','chown ','npm install','cargo install','git clone'];if(wp.some(p=>cmd.toLowerCase().includes(p))){process.stdout.write(JSON.stringify({continue:false,stopReason:'Dispatchers should not modify the filesystem. Dispatch a builder for implementation tasks.'}));process.exit(0);}}process.stdout.write(JSON.stringify({continue:true}));"#;
+
+    let settings = serde_json::json!({
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": ".*",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": format!("node -e \"{}\"", node_script)
+                        }
+                    ]
+                }
+            ]
+        }
+    });
+
+    let settings_path = claude_dir.join("settings.local.json");
+    let settings_str = serde_json::to_string_pretty(&settings)
+        .map_err(|e| anyhow!("failed to serialize settings: {}", e))?;
+    std::fs::write(&settings_path, settings_str)
+        .map_err(|e| anyhow!("failed to write settings.local.json: {}", e))?;
+
+    Ok(())
 }
 
 impl From<CreateSessionSpecRequest> for SessionSpecDraft {

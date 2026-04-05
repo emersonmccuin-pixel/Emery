@@ -34,6 +34,16 @@ fn default_stop_rules(origin_mode: &str) -> Vec<String> {
             "Do NOT write files or commit changes outside your worktree directory.".to_string(),
             "Stop when the follow-up is resolved. Report results.".to_string(),
         ],
+        "dispatch" => vec![
+            "Do NOT write, create, or edit any code files.".to_string(),
+            "Do NOT execute build tools, tests, or modify the filesystem directly.".to_string(),
+            "You coordinate work by creating work items (wcp_create) and dispatching builder sessions (euri_session_create).".to_string(),
+            "Do NOT spawn sub-agents or use internal agent systems. Use euri_session_create or euri_session_create_batch only.".to_string(),
+            "Monitor builder progress with euri_session_watch and euri_session_list.".to_string(),
+            "Review completed work through euri_merge_queue_get_diff before merging.".to_string(),
+            "Communicate status via wcp_comment on work items.".to_string(),
+            "Stop and report when all dispatched work is complete and merged, or when blocked.".to_string(),
+        ],
         _ => vec![],
     }
 }

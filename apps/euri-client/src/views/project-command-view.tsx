@@ -37,12 +37,12 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
   const documents = documentsByProject[projectId] ?? [];
   const mergeQueue = mergeQueueByProject[projectId] ?? [];
 
-  // Find the dispatch session for this project (running/starting, no worktree branch)
+  // Find the dispatch session for this project (running/starting, origin_mode === "dispatch")
   const dispatchSession = useMemo(() => {
     return sessions.find(
       (s) =>
         s.project_id === projectId &&
-        !s.worktree_branch &&
+        s.origin_mode === "dispatch" &&
         (s.runtime_state === "running" || s.runtime_state === "starting"),
     ) ?? null;
   }, [sessions, projectId]);
@@ -105,12 +105,10 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
                 <Button
                   variant="secondary"
                   size="sm"
-                  onClick={() => {
-                    // Navigate to settings to set up dispatch or show info
-                    navStore.goToProjectSettings(projectId);
-                  }}
+                  onClick={() => void appStore.handleLaunchDispatcher(projectId)}
+                  disabled={loadingKeys[`dispatch:${projectId}`] ?? false}
                 >
-                  Configure dispatch
+                  {loadingKeys[`dispatch:${projectId}`] ? "Launching..." : "Launch Dispatcher"}
                 </Button>
               </div>
             )}
