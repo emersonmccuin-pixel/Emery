@@ -101,7 +101,7 @@ export function WorkItemsSection({
         <div className="multi-dispatch-bar">
           <span className="multi-dispatch-count">{selectedIds.length} items selected</span>
           <button className="multi-dispatch-btn" onClick={onMultiDispatch}>
-            Dispatch {selectedIds.length} in parallel
+            Launch {selectedIds.length} in parallel
           </button>
           <button className="multi-dispatch-clear" onClick={onClearSelection}>
             Clear

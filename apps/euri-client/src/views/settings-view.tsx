@@ -93,7 +93,7 @@ function AccountsSection() {
         <div className="settings-panel-header-row">
           <div>
             <CardTitle className="settings-section-title">Accounts</CardTitle>
-            <CardDescription>Manage the agent accounts available to the dispatcher.</CardDescription>
+            <CardDescription>Manage the agent accounts available for launching sessions.</CardDescription>
           </div>
           <Button
             variant="ghost"

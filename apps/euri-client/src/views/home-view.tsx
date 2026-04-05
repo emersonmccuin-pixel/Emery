@@ -67,7 +67,7 @@ export function HomeView() {
               EURI CONTROL GRID
             </h2>
             <p className="home-hero-subtitle">
-              Dispatch autonomous agents, monitor live workstreams, and keep every project on a single
+              Launch autonomous agents, monitor live workstreams, and keep every project on a single
               compromised-looking control plane.
             </p>
           </div>
@@ -90,7 +90,7 @@ export function HomeView() {
         {accounts.length === 0 && (
           <div className="setup-banner">
             <span className="setup-banner-icon">!</span>
-            <span>No agent accounts configured. Set one up to start dispatching.</span>
+            <span>No agent accounts configured. Set one up to start launching agents.</span>
             <Button variant="default" size="sm" onClick={() => navStore.goToSettings()}>
               Configure accounts
             </Button>

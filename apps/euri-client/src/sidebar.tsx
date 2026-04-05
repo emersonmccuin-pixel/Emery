@@ -112,6 +112,77 @@ function SessionDots({ projectId, sessions }: { projectId: string; sessions: Ses
   );
 }
 
+// ── Recently completed session tracking ───────────────────────────────────
+
+type RecentlyEndedSession = {
+  sessionId: string;
+  projectId: string;
+  title: string;
+  endedAt: number;
+  status: "completed" | "errored";
+};
+
+const RECENT_SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+/** Tracks sessions that ended within the last 5 minutes. */
+function useRecentlyEndedSessions(sessions: SessionSummary[]): RecentlyEndedSession[] {
+  const [recentlyEnded, setRecentlyEnded] = useState<RecentlyEndedSession[]>([]);
+  const prevSessionsRef = useRef<Map<string, SessionSummary>>(new Map());
+
+  // Detect state transitions to completed/errored
+  useEffect(() => {
+    const prevMap = prevSessionsRef.current;
+    const nextMap = new Map(sessions.map((s) => [s.id, s]));
+
+    const newlyEnded: RecentlyEndedSession[] = [];
+    for (const [id, prev] of prevMap) {
+      const next = nextMap.get(id);
+      if (!next) continue;
+      const wasLive = prev.live || prev.runtime_state === "running" || prev.runtime_state === "starting";
+      const isNowDead = !next.live && next.runtime_state !== "running" && next.runtime_state !== "starting";
+      if (wasLive && isNowDead) {
+        newlyEnded.push({
+          sessionId: id,
+          projectId: next.project_id ?? "",
+          title: next.title ?? "Session",
+          endedAt: Date.now(),
+          status: next.runtime_state === "exited" ? "completed" : "errored",
+        });
+      }
+    }
+
+    if (newlyEnded.length > 0) {
+      setRecentlyEnded((prev) => {
+        // Deduplicate
+        const existing = new Set(prev.map((r) => r.sessionId));
+        const fresh = newlyEnded.filter((r) => !existing.has(r.sessionId));
+        return [...prev, ...fresh];
+      });
+    }
+
+    prevSessionsRef.current = nextMap;
+  }, [sessions]);
+
+  // Cleanup timer: prune entries older than 5 minutes
+  useEffect(() => {
+    if (recentlyEnded.length === 0) return;
+
+    const timer = window.setInterval(() => {
+      const cutoff = Date.now() - RECENT_SESSION_TTL_MS;
+      setRecentlyEnded((prev) => {
+        const next = prev.filter((r) => r.endedAt > cutoff);
+        return next.length === prev.length ? prev : next;
+      });
+    }, 15_000); // check every 15 seconds
+
+    return () => window.clearInterval(timer);
+  }, [recentlyEnded.length > 0]);
+
+  // Filter out stale entries on each render
+  const cutoff = Date.now() - RECENT_SESSION_TTL_MS;
+  return recentlyEnded.filter((r) => r.endedAt > cutoff);
+}
+
 // ── Fleet section ──────────────────────────────────────────────────────────
 
 function FleetDot({ session }: { session: SessionSummary }) {
@@ -146,11 +217,13 @@ function FleetSection({ collapsed, sessions }: FleetSectionProps) {
   const liveSessions = sessions.filter(
     (s) => s.live || s.runtime_state === "running" || s.runtime_state === "starting",
   );
+  const recentlyEnded = useRecentlyEndedSessions(sessions);
 
   const runningCount = liveSessions.length;
+  const totalVisible = runningCount + recentlyEnded.length;
 
   if (collapsed) {
-    if (runningCount === 0) return null;
+    if (totalVisible === 0) return null;
     return (
       <div className="sidebar-fleet-collapsed" title={`${runningCount} running`}>
         <span className="sidebar-fleet-dot" />
@@ -170,7 +243,7 @@ function FleetSection({ collapsed, sessions }: FleetSectionProps) {
         <span className="sidebar-fleet-count">{runningCount} running</span>
       </div>
 
-      {runningCount === 0 ? (
+      {totalVisible === 0 ? (
         <div className="sidebar-fleet-empty">No active sessions</div>
       ) : (
         <ul className="sidebar-fleet-list">
@@ -202,6 +275,28 @@ function FleetSection({ collapsed, sessions }: FleetSectionProps) {
               </li>
             );
           })}
+
+          {/* Recently completed/errored sessions */}
+          {recentlyEnded.map((recent) => (
+            <li key={`recent-${recent.sessionId}`}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="sidebar-fleet-row sidebar-fleet-row-ended justify-start px-3 py-2"
+                onClick={() => navStore.goToAgent(recent.projectId, recent.sessionId)}
+                title={`${recent.title} (${recent.status})`}
+              >
+                <span
+                  className={`sidebar-fleet-ended-icon ${recent.status === "completed" ? "sidebar-fleet-ended-ok" : "sidebar-fleet-ended-err"}`}
+                >
+                  {recent.status === "completed" ? "\u2713" : "\u2717"}
+                </span>
+                <span className="sidebar-fleet-title sidebar-fleet-title-ended">
+                  {recent.title}
+                </span>
+              </Button>
+            </li>
+          ))}
         </ul>
       )}
     </div>

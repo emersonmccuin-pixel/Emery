@@ -848,6 +848,35 @@ html[data-theme="vaporwave"] .sidebar {
   padding: var(--space-1) var(--space-3);
 }
 
+/* Recently ended session rows */
+.sidebar-fleet-row-ended {
+  opacity: 0.55;
+}
+
+.sidebar-fleet-row-ended:hover {
+  opacity: 0.85;
+}
+
+.sidebar-fleet-ended-icon {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  width: 14px;
+  text-align: center;
+  line-height: 1;
+}
+
+.sidebar-fleet-ended-ok {
+  color: var(--color-success, #22c55e);
+}
+
+.sidebar-fleet-ended-err {
+  color: var(--color-destructive, #ef4444);
+}
+
+.sidebar-fleet-title-ended {
+  font-style: italic;
+}
+
 /* ── Fleet collapsed state ── */
 
 .sidebar-fleet-collapsed {

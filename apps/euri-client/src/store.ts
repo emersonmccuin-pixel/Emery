@@ -631,13 +631,13 @@ class AppStore {
 
       // DING when an agent finishes its work
       if (payload.runtime_state === "exited") {
-        playCompletionDing(); // 🔔 baking timer — agent done
+        playCompletionDing(); // baking timer — agent done
         toastStore.addToast({
           type: "success",
-          message: `Session completed: ${entry.title || payload.session_id}`,
+          message: `${entry.title || payload.session_id} completed`,
           action: entry.project_id
             ? {
-                label: "View",
+                label: "View Terminal",
                 onClick: () => navStore.goToAgent(entry.project_id!, payload.session_id),
               }
             : undefined,
@@ -646,10 +646,10 @@ class AppStore {
         playErrorChime(); // low tone — something went wrong
         toastStore.addToast({
           type: "error",
-          message: `Session errored: ${entry.title || payload.session_id}`,
+          message: `${entry.title || payload.session_id} errored`,
           action: entry.project_id
             ? {
-                label: "View",
+                label: "View Terminal",
                 onClick: () => navStore.goToAgent(entry.project_id!, payload.session_id),
               }
             : undefined,
@@ -1306,8 +1306,8 @@ class AppStore {
       });
 
       toastStore.addToast({
-        type: "info",
-        message: `${sessions.length} session${sessions.length === 1 ? "" : "s"} launched`,
+        type: "success",
+        message: `${sessions.length} agent${sessions.length === 1 ? "" : "s"} launched`,
       });
 
       await watchLiveSessions(
@@ -1317,7 +1317,7 @@ class AppStore {
     } catch (err) {
       toastStore.addToast({
         type: "error",
-        message: `Dispatch failed: ${String(err)}`,
+        message: `Launch failed: ${String(err)}`,
       });
       this.update({ error: String(err) });
     }
@@ -1382,6 +1382,15 @@ class AppStore {
       this.applySessionDetail(detail);
       await watchLiveSessions([detail.id], correlationId);
       this.clearError();
+
+      toastStore.addToast({
+        type: "success",
+        message: `Agent launched for ${workItem.callsign}: ${workItem.title}`,
+        action: {
+          label: "View",
+          onClick: () => navStore.goToAgent(projectId, detail.id),
+        },
+      });
     } catch (invokeError) {
       this.update({ error: String(invokeError) });
     } finally {

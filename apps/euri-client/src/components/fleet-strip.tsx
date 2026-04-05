@@ -13,7 +13,7 @@ export function FleetStrip({ sessions, workItems, onZoomIntoAgent }: FleetStripP
   if (liveSessions.length === 0) {
     return (
       <section className="fleet-strip fleet-strip-empty">
-        <p className="fleet-empty-text">No agents running. Dispatch from a work item below.</p>
+        <p className="fleet-empty-text">No agents running. Launch from a work item below.</p>
       </section>
     );
   }

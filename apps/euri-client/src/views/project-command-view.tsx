@@ -78,7 +78,7 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
           <Card className="setup-banner">
             <CardContent className="flex items-center gap-3 p-3">
               <span className="setup-banner-icon">!</span>
-              <span className="flex-1">No agent accounts configured. Set one up to start dispatching.</span>
+              <span className="flex-1">No agent accounts configured. Set one up to start launching agents.</span>
               <Button size="sm" onClick={() => navStore.goToSettings()}>
                 Configure accounts
               </Button>
