@@ -1604,6 +1604,7 @@ impl SupervisorService {
             terminal_rows: snapshot.terminal_rows,
             replay: snapshot.replay,
             output_cursor: snapshot.output_cursor,
+            terminal_mode: snapshot.terminal_mode,
         };
         self.record_diagnostic(
             "service",

@@ -867,6 +867,33 @@ pub struct ReplaySnapshot {
     pub chunks: Vec<EncodedTerminalChunk>,
 }
 
+/// Snapshot of tracked terminal mode flags for a running session.
+///
+/// Sent as part of [`SessionAttachResponse`] so the client can restore the
+/// correct terminal state before painting the replay buffer.
+#[derive(Debug, Clone, Serialize)]
+pub struct TerminalMode {
+    /// Whether the alternate screen buffer (e.g. vim, less) is active.
+    pub alternate_screen: bool,
+    /// Whether bracketed-paste mode is enabled.
+    pub bracketed_paste: bool,
+    /// Whether the cursor is visible (`true` by default; hidden by some apps).
+    pub cursor_visible: bool,
+    /// Whether application cursor-key mode is active (sends `\x1bOA` etc.).
+    pub application_cursor_keys: bool,
+}
+
+impl Default for TerminalMode {
+    fn default() -> Self {
+        Self {
+            alternate_screen: false,
+            bracketed_paste: false,
+            cursor_visible: true,
+            application_cursor_keys: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionAttachResponse {
     pub attachment_id: String,
@@ -875,6 +902,9 @@ pub struct SessionAttachResponse {
     pub terminal_rows: i64,
     pub replay: ReplaySnapshot,
     pub output_cursor: u64,
+    /// Current terminal mode flags — apply these before painting the replay
+    /// buffer so the client widget is in the right state from the first byte.
+    pub terminal_mode: TerminalMode,
 }
 
 #[derive(Debug, Clone, Serialize)]
