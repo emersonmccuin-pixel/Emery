@@ -105,7 +105,7 @@ export function DailyAgenda({
         {!item.linkedSession && (
           <button
             className="agenda-dispatch-btn"
-            title="Dispatch"
+            title="Launch"
             onClick={(e) => {
               e.stopPropagation();
               onDispatch(item.workItem.id);
