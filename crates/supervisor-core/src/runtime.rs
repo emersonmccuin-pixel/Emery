@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::diagnostics::{DiagnosticContext, DiagnosticsHub};
 use crate::models::{
     EncodedTerminalChunk, OutputOrResync, ReplaySnapshot, ResyncRequiredEvent, SessionOutputEvent,
-    SessionRuntimeView, SessionStateChangedEvent,
+    SessionRuntimeView, SessionStateChangedEvent, TerminalMode,
 };
 use crate::output_filter::OutputFilter;
 use crate::store::DatabaseSet;
@@ -55,6 +55,7 @@ pub struct SessionAttachmentSnapshot {
     pub terminal_rows: i64,
     pub replay: ReplaySnapshot,
     pub output_cursor: u64,
+    pub terminal_mode: TerminalMode,
 }
 
 #[derive(Debug)]
@@ -79,6 +80,7 @@ struct RuntimeSessionState {
     controller: Option<Arc<SessionProcessController>>,
     requested_stop: Option<RequestedStop>,
     activity_monitor_running: bool,
+    terminal_mode: TerminalMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,6 +142,7 @@ impl SessionRegistry {
                 controller: None,
                 requested_stop: None,
                 activity_monitor_running: false,
+                terminal_mode: TerminalMode::default(),
             },
         );
         self.diagnostics.record(
@@ -305,6 +308,7 @@ impl SessionRegistry {
             .get_mut(session_id)
             .ok_or_else(|| anyhow!("session {session_id} was not registered"))?;
         state.raw_log.append(chunk)?;
+        scan_for_mode_changes(&mut state.terminal_mode, chunk);
 
         let sequence = state.replay.append(timestamp, chunk);
         let event = OutputOrResync::Output(encode_output_event(session_id, sequence, timestamp, chunk));
@@ -489,6 +493,7 @@ impl SessionRegistry {
             .size()?;
         let replay = state.replay.snapshot();
         let output_cursor = state.replay.latest_sequence();
+        let terminal_mode = state.terminal_mode.clone();
         drop(guard);
         self.broadcast_state_change(session_id)?;
         self.diagnostics.record(
@@ -512,6 +517,7 @@ impl SessionRegistry {
             terminal_rows,
             replay,
             output_cursor,
+            terminal_mode,
         })
     }
 
@@ -1300,6 +1306,58 @@ impl RawLogWriter {
         guard.write_all(chunk)?;
         guard.flush()?;
         Ok(())
+    }
+}
+
+/// Scan `bytes` for DEC private mode set/reset sequences (`CSI ? <n> h/l`) and
+/// update `mode` in place.  Only the four flags tracked in [`TerminalMode`] are
+/// handled; everything else is silently ignored.
+///
+/// The scanner operates on complete, filter-clean chunks (guaranteed by
+/// [`OutputFilter`]), so it never has to deal with split sequences.
+fn scan_for_mode_changes(mode: &mut TerminalMode, bytes: &[u8]) {
+    let mut i = 0;
+    while i < bytes.len() {
+        // Look for ESC [ ? — the start of a DEC private mode sequence.
+        if bytes[i] != 0x1B {
+            i += 1;
+            continue;
+        }
+        i += 1;
+        if i >= bytes.len() || bytes[i] != b'[' {
+            continue;
+        }
+        i += 1;
+        if i >= bytes.len() || bytes[i] != b'?' {
+            continue;
+        }
+        i += 1;
+
+        // Accumulate the numeric parameter.
+        let num_start = i;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+        let terminator = bytes[i];
+        if terminator != b'h' && terminator != b'l' {
+            i += 1;
+            continue;
+        }
+        let enable = terminator == b'h';
+        i += 1;
+
+        if let Ok(num_str) = std::str::from_utf8(&bytes[num_start..i - 1]) {
+            match num_str.parse::<u32>() {
+                Ok(1) => mode.application_cursor_keys = enable,
+                Ok(25) => mode.cursor_visible = enable,
+                Ok(1049) => mode.alternate_screen = enable,
+                Ok(2004) => mode.bracketed_paste = enable,
+                _ => {}
+            }
+        }
     }
 }
 
