@@ -369,6 +369,25 @@ export async function mergeQueueCheckConflicts(
   return invoke("merge_queue_check_conflicts", { mergeQueueId, correlationId });
 }
 
+export async function pickFolder(): Promise<string | null> {
+  return invoke("pick_folder");
+}
+
+export async function createProjectRoot(
+  input: {
+    project_id: string;
+    label: string;
+    path: string;
+    root_kind: string;
+    git_root_path?: string | null;
+    remote_url?: string | null;
+    sort_order?: number | null;
+  },
+  correlationId?: string,
+): Promise<unknown> {
+  return invoke("create_project_root", { input, correlationId });
+}
+
 export function connectionLabel(event: ConnectionStatusEvent | null): string {
   if (!event) {
     return "connecting";

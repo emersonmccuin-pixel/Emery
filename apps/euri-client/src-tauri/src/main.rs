@@ -1176,6 +1176,25 @@ fn merge_queue_check_conflicts(
         .map_err(error_string)
 }
 
+#[tauri::command]
+async fn pick_folder(app: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let folder = app.dialog().file().blocking_pick_folder();
+    Ok(folder.map(|p| p.to_string()))
+}
+
+#[tauri::command]
+fn create_project_root(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    input: Value,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(&app, "project_root.create", input, correlation_id)
+        .map_err(error_string)
+}
+
 fn main() {
     if let Err(error) = debug_dev_server_preflight() {
         eprintln!("{error}");
@@ -1183,6 +1202,7 @@ fn main() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(Arc::new(SupervisorManager::new()))
         .invoke_handler(tauri::generate_handler![
             bootstrap_shell,
@@ -1222,7 +1242,9 @@ fn main() {
             merge_queue_merge,
             merge_queue_park,
             merge_queue_reorder,
-            merge_queue_check_conflicts
+            merge_queue_check_conflicts,
+            pick_folder,
+            create_project_root
         ])
         .run(tauri::generate_context!())
         .expect("failed to run EURI client");
