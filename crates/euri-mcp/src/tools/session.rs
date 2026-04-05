@@ -25,11 +25,13 @@ fn default_stop_rules(origin_mode: &str) -> Vec<String> {
             "Implement only what is described in your task briefing.".to_string(),
             "Do NOT merge branches, push to remote, or modify branches other than your assigned branch.".to_string(),
             "Do NOT update external systems (WCP, Jira, etc.).".to_string(),
+            "Do NOT write files or commit changes outside your worktree directory.".to_string(),
             "Stop when implementation and verification are complete. Report results.".to_string(),
         ],
         "follow_up" => vec![
             "Address only the specific follow-up issue described.".to_string(),
             "Do NOT expand scope beyond the follow-up request.".to_string(),
+            "Do NOT write files or commit changes outside your worktree directory.".to_string(),
             "Stop when the follow-up is resolved. Report results.".to_string(),
         ],
         _ => vec![],
@@ -264,6 +266,12 @@ pub fn handle_session_create(input: Value) -> Result<String> {
         }
     }
 
+    // Write worktree guard hooks for execution and follow_up modes
+    if origin_mode == "execution" || origin_mode == "follow_up" {
+        write_worktree_guard(&worktree_path)?;
+        write_pre_commit_hook(&worktree_path, &branch_name)?;
+    }
+
     // Build args list
     let mut args = vec!["--dangerously-skip-permissions".to_string()];
     if let Some(ref p) = prompt {
@@ -344,6 +352,10 @@ pub fn handle_session_create_batch(input: Value) -> Result<String> {
             .as_str()
             .ok_or_else(|| anyhow!("worktree {} missing path", worktree_id))?
             .to_string();
+        let branch_name = worktree["branch_name"]
+            .as_str()
+            .ok_or_else(|| anyhow!("worktree {} missing branch_name", worktree_id))?
+            .to_string();
 
         // ── Instruction injection ────────────────────────────────────────────
         {
@@ -385,6 +397,12 @@ pub fn handle_session_create_batch(input: Value) -> Result<String> {
                 let merged = instruction_parts.join("\n\n---\n\n");
                 write_instructions_file(&worktree_path, &merged)?;
             }
+        }
+
+        // Write worktree guard hooks for execution and follow_up modes
+        if origin_mode == "execution" || origin_mode == "follow_up" {
+            write_worktree_guard(&worktree_path)?;
+            write_pre_commit_hook(&worktree_path, &branch_name)?;
         }
 
         let mut args = vec!["--dangerously-skip-permissions".to_string()];
@@ -568,6 +586,92 @@ fn required_str(input: &Value, key: &str) -> Result<String> {
         .as_str()
         .map(str::to_string)
         .ok_or_else(|| anyhow!("missing required field: {}", key))
+}
+
+fn write_worktree_guard(worktree_path: &str) -> Result<()> {
+    let claude_dir = std::path::Path::new(worktree_path).join(".claude");
+    std::fs::create_dir_all(&claude_dir)
+        .map_err(|e| anyhow!("failed to create .claude dir: {}", e))?;
+
+    // Normalize the worktree path to forward-slash lowercase for Windows compatibility
+    let normalized_path = worktree_path.replace('\\', "/").to_lowercase();
+
+    // Node.js inline script (single line) that checks file_path or detects write-pattern bash commands
+    // Outputs {"continue": true} if allowed, {"continue": false, "stopReason": "..."} if blocked
+    let node_script = format!(
+        r#"const i=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));const t=i.tool_name||'';const inp=i.tool_input||{{}};const guard='{normalized_path}';function norm(p){{return(p||'').replace(/\\/g,'/').toLowerCase();}};function allowed(p){{const n=norm(p);return n===guard||n.startsWith(guard+'/');}}if(['Edit','Write','MultiEdit','NotebookEdit'].includes(t)){{const fp=inp.file_path||inp.notebook_path||'';const paths=inp.edits?inp.edits.map(e=>e.file_path||''):[];const all=[fp,...paths].filter(Boolean);const blocked=all.find(p=>!allowed(p));if(blocked){{process.stdout.write(JSON.stringify({{continue:false,stopReason:'Blocked: file path '+blocked+' is outside your assigned worktree '+guard}}));process.exit(0);}}}}else if(t==='Bash'){{const cmd=inp.command||'';const writePatterns=[/\becho\b.*>/,/\btee\b/,/\bcat\b.*>/,/\bmv\b/,/\bcp\b/,/\brm\b/,/\bmkdir\b/,/\btouch\b/,/\bchmod\b/,/\bchown\b/,/\bnpm\b.*install/,/\bcargo\b.*install/,/\bgit\b.*clone/];const hasWrite=writePatterns.some(r=>r.test(cmd));if(hasWrite){{const cdMatch=cmd.match(/cd\s+([^\s;&|]+)/);const cwd=cdMatch?cdMatch[1]:'';if(cwd&&!allowed(cwd)){{process.stdout.write(JSON.stringify({{continue:false,stopReason:'Blocked: bash command targets path outside your assigned worktree '+guard}}));process.exit(0);}}}}}};process.stdout.write(JSON.stringify({{continue:true}}));"#,
+        normalized_path = normalized_path
+    );
+
+    let settings = json!({
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": ".*",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": format!("node -e \"{}\"", node_script)
+                        }
+                    ]
+                }
+            ]
+        }
+    });
+
+    let settings_path = claude_dir.join("settings.local.json");
+    let settings_str = serde_json::to_string_pretty(&settings)
+        .map_err(|e| anyhow!("failed to serialize settings: {}", e))?;
+    std::fs::write(&settings_path, settings_str)
+        .map_err(|e| anyhow!("failed to write settings.local.json: {}", e))?;
+
+    Ok(())
+}
+
+fn write_pre_commit_hook(worktree_path: &str, expected_branch: &str) -> Result<()> {
+    let hooks_dir = std::path::Path::new(worktree_path).join(".git-hooks");
+    std::fs::create_dir_all(&hooks_dir)
+        .map_err(|e| anyhow!("failed to create .git-hooks dir: {}", e))?;
+
+    let hook_script = format!(
+        r#"#!/bin/sh
+# Pre-commit hook: enforce that commits only land on the assigned worktree branch.
+expected="{expected_branch}"
+current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+if [ "$current" != "$expected" ]; then
+  echo "ERROR: Expected branch '$expected' but current branch is '$current'."
+  echo "Commits outside your assigned worktree branch are not allowed."
+  exit 1
+fi
+exit 0
+"#,
+        expected_branch = expected_branch
+    );
+
+    let hook_path = hooks_dir.join("pre-commit");
+    std::fs::write(&hook_path, &hook_script)
+        .map_err(|e| anyhow!("failed to write pre-commit hook: {}", e))?;
+
+    // Make hook executable on Unix
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&hook_path)
+            .map_err(|e| anyhow!("failed to read hook metadata: {}", e))?
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&hook_path, perms)
+            .map_err(|e| anyhow!("failed to set hook permissions: {}", e))?;
+    }
+
+    // Configure git to use this hooks directory
+    std::process::Command::new("git")
+        .args(["config", "core.hooksPath", ".git-hooks"])
+        .current_dir(worktree_path)
+        .output()
+        .map_err(|e| anyhow!("failed to run git config: {}", e))?;
+
+    Ok(())
 }
 
 fn write_instructions_file(worktree_path: &str, instructions: &str) -> Result<()> {
