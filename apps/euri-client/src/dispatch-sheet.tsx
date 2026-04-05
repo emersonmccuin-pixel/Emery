@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import type {
   AccountSummary,
   ConflictWarning,
@@ -57,6 +57,23 @@ export function DispatchSheet() {
   );
 }
 
+// --- Stop rules helper ---
+
+function getDefaultStopRules(originMode: string): string[] {
+  switch (originMode) {
+    case "planning":
+      return ["No file writes", "No shell execution", "Return plan as text only"];
+    case "research":
+      return ["No file writes", "Read-only tools only", "Return findings as text"];
+    case "execution":
+      return ["Implement only assigned task", "No merging/pushing", "No external system updates"];
+    case "follow_up":
+      return ["Address only the follow-up issue", "No scope expansion"];
+    default:
+      return [];
+  }
+}
+
 // --- Single dispatch (existing behavior) ---
 
 function SingleDispatchSheet({
@@ -84,7 +101,7 @@ function SingleDispatchSheet({
 
   return (
     <div className="dispatch-overlay" onClick={onCancel}>
-      <div className="dispatch-sheet" onClick={(e) => e.stopPropagation()}>
+      <div className="dispatch-sheet" onClick={(e: React.MouseEvent<HTMLDivElement>) => e.stopPropagation()}>
         <h3>Launch Session</h3>
         <div className="dispatch-details">
           <div className="dispatch-row">
@@ -132,6 +149,16 @@ function SingleDispatchSheet({
               <option value="sonnet">Sonnet (fast/cheap)</option>
             </select>
           </div>
+          {getDefaultStopRules(originMode).length > 0 && (
+            <div className="dispatch-row">
+              <span className="dispatch-label">Stop Rules</span>
+              <span className="dispatch-stop-rules">
+                {getDefaultStopRules(originMode).map((rule, i) => (
+                  <span key={i} className="dispatch-stop-rule">{rule}</span>
+                ))}
+              </span>
+            </div>
+          )}
         </div>
         <div className="dispatch-actions">
           <button className="secondary-button" onClick={onCancel}>Cancel</button>
