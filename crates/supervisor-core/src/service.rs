@@ -289,6 +289,13 @@ impl SupervisorService {
 
         let now = unix_time_seconds();
         let account_id = format!("acct_{}", Uuid::new_v4().simple());
+        let default_safety_mode = match request.default_safety_mode.as_deref() {
+            Some(mode) => Some(validate_safety_mode(mode)?),
+            None => None,
+        };
+        let default_launch_args_json = request.default_launch_args
+            .map(|args| serde_json::to_string(&args))
+            .transpose()?;
         let record = NewAccountRecord {
             id: account_id.clone(),
             agent_kind,
@@ -298,6 +305,8 @@ impl SupervisorService {
             env_preset_ref,
             is_default: request.is_default.unwrap_or(false),
             status: validate_account_status(request.status.as_deref().unwrap_or("ready"))?,
+            default_safety_mode,
+            default_launch_args_json,
             created_at: now,
             updated_at: now,
         };
@@ -328,6 +337,14 @@ impl SupervisorService {
             None => existing.summary.env_preset_ref.clone(),
         };
 
+        let default_safety_mode = match request.default_safety_mode.as_deref() {
+            Some(mode) => Some(validate_safety_mode(mode)?),
+            None => existing.summary.default_safety_mode.clone(),
+        };
+        let default_launch_args_json = match request.default_launch_args {
+            Some(args) => Some(serde_json::to_string(&args)?),
+            None => existing.summary.default_launch_args_json.clone(),
+        };
         let record = AccountUpdateRecord {
             id: existing.summary.id.clone(),
             agent_kind,
@@ -345,6 +362,8 @@ impl SupervisorService {
             },
             env_preset_ref,
             is_default: request.is_default.unwrap_or(existing.summary.is_default),
+            default_safety_mode,
+            default_launch_args_json,
             status: match request.status.as_deref() {
                 Some(status) => validate_account_status(status)?,
                 None => existing.summary.status.clone(),
@@ -1194,6 +1213,52 @@ impl SupervisorService {
         Ok(record)
     }
 
+    fn resolve_safety_config(
+        &self,
+        account_id: &str,
+        project_id: &str,
+        agent_kind: &str,
+        session_safety_mode: Option<&str>,
+        session_extra_args: Option<&[String]>,
+    ) -> Result<ResolvedSafetyConfig> {
+        // 1. Start with account defaults
+        let account = self.databases.get_account(account_id)?
+            .ok_or_else(|| anyhow!("account {} was not found", account_id))?;
+        let mut mode = account.summary.default_safety_mode
+            .unwrap_or_else(|| "cautious".to_string());
+        let mut extra_args: Vec<String> = account.summary.default_launch_args_json
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default();
+
+        // 2. Apply project overrides
+        if let Some(project) = self.databases.get_project(project_id)? {
+            if let Some(overrides_json) = &project.agent_safety_overrides_json {
+                if let Ok(overrides) = serde_json::from_str::<serde_json::Value>(overrides_json) {
+                    if let Some(agent_config) = overrides.get(agent_kind) {
+                        if let Some(m) = agent_config.get("safety_mode").and_then(|v| v.as_str()) {
+                            mode = m.to_string();
+                        }
+                        if let Some(args) = agent_config.get("extra_args").and_then(|v| v.as_array()) {
+                            extra_args = args.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect();
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Apply session-level overrides
+        if let Some(session_mode) = session_safety_mode {
+            mode = validate_safety_mode(session_mode)?;
+        }
+        if let Some(session_args) = session_extra_args {
+            extra_args = session_args.to_vec();
+        }
+
+        Ok(ResolvedSafetyConfig { mode, extra_args })
+    }
+
     pub fn get_session(&self, session_id: &str) -> Result<Option<SessionDetail>> {
         let Some(summary) = self.databases.get_session(session_id)? else {
             return Ok(None);
@@ -1233,6 +1298,26 @@ impl SupervisorService {
                 }
             }
             _ => {}
+        }
+
+        // Resolve safety configuration and inject CLI args
+        let safety = self.resolve_safety_config(
+            &request.account_id,
+            &request.project_id,
+            &request.agent_kind,
+            request.safety_mode.as_deref(),
+            request.extra_args.as_deref(),
+        )?;
+        let safety_args = safety_mode_to_args(&request.agent_kind, &safety.mode);
+        for arg in safety_args {
+            if !request.args.contains(&arg) {
+                request.args.push(arg);
+            }
+        }
+        for arg in &safety.extra_args {
+            if !request.args.contains(arg) {
+                request.args.push(arg.clone());
+            }
         }
 
         // Auto-create git worktree when requested
@@ -3067,6 +3152,29 @@ fn resolved_at_for_reconciliation_status(
     match status {
         "accepted" | "dismissed" | "applied" => Some(requested.unwrap_or(now)),
         _ => None,
+    }
+}
+
+struct ResolvedSafetyConfig {
+    mode: String,
+    extra_args: Vec<String>,
+}
+
+fn safety_mode_to_args(agent_kind: &str, mode: &str) -> Vec<String> {
+    match (agent_kind, mode) {
+        ("claude-code", "yolo") => vec!["--dangerously-skip-permissions".to_string()],
+        ("claude-code", "cautious") => vec![],
+        ("codex", "yolo") => vec!["--full-auto".to_string()],
+        ("codex", "cautious") => vec![],
+        _ => vec![],
+    }
+}
+
+fn validate_safety_mode(value: &str) -> Result<String> {
+    let normalized = value.trim().to_lowercase();
+    match normalized.as_str() {
+        "yolo" | "cautious" => Ok(normalized),
+        _ => Err(anyhow!("safety_mode must be one of: yolo, cautious")),
     }
 }
 

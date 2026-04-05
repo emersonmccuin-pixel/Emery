@@ -71,12 +71,14 @@ function SingleDispatchSheet({
   project: ProjectDetail;
   account: AccountSummary | null;
   originMode: string;
-  onConfirm: (opts: { autoWorktree: boolean; originMode: string }) => void;
+  onConfirm: (opts: { autoWorktree: boolean; originMode: string; safetyMode?: string }) => void;
   onCancel: () => void;
 }) {
+  const [safetyMode, setSafetyMode] = useState<string>("");
   const branchName = `euri/${workItem.callsign.toLowerCase()}`;
   const root = project.roots[0] ?? null;
   const isExecution = originMode === "execution";
+  const resolvedDefault = account?.default_safety_mode ?? "cautious";
 
   return (
     <div className="dispatch-overlay" onClick={onCancel}>
@@ -112,10 +114,18 @@ function SingleDispatchSheet({
             <span className="dispatch-label">Base</span>
             <span>Current HEAD of {root?.path ?? "project root"}</span>
           </div>
+          <div className="dispatch-row">
+            <span className="dispatch-label">Safety Mode</span>
+            <select value={safetyMode} onChange={(e) => setSafetyMode(e.target.value)}>
+              <option value="">Default ({resolvedDefault})</option>
+              <option value="yolo">YOLO (skip permissions)</option>
+              <option value="cautious">Cautious (confirm each action)</option>
+            </select>
+          </div>
         </div>
         <div className="dispatch-actions">
           <button className="secondary-button" onClick={onCancel}>Cancel</button>
-          <button className="secondary-button" onClick={() => onConfirm({ autoWorktree: isExecution, originMode })}>
+          <button className="secondary-button" onClick={() => onConfirm({ autoWorktree: isExecution, originMode, safetyMode: safetyMode || undefined })}>
             {isExecution ? "Launch on Branch" : "Launch on Main"}
           </button>
         </div>
@@ -139,7 +149,7 @@ function MultiDispatchSheet({
   accounts: AccountSummary[];
   defaultAccount: AccountSummary | null;
   conflicts: ConflictWarning[];
-  onConfirm: (dispatches: Array<{ workItemId: string; accountId: string; agentKind: string }>) => void;
+  onConfirm: (dispatches: Array<{ workItemId: string; accountId: string; agentKind: string; safetyMode?: string }>) => void;
   onCancel: () => void;
 }) {
   const [itemAccounts, setItemAccounts] = useState<Record<string, string>>(() => {
@@ -149,6 +159,8 @@ function MultiDispatchSheet({
     }
     return initial;
   });
+  const [safetyMode, setSafetyMode] = useState<string>("");
+  const resolvedDefault = defaultAccount?.default_safety_mode ?? "cautious";
 
   function handleConfirm() {
     const dispatches = workItems.map((item) => {
@@ -158,6 +170,7 @@ function MultiDispatchSheet({
         workItemId: item.id,
         accountId,
         agentKind: account?.agent_kind ?? "claude-code",
+        safetyMode: safetyMode || undefined,
       };
     });
     onConfirm(dispatches);
@@ -205,6 +218,17 @@ function MultiDispatchSheet({
               </select>
             </div>
           ))}
+        </div>
+
+        <div className="dispatch-details">
+          <div className="dispatch-row">
+            <span className="dispatch-label">Safety Mode</span>
+            <select value={safetyMode} onChange={(e) => setSafetyMode(e.target.value)}>
+              <option value="">Default ({resolvedDefault})</option>
+              <option value="yolo">YOLO (skip permissions)</option>
+              <option value="cautious">Cautious (confirm each action)</option>
+            </select>
+          </div>
         </div>
 
         <div className="dispatch-actions">

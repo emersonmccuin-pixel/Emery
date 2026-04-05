@@ -286,6 +286,8 @@ export async function createSession(
     initial_terminal_cols?: number;
     initial_terminal_rows?: number;
     auto_worktree?: boolean;
+    safety_mode?: string;
+    extra_args?: string[];
   },
   correlationId?: string,
 ): Promise<SessionDetail> {
