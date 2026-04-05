@@ -147,6 +147,8 @@ function toProjectSummary(detail: ProjectDetail, current?: ProjectSummary | null
     created_at: detail.created_at,
     updated_at: detail.updated_at,
     archived_at: detail.archived_at,
+    project_type: detail.project_type,
+    model_defaults_json: detail.model_defaults_json,
   };
 }
 
