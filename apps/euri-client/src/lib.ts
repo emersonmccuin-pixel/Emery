@@ -498,6 +498,42 @@ export async function setProjectRootRemote(
   return invoke("set_project_root_remote", { rootId, remoteUrl, correlationId });
 }
 
+// --- Accounts ---
+
+export async function listAccounts(correlationId?: string): Promise<unknown[]> {
+  return invoke("list_accounts", { correlationId });
+}
+
+export async function getAccount(accountId: string, correlationId?: string): Promise<unknown> {
+  return invoke("get_account", { accountId, correlationId });
+}
+
+export async function createAccount(
+  input: {
+    label: string;
+    agent_kind?: string;
+    binary_path?: string | null;
+    is_default?: boolean;
+  },
+  correlationId?: string,
+): Promise<unknown> {
+  return invoke("create_account", { input, correlationId });
+}
+
+export async function updateAccount(
+  accountId: string,
+  input: {
+    label?: string;
+    binary_path?: string | null;
+    is_default?: boolean;
+    default_model?: string | null;
+    default_safety_mode?: string | null;
+  },
+  correlationId?: string,
+): Promise<unknown> {
+  return invoke("update_account", { accountId, input, correlationId });
+}
+
 export function connectionLabel(event: ConnectionStatusEvent | null): string {
   if (!event) {
     return "connecting";

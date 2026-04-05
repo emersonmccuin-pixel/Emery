@@ -327,6 +327,11 @@ export default function App() {
         navStore.goHome();
       }
 
+      if (e.ctrlKey && e.key === ",") {
+        e.preventDefault();
+        navStore.goToSettings();
+      }
+
       if (e.ctrlKey && e.key >= "1" && e.key <= "5") {
         e.preventDefault();
         const index = parseInt(e.key, 10) - 1;

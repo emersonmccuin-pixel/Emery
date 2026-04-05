@@ -1378,6 +1378,63 @@ fn set_project_root_remote(
         .map_err(error_string)
 }
 
+#[tauri::command]
+fn list_accounts(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(&app, "account.list", json!({}), correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn get_account(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    account_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "account.get",
+            json!({ "account_id": account_id }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn create_account(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    input: Value,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(&app, "account.create", input, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn update_account(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    account_id: String,
+    input: Value,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    let mut payload = input;
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("account_id".to_string(), Value::String(account_id));
+    }
+    manager
+        .request_value(&app, "account.update", payload, correlation_id)
+        .map_err(error_string)
+}
+
 fn main() {
     if let Err(error) = debug_dev_server_preflight() {
         eprintln!("{error}");
@@ -1437,7 +1494,11 @@ fn main() {
             update_project_root,
             remove_project_root,
             git_init_project_root,
-            set_project_root_remote
+            set_project_root_remote,
+            list_accounts,
+            get_account,
+            create_account,
+            update_account
         ])
         .run(tauri::generate_context!())
         .expect("failed to run EURI client");

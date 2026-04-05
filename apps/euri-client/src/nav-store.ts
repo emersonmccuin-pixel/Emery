@@ -8,7 +8,8 @@ export type NavigationLayer =
   | { layer: "agent"; projectId: string; sessionId: string }
   | { layer: "document"; projectId: string; documentId: string }
   | { layer: "new-document"; projectId: string; workItemId?: string }
-  | { layer: "work_item"; projectId: string; workItemId: string };
+  | { layer: "work_item"; projectId: string; workItemId: string }
+  | { layer: "settings" };
 
 type NavState = {
   current: NavigationLayer;
@@ -102,6 +103,14 @@ export const navStore = {
     emit();
   },
 
+  goToSettings() {
+    state = {
+      current: { layer: "settings" },
+      history: [...state.history, state.current],
+    };
+    emit();
+  },
+
   goBack() {
     if (state.history.length === 0) return;
     const prev = state.history[state.history.length - 1];
@@ -123,6 +132,9 @@ export const navStore = {
       { label: "EURI", layer: { layer: "home" } },
     ];
     const c = state.current;
+    if (c.layer === "settings") {
+      crumbs.push({ label: "settings", layer: c });
+    }
     if (c.layer === "inbox") {
       crumbs.push({ label: "inbox", layer: c });
     }
