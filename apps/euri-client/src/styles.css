@@ -72,6 +72,12 @@ button {
   border-radius: 8px;
 }
 
+.brand-block {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .brand-block h1 {
   margin: 0;
   font-size: 0.88rem;
@@ -543,6 +549,76 @@ button {
   background: rgba(199, 92, 85, 0.14);
   color: #ffd3cb;
   font-size: 0.82rem;
+}
+
+/* ── Reconnecting / disconnected banners ── */
+
+.reconnecting-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  background: rgba(120, 53, 15, 0.40);
+  color: #fde68a;
+  font-size: 0.82rem;
+}
+
+.reconnecting-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #d97706;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spinner-rotate 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spinner-rotate {
+  to { transform: rotate(360deg); }
+}
+
+.disconnected-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  background: rgba(127, 29, 29, 0.40);
+  color: #fca5a5;
+  font-size: 0.82rem;
+}
+
+/* ── Connection dot (topbar) ── */
+
+.connection-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.connection-connected {
+  background: #22c55e;
+}
+
+.connection-reconnecting,
+.connection-connecting {
+  background: #f59e0b;
+  animation: connection-pulse 1s ease-in-out infinite;
+}
+
+.connection-disconnected {
+  background: #ef4444;
+}
+
+@keyframes connection-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 /* ── Workspace pane ── */

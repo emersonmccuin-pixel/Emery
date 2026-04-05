@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import {
+  bootstrapShell,
   checkDispatchConflicts,
   createDocument,
   createPlanningAssignment,
@@ -286,6 +287,7 @@ export type AppState = {
   dispatchConflicts: ConflictWarning[];
   focusProjectIds: string[];
   maxFocusSlots: number;
+  connectionState: "connecting" | "connected" | "reconnecting" | "disconnected";
 };
 
 function initialState(): AppState {
@@ -329,6 +331,7 @@ function initialState(): AppState {
     maxFocusSlots: 3,
     selectedWorkItemIds: [],
     dispatchConflicts: [],
+    connectionState: "connecting",
   };
 }
 
@@ -382,6 +385,55 @@ class AppStore {
 
   setConnectionEvent(event: ConnectionStatusEvent | null) {
     this.update({ connectionEvent: event });
+  }
+
+  setConnectionState(state: AppState["connectionState"]) {
+    this.update({ connectionState: state });
+  }
+
+  async rebootstrap() {
+    try {
+      const correlationId = newCorrelationId("rebootstrap");
+      const payload = await bootstrapShell(correlationId);
+
+      // Update sessions — replace stale data with fresh
+      this.setSessions(payload.sessions);
+
+      // Re-seed session store with fresh snapshots
+      for (const session of payload.sessions) {
+        sessionStore.seedSession(session.id, {
+          runtime_state: session.runtime_state,
+          status: session.status,
+          activity_state: session.activity_state,
+          needs_input_reason: session.needs_input_reason,
+          live: session.live,
+          title: session.title,
+          current_mode: session.current_mode,
+          agent_kind: session.agent_kind,
+          cwd: session.cwd,
+          attached_clients: 0,
+        });
+      }
+      sessionStore.seedComplete();
+
+      // Re-watch live sessions
+      const liveIds = payload.sessions.filter((s) => s.live).map((s) => s.id);
+      if (liveIds.length > 0) {
+        await watchLiveSessions(liveIds, correlationId);
+      }
+
+      // Re-load project data if a project is selected
+      const projectId = this.state.selectedProjectId;
+      if (projectId) {
+        void this.loadProjectReads(projectId, true);
+      }
+
+      this.setConnectionState("connected");
+      this.clearError();
+    } catch (err) {
+      this.update({ error: `Reconnect failed: ${String(err)}` });
+      this.setConnectionState("disconnected");
+    }
   }
 
   setError(error: string) {
