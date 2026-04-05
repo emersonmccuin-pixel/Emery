@@ -613,11 +613,138 @@ button {
 
 .home-stats-bar {
   padding: 4px 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
 .home-stat {
   font-size: 0.75rem;
   color: var(--text-ghost);
+}
+
+.home-new-project-btn {
+  font-size: 0.75rem;
+  color: var(--color-primary);
+  background: var(--color-primary-dim);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.home-new-project-btn:hover {
+  background: rgba(0, 229, 255, 0.25);
+  color: var(--color-primary);
+}
+
+/* ── Project create form ── */
+
+.project-create-form {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.project-create-form-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-create-input {
+  flex: 1;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  padding: 5px 8px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.project-create-input:focus {
+  border-color: var(--border-default);
+}
+
+.project-create-path-input {
+  cursor: default;
+}
+
+.project-create-browse-btn {
+  font-size: 0.8rem;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.project-create-browse-btn:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.project-create-browse-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.project-create-form-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.project-create-submit-btn {
+  font-size: 0.8rem;
+  background: var(--color-primary-dim);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  color: var(--color-primary);
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.project-create-submit-btn:hover:not(:disabled) {
+  background: rgba(0, 229, 255, 0.25);
+}
+
+.project-create-submit-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.project-create-cancel-btn {
+  font-size: 0.8rem;
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.project-create-cancel-btn:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.project-create-cancel-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* ── Focus card enhancements ── */

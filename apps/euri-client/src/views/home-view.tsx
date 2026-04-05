@@ -1,6 +1,7 @@
-import { type DragEvent, useMemo, useRef, useState } from "react";
+import { type DragEvent, type KeyboardEvent, useMemo, useRef, useState } from "react";
 import { appStore, useAppStore } from "../store";
 import { navStore } from "../nav-store";
+import { pickFolder } from "../lib";
 import type { ProjectSummary, SessionSummary, MergeQueueEntry } from "../types";
 
 export function HomeView() {
@@ -9,6 +10,7 @@ export function HomeView() {
   const mergeQueueByProject = useAppStore((s) => s.mergeQueueByProject);
   const focusProjectIds = useAppStore((s) => s.focusProjectIds);
   const maxFocusSlots = useAppStore((s) => s.maxFocusSlots);
+  const [showCreateForm, setShowCreateForm] = useState(false);
 
   const { focusProjects, otherProjects } = useMemo(() => {
     const focusSet = new Set(focusProjectIds);
@@ -29,13 +31,31 @@ export function HomeView() {
     return { focusProjects: focus, otherProjects: others };
   }, [projects, focusProjectIds, maxFocusSlots]);
 
+  function handleProjectCreated(projectId: string) {
+    setShowCreateForm(false);
+    navStore.goToProject(projectId);
+  }
+
   return (
     <div className="home-view">
       <div className="home-stats-bar">
         <span className="home-stat">
           {sessions.filter((s) => s.live).length} agents running
         </span>
+        <button
+          className="home-new-project-btn"
+          onClick={() => setShowCreateForm(true)}
+        >
+          + New Project
+        </button>
       </div>
+
+      {showCreateForm ? (
+        <ProjectCreateForm
+          onCreated={handleProjectCreated}
+          onCancel={() => setShowCreateForm(false)}
+        />
+      ) : null}
 
       <FocusCardGrid
         projects={focusProjects}
@@ -57,9 +77,94 @@ export function HomeView() {
         />
       ) : null}
 
-      {projects.length === 0 ? (
+      {projects.length === 0 && !showCreateForm ? (
         <div className="empty-pane">No projects yet. Create one to get started.</div>
       ) : null}
+    </div>
+  );
+}
+
+// --- ProjectCreateForm ---
+
+function ProjectCreateForm({
+  onCreated,
+  onCancel,
+}: {
+  onCreated: (projectId: string) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [folderPath, setFolderPath] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleBrowse() {
+    const folder = await pickFolder();
+    if (folder) {
+      setFolderPath(folder);
+      if (!name) {
+        const parts = folder.replace(/\\/g, "/").split("/");
+        const folderName = parts[parts.length - 1] || folder;
+        setName(folderName);
+      }
+    }
+  }
+
+  async function handleSubmit() {
+    if (!name.trim() || !folderPath.trim() || submitting) return;
+    setSubmitting(true);
+    const projectId = await appStore.handleCreateProject(name.trim(), folderPath.trim());
+    setSubmitting(false);
+    if (projectId) {
+      onCreated(projectId);
+    }
+  }
+
+  function handleKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") void handleSubmit();
+    if (e.key === "Escape") onCancel();
+  }
+
+  const canSubmit = name.trim().length > 0 && folderPath.trim().length > 0 && !submitting;
+
+  return (
+    <div className="project-create-form">
+      <div className="project-create-form-row">
+        <input
+          className="project-create-input"
+          type="text"
+          placeholder="Project name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={handleKeyDown}
+          autoFocus
+        />
+      </div>
+      <div className="project-create-form-row">
+        <input
+          className="project-create-input project-create-path-input"
+          type="text"
+          placeholder="Folder path"
+          value={folderPath}
+          onChange={(e) => setFolderPath(e.target.value)}
+          onKeyDown={handleKeyDown}
+          readOnly
+        />
+        <button className="project-create-browse-btn" onClick={handleBrowse} disabled={submitting}>
+          Browse
+        </button>
+      </div>
+      <div className="project-create-form-actions">
+        <button
+          className="project-create-submit-btn"
+          onClick={handleSubmit}
+          disabled={!canSubmit}
+        >
+          {submitting ? "Creating..." : "Create Project"}
+        </button>
+        <button className="project-create-cancel-btn" onClick={onCancel} disabled={submitting}>
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }

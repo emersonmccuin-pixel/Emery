@@ -4,6 +4,8 @@ import {
   checkDispatchConflicts,
   createDocument,
   createPlanningAssignment,
+  createProject,
+  createProjectRoot,
   createSession,
   createSessionBatch,
   createWorkItem,
@@ -834,7 +836,26 @@ class AppStore {
     }
   }
 
-  // handleCreateProject removed — project management via supervisor
+  async handleCreateProject(name: string, folderPath: string): Promise<string | null> {
+    const correlationId = newCorrelationId("project-create");
+    try {
+      const project = await createProject({ name }, correlationId);
+      await createProjectRoot(
+        {
+          project_id: project.id,
+          label: name,
+          path: folderPath,
+          root_kind: "project_root",
+        },
+        correlationId,
+      );
+      await this.rebootstrap();
+      return project.id;
+    } catch (err) {
+      this.update({ error: String(err) });
+      return null;
+    }
+  }
 
   async handleUpdateProject(projectId: string, input: { name: string; slug: string; default_account_id: string }) {
     const correlationId = newCorrelationId("project-update");
