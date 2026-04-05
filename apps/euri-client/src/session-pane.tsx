@@ -45,53 +45,32 @@ export const SessionPane = memo(function SessionPane({
   return (
     <div className="session-pane">
       <div className="session-header">
-        <div>
-          <div className="eyebrow">{session.live ? "Attached session" : "Ended session"}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <span className={`indicator ${tone}`} />
           <h2>{session.title ?? session.current_mode}</h2>
-          <p>
-            {session.agent_kind} · {session.cwd}
-          </p>
-        </div>
-        <div className="session-status-cluster">
           <span className={`status-chip ${tone}`}>{session.runtime_state}</span>
-          <span className="status-chip neutral">{session.activity_state}</span>
+          {session.activity_state !== "idle" ? (
+            <span className="status-chip neutral">{session.activity_state}</span>
+          ) : null}
           {session.needs_input_reason ? (
             <span className="status-chip neutral">{session.needs_input_reason}</span>
           ) : null}
         </div>
-      </div>
-
-      <div className="session-meta">
-        <span>status {session.status}</span>
-        <span>live {session.live ? "yes" : "no"}</span>
-        <span>attached {session.attached_clients}</span>
-      </div>
-
-      <div className="terminal-hint">
-        {session.live
-          ? "Click inside the terminal surface to type directly into the attached session."
-          : "This terminal is read-only because the session has ended."}
+        {session.live ? (
+          <div className="action-row">
+            <button className="secondary-button" onClick={onInterrupt}>Interrupt</button>
+            <button className="secondary-button danger" onClick={onTerminate}>Terminate</button>
+          </div>
+        ) : null}
       </div>
 
       <TerminalSurface sessionId={sessionId} live={session.live} />
 
       {!session.live ? (
-        <div className="card compact-card">
-          This session is not live. The shell keeps the tab as a read surface, but attach and input
-          are disabled.
+        <div className="terminal-hint">
+          Session ended. Terminal is read-only.
         </div>
       ) : null}
-
-      <div className="terminal-controls">
-        <div className="action-row">
-          <button onClick={onInterrupt} disabled={!session.live}>
-            Interrupt
-          </button>
-          <button className="danger" onClick={onTerminate} disabled={!session.live}>
-            Terminate
-          </button>
-        </div>
-      </div>
     </div>
   );
 });

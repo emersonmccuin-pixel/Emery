@@ -272,7 +272,7 @@ export type WorkspaceResource =
 export type WorkspacePayload = {
   version: 1;
   selected_project_id: string | null;
-  left_panel: "projects" | "sessions" | "work" | "docs";
+  left_panel: "sessions" | "workbench";
   open_resources: WorkspaceResource[];
   active_resource_id: string | null;
 };
