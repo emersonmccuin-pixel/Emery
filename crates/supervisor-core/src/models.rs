@@ -25,6 +25,7 @@ pub struct ProjectDetail {
     pub sort_order: i64,
     pub default_account_id: Option<String>,
     pub settings_json: Option<String>,
+    pub agent_safety_overrides_json: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
     pub archived_at: Option<i64>,
@@ -56,6 +57,8 @@ pub struct AccountSummary {
     pub env_preset_ref: Option<String>,
     pub is_default: bool,
     pub status: String,
+    pub default_safety_mode: Option<String>,
+    pub default_launch_args_json: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -266,6 +269,8 @@ pub struct CreateAccountRequest {
     pub env_preset_ref: Option<String>,
     pub is_default: Option<bool>,
     pub status: Option<String>,
+    pub default_safety_mode: Option<String>,
+    pub default_launch_args: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -278,6 +283,8 @@ pub struct UpdateAccountRequest {
     pub env_preset_ref: Option<String>,
     pub is_default: Option<bool>,
     pub status: Option<String>,
+    pub default_safety_mode: Option<String>,
+    pub default_launch_args: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -566,6 +573,8 @@ pub struct NewAccountRecord {
     pub env_preset_ref: Option<String>,
     pub is_default: bool,
     pub status: String,
+    pub default_safety_mode: Option<String>,
+    pub default_launch_args_json: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -580,6 +589,8 @@ pub struct AccountUpdateRecord {
     pub env_preset_ref: Option<String>,
     pub is_default: bool,
     pub status: String,
+    pub default_safety_mode: Option<String>,
+    pub default_launch_args_json: Option<String>,
     pub updated_at: i64,
 }
 
@@ -956,6 +967,8 @@ pub struct CreateSessionRequest {
     #[serde(default)]
     pub auto_worktree: bool,
     pub dispatch_group: Option<String>,
+    pub safety_mode: Option<String>,
+    pub extra_args: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]

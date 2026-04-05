@@ -47,6 +47,8 @@ export type AccountSummary = {
   env_preset_ref: string | null;
   is_default: boolean;
   status: string;
+  default_safety_mode: string | null;
+  default_launch_args_json: string | null;
   created_at: number;
   updated_at: number;
 };
