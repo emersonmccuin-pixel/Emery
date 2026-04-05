@@ -224,12 +224,13 @@ impl DatabaseSet {
                 default_account_id,
                 project_type,
                 model_defaults_json,
+                wcp_namespace,
                 settings_json,
                 instructions_md,
                 created_at,
                 updated_at,
                 archived_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, NULL)",
             params![
                 record.id,
                 record.name,
@@ -238,6 +239,7 @@ impl DatabaseSet {
                 record.default_account_id,
                 record.project_type,
                 record.model_defaults_json,
+                record.wcp_namespace,
                 record.settings_json,
                 record.instructions_md,
                 record.created_at,

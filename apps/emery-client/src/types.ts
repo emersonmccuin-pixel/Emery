@@ -6,6 +6,7 @@ export type ProjectSummary = {
   default_account_id: string | null;
   project_type: string | null;
   model_defaults_json: string | null;
+  wcp_namespace: string | null;
   root_count: number;
   live_session_count: number;
   created_at: number;
@@ -35,6 +36,8 @@ export type ProjectDetail = {
   default_account_id: string | null;
   project_type: string | null;
   model_defaults_json: string | null;
+  wcp_namespace: string | null;
+  dispatch_item_callsign: string | null;
   settings_json: string | null;
   instructions_md: string | null;
   created_at: number;

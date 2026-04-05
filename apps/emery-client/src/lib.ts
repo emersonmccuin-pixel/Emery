@@ -119,6 +119,7 @@ export async function createProject(
     slug?: string;
     default_account_id?: string | null;
     project_type?: string | null;
+    wcp_namespace?: string | null;
   },
   correlationId?: string,
 ): Promise<ProjectDetail> {

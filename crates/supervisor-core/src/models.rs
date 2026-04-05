@@ -240,6 +240,7 @@ pub struct CreateProjectRequest {
     pub default_account_id: Option<String>,
     pub project_type: Option<String>,
     pub model_defaults_json: Option<String>,
+    pub wcp_namespace: Option<String>,
     pub settings_json: Option<String>,
     pub instructions_md: Option<String>,
 }
@@ -572,6 +573,7 @@ pub struct NewProjectRecord {
     pub default_account_id: Option<String>,
     pub project_type: Option<String>,
     pub model_defaults_json: Option<String>,
+    pub wcp_namespace: Option<String>,
     pub settings_json: Option<String>,
     pub instructions_md: Option<String>,
     pub created_at: i64,
