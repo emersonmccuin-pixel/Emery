@@ -10,6 +10,7 @@ pub struct ProjectSummary {
     pub slug: String,
     pub sort_order: i64,
     pub default_account_id: Option<String>,
+    pub project_type: Option<String>,
     pub root_count: i64,
     pub live_session_count: i64,
     pub created_at: i64,
@@ -24,6 +25,7 @@ pub struct ProjectDetail {
     pub slug: String,
     pub sort_order: i64,
     pub default_account_id: Option<String>,
+    pub project_type: Option<String>,
     pub settings_json: Option<String>,
     pub agent_safety_overrides_json: Option<String>,
     pub instructions_md: Option<String>,
@@ -231,6 +233,7 @@ pub struct CreateProjectRequest {
     pub slug: Option<String>,
     pub sort_order: Option<i64>,
     pub default_account_id: Option<String>,
+    pub project_type: Option<String>,
     pub settings_json: Option<String>,
     pub instructions_md: Option<String>,
 }
@@ -242,6 +245,7 @@ pub struct UpdateProjectRequest {
     pub slug: Option<String>,
     pub sort_order: Option<i64>,
     pub default_account_id: Option<String>,
+    pub project_type: Option<String>,
     pub settings_json: Option<String>,
     pub instructions_md: Option<String>,
 }
@@ -552,6 +556,7 @@ pub struct NewProjectRecord {
     pub slug: String,
     pub sort_order: i64,
     pub default_account_id: Option<String>,
+    pub project_type: Option<String>,
     pub settings_json: Option<String>,
     pub instructions_md: Option<String>,
     pub created_at: i64,
@@ -565,6 +570,7 @@ pub struct ProjectUpdateRecord {
     pub slug: String,
     pub sort_order: i64,
     pub default_account_id: Option<String>,
+    pub project_type: Option<String>,
     pub settings_json: Option<String>,
     pub instructions_md: Option<String>,
     pub updated_at: i64,
@@ -1270,4 +1276,92 @@ pub struct InboxEntryUpdateRecord {
     pub read_at: Option<i64>,
     pub resolved_at: Option<i64>,
     pub updated_at: i64,
+}
+
+// --- Agent Templates ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTemplateSummary {
+    pub id: String,
+    pub project_id: String,
+    pub template_key: String,
+    pub label: String,
+    pub origin_mode: String,
+    pub default_model: Option<String>,
+    pub instructions_md: Option<String>,
+    pub stop_rules_json: Option<String>,
+    pub sort_order: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub archived_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTemplateDetail {
+    #[serde(flatten)]
+    pub summary: AgentTemplateSummary,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AgentTemplateListFilter {
+    pub project_id: String,
+    pub include_archived: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateAgentTemplateRequest {
+    pub project_id: String,
+    pub template_key: String,
+    pub label: String,
+    pub origin_mode: Option<String>,
+    pub default_model: Option<String>,
+    pub instructions_md: Option<String>,
+    pub stop_rules_json: Option<String>,
+    pub sort_order: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateAgentTemplateRequest {
+    pub agent_template_id: String,
+    pub template_key: Option<String>,
+    pub label: Option<String>,
+    pub origin_mode: Option<String>,
+    pub default_model: Option<String>,
+    pub instructions_md: Option<String>,
+    pub stop_rules_json: Option<String>,
+    pub sort_order: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ArchiveAgentTemplateRequest {
+    pub agent_template_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewAgentTemplateRecord {
+    pub id: String,
+    pub project_id: String,
+    pub template_key: String,
+    pub label: String,
+    pub origin_mode: String,
+    pub default_model: Option<String>,
+    pub instructions_md: Option<String>,
+    pub stop_rules_json: Option<String>,
+    pub sort_order: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct AgentTemplateUpdateRecord {
+    pub id: String,
+    pub template_key: String,
+    pub label: String,
+    pub origin_mode: String,
+    pub default_model: Option<String>,
+    pub instructions_md: Option<String>,
+    pub stop_rules_json: Option<String>,
+    pub sort_order: i64,
+    pub updated_at: i64,
+    pub archived_at: Option<i64>,
 }

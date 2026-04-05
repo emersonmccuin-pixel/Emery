@@ -5,26 +5,26 @@ use anyhow::Result;
 use crate::bootstrap::AppPaths;
 use crate::diagnostics::{DiagnosticContext, DiagnosticsBundleResult, DiagnosticsHub};
 use crate::models::{
-    AccountDetail, AccountSummary, ArchiveProjectRequest, CreateAccountRequest, CreateDiagnosticsBundleRequest,
-    CreateDocumentRequest, CreatePlanningAssignmentRequest, CreateProjectRequest,
-    CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
-    CreateWorkItemRequest, CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
+    AccountDetail, AccountSummary, AgentTemplateDetail, AgentTemplateListFilter,
+    AgentTemplateSummary, ArchiveAgentTemplateRequest, ArchiveProjectRequest, CreateAccountRequest,
+    CreateAgentTemplateRequest, CreateDiagnosticsBundleRequest, CreateDocumentRequest,
+    CreatePlanningAssignmentRequest, CreateProjectRequest, CreateProjectRootRequest,
+    CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest,
+    CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
     DeletePlanningAssignmentRequest, DocumentDetail, DocumentListFilter, DocumentSummary,
-    GetWorkspaceStateRequest, MergeQueueEntry, MergeQueueListFilter, PlanningAssignmentDetail,
+    GetWorkspaceStateRequest, GitInitProjectRootRequest, InboxEntryDetail, InboxEntryListFilter,
+    InboxEntrySummary, MergeQueueEntry, MergeQueueListFilter, PlanningAssignmentDetail,
     PlanningAssignmentListFilter, PlanningAssignmentSummary, ProjectDetail, ProjectRootSummary,
-    ProjectSummary, GitInitProjectRootRequest, SetProjectRootRemoteRequest,
-    RemoveProjectRootRequest, SessionAttachResponse, SessionDetachResponse,
-    SessionDetail, SessionListFilter, SessionSpecDetail,
-    SessionSpecListFilter, SessionSpecSummary, SessionStateChangedEvent, SessionSummary,
-    UpdateAccountRequest, UpdateDocumentRequest, UpdatePlanningAssignmentRequest,
-    UpdateProjectRequest, UpdateProjectRootRequest, UpdateSessionSpecRequest,
-    UpdateWorkItemRequest, UpdateWorkflowReconciliationProposalRequest,
+    ProjectSummary, RemoveProjectRootRequest, SessionAttachResponse, SessionDetachResponse,
+    SessionDetail, SessionListFilter, SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary,
+    SessionStateChangedEvent, SessionSummary, SetProjectRootRemoteRequest, UpdateAccountRequest,
+    UpdateAgentTemplateRequest, UpdateDocumentRequest, UpdateInboxEntryRequest,
+    UpdatePlanningAssignmentRequest, UpdateProjectRequest, UpdateProjectRootRequest,
+    UpdateSessionSpecRequest, UpdateWorkItemRequest, UpdateWorkflowReconciliationProposalRequest,
     UpdateWorkspaceStateRequest, UpdateWorktreeRequest, WorkItemDetail, WorkItemListFilter,
     WorkItemSummary, WorkflowReconciliationProposalDetail,
     WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
-    WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary,
-    InboxEntrySummary, InboxEntryDetail, InboxEntryListFilter, UpdateInboxEntryRequest,
-    GitHealthStatus,
+    WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary, GitHealthStatus,
 };
 use crate::runtime::SessionRegistry;
 use crate::service::SupervisorService;
@@ -479,6 +479,36 @@ impl Supervisor {
 
     pub fn count_unread_inbox_entries(&self, project_id: Option<&str>) -> Result<i64> {
         self.service.count_unread_inbox_entries(project_id.unwrap_or(""))
+    }
+
+    // --- Agent Templates ---
+
+    pub fn list_agent_templates(
+        &self,
+        filter: AgentTemplateListFilter,
+    ) -> Result<Vec<AgentTemplateSummary>> {
+        self.service.list_agent_templates(filter)
+    }
+
+    pub fn create_agent_template(
+        &self,
+        request: CreateAgentTemplateRequest,
+    ) -> Result<AgentTemplateDetail> {
+        self.service.create_agent_template(request)
+    }
+
+    pub fn update_agent_template(
+        &self,
+        request: UpdateAgentTemplateRequest,
+    ) -> Result<AgentTemplateDetail> {
+        self.service.update_agent_template(request)
+    }
+
+    pub fn archive_agent_template(
+        &self,
+        request: ArchiveAgentTemplateRequest,
+    ) -> Result<AgentTemplateDetail> {
+        self.service.archive_agent_template(request)
     }
 }
 

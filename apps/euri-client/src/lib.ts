@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AgentTemplateDetail,
+  AgentTemplateSummary,
   ConflictWarning,
   ConnectionStatusEvent,
   DiagnosticsBundleResult,
@@ -113,6 +115,7 @@ export async function createProject(
     name: string;
     slug?: string;
     default_account_id?: string | null;
+    project_type?: string | null;
   },
   correlationId?: string,
 ): Promise<ProjectDetail> {
@@ -540,6 +543,52 @@ export async function getProjectRootGitStatus(
   correlationId?: string,
 ): Promise<GitHealthStatus | null> {
   return invoke("get_project_root_git_status", { rootId, correlationId });
+}
+
+export async function listAgentTemplates(
+  projectId: string,
+  correlationId?: string,
+): Promise<AgentTemplateSummary[]> {
+  return invoke("list_agent_templates", { projectId, correlationId });
+}
+
+export async function createAgentTemplate(
+  input: {
+    project_id: string;
+    template_key: string;
+    label: string;
+    origin_mode?: string;
+    default_model?: string | null;
+    instructions_md?: string | null;
+    stop_rules_json?: string | null;
+    sort_order?: number;
+  },
+  correlationId?: string,
+): Promise<AgentTemplateDetail> {
+  return invoke("create_agent_template", { input, correlationId });
+}
+
+export async function updateAgentTemplate(
+  agentTemplateId: string,
+  input: {
+    template_key?: string;
+    label?: string;
+    origin_mode?: string;
+    default_model?: string | null;
+    instructions_md?: string | null;
+    stop_rules_json?: string | null;
+    sort_order?: number;
+  },
+  correlationId?: string,
+): Promise<AgentTemplateDetail> {
+  return invoke("update_agent_template", { agentTemplateId, input, correlationId });
+}
+
+export async function archiveAgentTemplate(
+  agentTemplateId: string,
+  correlationId?: string,
+): Promise<AgentTemplateDetail> {
+  return invoke("archive_agent_template", { agentTemplateId, correlationId });
 }
 
 export function connectionLabel(event: ConnectionStatusEvent | null): string {

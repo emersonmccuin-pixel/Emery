@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { appStore, useAppStore } from "../store";
 import { navStore } from "../nav-store";
-import { pickFolder } from "../lib";
-import type { ProjectRootSummary } from "../types";
+import { pickFolder, listAgentTemplates, createAgentTemplate, updateAgentTemplate, archiveAgentTemplate } from "../lib";
+import type { AgentTemplateSummary, ProjectRootSummary } from "../types";
 
 export function ProjectSettingsView({ projectId }: { projectId: string }) {
   const projectDetails = useAppStore((s) => s.projectDetails);
@@ -16,9 +16,20 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
   const [nameSaved, setNameSaved] = useState(false);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const [confirmArchive, setConfirmArchive] = useState(false);
+  const [agentTemplates, setAgentTemplates] = useState<AgentTemplateSummary[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [showAddTemplate, setShowAddTemplate] = useState(false);
 
   useEffect(() => {
     void appStore.loadProjectReads(projectId);
+  }, [projectId]);
+
+  useEffect(() => {
+    setTemplatesLoading(true);
+    listAgentTemplates(projectId)
+      .then((templates) => setAgentTemplates(templates))
+      .catch(() => {})
+      .finally(() => setTemplatesLoading(false));
   }, [projectId]);
 
   useEffect(() => {
@@ -73,6 +84,16 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
     }
     setConfirmArchive(false);
     await appStore.handleArchiveProject(projectId);
+  }
+
+  async function refreshTemplates() {
+    const templates = await listAgentTemplates(projectId);
+    setAgentTemplates(templates);
+  }
+
+  async function handleArchiveTemplate(templateId: string) {
+    await archiveAgentTemplate(templateId);
+    await refreshTemplates();
   }
 
   return (
@@ -157,6 +178,49 @@ export function ProjectSettingsView({ projectId }: { projectId: string }) {
             </div>
           )}
           {addingRoot && <div className="settings-adding-root">Adding root...</div>}
+        </section>
+
+        {/* Agent Templates section */}
+        <section className="settings-section">
+          <div className="settings-section-header-row">
+            <h3 className="settings-section-title">Agent Templates</h3>
+            <button
+              className="section-add-btn"
+              onClick={() => setShowAddTemplate(true)}
+              disabled={showAddTemplate}
+              title="Add template"
+            >
+              +
+            </button>
+          </div>
+
+          {showAddTemplate && (
+            <AddTemplateForm
+              projectId={projectId}
+              onSaved={async () => {
+                setShowAddTemplate(false);
+                await refreshTemplates();
+              }}
+              onCancel={() => setShowAddTemplate(false)}
+            />
+          )}
+
+          {templatesLoading ? (
+            <div className="settings-empty-roots">Loading templates...</div>
+          ) : agentTemplates.length === 0 && !showAddTemplate ? (
+            <div className="settings-empty-roots">No agent templates configured.</div>
+          ) : (
+            <div className="agent-templates-list">
+              {agentTemplates.map((tpl) => (
+                <TemplateRow
+                  key={tpl.id}
+                  template={tpl}
+                  onArchive={handleArchiveTemplate}
+                  onUpdated={refreshTemplates}
+                />
+              ))}
+            </div>
+          )}
         </section>
 
         {/* Danger Zone */}
@@ -315,6 +379,213 @@ function RootRow({
         >
           {removing ? "Removing..." : isConfirming ? "Confirm?" : "Remove"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+// --- TemplateRow ---
+
+function TemplateRow({
+  template,
+  onArchive,
+  onUpdated,
+}: {
+  template: AgentTemplateSummary;
+  onArchive: (id: string) => void;
+  onUpdated: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [confirmArchive, setConfirmArchive] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [labelInput, setLabelInput] = useState(template.label);
+  const [modelInput, setModelInput] = useState(template.default_model ?? "");
+  const [originModeInput, setOriginModeInput] = useState(template.origin_mode);
+
+  async function handleSave() {
+    if (!labelInput.trim()) return;
+    setSaving(true);
+    try {
+      await updateAgentTemplate(template.id, {
+        label: labelInput.trim(),
+        default_model: modelInput.trim() || null,
+        origin_mode: originModeInput || undefined,
+      });
+      setEditing(false);
+      onUpdated();
+    } catch {
+      // leave form open on error
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleArchiveClick() {
+    if (!confirmArchive) {
+      setConfirmArchive(true);
+      return;
+    }
+    setConfirmArchive(false);
+    onArchive(template.id);
+  }
+
+  return (
+    <div className="agent-template-row">
+      <div className="agent-template-info">
+        <div className="agent-template-header">
+          <span className="agent-template-key">{template.template_key}</span>
+          <span className="agent-template-label">{template.label}</span>
+          <span className="agent-template-mode">{template.origin_mode}</span>
+        </div>
+        {template.default_model && (
+          <span className="agent-template-model">{template.default_model}</span>
+        )}
+        {editing && (
+          <div className="agent-template-edit-form">
+            <input
+              className="settings-input"
+              type="text"
+              value={labelInput}
+              onChange={(e) => setLabelInput(e.target.value)}
+              placeholder="Label"
+            />
+            <input
+              className="settings-input"
+              type="text"
+              value={modelInput}
+              onChange={(e) => setModelInput(e.target.value)}
+              placeholder="Model (e.g. claude-sonnet-4-5)"
+            />
+            <select
+              className="settings-input agent-template-mode-select"
+              value={originModeInput}
+              onChange={(e) => setOriginModeInput(e.target.value)}
+            >
+              <option value="code">code</option>
+              <option value="chat">chat</option>
+            </select>
+            <div className="agent-template-edit-actions">
+              <button
+                className="btn-sm btn-primary"
+                onClick={() => void handleSave()}
+                disabled={saving || !labelInput.trim()}
+              >
+                {saving ? "Saving..." : "Save"}
+              </button>
+              <button
+                className="btn-sm btn-ghost"
+                onClick={() => setEditing(false)}
+                disabled={saving}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+      <div className="agent-template-actions">
+        {!editing && (
+          <button
+            className="btn-sm btn-ghost"
+            onClick={() => { setLabelInput(template.label); setModelInput(template.default_model ?? ""); setOriginModeInput(template.origin_mode); setEditing(true); }}
+          >
+            Edit
+          </button>
+        )}
+        <button
+          className={`btn-sm ${confirmArchive ? "btn-danger" : "btn-ghost"}`}
+          onClick={handleArchiveClick}
+          onBlur={() => { if (confirmArchive) setConfirmArchive(false); }}
+          title={confirmArchive ? "Click again to confirm archive" : "Archive template"}
+        >
+          {confirmArchive ? "Confirm?" : "Archive"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// --- AddTemplateForm ---
+
+function AddTemplateForm({
+  projectId,
+  onSaved,
+  onCancel,
+}: {
+  projectId: string;
+  onSaved: () => void;
+  onCancel: () => void;
+}) {
+  const [keyInput, setKeyInput] = useState("");
+  const [labelInput, setLabelInput] = useState("");
+  const [originMode, setOriginMode] = useState("code");
+  const [modelInput, setModelInput] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    if (!keyInput.trim() || !labelInput.trim()) return;
+    setSaving(true);
+    try {
+      await createAgentTemplate({
+        project_id: projectId,
+        template_key: keyInput.trim(),
+        label: labelInput.trim(),
+        origin_mode: originMode,
+        default_model: modelInput.trim() || null,
+      });
+      onSaved();
+    } catch {
+      // leave form open on error
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="agent-template-add-form">
+      <div className="agent-template-edit-form">
+        <input
+          className="settings-input"
+          type="text"
+          value={keyInput}
+          onChange={(e) => setKeyInput(e.target.value)}
+          placeholder="Template key (e.g. implementer)"
+          autoFocus
+        />
+        <input
+          className="settings-input"
+          type="text"
+          value={labelInput}
+          onChange={(e) => setLabelInput(e.target.value)}
+          placeholder="Label (e.g. Implementer)"
+        />
+        <select
+          className="settings-input agent-template-mode-select"
+          value={originMode}
+          onChange={(e) => setOriginMode(e.target.value)}
+        >
+          <option value="code">code</option>
+          <option value="chat">chat</option>
+        </select>
+        <input
+          className="settings-input"
+          type="text"
+          value={modelInput}
+          onChange={(e) => setModelInput(e.target.value)}
+          placeholder="Model (optional)"
+        />
+        <div className="agent-template-edit-actions">
+          <button
+            className="btn-sm btn-primary"
+            onClick={() => void handleSave()}
+            disabled={saving || !keyInput.trim() || !labelInput.trim()}
+          >
+            {saving ? "Adding..." : "Add Template"}
+          </button>
+          <button className="btn-sm btn-ghost" onClick={onCancel} disabled={saving}>
+            Cancel
+          </button>
+        </div>
       </div>
     </div>
   );

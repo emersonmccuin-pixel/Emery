@@ -10,34 +10,34 @@ use crate::diagnostics::{
     DiagnosticContext, DiagnosticsBundleRequest, DiagnosticsBundleResult, DiagnosticsHub,
 };
 use crate::models::{
-    AccountDetail, AccountSummary, AccountUpdateRecord, CreateAccountRequest,
+    AccountDetail, AccountSummary, AccountUpdateRecord, AgentTemplateDetail, AgentTemplateListFilter,
+    AgentTemplateSummary, AgentTemplateUpdateRecord, ArchiveAgentTemplateRequest,
+    ArchiveProjectRequest, CreateAccountRequest, CreateAgentTemplateRequest,
     CreateDiagnosticsBundleRequest, CreateDocumentRequest, CreateInboxEntryRequest,
     CreatePlanningAssignmentRequest, CreateProjectRequest, CreateProjectRootRequest,
     CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest,
     CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
     DeletePlanningAssignmentRequest, DocumentDetail, DocumentListFilter, DocumentSummary,
-    DocumentUpdateRecord, GetWorkspaceStateRequest, InboxEntryDetail, InboxEntryListFilter,
-    InboxEntrySummary, InboxEntryUpdateRecord, MergeQueueEntry, MergeQueueListFilter,
-    NewAccountRecord, NewDocumentRecord, NewInboxEntryRecord, NewMergeQueueRecord,
-    NewPlanningAssignmentRecord, NewProjectRecord, NewProjectRootRecord, NewSessionRecord,
-    NewSessionSpecRecord, NewWorkItemRecord, NewWorkflowReconciliationProposalRecord,
-    NewWorktreeRecord, PlanningAssignmentDetail, PlanningAssignmentListFilter,
-    PlanningAssignmentSummary, PlanningAssignmentUpdateRecord, ProjectDetail, ProjectRootSummary,
-    ArchiveProjectRequest, ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord,
-    GitInitProjectRootRequest, SetProjectRootRemoteRequest, RemoveProjectRootRequest,
-    SessionArtifactRecord, SessionAttachResponse, SessionDetachResponse, SessionDetail,
-    SessionListFilter, SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary,
-    SessionSpecUpdateRecord, SessionStateChangedEvent, SessionSummary, SessionWatchResponse,
-    UpdateAccountRequest, UpdateInboxEntryRequest, UpdateDocumentRequest,
-    UpdatePlanningAssignmentRequest, UpdateProjectRequest, UpdateProjectRootRequest,
-    UpdateSessionSpecRequest, UpdateWorkItemRequest,
-    UpdateWorkflowReconciliationProposalRequest, UpdateWorkspaceStateRequest,
-    UpdateWorktreeRequest, WorkItemDetail, WorkItemListFilter, WorkItemSummary,
-    WorkItemUpdateRecord, WorkflowReconciliationProposalDetail,
-    WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
-    WorkflowReconciliationProposalUpdateRecord, WorkspaceStateRecord, WorktreeDetail,
-    WorktreeListFilter, WorktreeSummary, WorktreeUpdateRecord,
-    GitHealthStatus,
+    DocumentUpdateRecord, GetWorkspaceStateRequest, GitInitProjectRootRequest,
+    InboxEntryDetail, InboxEntryListFilter, InboxEntrySummary, InboxEntryUpdateRecord,
+    MergeQueueEntry, MergeQueueListFilter, NewAccountRecord, NewAgentTemplateRecord,
+    NewDocumentRecord, NewInboxEntryRecord, NewMergeQueueRecord, NewPlanningAssignmentRecord,
+    NewProjectRecord, NewProjectRootRecord, NewSessionRecord, NewSessionSpecRecord,
+    NewWorkItemRecord, NewWorkflowReconciliationProposalRecord, NewWorktreeRecord,
+    PlanningAssignmentDetail, PlanningAssignmentListFilter, PlanningAssignmentSummary,
+    PlanningAssignmentUpdateRecord, ProjectDetail, ProjectRootSummary, ProjectRootUpdateRecord,
+    ProjectSummary, ProjectUpdateRecord, RemoveProjectRootRequest,
+    SetProjectRootRemoteRequest, SessionArtifactRecord, SessionAttachResponse,
+    SessionDetachResponse, SessionDetail, SessionListFilter, SessionSpecDetail,
+    SessionSpecListFilter, SessionSpecSummary, SessionSpecUpdateRecord, SessionStateChangedEvent,
+    SessionSummary, SessionWatchResponse, UpdateAccountRequest, UpdateAgentTemplateRequest,
+    UpdateDocumentRequest, UpdateInboxEntryRequest, UpdatePlanningAssignmentRequest,
+    UpdateProjectRequest, UpdateProjectRootRequest, UpdateSessionSpecRequest, UpdateWorkItemRequest,
+    UpdateWorkflowReconciliationProposalRequest, UpdateWorkspaceStateRequest, UpdateWorktreeRequest,
+    GitHealthStatus, WorkItemDetail, WorkItemListFilter, WorkItemSummary, WorkItemUpdateRecord,
+    WorkflowReconciliationProposalDetail, WorkflowReconciliationProposalListFilter,
+    WorkflowReconciliationProposalSummary, WorkflowReconciliationProposalUpdateRecord,
+    WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary, WorktreeUpdateRecord,
 };
 use crate::runtime::{SessionLaunchRequest, SessionRegistry, SessionRuntimeRegistration};
 use crate::store::DatabaseSet;
@@ -77,6 +77,7 @@ impl SupervisorService {
             self.ensure_account_exists(account_id)?;
         }
 
+        let project_type = optional_trimmed(request.project_type);
         let slug = self.resolve_project_slug(request.slug.as_deref(), &name, None)?;
         let sort_order = match request.sort_order {
             Some(sort_order) => sort_order,
@@ -91,6 +92,7 @@ impl SupervisorService {
             slug,
             sort_order,
             default_account_id,
+            project_type: project_type.clone(),
             settings_json: optional_trimmed(request.settings_json),
             instructions_md: optional_trimmed(request.instructions_md),
             created_at: now,
@@ -98,6 +100,29 @@ impl SupervisorService {
         };
 
         self.databases.insert_project(&record)?;
+
+        // Auto-provision agent templates when a project type is specified
+        if let Some(ref ptype) = project_type {
+            let templates = default_templates_for_type(ptype);
+            for (i, tpl) in templates.into_iter().enumerate() {
+                let tpl_id = format!("atpl_{}", Uuid::new_v4().simple());
+                let tpl_record = NewAgentTemplateRecord {
+                    id: tpl_id,
+                    project_id: project_id.clone(),
+                    template_key: tpl.template_key,
+                    label: tpl.label,
+                    origin_mode: tpl.origin_mode,
+                    default_model: tpl.default_model,
+                    instructions_md: tpl.instructions_md,
+                    stop_rules_json: None,
+                    sort_order: i as i64,
+                    created_at: now,
+                    updated_at: now,
+                };
+                self.databases.insert_agent_template(&tpl_record)?;
+            }
+        }
+
         self.get_project(&project_id)?
             .ok_or_else(|| anyhow!("project {} was not found", project_id))
     }
@@ -126,6 +151,10 @@ impl SupervisorService {
             }
             None => existing.default_account_id.clone(),
         };
+        let project_type = match request.project_type {
+            Some(value) => optional_trimmed(Some(value)),
+            None => existing.project_type.clone(),
+        };
         let settings_json = match request.settings_json {
             Some(value) => optional_trimmed(Some(value)),
             None => existing.settings_json.clone(),
@@ -141,6 +170,7 @@ impl SupervisorService {
             slug,
             sort_order: request.sort_order.unwrap_or(existing.sort_order),
             default_account_id,
+            project_type,
             settings_json,
             instructions_md,
             updated_at: unix_time_seconds(),
@@ -3048,6 +3078,209 @@ impl SupervisorService {
 
     pub fn count_unread_inbox_entries(&self, project_id: &str) -> Result<i64> {
         self.databases.count_unread_inbox_entries(project_id)
+    }
+
+    // --- Agent Templates ---
+
+    pub fn list_agent_templates(
+        &self,
+        filter: AgentTemplateListFilter,
+    ) -> Result<Vec<AgentTemplateSummary>> {
+        self.ensure_project_exists(&filter.project_id)?;
+        self.databases.list_agent_templates(&filter)
+    }
+
+    pub fn create_agent_template(
+        &self,
+        request: CreateAgentTemplateRequest,
+    ) -> Result<AgentTemplateDetail> {
+        self.ensure_project_exists(&request.project_id)?;
+
+        let template_key = required_trimmed("template_key", &request.template_key)?;
+        let label = required_trimmed("label", &request.label)?;
+        let origin_mode = optional_trimmed(request.origin_mode)
+            .unwrap_or_else(|| "code".to_string());
+
+        let sort_order = match request.sort_order {
+            Some(s) => s,
+            None => self.databases.next_agent_template_sort_order(&request.project_id)?,
+        };
+
+        let now = unix_time_seconds();
+        let id = format!("atpl_{}", Uuid::new_v4().simple());
+
+        let record = NewAgentTemplateRecord {
+            id: id.clone(),
+            project_id: request.project_id,
+            template_key,
+            label,
+            origin_mode,
+            default_model: optional_trimmed(request.default_model),
+            instructions_md: optional_trimmed(request.instructions_md),
+            stop_rules_json: optional_trimmed(request.stop_rules_json),
+            sort_order,
+            created_at: now,
+            updated_at: now,
+        };
+
+        self.databases.insert_agent_template(&record)?;
+        self.databases
+            .get_agent_template(&id)?
+            .ok_or_else(|| anyhow!("agent_template {} was not found after insert", id))
+    }
+
+    pub fn update_agent_template(
+        &self,
+        request: UpdateAgentTemplateRequest,
+    ) -> Result<AgentTemplateDetail> {
+        let existing = self
+            .databases
+            .get_agent_template(&request.agent_template_id)?
+            .ok_or_else(|| {
+                anyhow!("agent_template {} was not found", request.agent_template_id)
+            })?;
+
+        let template_key = match request.template_key.as_deref() {
+            Some(key) => required_trimmed("template_key", key)?,
+            None => existing.summary.template_key.clone(),
+        };
+        let label = match request.label.as_deref() {
+            Some(lbl) => required_trimmed("label", lbl)?,
+            None => existing.summary.label.clone(),
+        };
+        let origin_mode = match request.origin_mode {
+            Some(om) => optional_trimmed(Some(om)).unwrap_or_else(|| "code".to_string()),
+            None => existing.summary.origin_mode.clone(),
+        };
+        let default_model = match request.default_model {
+            Some(v) => optional_trimmed(Some(v)),
+            None => existing.summary.default_model.clone(),
+        };
+        let instructions_md = match request.instructions_md {
+            Some(v) => optional_trimmed(Some(v)),
+            None => existing.summary.instructions_md.clone(),
+        };
+        let stop_rules_json = match request.stop_rules_json {
+            Some(v) => optional_trimmed(Some(v)),
+            None => existing.summary.stop_rules_json.clone(),
+        };
+        let sort_order = request.sort_order.unwrap_or(existing.summary.sort_order);
+
+        let record = AgentTemplateUpdateRecord {
+            id: existing.summary.id.clone(),
+            template_key,
+            label,
+            origin_mode,
+            default_model,
+            instructions_md,
+            stop_rules_json,
+            sort_order,
+            updated_at: unix_time_seconds(),
+            archived_at: existing.summary.archived_at,
+        };
+
+        self.databases.update_agent_template(&record)?;
+        self.databases
+            .get_agent_template(&existing.summary.id)?
+            .ok_or_else(|| anyhow!("agent_template {} was not found", existing.summary.id))
+    }
+
+    pub fn archive_agent_template(
+        &self,
+        request: ArchiveAgentTemplateRequest,
+    ) -> Result<AgentTemplateDetail> {
+        let existing = self
+            .databases
+            .get_agent_template(&request.agent_template_id)?
+            .ok_or_else(|| {
+                anyhow!("agent_template {} was not found", request.agent_template_id)
+            })?;
+
+        let now = unix_time_seconds();
+        let record = AgentTemplateUpdateRecord {
+            id: existing.summary.id.clone(),
+            template_key: existing.summary.template_key.clone(),
+            label: existing.summary.label.clone(),
+            origin_mode: existing.summary.origin_mode.clone(),
+            default_model: existing.summary.default_model.clone(),
+            instructions_md: existing.summary.instructions_md.clone(),
+            stop_rules_json: existing.summary.stop_rules_json.clone(),
+            sort_order: existing.summary.sort_order,
+            updated_at: now,
+            archived_at: Some(now),
+        };
+
+        self.databases.update_agent_template(&record)?;
+        self.databases
+            .get_agent_template(&existing.summary.id)?
+            .ok_or_else(|| anyhow!("agent_template {} was not found", existing.summary.id))
+    }
+}
+
+struct TemplateSpec {
+    template_key: String,
+    label: String,
+    origin_mode: String,
+    default_model: Option<String>,
+    instructions_md: Option<String>,
+}
+
+fn default_templates_for_type(project_type: &str) -> Vec<TemplateSpec> {
+    match project_type {
+        "coding" => vec![
+            TemplateSpec {
+                template_key: "planner".to_string(),
+                label: "Planner".to_string(),
+                origin_mode: "code".to_string(),
+                default_model: Some("claude-opus-4-5".to_string()),
+                instructions_md: Some("You are a planning agent. Break down tasks into clear, actionable steps. Identify dependencies, risks, and acceptance criteria before any implementation begins.".to_string()),
+            },
+            TemplateSpec {
+                template_key: "architect".to_string(),
+                label: "Architect".to_string(),
+                origin_mode: "code".to_string(),
+                default_model: Some("claude-opus-4-5".to_string()),
+                instructions_md: Some("You are an architecture agent. Design system structure, define interfaces, and make high-level technical decisions. Document your reasoning.".to_string()),
+            },
+            TemplateSpec {
+                template_key: "implementer".to_string(),
+                label: "Implementer".to_string(),
+                origin_mode: "code".to_string(),
+                default_model: Some("claude-sonnet-4-5".to_string()),
+                instructions_md: Some("You are an implementation agent. Write clean, well-structured code following project conventions. Run build verification after each change.".to_string()),
+            },
+            TemplateSpec {
+                template_key: "reviewer".to_string(),
+                label: "Reviewer".to_string(),
+                origin_mode: "code".to_string(),
+                default_model: Some("claude-opus-4-5".to_string()),
+                instructions_md: Some("You are a code review agent. Check correctness, style, test coverage, and adherence to acceptance criteria. Provide specific, actionable feedback.".to_string()),
+            },
+        ],
+        "research" => vec![
+            TemplateSpec {
+                template_key: "researcher".to_string(),
+                label: "Researcher".to_string(),
+                origin_mode: "chat".to_string(),
+                default_model: Some("claude-opus-4-5".to_string()),
+                instructions_md: Some("You are a research agent. Gather, synthesize, and summarize information from available sources. Cite your reasoning and flag uncertainty.".to_string()),
+            },
+            TemplateSpec {
+                template_key: "analyst".to_string(),
+                label: "Analyst".to_string(),
+                origin_mode: "chat".to_string(),
+                default_model: Some("claude-opus-4-5".to_string()),
+                instructions_md: Some("You are an analysis agent. Evaluate data, identify patterns, and draw well-reasoned conclusions. Present findings clearly with supporting evidence.".to_string()),
+            },
+            TemplateSpec {
+                template_key: "writer".to_string(),
+                label: "Writer".to_string(),
+                origin_mode: "chat".to_string(),
+                default_model: Some("claude-sonnet-4-5".to_string()),
+                instructions_md: Some("You are a writing agent. Produce clear, well-structured prose. Adapt tone and format to the audience and purpose of the document.".to_string()),
+            },
+        ],
+        _ => vec![],
     }
 }
 

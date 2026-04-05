@@ -4718,3 +4718,160 @@ button {
   color: var(--text-secondary);
   white-space: nowrap;
 }
+
+/* --- Project type selector (create form) --- */
+
+.project-create-type-row {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.project-create-type-label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.project-type-selector {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.project-type-option {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--border-default);
+  background: var(--bg-elevated, var(--surface-overlay));
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.1s, color 0.1s;
+}
+
+.project-type-option:hover {
+  border-color: var(--color-primary);
+  color: var(--text-primary);
+}
+
+.project-type-option-selected {
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  color: var(--text-primary);
+}
+
+.project-type-radio {
+  display: none;
+}
+
+.project-type-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* --- Agent Templates (project settings) --- */
+
+.agent-templates-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agent-template-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--border-default);
+  background: var(--bg-elevated, var(--surface-overlay));
+}
+
+.agent-template-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-template-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.agent-template-key {
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  background: var(--bg-sunken, var(--surface-default));
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.agent-template-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.agent-template-mode {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.agent-template-model {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.agent-template-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.agent-template-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.agent-template-mode-select {
+  padding: 6px 10px;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--border-default);
+  background: var(--bg-elevated, var(--surface-overlay));
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  outline: none;
+  cursor: pointer;
+}
+
+.agent-template-mode-select:focus {
+  border-color: var(--color-primary);
+}
+
+.agent-template-edit-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.agent-template-add-form {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px dashed var(--border-default);
+  background: var(--bg-elevated, var(--surface-overlay));
+}
