@@ -1,19 +1,22 @@
-import { useSyncExternalStore } from "react";
-import { appStore } from "./store";
+import { useRef } from "react";
+import { useAppStore } from "./store";
 import { navStore, useNavLayer } from "./nav-store";
 
 function useProjects() {
-  return useSyncExternalStore(
-    appStore.subscribe,
-    () => appStore.getState().bootstrap?.projects.filter((p) => p.archived_at === null) ?? [],
-  );
+  const projects = useAppStore((s) => s.bootstrap?.projects ?? []);
+  const prevRef = useRef(projects);
+  const filtered = projects.filter((p) => p.archived_at === null);
+  // Stable reference: only update if the IDs actually changed
+  const prevIds = prevRef.current.filter((p) => p.archived_at === null).map((p) => p.id).join(",");
+  const nextIds = filtered.map((p) => p.id).join(",");
+  if (prevIds !== nextIds) {
+    prevRef.current = projects;
+  }
+  return filtered;
 }
 
 function useLiveSessionCount() {
-  return useSyncExternalStore(
-    appStore.subscribe,
-    () => appStore.getState().sessions.filter((s) => s.live).length,
-  );
+  return useAppStore((s) => s.sessions.filter((ss) => ss.live).length);
 }
 
 interface SidebarProps {
