@@ -530,6 +530,7 @@ export async function createAccount(
     label: string;
     agent_kind?: string;
     binary_path?: string | null;
+    config_root?: string | null;
     is_default?: boolean;
   },
   correlationId?: string,
@@ -542,9 +543,12 @@ export async function updateAccount(
   input: {
     label?: string;
     binary_path?: string | null;
+    config_root?: string | null;
     is_default?: boolean;
+    status?: string;
     default_model?: string | null;
     default_safety_mode?: string | null;
+    default_launch_args?: string[] | null;
   },
   correlationId?: string,
 ): Promise<unknown> {
