@@ -2,10 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { appStore, useAppStore } from "./store";
 import { navStore, useNavLayer } from "./nav-store";
 import { ContextMenu, type ContextMenuItem } from "./components/context-menu";
-import { DurationDisplay } from "./components/duration-display";
-import { toastStore } from "./toast-store";
-import type { AccountSummary, SessionSummary } from "./types";
-import { Badge } from "@/components/ui/badge";
+import type { SessionSummary } from "./types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -23,14 +20,6 @@ function useProjects() {
     prevRef.current = projects;
   }
   return filtered;
-}
-
-function useFocusProjectIds() {
-  return useAppStore((s) => s.focusProjectIds);
-}
-
-function useSessions() {
-  return useAppStore((s) => s.sessions);
 }
 
 function useLiveSessions() {
@@ -112,253 +101,6 @@ function SessionDots({ projectId, sessions }: { projectId: string; sessions: Ses
   );
 }
 
-// ── Recently completed session tracking ───────────────────────────────────
-
-type RecentlyEndedSession = {
-  sessionId: string;
-  projectId: string;
-  title: string;
-  endedAt: number;
-  status: "completed" | "errored";
-};
-
-const RECENT_SESSION_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-/** Tracks sessions that ended within the last 5 minutes. */
-function useRecentlyEndedSessions(sessions: SessionSummary[]): RecentlyEndedSession[] {
-  const [recentlyEnded, setRecentlyEnded] = useState<RecentlyEndedSession[]>([]);
-  const prevSessionsRef = useRef<Map<string, SessionSummary>>(new Map());
-
-  // Detect state transitions to completed/errored
-  useEffect(() => {
-    const prevMap = prevSessionsRef.current;
-    const nextMap = new Map(sessions.map((s) => [s.id, s]));
-
-    const newlyEnded: RecentlyEndedSession[] = [];
-    for (const [id, prev] of prevMap) {
-      const next = nextMap.get(id);
-      if (!next) continue;
-      const wasLive = prev.live || prev.runtime_state === "running" || prev.runtime_state === "starting";
-      const isNowDead = !next.live && next.runtime_state !== "running" && next.runtime_state !== "starting";
-      if (wasLive && isNowDead) {
-        newlyEnded.push({
-          sessionId: id,
-          projectId: next.project_id ?? "",
-          title: next.title ?? "Session",
-          endedAt: Date.now(),
-          status: next.runtime_state === "exited" ? "completed" : "errored",
-        });
-      }
-    }
-
-    if (newlyEnded.length > 0) {
-      setRecentlyEnded((prev) => {
-        // Deduplicate
-        const existing = new Set(prev.map((r) => r.sessionId));
-        const fresh = newlyEnded.filter((r) => !existing.has(r.sessionId));
-        return [...prev, ...fresh];
-      });
-    }
-
-    prevSessionsRef.current = nextMap;
-  }, [sessions]);
-
-  // Cleanup timer: prune entries older than 5 minutes
-  useEffect(() => {
-    if (recentlyEnded.length === 0) return;
-
-    const timer = window.setInterval(() => {
-      const cutoff = Date.now() - RECENT_SESSION_TTL_MS;
-      setRecentlyEnded((prev) => {
-        const next = prev.filter((r) => r.endedAt > cutoff);
-        return next.length === prev.length ? prev : next;
-      });
-    }, 15_000); // check every 15 seconds
-
-    return () => window.clearInterval(timer);
-  }, [recentlyEnded.length > 0]);
-
-  // Filter out stale entries on each render
-  const cutoff = Date.now() - RECENT_SESSION_TTL_MS;
-  return recentlyEnded.filter((r) => r.endedAt > cutoff);
-}
-
-// ── Fleet section ──────────────────────────────────────────────────────────
-
-function FleetDot({ session }: { session: SessionSummary }) {
-  const isStarting = session.runtime_state === "starting";
-  const isChat = session.origin_mode === "chat";
-
-  if (isChat) {
-    return (
-      <span
-        className="sidebar-fleet-chat-icon"
-        title={isStarting ? "Starting chat" : "Chat session"}
-      >
-        💬
-      </span>
-    );
-  }
-
-  return (
-    <span
-      className={`sidebar-fleet-dot${isStarting ? " starting" : ""}`}
-      title={isStarting ? "Starting" : "Running"}
-    />
-  );
-}
-
-type FleetSectionProps = {
-  collapsed: boolean;
-  sessions: SessionSummary[];
-};
-
-function FleetSection({ collapsed, sessions }: FleetSectionProps) {
-  const liveSessions = sessions.filter(
-    (s) => s.live || s.runtime_state === "running" || s.runtime_state === "starting",
-  );
-  const recentlyEnded = useRecentlyEndedSessions(sessions);
-
-  const runningCount = liveSessions.length;
-  const totalVisible = runningCount + recentlyEnded.length;
-
-  if (collapsed) {
-    if (totalVisible === 0) return null;
-    return (
-      <div className="sidebar-fleet-collapsed" title={`${runningCount} running`}>
-        <span className="sidebar-fleet-dot" />
-        <Badge className="sidebar-fleet-count-badge">{runningCount}</Badge>
-      </div>
-    );
-  }
-
-  // Group by project_id when sessions span multiple projects
-  const projectIds = [...new Set(liveSessions.map((s) => s.project_id))];
-  const multiProject = projectIds.length > 1;
-
-  return (
-    <div className="sidebar-fleet-section">
-      <div className="sidebar-section-label sidebar-fleet-header">
-        <span>Fleet</span>
-        <span className="sidebar-fleet-count">{runningCount} running</span>
-      </div>
-
-      {totalVisible === 0 ? (
-        <div className="sidebar-fleet-empty">No active sessions</div>
-      ) : (
-        <ul className="sidebar-fleet-list">
-          {projectIds.map((pid) => {
-            const projectSessions = liveSessions.filter((s) => s.project_id === pid);
-            return (
-              <li key={pid}>
-                {multiProject && (
-                  <div className="sidebar-fleet-project-subheader">
-                    {pid.slice(0, 8)}
-                  </div>
-                )}
-                {projectSessions.map((session) => (
-                  <Button
-                    key={session.id}
-                    variant="ghost"
-                    size="sm"
-                    className="sidebar-fleet-row justify-start px-3 py-2"
-                    onClick={() => navStore.goToAgent(session.project_id, session.id)}
-                    title={session.title ?? "Running session"}
-                  >
-                    <FleetDot session={session} />
-                    <span className="sidebar-fleet-title">
-                      {session.title ?? session.current_mode ?? "Session"}
-                    </span>
-                    <DurationDisplay startedAt={session.started_at} />
-                  </Button>
-                ))}
-              </li>
-            );
-          })}
-
-          {/* Recently completed/errored sessions */}
-          {recentlyEnded.map((recent) => (
-            <li key={`recent-${recent.sessionId}`}>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="sidebar-fleet-row sidebar-fleet-row-ended justify-start px-3 py-2"
-                onClick={() => navStore.goToAgent(recent.projectId, recent.sessionId)}
-                title={`${recent.title} (${recent.status})`}
-              >
-                <span
-                  className={`sidebar-fleet-ended-icon ${recent.status === "completed" ? "sidebar-fleet-ended-ok" : "sidebar-fleet-ended-err"}`}
-                >
-                  {recent.status === "completed" ? "\u2713" : "\u2717"}
-                </span>
-                <span className="sidebar-fleet-title sidebar-fleet-title-ended">
-                  {recent.title}
-                </span>
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-// ── Account picker popover for Quick Chat ─────────────────────────────────
-
-function AccountPickerPopover({
-  accounts,
-  onSelect,
-  onClose,
-}: {
-  accounts: AccountSummary[];
-  onSelect: (accountId: string, setDefault: boolean) => void;
-  onClose: () => void;
-}) {
-  const [setDefault, setSetDefault] = useState(false);
-  const popoverRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
-        onClose();
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [onClose]);
-
-  return (
-    <div ref={popoverRef} className="sidebar-account-picker">
-      <div className="sidebar-account-picker-header">Select account</div>
-      <ul className="sidebar-account-picker-list">
-        {accounts.map((account) => (
-          <li key={account.id}>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="sidebar-account-picker-row justify-start px-3 py-2"
-              onClick={() => onSelect(account.id, setDefault)}
-            >
-              <span className="sidebar-account-picker-label">{account.label}</span>
-              <Badge variant="outline" className="sidebar-account-picker-badge">
-                {account.agent_kind}
-              </Badge>
-            </Button>
-          </li>
-        ))}
-      </ul>
-      <label className="sidebar-account-picker-default">
-        <input
-          type="checkbox"
-          checked={setDefault}
-          onChange={(e) => setSetDefault(e.target.checked)}
-        />
-        <span>Set as default</span>
-      </label>
-    </div>
-  );
-}
-
 // ── Sidebar props ──────────────────────────────────────────────────────────
 
 interface SidebarProps {
@@ -378,21 +120,15 @@ type ContextMenuState = {
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const projects = useProjects();
-  const focusProjectIds = useFocusProjectIds();
-  const allSessions = useSessions();
   const liveSessions = useLiveSessions();
   const navLayer = useNavLayer();
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null);
-  const [showAccountPicker, setShowAccountPicker] = useState(false);
-  const quickChatLoading = useAppStore((s) => s.loadingKeys["quick-chat"] ?? false);
-  const accounts = useAppStore((s) => s.bootstrap?.accounts ?? []);
 
   const activeProjectId =
     navLayer.layer === "project" ||
     navLayer.layer === "agent" ||
-    navLayer.layer === "inbox" ||
     navLayer.layer === "work_item" ||
     navLayer.layer === "document" ||
     navLayer.layer === "new-document" ||
@@ -400,19 +136,9 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       ? navLayer.projectId
       : null;
 
-  // Focus projects — show pinned ones first, then the rest
-  const focusProjects = focusProjectIds
-    .map((id) => projects.find((p) => p.id === id))
-    .filter(Boolean) as typeof projects;
-
-  // Show all projects if no focus set, otherwise just focus set
-  const displayProjects = focusProjects.length > 0 ? focusProjects : projects.slice(0, 5);
-
   function openContextMenu(e: React.MouseEvent, projectId: string, projectName: string) {
     e.preventDefault();
     e.stopPropagation();
-
-    const isPinned = focusProjectIds.includes(projectId);
 
     const items: ContextMenuItem[] = [
       {
@@ -422,16 +148,6 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       {
         label: "Settings",
         onClick: () => navStore.goToProjectSettings(projectId),
-      },
-      {
-        label: isPinned ? "Unpin" : "Pin to sidebar",
-        onClick: () => {
-          if (isPinned) {
-            appStore.unpinProject(projectId);
-          } else {
-            appStore.pinProject(projectId);
-          }
-        },
       },
       {
         label: "Rename",
@@ -485,17 +201,17 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             title={collapsed ? "Expand sidebar (Ctrl+B)" : "Collapse sidebar (Ctrl+B)"}
             aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
-            {collapsed ? "›" : "‹"}
+            {collapsed ? "\u203A" : "\u2039"}
           </Button>
         </div>
 
-        {/* Projects section */}
+        {/* Projects section — ALL registered projects */}
         <div className="sidebar-section">
           {!collapsed && (
             <div className="sidebar-section-label">Projects</div>
           )}
           <ul className="sidebar-projects-list">
-            {displayProjects.map((project) => {
+            {projects.map((project) => {
               const isActive = project.id === activeProjectId;
               const isRenaming = renamingProjectId === project.id;
               return (
@@ -526,6 +242,8 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                           <span className="sidebar-project-name">{project.name}</span>
                         )}
                         <SessionDots projectId={project.id} sessions={liveSessions} />
+                        {/* Attention indicator placeholder — wire logic later */}
+                        <span className="sidebar-attention-dot" />
                       </>
                     )}
                   </Button>
@@ -534,18 +252,9 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             })}
           </ul>
 
-          {/* All projects / New project links */}
+          {/* New project link */}
           {!collapsed && (
             <div className="sidebar-project-links">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="sidebar-project-link justify-start px-3 py-2"
-                onClick={() => navStore.goHome()}
-                title="All projects"
-              >
-                All projects
-              </Button>
               <Button
                 variant="ghost"
                 size="sm"
@@ -559,99 +268,11 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
           )}
         </div>
 
-        {/* Fleet section */}
-        <FleetSection collapsed={collapsed} sessions={allSessions} />
-
         {/* Flex spacer */}
         <div className="sidebar-spacer" />
 
-        {/* Bottom nav */}
+        {/* Bottom nav — Settings only */}
         <div className="sidebar-bottom">
-          <div className="sidebar-quick-chat-wrapper">
-            <Button
-              variant="ghost"
-              size="sm"
-              className={cn(
-                "sidebar-nav-btn justify-start px-3 py-2",
-                showAccountPicker && "active",
-              )}
-              disabled={quickChatLoading}
-              title="Quick Chat"
-              onClick={() => {
-                if (quickChatLoading) return;
-
-                // No accounts at all — direct to settings
-                if (accounts.length === 0) {
-                  toastStore.addToast({
-                    type: "info",
-                    message: "No accounts configured. Go to Settings to add one.",
-                    action: {
-                      label: "Settings",
-                      onClick: () => navStore.goToSettings(),
-                    },
-                  });
-                  return;
-                }
-
-                // Single account — launch directly
-                if (accounts.length === 1) {
-                  void appStore.launchQuickChat(accounts[0].id);
-                  return;
-                }
-
-                // Check for saved default
-                const defaultId = localStorage.getItem("euri:quick-chat-default-account");
-                if (defaultId && accounts.find((a) => a.id === defaultId)) {
-                  void appStore.launchQuickChat(defaultId);
-                  return;
-                }
-
-                // Multiple accounts, no default — show picker
-                setShowAccountPicker((v) => !v);
-              }}
-            >
-              <span className="sidebar-nav-icon">✦</span>
-              {!collapsed && <span>{quickChatLoading ? "Starting..." : "Quick Chat"}</span>}
-            </Button>
-            {showAccountPicker && (
-              <AccountPickerPopover
-                accounts={accounts}
-                onSelect={(accountId, setDefault) => {
-                  setShowAccountPicker(false);
-                  if (setDefault) {
-                    localStorage.setItem("euri:quick-chat-default-account", accountId);
-                  }
-                  void appStore.launchQuickChat(accountId);
-                }}
-                onClose={() => setShowAccountPicker(false)}
-              />
-            )}
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className={`sidebar-nav-btn justify-start px-3 py-2 ${navLayer.layer === "inbox" ? " active" : ""}`}
-            onClick={() => {
-              if (activeProjectId) {
-                navStore.openPeek({ peek: "inbox", projectId: activeProjectId });
-              }
-            }}
-            disabled={!activeProjectId}
-            title="Inbox"
-          >
-            <span className="sidebar-nav-icon">&#x2709;</span>
-            {!collapsed && <span>Inbox</span>}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className={`sidebar-nav-btn justify-start px-3 py-2 ${navLayer.layer === "vault" ? " active" : ""}`}
-            onClick={() => navStore.goToVault()}
-            title="Vault"
-          >
-            <span className="sidebar-nav-icon">⬡</span>
-            {!collapsed && <span>Vault</span>}
-          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -659,7 +280,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             onClick={() => navStore.goToSettings()}
             title="Settings (Ctrl+,)"
           >
-            <span className="sidebar-nav-icon">⚙</span>
+            <span className="sidebar-nav-icon">{"\u2699"}</span>
             {!collapsed && <span>Settings</span>}
           </Button>
         </div>

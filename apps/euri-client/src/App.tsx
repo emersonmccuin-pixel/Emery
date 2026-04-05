@@ -23,18 +23,14 @@ import type {
   WorkspacePayloadV3,
 } from "./types";
 import { appStore, useAppStore } from "./store";
-import { navStore, useNavLayer, usePeekLayer, useModalLayer } from "./nav-store";
+import { navStore, useNavLayer, useModalLayer } from "./nav-store";
 import type { NavigationLayer } from "./nav-store";
 import { toastStore, useToastStore } from "./toast-store";
 import type { Toast } from "./toast-store";
 import { Topbar } from "./topbar";
-import { Breadcrumb } from "./breadcrumb";
 import { LayerRouter } from "./layer-router";
 import { ModalRouter } from "./modals";
 import { Sidebar } from "./sidebar";
-import { PeekPanel } from "./peek-panel";
-import { PeekRouter } from "./peek-router";
-import { Cityscape } from "./components/cityscape";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -83,7 +79,6 @@ function buildWorkspacePayloadV3(mainNav: NavigationLayer, sidebarCollapsed: boo
     version: 3,
     main_navigation: mainNav,
     focus_project_ids: appStore.getState().focusProjectIds,
-    planning_view_mode: appStore.getState().planningViewMode,
     sidebar_collapsed: sidebarCollapsed,
   };
 }
@@ -109,7 +104,6 @@ export default function App() {
   const focusProjectIds = useAppStore((s) => s.focusProjectIds);
   const connectionState = useAppStore((s) => s.connectionState);
   const navLayer = useNavLayer();
-  const peekLayer = usePeekLayer();
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     try {
@@ -187,8 +181,13 @@ export default function App() {
           const restored = payload.workspace?.payload;
           if (restored) {
             if (restored.version === 3) {
-              // V3: main_navigation, peek/modal always start closed
-              const layer = restored.main_navigation as NavigationLayer;
+              // V3: main_navigation, modal always starts closed
+              const raw = restored.main_navigation as Record<string, unknown>;
+              // Migrate removed layers (inbox, vault) back to home
+              const removedLayers = ["inbox", "vault"];
+              const layer: NavigationLayer = removedLayers.includes(raw.layer as string)
+                ? { layer: "home" }
+                : (raw as NavigationLayer);
               navStore.restore(layer);
               if (layer.layer === "project" || layer.layer === "agent") {
                 appStore.setSelectedProjectId(layer.projectId);
@@ -199,7 +198,11 @@ export default function App() {
               }
             } else if (restored.version === 2) {
               // V2 migration: navigation -> main_navigation
-              const layer = restored.navigation as NavigationLayer;
+              const rawV2 = restored.navigation as Record<string, unknown>;
+              const removedLayersV2 = ["inbox", "vault"];
+              const layer: NavigationLayer = removedLayersV2.includes(rawV2.layer as string)
+                ? { layer: "home" }
+                : (rawV2 as NavigationLayer);
               navStore.restore(layer);
               if (layer.layer === "project" || layer.layer === "agent") {
                 appStore.setSelectedProjectId(layer.projectId);
@@ -375,7 +378,6 @@ export default function App() {
       appStore.setSelectedProjectId(navProjectId);
       void appStore.loadProjectReads(navProjectId);
       void appStore.handleLoadMergeQueue(navProjectId);
-      void appStore.handleLoadInboxUnreadCount(navProjectId);
     }
   }, [navProjectId]);
 
@@ -401,18 +403,13 @@ export default function App() {
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      const { main: layer, modal, peek } = navStore.getState();
+      const { main: layer, modal } = navStore.getState();
 
       if (e.key === "Escape") {
-        // Priority: Modal (if open) -> Peek (if open) -> Main (go back)
+        // Priority: Modal (if open) -> Main (go back)
         if (modal) {
           e.preventDefault();
           navStore.closeModal();
-          return;
-        }
-        if (peek) {
-          e.preventDefault();
-          navStore.closePeek();
           return;
         }
         if (layer.layer === "agent") {
@@ -488,7 +485,6 @@ export default function App() {
       <div className="app-body">
         <Sidebar collapsed={sidebarCollapsed} onToggle={toggleSidebar} />
         <div className="main-content">
-          <Breadcrumb />
           {error ? (
             <Card className="error-banner">
               <CardContent className="flex items-center justify-between gap-3 p-3">
@@ -528,13 +524,9 @@ export default function App() {
             <LayerRouter />
           </div>
         </div>
-        <PeekPanel hidden={!peekLayer} onClose={() => navStore.closePeek()}>
-          {peekLayer && <PeekRouter peek={peekLayer} />}
-        </PeekPanel>
       </div>
       <ModalOverlay />
       <ToastStack />
-      <Cityscape />
     </div>
   );
 }

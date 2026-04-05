@@ -4,9 +4,7 @@ import {
   deleteProject,
   bootstrapShell,
   checkDispatchConflicts,
-  countUnreadInboxEntries,
   createDocument,
-  createPlanningAssignment,
   createProject,
   createProjectRoot,
   removeProjectRoot,
@@ -15,7 +13,6 @@ import {
   createSession,
   createSessionBatch,
   createWorkItem,
-  deletePlanningAssignment,
   getMergeQueueDiff,
   getProject,
   getSession,
@@ -23,9 +20,7 @@ import {
   getWorkItem,
   interruptSession,
   listDocuments,
-  listInboxEntries,
   listMergeQueue,
-  listPlanningAssignments,
   listWorkflowReconciliationProposals,
   listAccounts,
   createAccount,
@@ -36,7 +31,6 @@ import {
   mergeQueuePark,
   terminateSession,
   updateDocument,
-  updateInboxEntry,
   updateProject,
   updateWorkflowReconciliationProposal,
   updateWorkItem,
@@ -104,7 +98,6 @@ import type {
   GitHealthStatus,
   MergeQueueEntry,
   PendingDispatch,
-  PlanningAssignmentSummary,
   ProjectDetail,
   ProjectSummary,
   SessionDetail,
@@ -115,7 +108,6 @@ import type {
   WorkItemSummary,
   WorkflowReconciliationProposalSummary,
 } from "./types";
-import type { InboxEntrySummary } from "./lib";
 import { getProjectRootGitStatus } from "./lib";
 
 // --- Constants ---
@@ -131,8 +123,6 @@ export const WORK_ITEM_STATUSES = [
 ] as const;
 export const PRIORITIES = ["", "low", "medium", "high", "urgent"] as const;
 export const DOCUMENT_STATUSES = ["draft", "active", "archived"] as const;
-
-export type PlanningViewMode = "all" | "day" | "week";
 
 // --- Pure helpers ---
 
@@ -192,60 +182,6 @@ function sessionSummaryFromDetail(detail: SessionDetail): SessionSummary {
   return summary;
 }
 
-export function currentDayCadenceKey(now = new Date()) {
-  return now.toISOString().slice(0, 10);
-}
-
-export function currentWeekCadenceKey(now = new Date()) {
-  const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const day = date.getUTCDay() || 7;
-  date.setUTCDate(date.getUTCDate() + 4 - day);
-  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
-  const weekNumber = Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-  return `${date.getUTCFullYear()}-W${String(weekNumber).padStart(2, "0")}`;
-}
-
-export function weekDaysFromKey(weekKey: string): string[] {
-  const [yearStr, weekPart] = weekKey.split("-W");
-  const year = parseInt(yearStr);
-  const week = parseInt(weekPart);
-  // ISO week 1 is the week containing Jan 4
-  const jan4 = new Date(Date.UTC(year, 0, 4));
-  const jan4Day = jan4.getUTCDay() || 7; // 1=Mon … 7=Sun
-  const monday = new Date(jan4);
-  monday.setUTCDate(jan4.getUTCDate() - (jan4Day - 1) + (week - 1) * 7);
-  return Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(monday);
-    d.setUTCDate(monday.getUTCDate() + i);
-    return d.toISOString().slice(0, 10);
-  });
-}
-
-export function weekKeyOffset(baseWeekKey: string, offset: number): string {
-  if (offset === 0) return baseWeekKey;
-  const dates = weekDaysFromKey(baseWeekKey);
-  const monday = new Date(dates[0] + "T12:00:00Z");
-  monday.setUTCDate(monday.getUTCDate() + offset * 7);
-  return currentWeekCadenceKey(monday);
-}
-
-export function planningAssignmentForKey(
-  assignments: PlanningAssignmentSummary[],
-  workItemId: string,
-  cadenceType: "day" | "week",
-  cadenceKey: string,
-) {
-  return (
-    assignments.find(
-      (assignment) =>
-        assignment.work_item_id === workItemId &&
-        assignment.removed_at === null &&
-        assignment.cadence_type === cadenceType &&
-        assignment.cadence_key === cadenceKey,
-    ) ?? null
-  );
-}
-
 export function sessionTone(session: Pick<SessionSummary, "runtime_state" | "activity_state" | "needs_input_reason">) {
   if (session.runtime_state === "failed" || session.runtime_state === "interrupted") {
     return "danger";
@@ -272,18 +208,14 @@ export type AppState = {
   bootstrapping: boolean;
   sessions: SessionSummary[];
   selectedProjectId: string | null;
-  planningViewMode: PlanningViewMode;
   projectDetails: Record<string, ProjectDetail>;
   workItemsByProject: Record<string, WorkItemSummary[]>;
   documentsByProject: Record<string, DocumentSummary[]>;
-  planningAssignmentsByProject: Record<string, PlanningAssignmentSummary[]>;
   workItemDetails: Record<string, WorkItemDetail>;
   documentDetails: Record<string, DocumentDetail>;
   reconciliationByWorkItem: Record<string, WorkflowReconciliationProposalSummary[]>;
   mergeQueueByProject: Record<string, MergeQueueEntry[]>;
   mergeQueueDiffs: Record<string, string>;
-  inboxEntriesByProject: Record<string, InboxEntrySummary[]>;
-  inboxUnreadCountByProject: Record<string, number>;
   gitStatusByRootId: Record<string, GitHealthStatus>;
   connectionEvent: ConnectionStatusEvent | null;
   loadingKeys: Record<string, boolean>;
@@ -322,18 +254,14 @@ function initialState(): AppState {
     bootstrapping: true,
     sessions: [],
     selectedProjectId: null,
-    planningViewMode: "all",
     projectDetails: {},
     workItemsByProject: {},
     documentsByProject: {},
-    planningAssignmentsByProject: {},
     workItemDetails: {},
     documentDetails: {},
     reconciliationByWorkItem: {},
     mergeQueueByProject: {},
     mergeQueueDiffs: {},
-    inboxEntriesByProject: {},
-    inboxUnreadCountByProject: {},
     gitStatusByRootId: {},
     connectionEvent: null,
     loadingKeys: {},
@@ -409,10 +337,6 @@ class AppStore {
 
   setSelectedProjectId(id: string | null) {
     this.update({ selectedProjectId: id });
-  }
-
-  setPlanningViewMode(mode: PlanningViewMode) {
-    this.update({ planningViewMode: mode });
   }
 
   setConnectionEvent(event: ConnectionStatusEvent | null) {
@@ -656,40 +580,7 @@ class AppStore {
         });
       }
 
-      // Refresh inbox unread count — session may have created a new inbox entry
-      const projectId = entry.project_id;
-      if (projectId) {
-        window.setTimeout(() => {
-          void this.handleLoadInboxUnreadCount(projectId);
-        }, 500);
-      }
     }
-  }
-
-  applyPlanningAssignment(projectId: string, assignment: PlanningAssignmentSummary) {
-    const s = this.state;
-    this.update({
-      planningAssignmentsByProject: {
-        ...s.planningAssignmentsByProject,
-        [projectId]: upsertById(
-          s.planningAssignmentsByProject[projectId] ?? [],
-          assignment,
-          (left, right) => right.updated_at - left.updated_at || left.id.localeCompare(right.id),
-        ),
-      },
-    });
-  }
-
-  removePlanningAssignment(projectId: string, planningAssignmentId: string) {
-    const s = this.state;
-    this.update({
-      planningAssignmentsByProject: {
-        ...s.planningAssignmentsByProject,
-        [projectId]: (s.planningAssignmentsByProject[projectId] ?? []).filter(
-          (a) => a.id !== planningAssignmentId,
-        ),
-      },
-    });
   }
 
   // --- Data loading ---
@@ -700,8 +591,7 @@ class AppStore {
       !force &&
       s.projectDetails[projectId] &&
       s.workItemsByProject[projectId] &&
-      s.documentsByProject[projectId] &&
-      s.planningAssignmentsByProject[projectId]
+      s.documentsByProject[projectId]
     ) {
       return;
     }
@@ -709,17 +599,15 @@ class AppStore {
     const correlationId = newCorrelationId("project-load");
     this.setLoading(`project:${projectId}`, true);
     try {
-      const [projectDetail, workItems, documents, planningAssignments] = await Promise.all([
+      const [projectDetail, workItems, documents] = await Promise.all([
         getProject(projectId, correlationId),
         listWorkItems(projectId, correlationId),
         listDocuments(projectId, undefined, correlationId),
-        listPlanningAssignments(projectId, undefined, correlationId),
       ]);
       this.applyProjectDetail(projectDetail);
       this.update({
         workItemsByProject: { ...this.state.workItemsByProject, [projectId]: workItems },
         documentsByProject: { ...this.state.documentsByProject, [projectId]: documents },
-        planningAssignmentsByProject: { ...this.state.planningAssignmentsByProject, [projectId]: planningAssignments },
       });
       recordClientEvent(
         makeClientEvent("shell", "project.reads_loaded", {
@@ -728,7 +616,6 @@ class AppStore {
           payload: {
             work_item_count: workItems.length,
             document_count: documents.length,
-            planning_assignment_count: planningAssignments.length,
             force_refresh: force,
           },
         }),
@@ -1160,50 +1047,6 @@ class AppStore {
       this.update({ error: String(invokeError) });
     } finally {
       this.setLoading(`save-work-item:${workItemId}`, false);
-    }
-  }
-
-  async handleTogglePlanningAssignment(
-    workItemId: string,
-    cadenceType: "day" | "week",
-    cadenceKey: string,
-  ) {
-    const s = this.state;
-    if (!s.selectedProjectId) {
-      this.update({ error: "Select a project before updating planning assignments." });
-      return;
-    }
-
-    const existingAssignment = planningAssignmentForKey(
-      s.planningAssignmentsByProject[s.selectedProjectId] ?? [],
-      workItemId,
-      cadenceType,
-      cadenceKey,
-    );
-    const loadingKey = `${cadenceType}-assignment:${workItemId}:${cadenceKey}`;
-    const correlationId = newCorrelationId(`${cadenceType}-assignment`);
-    this.setLoading(loadingKey, true);
-    try {
-      if (existingAssignment) {
-        await deletePlanningAssignment(existingAssignment.id, correlationId);
-        this.removePlanningAssignment(s.selectedProjectId, existingAssignment.id);
-      } else {
-        const assignment = await createPlanningAssignment(
-          {
-            work_item_id: workItemId,
-            cadence_type: cadenceType,
-            cadence_key: cadenceKey,
-            created_by: "tauri-client",
-          },
-          correlationId,
-        );
-        this.applyPlanningAssignment(s.selectedProjectId, assignment);
-      }
-      this.clearError();
-    } catch (invokeError) {
-      this.update({ error: String(invokeError) });
-    } finally {
-      this.setLoading(loadingKey, false);
     }
   }
 
@@ -1643,141 +1486,6 @@ class AppStore {
     }
   }
 
-  // --- Inbox ---
-
-  async handleLoadInboxEntries(projectId: string, status?: string) {
-    this.setLoading(`inbox:${projectId}`, true);
-    try {
-      const entries = await listInboxEntries(projectId, status);
-      this.update({
-        inboxEntriesByProject: { ...this.state.inboxEntriesByProject, [projectId]: entries },
-      });
-      this.clearError();
-    } catch (invokeError) {
-      this.update({ error: String(invokeError) });
-    } finally {
-      this.setLoading(`inbox:${projectId}`, false);
-    }
-  }
-
-  async handleLoadInboxUnreadCount(projectId: string) {
-    try {
-      const result = await countUnreadInboxEntries(projectId);
-      this.update({
-        inboxUnreadCountByProject: {
-          ...this.state.inboxUnreadCountByProject,
-          [projectId]: result.count,
-        },
-      });
-    } catch {
-      // non-critical — silently ignore
-    }
-  }
-
-  async handleUpdateInboxEntry(
-    inboxEntryId: string,
-    updates: { status?: string; read_at?: number | null; resolved_at?: number | null },
-    projectId: string,
-  ) {
-    this.setLoading(`inbox-update:${inboxEntryId}`, true);
-    try {
-      await updateInboxEntry(inboxEntryId, updates);
-      await this.handleLoadInboxEntries(projectId);
-      await this.handleLoadInboxUnreadCount(projectId);
-      this.clearError();
-    } catch (invokeError) {
-      this.update({ error: String(invokeError) });
-    } finally {
-      this.setLoading(`inbox-update:${inboxEntryId}`, false);
-    }
-  }
-
-  async handleApproveInboxEntry(inboxEntryId: string, projectId: string) {
-    // Optimistic update
-    const entries = this.state.inboxEntriesByProject[projectId] ?? [];
-    const nowSecs = Math.floor(Date.now() / 1000);
-    const optimistic = entries.map((e) =>
-      e.id === inboxEntryId ? { ...e, status: "resolved", resolved_at: nowSecs } : e,
-    );
-    this.update({
-      inboxEntriesByProject: { ...this.state.inboxEntriesByProject, [projectId]: optimistic },
-    });
-
-    this.setLoading(`inbox-update:${inboxEntryId}`, true);
-    try {
-      await updateInboxEntry(inboxEntryId, { status: "resolved", resolved_at: nowSecs });
-      await this.handleLoadInboxEntries(projectId);
-      await this.handleLoadInboxUnreadCount(projectId);
-      this.clearError();
-    } catch (invokeError) {
-      // Rollback optimistic update
-      this.update({
-        inboxEntriesByProject: { ...this.state.inboxEntriesByProject, [projectId]: entries },
-        error: String(invokeError),
-      });
-    } finally {
-      this.setLoading(`inbox-update:${inboxEntryId}`, false);
-    }
-  }
-
-  async handleDismissInboxEntry(inboxEntryId: string, projectId: string) {
-    // Optimistic update
-    const entries = this.state.inboxEntriesByProject[projectId] ?? [];
-    const nowSecs = Math.floor(Date.now() / 1000);
-    const optimistic = entries.map((e) =>
-      e.id === inboxEntryId ? { ...e, status: "resolved", resolved_at: nowSecs, read_at: e.read_at ?? nowSecs } : e,
-    );
-    this.update({
-      inboxEntriesByProject: { ...this.state.inboxEntriesByProject, [projectId]: optimistic },
-    });
-
-    this.setLoading(`inbox-update:${inboxEntryId}`, true);
-    try {
-      await updateInboxEntry(inboxEntryId, {
-        status: "resolved",
-        resolved_at: nowSecs,
-        read_at: nowSecs,
-      });
-      await this.handleLoadInboxEntries(projectId);
-      await this.handleLoadInboxUnreadCount(projectId);
-      this.clearError();
-    } catch (invokeError) {
-      // Rollback optimistic update
-      this.update({
-        inboxEntriesByProject: { ...this.state.inboxEntriesByProject, [projectId]: entries },
-        error: String(invokeError),
-      });
-    } finally {
-      this.setLoading(`inbox-update:${inboxEntryId}`, false);
-    }
-  }
-
-  async handleMarkAllInboxRead(projectId: string) {
-    const entries = this.state.inboxEntriesByProject[projectId] ?? [];
-    const unread = entries.filter((e) => e.read_at === null);
-    if (unread.length === 0) return;
-    const nowSecs = Math.floor(Date.now() / 1000);
-    // Optimistic update
-    const optimistic = entries.map((e) => e.read_at === null ? { ...e, read_at: nowSecs } : e);
-    this.update({
-      inboxEntriesByProject: { ...this.state.inboxEntriesByProject, [projectId]: optimistic },
-    });
-    this.setLoading(`inbox-mark-all-read:${projectId}`, true);
-    try {
-      await Promise.all(unread.map((e) => updateInboxEntry(e.id, { read_at: nowSecs })));
-      await this.handleLoadInboxUnreadCount(projectId);
-      this.clearError();
-    } catch (invokeError) {
-      // Rollback
-      this.update({
-        inboxEntriesByProject: { ...this.state.inboxEntriesByProject, [projectId]: entries },
-        error: String(invokeError),
-      });
-    } finally {
-      this.setLoading(`inbox-mark-all-read:${projectId}`, false);
-    }
-  }
-
   // --- Derived state helpers ---
 
   filteredSessions(): SessionSummary[] {
@@ -1801,29 +1509,6 @@ class AppStore {
   allCurrentWorkItems(): WorkItemSummary[] {
     const s = this.state;
     return s.selectedProjectId ? s.workItemsByProject[s.selectedProjectId] ?? [] : [];
-  }
-
-  currentWorkItems(dayCadenceKey: string, weekCadenceKey: string): WorkItemSummary[] {
-    const s = this.state;
-    const all = this.allCurrentWorkItems();
-    if (s.planningViewMode === "all") return all;
-
-    const cadenceType = s.planningViewMode === "day" ? "day" : "week";
-    const cadenceKey = s.planningViewMode === "day" ? dayCadenceKey : weekCadenceKey;
-    const assignments = s.selectedProjectId
-      ? s.planningAssignmentsByProject[s.selectedProjectId] ?? []
-      : [];
-    const assignedIds = new Set(
-      assignments
-        .filter(
-          (a) =>
-            a.removed_at === null &&
-            a.cadence_type === cadenceType &&
-            a.cadence_key === cadenceKey,
-        )
-        .map((a) => a.work_item_id),
-    );
-    return all.filter((workItem) => assignedIds.has(workItem.id));
   }
 
   currentDocuments(): DocumentSummary[] {

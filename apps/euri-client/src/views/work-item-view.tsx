@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { appStore, useAppStore, currentDayCadenceKey, currentWeekCadenceKey } from "../store";
+import { appStore, useAppStore } from "../store";
 import { navStore } from "../nav-store";
 import { StatusBadge } from "../components/status-badge";
-import { PlanPicker } from "../components/plan-picker";
 import { WorkItemForm, type WorkItemFormData } from "../components/work-item-form";
 import { Button, Card, CardContent, CardHeader, CardTitle } from "../components/ui";
 import { renderMarkdown } from "../utils/markdown";
@@ -40,7 +39,6 @@ export function WorkItemView({
   const sessions = useAppStore((s) => s.sessions);
   const documentsByProject = useAppStore((s) => s.documentsByProject);
   const workItemsByProject = useAppStore((s) => s.workItemsByProject);
-  const planningAssignmentsByProject = useAppStore((s) => s.planningAssignmentsByProject);
   const loadingKeys = useAppStore((s) => s.loadingKeys);
   const editingWorkItemId = useAppStore((s) => s.editingWorkItemId);
 
@@ -86,14 +84,6 @@ export function WorkItemView({
     () => (workItemsByProject[projectId] ?? []).filter((w) => w.parent_id === workItemId),
     [workItemsByProject, projectId, workItemId],
   );
-
-  const assignments = useMemo(
-    () => (planningAssignmentsByProject[projectId] ?? []).filter((a) => a.work_item_id === workItemId),
-    [planningAssignmentsByProject, projectId, workItemId],
-  );
-
-  const dayCadenceKey = useMemo(() => currentDayCadenceKey(), []);
-  const weekCadenceKey = useMemo(() => currentWeekCadenceKey(), []);
 
   const [showAddChildForm, setShowAddChildForm] = useState(false);
   const creatingChild = loadingKeys[`create-child-work-item:${workItemId}`] ?? false;
@@ -265,23 +255,6 @@ export function WorkItemView({
           ) : null}
         </>
       )}
-
-      {/* Planning */}
-      <Card className="wi-detail-section">
-        <CardHeader>
-          <CardTitle>Planning</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <PlanPicker
-            assignments={assignments}
-            dayCadenceKey={dayCadenceKey}
-            weekCadenceKey={weekCadenceKey}
-            onToggle={(cadenceType, cadenceKey) =>
-              void appStore.handleTogglePlanningAssignment(workItemId, cadenceType, cadenceKey)
-            }
-          />
-        </CardContent>
-      </Card>
 
       {/* Live Sessions */}
       {liveSessions.length > 0 ? (

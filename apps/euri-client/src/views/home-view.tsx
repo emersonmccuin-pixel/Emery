@@ -2,7 +2,6 @@ import { type DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { appStore, useAppStore } from "../store";
 import { navStore } from "../nav-store";
 import type { GitHealthStatus, ProjectSummary, SessionSummary, MergeQueueEntry } from "../types";
-import { StatusLEDs } from "../components/status-leds";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -347,7 +346,7 @@ function FocusCard({
           <Badge className={`focus-card-badge focus-card-badge-${status}`}>
             {status}
           </Badge>
-          <StatusLEDs status={gitStatus} compact />
+          {/* Git status indicator — placeholder */}
         </div>
       </button>
     </Card>

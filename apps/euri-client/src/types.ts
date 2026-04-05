@@ -364,7 +364,6 @@ export type WorkspacePayloadV3 = {
   version: 3;
   main_navigation: { layer: string; projectId?: string; sessionId?: string; documentId?: string; workItemId?: string };
   focus_project_ids: string[];
-  planning_view_mode: string;
   sidebar_collapsed: boolean;
 };
 

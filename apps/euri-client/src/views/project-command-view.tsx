@@ -1,28 +1,21 @@
-import { useEffect, useMemo } from "react";
-import { appStore, useAppStore, currentDayCadenceKey, currentWeekCadenceKey } from "../store";
+import { useEffect } from "react";
+import { appStore, useAppStore } from "../store";
 import { navStore } from "../nav-store";
-import { FleetStrip } from "../components/fleet-strip";
 import { MergeQueueSection } from "../components/merge-queue-section";
 import { WorkItemsSection } from "../components/work-items-section";
-import { PlanningSection } from "../components/planning-section";
 import { DocsSection } from "../components/docs-section";
-import { StatusLEDs } from "../components/status-leds";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
 export function ProjectCommandView({ projectId }: { projectId: string }) {
   const bootstrap = useAppStore((s) => s.bootstrap);
   const accounts = useAppStore((s) => s.bootstrap?.accounts ?? []);
-  const sessions = useAppStore((s) => s.sessions);
   const workItemsByProject = useAppStore((s) => s.workItemsByProject);
   const documentsByProject = useAppStore((s) => s.documentsByProject);
-  const planningAssignmentsByProject = useAppStore((s) => s.planningAssignmentsByProject);
   const mergeQueueByProject = useAppStore((s) => s.mergeQueueByProject);
   const mergeQueueDiffs = useAppStore((s) => s.mergeQueueDiffs);
   const loadingKeys = useAppStore((s) => s.loadingKeys);
-  const planningViewMode = useAppStore((s) => s.planningViewMode);
   const projectDetails = useAppStore((s) => s.projectDetails);
-  const gitStatusByRootId = useAppStore((s) => s.gitStatusByRootId);
 
   const selectedWorkItemIds = useAppStore((s) => s.selectedWorkItemIds);
 
@@ -34,38 +27,10 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
   }, [projectId, projectDetails]);
 
   const project = bootstrap?.projects.find((p) => p.id === projectId) ?? null;
-
-  const gitStatus = useMemo(() => {
-    const detail = projectDetails[projectId];
-    if (!detail) return null;
-    const activeRoot = detail.roots.find((r) => r.archived_at === null && r.git_root_path);
-    if (!activeRoot) return null;
-    return gitStatusByRootId[activeRoot.id] ?? null;
-  }, [projectId, projectDetails, gitStatusByRootId]);
-  const projectSessions = useMemo(
-    () => sessions.filter((s) => s.project_id === projectId),
-    [sessions, projectId],
-  );
   const isLoadingProject = loadingKeys[`project:${projectId}`] ?? false;
   const workItems = workItemsByProject[projectId] ?? [];
   const documents = documentsByProject[projectId] ?? [];
-  const assignments = planningAssignmentsByProject[projectId] ?? [];
   const mergeQueue = mergeQueueByProject[projectId] ?? [];
-
-  const dayCadenceKey = useMemo(() => currentDayCadenceKey(), []);
-  const weekCadenceKey = useMemo(() => currentWeekCadenceKey(), []);
-
-  const filteredWorkItems = useMemo(() => {
-    if (planningViewMode === "all") return workItems;
-    const cadenceType = planningViewMode === "day" ? "day" : "week";
-    const cadenceKey = planningViewMode === "day" ? dayCadenceKey : weekCadenceKey;
-    const assignedIds = new Set(
-      assignments
-        .filter((a) => a.removed_at === null && a.cadence_type === cadenceType && a.cadence_key === cadenceKey)
-        .map((a) => a.work_item_id),
-    );
-    return workItems.filter((w) => assignedIds.has(w.id));
-  }, [planningViewMode, workItems, assignments, dayCadenceKey, weekCadenceKey]);
 
   if (!project) {
     return <div className="empty-pane">Project not found.</div>;
@@ -95,14 +60,8 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
           >
             ⚙ Settings
           </Button>
-          <StatusLEDs status={gitStatus} />
         </div>
         <div className="operations-zone">
-          <FleetStrip
-            sessions={projectSessions}
-            workItems={workItems}
-            onZoomIntoAgent={(pid, sid) => navStore.goToAgent(pid, sid)}
-          />
           <MergeQueueSection
             entries={mergeQueue}
             diffs={mergeQueueDiffs}
@@ -111,7 +70,7 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
             onPark={(id) => void appStore.handleMergeQueuePark(id, projectId)}
             onLoadDiff={(id) => void appStore.handleLoadMergeQueueDiff(id)}
             onCheckConflicts={(id) => void appStore.handleMergeQueueCheckConflicts(id, projectId)}
-            onPeekDiff={(id) => navStore.openPeek({ peek: "merge_diff", projectId, entryId: id })}
+            onPeekDiff={() => {/* removed — peek panel deleted */}}
           />
         </div>
         <div className="planning-zone">
@@ -122,32 +81,15 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
               <span className="skeleton-line" style={{ width: "45%" }} />
             </div>
           ) : null}
-          <PlanningSection
-            viewMode={planningViewMode}
-            onSetViewMode={(mode) => appStore.setPlanningViewMode(mode)}
+          <WorkItemsSection
             workItems={workItems}
-            assignments={assignments}
-            sessions={projectSessions}
+            selectedIds={selectedWorkItemIds}
+            onToggleSelect={(id) => appStore.toggleWorkItemSelection(id)}
+            onClearSelection={() => appStore.clearWorkItemSelection()}
             onDispatch={(workItemId) => void appStore.handleLaunchSessionFromWorkItem(workItemId)}
-            onNavigateToSession={(sessionId) => navStore.goToAgent(projectId, sessionId)}
+            onMultiDispatch={() => void appStore.handleMultiDispatch(projectId)}
+            onNavigate={(workItemId) => navStore.goToWorkItem(projectId, workItemId)}
           />
-          {planningViewMode !== "day" && (
-            <WorkItemsSection
-              workItems={filteredWorkItems}
-              selectedIds={selectedWorkItemIds}
-              onToggleSelect={(id) => appStore.toggleWorkItemSelection(id)}
-              onClearSelection={() => appStore.clearWorkItemSelection()}
-              onDispatch={(workItemId) => void appStore.handleLaunchSessionFromWorkItem(workItemId)}
-              onMultiDispatch={() => void appStore.handleMultiDispatch(projectId)}
-              onNavigate={(workItemId) => navStore.openPeek({ peek: "work_item", projectId, workItemId })}
-              assignments={assignments}
-              dayCadenceKey={dayCadenceKey}
-              weekCadenceKey={weekCadenceKey}
-              onPlan={(workItemId, cadenceType, cadenceKey) =>
-                void appStore.handleTogglePlanningAssignment(workItemId, cadenceType, cadenceKey)
-              }
-            />
-          )}
           <DocsSection
             documents={documents}
             workItems={workItems}

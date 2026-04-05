@@ -2,11 +2,6 @@ import { lazy, Suspense } from "react";
 import { useNavLayer } from "./nav-store";
 import { HomeView } from "./views/home-view";
 
-const InboxView = lazy(async () => {
-  const module = await import("./views/inbox-view");
-  return { default: module.InboxView };
-});
-
 const ProjectCommandView = lazy(async () => {
   const module = await import("./views/project-command-view");
   return { default: module.ProjectCommandView };
@@ -37,11 +32,6 @@ const SettingsView = lazy(async () => {
   return { default: module.SettingsView };
 });
 
-const VaultView = lazy(async () => {
-  const module = await import("./views/vault-view");
-  return { default: module.VaultView };
-});
-
 export function LayerRouter() {
   const layer = useNavLayer();
 
@@ -50,12 +40,6 @@ export function LayerRouter() {
   }
 
   switch (layer.layer) {
-    case "inbox":
-      return (
-        <Suspense fallback={<div className="layer-stub">Loading inbox...</div>}>
-          <InboxView projectId={layer.projectId} />
-        </Suspense>
-      );
     case "project":
       return (
         <Suspense fallback={<div className="layer-stub">Loading project...</div>}>
@@ -96,12 +80,6 @@ export function LayerRouter() {
       return (
         <Suspense fallback={<div className="layer-stub">Loading settings...</div>}>
           <SettingsView />
-        </Suspense>
-      );
-    case "vault":
-      return (
-        <Suspense fallback={<div className="layer-stub">Loading vault...</div>}>
-          <VaultView />
         </Suspense>
       );
   }

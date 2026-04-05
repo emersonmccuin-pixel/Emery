@@ -1,7 +1,7 @@
 import { useMemo } from "react";
-import type { PlanningAssignmentSummary, WorkItemSummary } from "../types";
+import type { WorkItemSummary } from "../types";
 import { WorkItemRow } from "./work-item-row";
-import { appStore, useAppStore } from "../store";
+import { useAppStore } from "../store";
 import { navStore } from "../nav-store";
 
 type WorkItemsSectionProps = {
@@ -12,10 +12,6 @@ type WorkItemsSectionProps = {
   onDispatch: (workItemId: string) => void;
   onMultiDispatch: () => void;
   onNavigate: (workItemId: string) => void;
-  assignments: PlanningAssignmentSummary[];
-  dayCadenceKey: string;
-  weekCadenceKey: string;
-  onPlan: (workItemId: string, cadenceType: "day" | "week", cadenceKey: string) => void;
 };
 
 const STATUS_GROUPS = [
@@ -33,10 +29,6 @@ export function WorkItemsSection({
   onDispatch,
   onMultiDispatch,
   onNavigate,
-  assignments,
-  dayCadenceKey,
-  weekCadenceKey,
-  onPlan,
 }: WorkItemsSectionProps) {
   const grouped = useMemo(() => {
     const groups: Record<string, WorkItemSummary[]> = {};
@@ -47,15 +39,6 @@ export function WorkItemsSection({
     }
     return groups;
   }, [workItems]);
-
-  const assignmentsByWorkItem = useMemo(() => {
-    const map: Record<string, PlanningAssignmentSummary[]> = {};
-    for (const a of assignments) {
-      if (!map[a.work_item_id]) map[a.work_item_id] = [];
-      map[a.work_item_id].push(a);
-    }
-    return map;
-  }, [assignments]);
 
   const selectedProjectId = useAppStore((s) => s.selectedProjectId);
 
@@ -68,10 +51,6 @@ export function WorkItemsSection({
         onToggleSelect={() => onToggleSelect(item.id)}
         onDispatch={() => onDispatch(item.id)}
         onNavigate={() => onNavigate(item.id)}
-        assignments={assignmentsByWorkItem[item.id] ?? []}
-        dayCadenceKey={dayCadenceKey}
-        weekCadenceKey={weekCadenceKey}
-        onPlan={(cadenceType, cadenceKey) => onPlan(item.id, cadenceType, cadenceKey)}
       />
     );
   }
