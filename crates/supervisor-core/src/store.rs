@@ -2487,7 +2487,7 @@ impl DatabaseSet {
     }
 
     pub fn list_merge_queue(&self, filter: &MergeQueueListFilter) -> Result<Vec<MergeQueueEntry>> {
-        let connection = open_connection(&self.paths.app_db)?;
+        let connection = open_app_connection_with_knowledge(&self.paths)?;
         let mut sql = String::from(
             "SELECT
                 mq.id, mq.project_id, mq.session_id, mq.worktree_id,
@@ -2498,7 +2498,7 @@ impl DatabaseSet {
                 wi.callsign AS work_item_callsign
              FROM merge_queue mq
              LEFT JOIN sessions s ON s.id = mq.session_id
-             LEFT JOIN work_items wi ON wi.id = s.work_item_id
+             LEFT JOIN knowledge.work_items wi ON wi.id = s.work_item_id
              WHERE mq.project_id = ?1",
         );
         let mut values: Vec<String> = vec![filter.project_id.clone()];
@@ -2515,7 +2515,7 @@ impl DatabaseSet {
     }
 
     pub fn get_merge_queue_entry(&self, id: &str) -> Result<Option<MergeQueueEntry>> {
-        let connection = open_connection(&self.paths.app_db)?;
+        let connection = open_app_connection_with_knowledge(&self.paths)?;
         connection
             .query_row(
                 "SELECT
@@ -2527,7 +2527,7 @@ impl DatabaseSet {
                     wi.callsign AS work_item_callsign
                  FROM merge_queue mq
                  LEFT JOIN sessions s ON s.id = mq.session_id
-                 LEFT JOIN work_items wi ON wi.id = s.work_item_id
+                 LEFT JOIN knowledge.work_items wi ON wi.id = s.work_item_id
                  WHERE mq.id = ?1",
                 [id],
                 map_merge_queue_entry,
@@ -2613,6 +2613,21 @@ impl DatabaseSet {
 fn open_connection(path: &Path) -> Result<Connection> {
     let connection = Connection::open(path)?;
     connection.pragma_update(None, "foreign_keys", "ON")?;
+    Ok(connection)
+}
+
+/// Open the app DB and attach the knowledge DB under the alias `knowledge`.
+/// Use this for queries that need to JOIN across both databases (e.g. merge_queue → work_items).
+fn open_app_connection_with_knowledge(paths: &AppPaths) -> Result<Connection> {
+    let connection = open_connection(&paths.app_db)?;
+    let knowledge_path = paths
+        .knowledge_db
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("knowledge_db path is not valid UTF-8"))?;
+    connection.execute_batch(&format!(
+        "ATTACH DATABASE '{}' AS knowledge;",
+        knowledge_path.replace('\'', "''")
+    ))?;
     Ok(connection)
 }
 
