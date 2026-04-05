@@ -231,12 +231,24 @@ export default function App() {
   }, [bootstrap, navLayer]);
 
   // --- Keyboard shortcuts ---
+  const lastEscapeRef = useRef<number>(0);
+
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       const layer = navStore.getState().current;
 
       if (e.key === "Escape") {
-        if (layer.layer !== "home") {
+        if (layer.layer === "agent") {
+          // Double-Escape to exit agent view — single Escape passes through to terminal
+          const now = Date.now();
+          if (now - lastEscapeRef.current < 400) {
+            e.preventDefault();
+            navStore.goBack();
+            lastEscapeRef.current = 0;
+          } else {
+            lastEscapeRef.current = now;
+          }
+        } else if (layer.layer !== "home") {
           navStore.goBack();
         }
       }

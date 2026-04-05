@@ -5,6 +5,7 @@ export function Breadcrumb() {
   const crumbs = useNavStore(() => navStore.breadcrumbs());
   const bootstrap = useAppStore((s) => s.bootstrap);
   const sessions = useAppStore((s) => s.sessions);
+  const workItemDetails = useAppStore((s) => s.workItemDetails);
 
   function resolveLabel(crumb: ReturnType<typeof navStore.breadcrumbs>[number]): string {
     const layer = crumb.layer;
@@ -15,6 +16,10 @@ export function Breadcrumb() {
     }
     if (layer.layer === "agent") {
       const session = sessions.find((s) => s.id === layer.sessionId);
+      if (session?.work_item_id) {
+        const wi = workItemDetails[session.work_item_id];
+        if (wi) return wi.callsign;
+      }
       return session?.title ?? session?.current_mode ?? crumb.label;
     }
     return crumb.label;
