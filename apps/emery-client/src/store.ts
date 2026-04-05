@@ -1300,11 +1300,8 @@ class AppStore {
       toastStore.addToast({
         type: "success",
         message: `Agent launched for ${workItem.callsign}: ${workItem.title}`,
-        action: {
-          label: "View",
-          onClick: () => navStore.goToAgent(projectId, detail.id),
-        },
       });
+      navStore.goToAgent(projectId, detail.id);
     } catch (invokeError) {
       this.update({ error: String(invokeError) });
     } finally {
