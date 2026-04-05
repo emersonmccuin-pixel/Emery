@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { pickFolder } from "../lib";
 
 type SettingsTab = "accounts" | "appearance" | "agent-defaults" | "github";
 
@@ -72,9 +73,11 @@ function AccountsSection() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newLabel, setNewLabel] = useState("");
   const [newBinaryPath, setNewBinaryPath] = useState("");
+  const [newConfigRoot, setNewConfigRoot] = useState("");
   const [newAgentKind, setNewAgentKind] = useState("claude");
 
-  const accounts: AccountSummary[] = bootstrap?.accounts ?? [];
+  const allAccounts: AccountSummary[] = bootstrap?.accounts ?? [];
+  const accounts = allAccounts.filter((a) => a.status !== "disabled");
   const creating = loadingKeys["create-account"] ?? false;
 
   async function handleCreate() {
@@ -83,11 +86,18 @@ function AccountsSection() {
       label: newLabel.trim(),
       agent_kind: newAgentKind,
       binary_path: newBinaryPath.trim() || null,
+      config_root: newConfigRoot.trim() || null,
     });
     setNewLabel("");
     setNewBinaryPath("");
+    setNewConfigRoot("");
     setNewAgentKind("claude");
     setShowAddForm(false);
+  }
+
+  async function handlePickConfigRoot() {
+    const path = await pickFolder();
+    if (path) setNewConfigRoot(path);
   }
 
   return (
@@ -129,6 +139,38 @@ function AccountsSection() {
             />
           </div>
           <div className="settings-field-group">
+            <label className="settings-label">Agent kind</label>
+            <select
+              className="settings-input"
+              value={newAgentKind}
+              onChange={(e) => setNewAgentKind(e.target.value)}
+            >
+              <option value="claude">claude</option>
+              <option value="codex">codex</option>
+              <option value="gemini">gemini</option>
+            </select>
+          </div>
+          <div className="settings-field-group">
+            <label className="settings-label">Agent config folder (optional)</label>
+            <div className="settings-input-row">
+              <Input
+                className="settings-input"
+                type="text"
+                value={newConfigRoot}
+                onChange={(e) => setNewConfigRoot(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void handleCreate();
+                  if (e.key === "Escape") setShowAddForm(false);
+                }}
+                placeholder="~/.claude"
+                style={{ flex: 1 }}
+              />
+              <Button variant="ghost" size="sm" onClick={() => void handlePickConfigRoot()}>
+                Browse
+              </Button>
+            </div>
+          </div>
+          <div className="settings-field-group">
             <label className="settings-label">Binary path (optional)</label>
             <Input
               className="settings-input"
@@ -141,18 +183,6 @@ function AccountsSection() {
               }}
               placeholder="/usr/local/bin/claude"
             />
-          </div>
-          <div className="settings-field-group">
-            <label className="settings-label">Agent kind</label>
-            <select
-              className="settings-input"
-              value={newAgentKind}
-              onChange={(e) => setNewAgentKind(e.target.value)}
-            >
-              <option value="claude">claude</option>
-              <option value="codex">codex</option>
-              <option value="gemini">gemini</option>
-            </select>
           </div>
           <div className="settings-form-actions">
             <Button
@@ -198,16 +228,33 @@ function AccountRow({
 }) {
   const [editing, setEditing] = useState(false);
   const [labelInput, setLabelInput] = useState(account.label);
+  const [binaryPathInput, setBinaryPathInput] = useState(account.binary_path ?? "");
+  const [configRootInput, setConfigRootInput] = useState(account.config_root ?? "");
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const saving = loadingKeys[`update-account:${account.id}`] ?? false;
+  const deleting = loadingKeys[`delete-account:${account.id}`] ?? false;
 
-  async function handleSaveLabel() {
-    if (!labelInput.trim() || labelInput.trim() === account.label) {
-      setEditing(false);
-      return;
-    }
-    await appStore.handleUpdateAccount(account.id, { label: labelInput.trim() });
+  async function handleSave() {
+    if (!labelInput.trim()) return;
+    await appStore.handleUpdateAccount(account.id, {
+      label: labelInput.trim(),
+      binary_path: binaryPathInput.trim() || null,
+      config_root: configRootInput.trim() || null,
+    });
     setEditing(false);
+  }
+
+  function handleCancelEdit() {
+    setLabelInput(account.label);
+    setBinaryPathInput(account.binary_path ?? "");
+    setConfigRootInput(account.config_root ?? "");
+    setEditing(false);
+  }
+
+  async function handlePickConfigRoot() {
+    const path = await pickFolder();
+    if (path) setConfigRootInput(path);
   }
 
   async function handleSetDefault() {
@@ -215,81 +262,151 @@ function AccountRow({
     await appStore.handleUpdateAccount(account.id, { is_default: true });
   }
 
+  async function handleDelete() {
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      return;
+    }
+    setConfirmDelete(false);
+    await appStore.handleDeleteAccount(account.id);
+  }
+
   return (
     <Card className="settings-account-row p-4">
       <div className="settings-account-info">
         {editing ? (
-          <div className="settings-input-row">
-            <Input
-              className="settings-input"
-              type="text"
-              value={labelInput}
-              onChange={(e) => setLabelInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void handleSaveLabel();
-                if (e.key === "Escape") {
-                  setLabelInput(account.label);
-                  setEditing(false);
-                }
-              }}
-              autoFocus
-            />
-            <Button
-              variant="terminal"
-              size="sm"
-              onClick={() => void handleSaveLabel()}
-              disabled={saving || !labelInput.trim()}
-            >
-              {saving ? "..." : "Save"}
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setLabelInput(account.label);
-                setEditing(false);
-              }}
-              disabled={saving}
-            >
-              Cancel
-            </Button>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+            <div className="settings-field-group">
+              <label className="settings-label">Label</label>
+              <Input
+                className="settings-input"
+                type="text"
+                value={labelInput}
+                onChange={(e) => setLabelInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void handleSave();
+                  if (e.key === "Escape") handleCancelEdit();
+                }}
+                autoFocus
+              />
+            </div>
+            <div className="settings-field-group">
+              <label className="settings-label">Agent config folder</label>
+              <div className="settings-input-row">
+                <Input
+                  className="settings-input"
+                  type="text"
+                  value={configRootInput}
+                  onChange={(e) => setConfigRootInput(e.target.value)}
+                  placeholder="~/.claude"
+                  style={{ flex: 1 }}
+                />
+                <Button variant="ghost" size="sm" onClick={() => void handlePickConfigRoot()}>
+                  Browse
+                </Button>
+              </div>
+            </div>
+            <div className="settings-field-group">
+              <label className="settings-label">Binary path</label>
+              <Input
+                className="settings-input"
+                type="text"
+                value={binaryPathInput}
+                onChange={(e) => setBinaryPathInput(e.target.value)}
+                placeholder="/usr/local/bin/claude"
+              />
+            </div>
+            <div className="settings-form-actions">
+              <Button
+                variant="terminal"
+                size="sm"
+                onClick={() => void handleSave()}
+                disabled={saving || !labelInput.trim()}
+              >
+                {saving ? "Saving..." : "Save"}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleCancelEdit}
+                disabled={saving}
+              >
+                Cancel
+              </Button>
+            </div>
           </div>
         ) : (
-          <div className="settings-account-label-row">
-            <span className="settings-account-label">{account.label}</span>
-            {account.is_default && (
-              <Badge className="settings-account-default-badge">default</Badge>
+          <>
+            <div className="settings-account-label-row">
+              <span className="settings-account-label">{account.label}</span>
+              {account.is_default && (
+                <Badge className="settings-account-default-badge">default</Badge>
+              )}
+              <Badge variant="outline" style={{ fontSize: "0.65rem", opacity: 0.7 }}>{account.agent_kind}</Badge>
+            </div>
+            {account.config_root && (
+              <span className="settings-account-binary" title="Config folder">{account.config_root}</span>
             )}
-          </div>
+            {account.binary_path && (
+              <span className="settings-account-binary" title="Binary path">{account.binary_path}</span>
+            )}
+          </>
         )}
-        {account.binary_path && (
-          <span className="settings-account-binary">{account.binary_path}</span>
-        )}
-        <span className="settings-account-kind">{account.agent_kind}</span>
       </div>
-      <div className="settings-account-actions">
-        {!editing && (
+      {!editing && (
+        <div className="settings-account-actions">
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setEditing(true)}
-            title="Edit label"
+            title="Edit account"
           >
             Edit
           </Button>
-        )}
-        {!account.is_default && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => void handleSetDefault()}
-            disabled={saving}
-            title="Set as default"
-          >
-            Set default
-          </Button>
-        )}
-      </div>
+          {!account.is_default && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void handleSetDefault()}
+              disabled={saving || deleting}
+              title="Set as default"
+            >
+              Set default
+            </Button>
+          )}
+          {confirmDelete ? (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void handleDelete()}
+                disabled={deleting}
+                style={{ color: "var(--destructive, #e55)" }}
+              >
+                {deleting ? "Removing..." : "Confirm remove"}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setConfirmDelete(false)}
+                disabled={deleting}
+              >
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void handleDelete()}
+              disabled={deleting || saving}
+              title="Remove account"
+            >
+              Remove
+            </Button>
+          )}
+        </div>
+      )}
     </Card>
   );
 }
@@ -371,7 +488,7 @@ function AgentDefaultsSection() {
   const bootstrap = useAppStore((s) => s.bootstrap);
   const loadingKeys = useAppStore((s) => s.loadingKeys);
 
-  const accounts: AccountSummary[] = bootstrap?.accounts ?? [];
+  const accounts: AccountSummary[] = (bootstrap?.accounts ?? []).filter((a) => a.status !== "disabled");
 
   return (
     <Card className="settings-panel">

@@ -1607,7 +1607,7 @@ class AppStore {
     }
   }
 
-  async handleCreateAccount(input: { label: string; agent_kind?: string; binary_path?: string | null; is_default?: boolean }) {
+  async handleCreateAccount(input: { label: string; agent_kind?: string; binary_path?: string | null; config_root?: string | null; is_default?: boolean }) {
     const key = "create-account";
     this.setLoading(key, true);
     try {
@@ -1620,11 +1620,24 @@ class AppStore {
     }
   }
 
-  async handleUpdateAccount(accountId: string, input: { label?: string; binary_path?: string | null; is_default?: boolean; default_model?: string | null; default_safety_mode?: string | null }) {
+  async handleUpdateAccount(accountId: string, input: { label?: string; binary_path?: string | null; config_root?: string | null; is_default?: boolean; status?: string; default_model?: string | null; default_safety_mode?: string | null; default_launch_args?: string[] | null }) {
     const key = `update-account:${accountId}`;
     this.setLoading(key, true);
     try {
       await updateAccount(accountId, input, newCorrelationId("update-account"));
+      await this.refreshAccounts();
+    } catch (err) {
+      this.update({ error: String(err) });
+    } finally {
+      this.setLoading(key, false);
+    }
+  }
+
+  async handleDeleteAccount(accountId: string) {
+    const key = `delete-account:${accountId}`;
+    this.setLoading(key, true);
+    try {
+      await updateAccount(accountId, { status: "disabled" }, newCorrelationId("delete-account"));
       await this.refreshAccounts();
     } catch (err) {
       this.update({ error: String(err) });
