@@ -972,6 +972,9 @@ html[data-theme="vaporwave"] .main-content {
   max-width: none;
   width: 100%;
   padding: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ─��� Modal overlay ── */
@@ -1803,9 +1806,8 @@ html[data-theme="vaporwave"] .topbar {
 .agent-view {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  min-height: 0;
-  max-height: calc(100vh - 80px);
+  height: calc(100vh - 120px);
+  min-height: 300px;
   padding-bottom: var(--space-4);
 }
 
