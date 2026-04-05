@@ -1210,6 +1210,30 @@ impl SupervisorService {
         let now = unix_time_seconds();
         let session_id = format!("ses_{}", Uuid::new_v4().simple());
 
+        // Enforce origin_mode → location rules
+        match request.origin_mode.as_str() {
+            "planning" | "research" => {
+                if request.auto_worktree {
+                    return Err(anyhow!(
+                        "origin_mode '{}' must run on project root — auto_worktree is not allowed",
+                        request.origin_mode
+                    ));
+                }
+                if request.worktree_id.is_some() {
+                    return Err(anyhow!(
+                        "origin_mode '{}' must run on project root — worktree_id is not allowed",
+                        request.origin_mode
+                    ));
+                }
+            }
+            "execution" => {
+                if !request.auto_worktree && request.worktree_id.is_none() && request.work_item_id.is_some() {
+                    request.auto_worktree = true;
+                }
+            }
+            _ => {}
+        }
+
         // Auto-create git worktree when requested
         if request.auto_worktree
             && request.work_item_id.is_some()
