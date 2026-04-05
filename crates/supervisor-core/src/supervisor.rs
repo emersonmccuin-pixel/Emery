@@ -314,6 +314,20 @@ impl Supervisor {
         self.service.create_session(request)
     }
 
+    pub fn create_session_batch(
+        &self,
+        requests: Vec<CreateSessionRequest>,
+    ) -> Result<Vec<SessionDetail>> {
+        self.service.create_session_batch(requests)
+    }
+
+    pub fn check_dispatch_conflicts(
+        &self,
+        work_item_ids: &[String],
+    ) -> Result<Vec<crate::models::ConflictWarning>> {
+        self.service.check_dispatch_conflicts(work_item_ids)
+    }
+
     pub fn forward_input(&self, session_id: &str, input: &[u8]) -> Result<()> {
         self.service.forward_input(session_id, input)
     }

@@ -300,19 +300,7 @@ export default function App() {
       <main className="layer-viewport">
         <LayerRouter />
       </main>
-      {pendingDispatch && projectDetails[pendingDispatch.projectId] && workItemDetails[pendingDispatch.workItemId] ? (
-        <DispatchSheet
-          workItem={workItemDetails[pendingDispatch.workItemId]}
-          project={projectDetails[pendingDispatch.projectId]}
-          account={
-            bootstrap?.accounts.find(
-              (a) => a.id === projectDetails[pendingDispatch.projectId].default_account_id,
-            ) ?? bootstrap?.accounts[0] ?? null
-          }
-          onConfirm={(opts) => void appStore.confirmDispatch(opts)}
-          onCancel={() => appStore.cancelDispatch()}
-        />
-      ) : null}
+      <DispatchSheet />
     </div>
   );
 }

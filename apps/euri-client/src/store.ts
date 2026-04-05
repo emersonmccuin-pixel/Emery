@@ -1,8 +1,10 @@
 import { useSyncExternalStore } from "react";
 import {
+  checkDispatchConflicts,
   createDocument,
   createPlanningAssignment,
   createSession,
+  createSessionBatch,
   createWorkItem,
   deletePlanningAssignment,
   getMergeQueueDiff,
@@ -79,10 +81,12 @@ function playErrorChime() {
 }
 
 import type {
+  ConflictWarning,
   ConnectionStatusEvent,
   DocumentDetail,
   DocumentSummary,
   MergeQueueEntry,
+  PendingDispatch,
   PlanningAssignmentSummary,
   ProjectDetail,
   ProjectSummary,
@@ -253,10 +257,9 @@ export type AppState = {
     work_item_id: string;
     content_markdown: string;
   };
-  pendingDispatch: {
-    workItemId: string;
-    projectId: string;
-  } | null;
+  pendingDispatch: PendingDispatch | null;
+  selectedWorkItemIds: string[];
+  dispatchConflicts: ConflictWarning[];
   focusProjectIds: string[];
   maxFocusSlots: number;
 };
@@ -300,6 +303,8 @@ function initialState(): AppState {
     pendingDispatch: null,
     focusProjectIds: [],
     maxFocusSlots: 3,
+    selectedWorkItemIds: [],
+    dispatchConflicts: [],
   };
 }
 
@@ -866,16 +871,90 @@ class AppStore {
       return;
     }
 
-    this.update({ pendingDispatch: { workItemId, projectId: s.selectedProjectId } });
+    this.update({ pendingDispatch: { mode: "single", workItemId, projectId: s.selectedProjectId } });
   }
 
   cancelDispatch() {
     this.update({ pendingDispatch: null });
   }
 
+  toggleWorkItemSelection(workItemId: string) {
+    const current = this.state.selectedWorkItemIds;
+    const next = current.includes(workItemId)
+      ? current.filter((id) => id !== workItemId)
+      : [...current, workItemId];
+    this.update({ selectedWorkItemIds: next });
+  }
+
+  clearWorkItemSelection() {
+    this.update({ selectedWorkItemIds: [] });
+  }
+
+  async handleMultiDispatch(projectId: string) {
+    const ids = this.state.selectedWorkItemIds;
+    if (ids.length === 0) return;
+
+    const correlationId = newCorrelationId("conflict-check");
+    try {
+      const result = await checkDispatchConflicts(ids, correlationId);
+      this.update({
+        dispatchConflicts: result.warnings,
+        pendingDispatch: { mode: "multi", workItemIds: ids, projectId },
+      });
+    } catch (err) {
+      this.update({ error: String(err) });
+    }
+  }
+
+  async confirmMultiDispatch(
+    dispatches: Array<{ workItemId: string; accountId: string; agentKind: string }>,
+  ) {
+    const pending = this.state.pendingDispatch;
+    if (!pending || pending.mode !== "multi") return;
+
+    const projectDetail = this.state.projectDetails[pending.projectId];
+    if (!projectDetail) return;
+    const root = projectDetail.roots[0];
+    if (!root) return;
+
+    const correlationId = newCorrelationId("batch-dispatch");
+    try {
+      const requests = dispatches.map((d) => ({
+        project_id: pending.projectId,
+        project_root_id: root.id,
+        work_item_id: d.workItemId,
+        account_id: d.accountId,
+        agent_kind: d.agentKind,
+        cwd: root.path,
+        command: d.agentKind,
+        origin_mode: "dispatch" as const,
+        auto_worktree: true,
+      }));
+
+      const sessions = await createSessionBatch(requests, correlationId);
+
+      for (const session of sessions) {
+        this.applySessionDetail(session);
+      }
+
+      this.update({
+        pendingDispatch: null,
+        selectedWorkItemIds: [],
+        dispatchConflicts: [],
+      });
+
+      await watchLiveSessions(
+        sessions.filter((s) => s.live).map((s) => s.id),
+        correlationId,
+      );
+    } catch (err) {
+      this.update({ error: String(err) });
+    }
+  }
+
   async confirmDispatch(opts: { autoWorktree: boolean }) {
     const dispatch = this.state.pendingDispatch;
-    if (!dispatch) return;
+    if (!dispatch || dispatch.mode !== "single") return;
 
     const { workItemId, projectId } = dispatch;
     this.update({ pendingDispatch: null });

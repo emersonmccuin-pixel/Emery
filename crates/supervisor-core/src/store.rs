@@ -1896,7 +1896,8 @@ impl DatabaseSet {
                 s.last_attached_at,
                 s.created_at,
                 s.updated_at,
-                s.archived_at
+                s.archived_at,
+                s.dispatch_group
              FROM sessions s
              LEFT JOIN worktrees w ON s.worktree_id = w.id
              WHERE 1 = 1",
@@ -1983,7 +1984,8 @@ impl DatabaseSet {
                     s.last_attached_at,
                     s.created_at,
                     s.updated_at,
-                    s.archived_at
+                    s.archived_at,
+                    s.dispatch_group
                  FROM sessions s
                  LEFT JOIN worktrees w ON s.worktree_id = w.id
                  WHERE s.id = ?1",
@@ -2084,9 +2086,10 @@ impl DatabaseSet {
                 last_attached_at,
                 created_at,
                 updated_at,
-                archived_at
+                archived_at,
+                dispatch_group
              ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0, 1, ?13, ?14, ?15, NULL, ?16, ?17, ?18, ?19, ?20, NULL, NULL, NULL, ?21, ?22, NULL
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 0, 1, ?13, ?14, ?15, NULL, ?16, ?17, ?18, ?19, ?20, NULL, NULL, NULL, ?21, ?22, NULL, ?23
              )",
             params![
                 record.id,
@@ -2111,6 +2114,7 @@ impl DatabaseSet {
                 record.started_at,
                 record.created_at,
                 record.updated_at,
+                record.dispatch_group,
             ],
         )?;
 
@@ -2754,6 +2758,7 @@ fn map_session_summary(row: &Row<'_>) -> rusqlite::Result<SessionSummary> {
         created_at: row.get(23)?,
         updated_at: row.get(24)?,
         archived_at: row.get(25)?,
+        dispatch_group: row.get(26)?,
         live: false,
     })
 }

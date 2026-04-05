@@ -63,6 +63,8 @@ pub enum Method {
     MergeQueuePark,
     MergeQueueReorder,
     MergeQueueCheckConflicts,
+    SessionCreateBatch,
+    SessionCheckDispatchConflicts,
 }
 
 impl Method {
@@ -128,6 +130,8 @@ impl Method {
             Self::MergeQueuePark => "merge_queue.park",
             Self::MergeQueueReorder => "merge_queue.reorder",
             Self::MergeQueueCheckConflicts => "merge_queue.check_conflicts",
+            Self::SessionCreateBatch => "session.create_batch",
+            Self::SessionCheckDispatchConflicts => "session.check_dispatch_conflicts",
         }
     }
 }
@@ -201,9 +205,16 @@ impl TryFrom<&str> for Method {
             "merge_queue.park" => Ok(Self::MergeQueuePark),
             "merge_queue.reorder" => Ok(Self::MergeQueueReorder),
             "merge_queue.check_conflicts" => Ok(Self::MergeQueueCheckConflicts),
+            "session.create_batch" => Ok(Self::SessionCreateBatch),
+            "session.check_dispatch_conflicts" => Ok(Self::SessionCheckDispatchConflicts),
             _ => Err(()),
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CheckDispatchConflictsParams {
+    pub work_item_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

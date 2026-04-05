@@ -16,6 +16,8 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
   const loadingKeys = useAppStore((s) => s.loadingKeys);
   const planningViewMode = useAppStore((s) => s.planningViewMode);
 
+  const selectedWorkItemIds = useAppStore((s) => s.selectedWorkItemIds);
+
   const project = bootstrap?.projects.find((p) => p.id === projectId) ?? null;
   const projectSessions = useMemo(
     () => sessions.filter((s) => s.project_id === projectId),
@@ -71,7 +73,11 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
         />
         <WorkItemsSection
           workItems={filteredWorkItems}
+          selectedIds={selectedWorkItemIds}
+          onToggleSelect={(id) => appStore.toggleWorkItemSelection(id)}
+          onClearSelection={() => appStore.clearWorkItemSelection()}
           onDispatch={(workItemId) => void appStore.handleLaunchSessionFromWorkItem(workItemId)}
+          onMultiDispatch={() => void appStore.handleMultiDispatch(projectId)}
         />
       </div>
     </div>

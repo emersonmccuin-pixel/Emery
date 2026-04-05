@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ConflictWarning,
   ConnectionStatusEvent,
   DiagnosticsBundleResult,
   DocumentDetail,
@@ -289,6 +290,20 @@ export async function createSession(
   correlationId?: string,
 ): Promise<SessionDetail> {
   return invoke("create_session", { input, correlationId });
+}
+
+export async function createSessionBatch(
+  input: Array<Parameters<typeof createSession>[0]>,
+  correlationId?: string,
+): Promise<SessionDetail[]> {
+  return invoke("create_session_batch", { input, correlationId });
+}
+
+export async function checkDispatchConflicts(
+  workItemIds: string[],
+  correlationId?: string,
+): Promise<{ warnings: ConflictWarning[] }> {
+  return invoke("check_dispatch_conflicts", { workItemIds, correlationId });
 }
 
 export async function exportDiagnosticsBundle(
