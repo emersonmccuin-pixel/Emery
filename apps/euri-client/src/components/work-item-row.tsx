@@ -39,6 +39,9 @@ export function WorkItemRow({
       />
       <span className="work-item-callsign">{workItem.callsign}</span>
       <span className="work-item-title">{workItem.title}</span>
+      {workItem.child_count > 0 ? (
+        <span className="work-item-child-count">{workItem.child_count} {workItem.child_count === 1 ? "child" : "children"}</span>
+      ) : null}
       <span className="work-item-meta">
         {workItem.status}
         {workItem.priority ? ` · ${workItem.priority}` : ""}

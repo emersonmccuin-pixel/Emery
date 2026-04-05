@@ -983,6 +983,43 @@ class AppStore {
     }
   }
 
+  async handleCreateChildWorkItem(
+    projectId: string,
+    parentId: string,
+    input: {
+      title: string;
+      description: string;
+      acceptance_criteria?: string | null;
+      work_item_type: string;
+      status: string;
+      priority?: string | null;
+    },
+  ): Promise<void> {
+    const correlationId = newCorrelationId("work-item-create-child");
+    this.setLoading(`create-child-work-item:${parentId}`, true);
+    try {
+      const detail = await createWorkItem(
+        {
+          project_id: projectId,
+          parent_id: parentId,
+          title: input.title,
+          description: input.description,
+          acceptance_criteria: input.acceptance_criteria || null,
+          work_item_type: input.work_item_type,
+          status: input.status,
+          priority: input.priority || null,
+        },
+        correlationId,
+      );
+      this.applyWorkItemDetail(detail);
+      this.clearError();
+    } catch (invokeError) {
+      this.update({ error: String(invokeError) });
+    } finally {
+      this.setLoading(`create-child-work-item:${parentId}`, false);
+    }
+  }
+
   async handleUpdateWorkItem(
     workItemId: string,
     input: {

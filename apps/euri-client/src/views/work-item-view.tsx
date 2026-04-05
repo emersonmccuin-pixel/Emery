@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { appStore, useAppStore, currentDayCadenceKey, currentWeekCadenceKey } from "../store";
 import { navStore } from "../nav-store";
 import { StatusBadge } from "../components/status-badge";
@@ -68,11 +68,26 @@ export function WorkItemView({
   const dayCadenceKey = useMemo(() => currentDayCadenceKey(), []);
   const weekCadenceKey = useMemo(() => currentWeekCadenceKey(), []);
 
+  const [showAddChildForm, setShowAddChildForm] = useState(false);
+  const creatingChild = loadingKeys[`create-child-work-item:${workItemId}`] ?? false;
+
   if (!workItem && loading) {
     return <div className="empty-pane">Loading work item...</div>;
   }
   if (!workItem) {
     return <div className="empty-pane">Work item not found.</div>;
+  }
+
+  async function handleAddChildSubmit(data: WorkItemFormData) {
+    await appStore.handleCreateChildWorkItem(projectId, workItemId, {
+      title: data.title,
+      description: data.description,
+      acceptance_criteria: data.acceptance_criteria || null,
+      work_item_type: data.work_item_type,
+      status: data.status,
+      priority: data.priority || null,
+    });
+    setShowAddChildForm(false);
   }
 
   async function handleEditSubmit(data: WorkItemFormData) {
@@ -209,9 +224,30 @@ export function WorkItemView({
       </section>
 
       {/* Child Items */}
-      {childItems.length > 0 ? (
-        <section className="wi-detail-section">
+      <section className="wi-detail-section">
+        <div className="wi-detail-section-header">
           <h3>Children ({childItems.length})</h3>
+          <button
+            className="wi-detail-add-child-btn"
+            title="Add child work item"
+            onClick={() => setShowAddChildForm((v) => !v)}
+          >
+            {showAddChildForm ? "✕" : "+ Add Child"}
+          </button>
+        </div>
+        {showAddChildForm ? (
+          <WorkItemForm
+            mode="create"
+            initialData={{ parent_id: workItemId }}
+            loading={creatingChild}
+            onSubmit={(data) => void handleAddChildSubmit(data)}
+            onCancel={() => setShowAddChildForm(false)}
+          />
+        ) : null}
+        {childItems.length === 0 && !showAddChildForm ? (
+          <p className="section-empty">No child items.</p>
+        ) : null}
+        {childItems.length > 0 ? (
           <div className="wi-detail-list">
             {childItems.map((child) => (
               <div
@@ -221,12 +257,17 @@ export function WorkItemView({
               >
                 <span className="wi-child-callsign">{child.callsign}</span>
                 <span className="wi-child-title">{child.title}</span>
+                {child.priority ? (
+                  <span className={`wi-child-priority priority-${child.priority}`}>
+                    {child.priority}
+                  </span>
+                ) : null}
                 <StatusBadge status={child.status} />
               </div>
             ))}
           </div>
-        </section>
-      ) : null}
+        ) : null}
+      </section>
 
       {/* Actions */}
       <div className="wi-detail-actions">
