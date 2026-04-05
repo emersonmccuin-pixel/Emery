@@ -160,7 +160,9 @@ export function InboxView({ projectId }: { projectId: string }) {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
   const isLoading = loadingKeys[`inbox:${projectId}`] ?? false;
+  const markingAllRead = loadingKeys[`inbox-mark-all-read:${projectId}`] ?? false;
   const allEntries = inboxEntriesByProject[projectId] ?? [];
+  const unreadCount = allEntries.filter((e) => e.read_at === null).length;
 
   useEffect(() => {
     void appStore.handleLoadInboxEntries(projectId);
@@ -182,6 +184,16 @@ export function InboxView({ projectId }: { projectId: string }) {
       <div className="inbox-header">
         <h2 className="inbox-title">Inbox</h2>
         <span className="inbox-count">{allEntries.length} entries</span>
+        {unreadCount > 0 ? (
+          <button
+            className="btn-ghost btn-sm"
+            onClick={() => void appStore.handleMarkAllInboxRead(projectId)}
+            disabled={markingAllRead}
+            title="Mark all as read"
+          >
+            {markingAllRead ? "Marking…" : `Mark all read (${unreadCount})`}
+          </button>
+        ) : null}
       </div>
       <div className="inbox-filters">
         {(["all", "success", "needs_review"] as StatusFilter[]).map((f) => (

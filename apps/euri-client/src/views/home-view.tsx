@@ -6,7 +6,7 @@ import type { GitHealthStatus, ProjectSummary, SessionSummary, MergeQueueEntry }
 import { StatusLEDs } from "../components/status-leds";
 
 export function HomeView() {
-  const projects = useAppStore((s) => s.bootstrap?.projects ?? []);
+  const allProjects = useAppStore((s) => s.bootstrap?.projects ?? []);
   const accounts = useAppStore((s) => s.bootstrap?.accounts ?? []);
   const sessions = useAppStore((s) => s.sessions);
   const mergeQueueByProject = useAppStore((s) => s.mergeQueueByProject);
@@ -16,6 +16,12 @@ export function HomeView() {
   const gitStatusByRootId = useAppStore((s) => s.gitStatusByRootId);
   const bootstrapping = useAppStore((s) => s.bootstrapping);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+
+  const projects = showArchived
+    ? allProjects.filter((p) => p.archived_at !== null)
+    : allProjects.filter((p) => p.archived_at === null);
+  const archivedCount = allProjects.filter((p) => p.archived_at !== null).length;
 
   // Load git status for all visible focus projects on mount
   useEffect(() => {
@@ -66,12 +72,24 @@ export function HomeView() {
         <span className="home-stat">
           {sessions.filter((s) => s.live).length} agents running
         </span>
-        <button
-          className="home-new-project-btn"
-          onClick={() => setShowCreateForm(true)}
-        >
-          + New Project
-        </button>
+        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          {archivedCount > 0 || showArchived ? (
+            <button
+              className="btn-ghost btn-sm"
+              onClick={() => setShowArchived((v) => !v)}
+            >
+              {showArchived ? "← Active projects" : `Show archived (${archivedCount})`}
+            </button>
+          ) : null}
+          {!showArchived ? (
+            <button
+              className="home-new-project-btn"
+              onClick={() => setShowCreateForm(true)}
+            >
+              + New Project
+            </button>
+          ) : null}
+        </div>
       </div>
 
       {showCreateForm ? (
@@ -109,7 +127,9 @@ export function HomeView() {
           Loading workspace...
         </div>
       ) : projects.length === 0 && !showCreateForm ? (
-        <div className="empty-pane">No projects yet. Create one to get started.</div>
+        <div className="empty-pane">
+          {showArchived ? "No archived projects." : "No projects yet. Create one to get started."}
+        </div>
       ) : null}
     </div>
   );

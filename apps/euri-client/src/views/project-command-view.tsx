@@ -44,6 +44,7 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
     () => sessions.filter((s) => s.project_id === projectId),
     [sessions, projectId],
   );
+  const isLoadingProject = loadingKeys[`project:${projectId}`] ?? false;
   const workItems = workItemsByProject[projectId] ?? [];
   const documents = documentsByProject[projectId] ?? [];
   const assignments = planningAssignmentsByProject[projectId] ?? [];
@@ -106,6 +107,13 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
         />
       </div>
       <div className="planning-zone">
+        {isLoadingProject && workItems.length === 0 ? (
+          <div className="project-skeleton-placeholder" style={{ padding: "16px 0" }}>
+            <span className="skeleton-line" style={{ width: "60%" }} />
+            <span className="skeleton-line" style={{ width: "80%" }} />
+            <span className="skeleton-line" style={{ width: "45%" }} />
+          </div>
+        ) : null}
         <PlanningSection
           viewMode={planningViewMode}
           onSetViewMode={(mode) => appStore.setPlanningViewMode(mode)}

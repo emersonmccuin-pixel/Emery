@@ -1150,6 +1150,7 @@ button {
 .agent-info-activity { font-size: var(--text-xs); color: var(--text-tertiary); }
 .agent-info-input-reason { font-size: var(--text-xs); color: var(--accent); }
 .agent-info-ended { font-size: var(--text-sm); color: var(--text-ghost); }
+.agent-info-ended-duration { font-size: var(--text-xs); color: var(--text-ghost); opacity: 0.7; }
 
 /* ── Agent Terminal Area ── */
 
@@ -3454,6 +3455,26 @@ button {
   background: var(--accent-muted);
 }
 
+.wi-action-btn--block {
+  background: transparent;
+  color: var(--status-warning, #ffc832);
+  border: 1px solid var(--status-warning, #ffc832);
+}
+
+.wi-action-btn--block:hover:not(:disabled) {
+  background: var(--status-warning-bg, rgba(255, 159, 67, 0.12));
+}
+
+.wi-action-btn--unblock {
+  background: transparent;
+  color: var(--status-live, #3df5d0);
+  border: 1px solid var(--status-live, #3df5d0);
+}
+
+.wi-action-btn--unblock:hover:not(:disabled) {
+  background: var(--status-live-bg, rgba(61, 245, 208, 0.12));
+}
+
 /* ── Live session cards ── */
 
 .wi-session-cards {
@@ -5135,4 +5156,71 @@ button {
 .dispatch-discard-confirm {
   color: var(--color-warning, #ffbe00) !important;
   border-color: var(--color-warning, #ffbe00) !important;
+}
+
+/* ── Skeleton loading lines (P2-5) ── */
+@keyframes skeleton-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.skeleton-line {
+  height: 8px;
+  border-radius: var(--radius-sm, 4px);
+  background: linear-gradient(
+    90deg,
+    var(--surface-hover, rgba(220, 180, 255, 0.06)) 25%,
+    var(--surface-active, rgba(220, 180, 255, 0.11)) 50%,
+    var(--surface-hover, rgba(220, 180, 255, 0.06)) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.6s ease-in-out infinite;
+  display: block;
+}
+
+.skeleton-line + .skeleton-line {
+  margin-top: 10px;
+}
+
+/* ── Button hierarchy (P2-6) ── */
+.primary-button {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--accent-muted);
+  color: var(--accent);
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  border: 1px solid var(--accent-muted);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.primary-button:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--surface-base, #0e0b14);
+}
+
+.primary-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.danger-button {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
+  background: rgba(229, 115, 115, 0.1);
+  color: #e57373;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  border: 1px solid rgba(229, 115, 115, 0.2);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.danger-button:hover:not(:disabled) {
+  background: #e57373;
+  color: #fff;
+}
+
+.danger-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }

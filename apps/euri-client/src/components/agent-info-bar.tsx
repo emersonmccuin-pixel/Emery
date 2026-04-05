@@ -65,6 +65,24 @@ type AgentInfoBarProps = {
   workItemId: string | null;
 };
 
+function formatEndedAgo(endedAt: number): string {
+  const diffMs = Date.now() - endedAt;
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return "Ended just now";
+  if (diffMin === 1) return "Ended 1 min ago";
+  return `Ended ${diffMin} min ago`;
+}
+
+function formatCompletedDuration(startedAt: number | null, endedAt: number): string {
+  if (!startedAt) return "";
+  const ms = endedAt - startedAt;
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes === 0) return `${seconds}s`;
+  return `${minutes}m ${seconds}s`;
+}
+
 export function AgentInfoBar({
   callsign,
   title,
@@ -75,7 +93,7 @@ export function AgentInfoBar({
   activityState,
   needsInputReason,
   live,
-  endedAt: _endedAt,
+  endedAt,
   projectId,
   workItemId,
 }: AgentInfoBarProps) {
@@ -107,6 +125,13 @@ export function AgentInfoBar({
 
       {live ? (
         <DurationDisplay startedAt={startedAt} />
+      ) : endedAt ? (
+        <span className="agent-info-ended" title={`Duration: ${formatCompletedDuration(startedAt, endedAt)}`}>
+          {formatEndedAgo(endedAt)}
+          {startedAt ? (
+            <span className="agent-info-ended-duration"> · {formatCompletedDuration(startedAt, endedAt)}</span>
+          ) : null}
+        </span>
       ) : (
         <span className="agent-info-ended">Ended</span>
       )}

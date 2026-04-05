@@ -42,17 +42,23 @@ export function PlanningSection({
     return `${displayedWeekKey.split("-")[1]} · ${fmt(dates[0])}–${fmt(dates[6])}`;
   }, [displayedWeekKey]);
 
-  const filteredCount = useMemo(() => {
-    if (viewMode === "all") return workItems.length;
-    const cadenceType = viewMode === "day" ? "day" : "week";
-    const cadenceKey = viewMode === "day" ? dayCadenceKey : displayedWeekKey;
+  const dayCount = useMemo(() => {
     const assignedIds = new Set(
       assignments
-        .filter((a) => a.removed_at === null && a.cadence_type === cadenceType && a.cadence_key === cadenceKey)
+        .filter((a) => a.removed_at === null && a.cadence_type === "day" && a.cadence_key === dayCadenceKey)
         .map((a) => a.work_item_id),
     );
     return workItems.filter((w) => assignedIds.has(w.id)).length;
-  }, [viewMode, workItems, assignments, dayCadenceKey, displayedWeekKey]);
+  }, [workItems, assignments, dayCadenceKey]);
+
+  const weekCount = useMemo(() => {
+    const assignedIds = new Set(
+      assignments
+        .filter((a) => a.removed_at === null && a.cadence_type === "week" && a.cadence_key === displayedWeekKey)
+        .map((a) => a.work_item_id),
+    );
+    return workItems.filter((w) => assignedIds.has(w.id)).length;
+  }, [workItems, assignments, displayedWeekKey]);
 
   return (
     <div className="planning-section">
@@ -62,10 +68,10 @@ export function PlanningSection({
             All
           </button>
           <button className={viewMode === "day" ? "active" : ""} onClick={() => onSetViewMode("day")}>
-            Today ({viewMode === "day" ? filteredCount : "…"})
+            Today ({dayCount})
           </button>
           <button className={viewMode === "week" ? "active" : ""} onClick={() => onSetViewMode("week")}>
-            Week ({viewMode === "week" ? filteredCount : "…"})
+            Week ({weekCount})
           </button>
         </div>
         {viewMode === "week" && (
