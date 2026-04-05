@@ -983,7 +983,7 @@ class AppStore {
   }
 
   async confirmMultiDispatch(
-    dispatches: Array<{ workItemId: string; accountId: string; agentKind: string; safetyMode?: string }>,
+    dispatches: Array<{ workItemId: string; accountId: string; agentKind: string; safetyMode?: string; model?: string }>,
   ) {
     const pending = this.state.pendingDispatch;
     if (!pending || pending.mode !== "multi") return;
@@ -1006,6 +1006,7 @@ class AppStore {
         origin_mode: "dispatch" as const,
         auto_worktree: true,
         safety_mode: d.safetyMode,
+        model: d.model,
       }));
 
       const sessions = await createSessionBatch(requests, correlationId);
@@ -1029,7 +1030,7 @@ class AppStore {
     }
   }
 
-  async confirmDispatch(opts: { autoWorktree: boolean; originMode: string; safetyMode?: string }) {
+  async confirmDispatch(opts: { autoWorktree: boolean; originMode: string; safetyMode?: string; model?: string }) {
     const dispatch = this.state.pendingDispatch;
     if (!dispatch || dispatch.mode !== "single") return;
 
@@ -1080,6 +1081,7 @@ class AppStore {
           initial_terminal_rows: 40,
           auto_worktree: opts.autoWorktree,
           safety_mode: opts.safetyMode,
+          model: opts.model,
         },
         correlationId,
       );

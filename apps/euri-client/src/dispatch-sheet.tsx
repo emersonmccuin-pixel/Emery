@@ -71,14 +71,16 @@ function SingleDispatchSheet({
   project: ProjectDetail;
   account: AccountSummary | null;
   originMode: string;
-  onConfirm: (opts: { autoWorktree: boolean; originMode: string; safetyMode?: string }) => void;
+  onConfirm: (opts: { autoWorktree: boolean; originMode: string; safetyMode?: string; model?: string }) => void;
   onCancel: () => void;
 }) {
   const [safetyMode, setSafetyMode] = useState<string>("");
+  const [model, setModel] = useState<string>("");
   const branchName = `euri/${workItem.callsign.toLowerCase()}`;
   const root = project.roots[0] ?? null;
   const isExecution = originMode === "execution";
   const resolvedDefault = account?.default_safety_mode ?? "cautious";
+  const resolvedDefaultModel = isExecution ? "sonnet" : "opus";
 
   return (
     <div className="dispatch-overlay" onClick={onCancel}>
@@ -122,10 +124,18 @@ function SingleDispatchSheet({
               <option value="cautious">Cautious (confirm each action)</option>
             </select>
           </div>
+          <div className="dispatch-row">
+            <span className="dispatch-label">Model</span>
+            <select value={model} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setModel(e.target.value)}>
+              <option value="">Default ({resolvedDefaultModel})</option>
+              <option value="opus">Opus (best reasoning)</option>
+              <option value="sonnet">Sonnet (fast/cheap)</option>
+            </select>
+          </div>
         </div>
         <div className="dispatch-actions">
           <button className="secondary-button" onClick={onCancel}>Cancel</button>
-          <button className="secondary-button" onClick={() => onConfirm({ autoWorktree: isExecution, originMode, safetyMode: safetyMode || undefined })}>
+          <button className="secondary-button" onClick={() => onConfirm({ autoWorktree: isExecution, originMode, safetyMode: safetyMode || undefined, model: model || undefined })}>
             {isExecution ? "Launch on Branch" : "Launch on Main"}
           </button>
         </div>
@@ -149,7 +159,7 @@ function MultiDispatchSheet({
   accounts: AccountSummary[];
   defaultAccount: AccountSummary | null;
   conflicts: ConflictWarning[];
-  onConfirm: (dispatches: Array<{ workItemId: string; accountId: string; agentKind: string; safetyMode?: string }>) => void;
+  onConfirm: (dispatches: Array<{ workItemId: string; accountId: string; agentKind: string; safetyMode?: string; model?: string }>) => void;
   onCancel: () => void;
 }) {
   const [itemAccounts, setItemAccounts] = useState<Record<string, string>>(() => {
@@ -160,6 +170,7 @@ function MultiDispatchSheet({
     return initial;
   });
   const [safetyMode, setSafetyMode] = useState<string>("");
+  const [model, setModel] = useState<string>("");
   const resolvedDefault = defaultAccount?.default_safety_mode ?? "cautious";
 
   function handleConfirm() {
@@ -171,6 +182,7 @@ function MultiDispatchSheet({
         accountId,
         agentKind: account?.agent_kind ?? "claude-code",
         safetyMode: safetyMode || undefined,
+        model: model || undefined,
       };
     });
     onConfirm(dispatches);
@@ -227,6 +239,14 @@ function MultiDispatchSheet({
               <option value="">Default ({resolvedDefault})</option>
               <option value="yolo">YOLO (skip permissions)</option>
               <option value="cautious">Cautious (confirm each action)</option>
+            </select>
+          </div>
+          <div className="dispatch-row">
+            <span className="dispatch-label">Model</span>
+            <select value={model} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setModel(e.target.value)}>
+              <option value="">Default (execution → sonnet)</option>
+              <option value="opus">Opus (best reasoning)</option>
+              <option value="sonnet">Sonnet (fast/cheap)</option>
             </select>
           </div>
         </div>
