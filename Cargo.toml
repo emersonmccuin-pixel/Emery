@@ -4,6 +4,7 @@ members = [
     "apps/euri-client/src-tauri",
     "crates/supervisor-core",
     "crates/supervisor-ipc",
+    "crates/euri-mcp",
 ]
 resolver = "2"
 

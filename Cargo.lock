@@ -747,6 +747,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "euri-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "interprocess",
+ "serde",
+ "serde_json",
+ "supervisor-core",
+]
+
+[[package]]
 name = "euri-supervisor"
 version = "0.1.0"
 dependencies = [
