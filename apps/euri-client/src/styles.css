@@ -5705,3 +5705,18 @@ html[data-theme="cyberpunk"] .all-projects-row:hover {
   letter-spacing: 0.04em;
   margin-bottom: var(--space-1);
 }
+
+/* ── Responsive: sidebar collapses to icon rail below 800px ── */
+@media (max-width: 800px) {
+  .sidebar:not(.collapsed) {
+    width: var(--sidebar-collapsed-width, 48px);
+  }
+}
+
+/* ── Responsive: right panel auto-collapses below 1100px ── */
+@media (max-width: 1100px) {
+  .right-panel:not(.collapsed) {
+    width: 0;
+    overflow: hidden;
+  }
+}

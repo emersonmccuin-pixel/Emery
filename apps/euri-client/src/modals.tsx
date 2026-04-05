@@ -1,8 +1,5 @@
 import React, { useState, type KeyboardEvent } from "react";
 import type {
-  AccountSummary,
-  ConflictWarning,
-  ProjectDetail,
   WorkItemSummary,
 } from "./types";
 import { useAppStore, appStore } from "./store";
