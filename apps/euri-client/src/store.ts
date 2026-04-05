@@ -1058,6 +1058,29 @@ class AppStore {
     }
   }
 
+  async handleCreateDocumentWithParams(params: {
+    project_id: string;
+    title: string;
+    doc_type: string;
+    status: string;
+    content_markdown: string;
+    work_item_id?: string | null;
+  }): Promise<DocumentDetail | null> {
+    const correlationId = newCorrelationId("document-create");
+    this.setLoading("create-document", true);
+    try {
+      const detail = await createDocument(params, correlationId);
+      this.applyDocumentDetail(detail);
+      this.clearError();
+      return detail;
+    } catch (invokeError) {
+      this.update({ error: String(invokeError) });
+      return null;
+    } finally {
+      this.setLoading("create-document", false);
+    }
+  }
+
   async handleUpdateDocument(
     documentId: string,
     input: {

@@ -16,5 +16,7 @@ export function LayerRouter() {
       return <AgentView projectId={layer.projectId} sessionId={layer.sessionId} />;
     case "document":
       return <DocumentView documentId={layer.documentId} projectId={layer.projectId} />;
+    case "new-document":
+      return <DocumentView documentId="new" projectId={layer.projectId} workItemId={layer.workItemId} />;
   }
 }

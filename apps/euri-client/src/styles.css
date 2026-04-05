@@ -2477,3 +2477,164 @@ button {
   flex-shrink: 0;
   padding-top: 2px;
 }
+
+/* ── Section new button ── */
+
+.section-new-btn {
+  margin-left: auto;
+  padding: 0 6px;
+  height: 18px;
+  border-radius: 3px;
+  font-size: 0.9rem;
+  line-height: 1;
+  background: transparent;
+  color: rgba(242, 237, 225, 0.4);
+  border: 1px solid rgba(242, 237, 225, 0.12);
+  transition: color 0.1s, border-color 0.1s, background 0.1s;
+}
+
+.section-new-btn:hover {
+  color: rgba(210, 129, 55, 0.9);
+  border-color: rgba(210, 129, 55, 0.3);
+  background: rgba(210, 129, 55, 0.08);
+}
+
+/* ── Document metadata panel ── */
+
+.doc-meta-toggle {
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 1rem;
+  line-height: 1;
+  background: transparent;
+  color: rgba(242, 237, 225, 0.35);
+  border: 1px solid transparent;
+  transition: color 0.1s, background 0.1s, border-color 0.1s;
+  flex-shrink: 0;
+}
+
+.doc-meta-toggle:hover,
+.doc-meta-toggle--active {
+  color: rgba(242, 237, 225, 0.8);
+  background: rgba(242, 237, 225, 0.07);
+  border-color: rgba(242, 237, 225, 0.1);
+}
+
+.doc-meta-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.doc-meta-panel--overlay {
+  padding: 12px 14px;
+  border-radius: 6px;
+  border: 1px solid rgba(242, 237, 225, 0.1);
+  background: rgba(20, 17, 15, 0.7);
+}
+
+.doc-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.doc-meta-label {
+  font-size: 0.72rem;
+  color: rgba(242, 237, 225, 0.45);
+  width: 64px;
+  flex-shrink: 0;
+  text-align: right;
+}
+
+.doc-meta-input {
+  padding: 3px 7px;
+  border-radius: 4px;
+  border: 1px solid rgba(242, 237, 225, 0.1);
+  background: rgba(10, 8, 6, 0.5);
+  color: rgba(242, 237, 225, 0.88);
+  font-size: 0.82rem;
+  outline: none;
+  width: 140px;
+}
+
+.doc-meta-input--wide {
+  width: 260px;
+}
+
+.doc-meta-input:focus {
+  border-color: rgba(242, 237, 225, 0.2);
+}
+
+.doc-meta-select {
+  padding: 3px 7px;
+  border-radius: 4px;
+  border: 1px solid rgba(242, 237, 225, 0.1);
+  background: rgba(10, 8, 6, 0.5);
+  color: rgba(242, 237, 225, 0.88);
+  font-size: 0.82rem;
+  outline: none;
+  width: 260px;
+}
+
+.doc-meta-select:focus {
+  border-color: rgba(242, 237, 225, 0.2);
+}
+
+.doc-meta-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+/* ── Document create form ── */
+
+.document-create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1;
+  min-height: 0;
+}
+
+.document-create-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: rgba(242, 237, 225, 0.9);
+}
+
+.document-editor--create {
+  min-height: 160px;
+  flex: 1;
+}
+
+.doc-create-error {
+  margin: 0;
+  font-size: 0.78rem;
+  color: rgba(220, 80, 60, 0.85);
+}
+
+.document-create-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.doc-cancel-btn {
+  padding: 4px 14px;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  background: transparent;
+  color: rgba(242, 237, 225, 0.45);
+  border: 1px solid rgba(242, 237, 225, 0.1);
+  transition: color 0.1s, background 0.1s;
+}
+
+.doc-cancel-btn:hover {
+  color: rgba(242, 237, 225, 0.7);
+  background: rgba(242, 237, 225, 0.05);
+}

@@ -96,6 +96,7 @@ export function ProjectCommandView({ projectId }: { projectId: string }) {
           documents={documents}
           workItems={workItems}
           onOpen={(docId) => navStore.goToDocument(projectId, docId)}
+          onNew={() => navStore.goToNewDocument(projectId)}
         />
       </div>
     </div>
