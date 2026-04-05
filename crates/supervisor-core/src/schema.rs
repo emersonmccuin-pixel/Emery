@@ -52,6 +52,10 @@ const APP_MIGRATIONS: &[(&str, &str)] = &[
         "0012_model_defaults",
         include_str!("migrations/app/0012_model_defaults.sql"),
     ),
+    (
+        "0013_vault",
+        include_str!("migrations/app/0013_vault.sql"),
+    ),
 ];
 const KNOWLEDGE_MIGRATIONS: &[(&str, &str)] = &[(
     "0001_initial",

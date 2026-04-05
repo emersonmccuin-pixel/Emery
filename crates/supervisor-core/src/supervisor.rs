@@ -25,10 +25,12 @@ use crate::models::{
     WorkItemSummary, WorkflowReconciliationProposalDetail,
     WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
     WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary, GitHealthStatus,
+    CreateVaultEntryRequest, VaultAuditEntry, VaultEntry, VaultLockState,
 };
 use crate::runtime::SessionRegistry;
 use crate::service::SupervisorService;
 use crate::store::{BootstrapState, DatabaseSet, HealthSnapshot};
+use crate::vault::VaultService;
 
 #[derive(Debug, Clone)]
 pub struct Supervisor {
@@ -38,6 +40,7 @@ pub struct Supervisor {
     diagnostics: DiagnosticsHub,
     paths: AppPaths,
     started_at_unix_ms: u64,
+    vault: VaultService,
 }
 
 impl Supervisor {
@@ -48,6 +51,7 @@ impl Supervisor {
         let registry = SessionRegistry::new(diagnostics.clone());
         let service =
             SupervisorService::new(databases.clone(), registry.clone(), diagnostics.clone());
+        let vault = VaultService::new(databases.clone());
         let supervisor = Self {
             databases,
             registry,
@@ -55,6 +59,7 @@ impl Supervisor {
             diagnostics,
             paths,
             started_at_unix_ms: unix_time_ms(),
+            vault,
         };
         supervisor.record_diagnostic_event(
             "supervisor",
@@ -509,6 +514,71 @@ impl Supervisor {
         request: ArchiveAgentTemplateRequest,
     ) -> Result<AgentTemplateDetail> {
         self.service.archive_agent_template(request)
+    }
+
+    // --- Vault ---
+
+    /// Unlock the vault for credential access.
+    /// `duration_minutes`: how long before auto-lock (default 60).
+    pub fn vault_unlock(&self, duration_minutes: Option<i64>) {
+        self.vault.unlock(duration_minutes);
+    }
+
+    /// Lock the vault immediately.
+    pub fn vault_lock(&self) {
+        self.vault.lock();
+    }
+
+    /// Return the current lock state.
+    pub fn vault_lock_state(&self) -> VaultLockState {
+        self.vault.lock_state()
+    }
+
+    /// Create or update a vault entry.  Encrypts the value before storage.
+    pub fn vault_set_entry(
+        &self,
+        request: CreateVaultEntryRequest,
+        actor: &str,
+    ) -> Result<VaultEntry> {
+        self.vault.set_entry(request, actor)
+    }
+
+    /// Retrieve and decrypt a vault entry value.  Requires vault to be unlocked.
+    pub fn vault_get_entry_value(
+        &self,
+        scope: &str,
+        key: &str,
+        actor: &str,
+    ) -> Result<Option<String>> {
+        self.vault.get_entry_value(scope, key, actor)
+    }
+
+    /// Delete a vault entry by ID.
+    pub fn vault_delete_entry(&self, id: &str, actor: &str) -> Result<()> {
+        self.vault.delete_entry(id, actor)
+    }
+
+    /// List vault entries (metadata only, no plaintext values).
+    pub fn vault_list_entries(&self, scope: Option<&str>) -> Result<Vec<VaultEntry>> {
+        self.vault.list_entries(scope)
+    }
+
+    /// Resolve environment variables for a session launch.
+    /// Merges global and project-scoped entries; project overrides global.
+    pub fn vault_resolve_env_for_session(
+        &self,
+        project_id: &str,
+    ) -> Result<std::collections::HashMap<String, String>> {
+        self.vault.resolve_env_for_session(project_id)
+    }
+
+    /// List vault audit log entries.
+    pub fn vault_list_audit(
+        &self,
+        entry_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<VaultAuditEntry>> {
+        self.vault.list_audit(entry_id, limit)
     }
 }
 
