@@ -43,7 +43,7 @@ button {
 /* ── App shell ── */
 
 .app-shell {
-  min-height: 100vh;
+  height: 100vh;
   padding: 8px;
   display: flex;
   flex-direction: column;

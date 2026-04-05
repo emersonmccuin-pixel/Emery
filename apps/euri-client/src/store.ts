@@ -1155,7 +1155,15 @@ class AppStore {
         mergeQueueByProject: { ...this.state.mergeQueueByProject, [projectId]: entries },
       });
     } catch (invokeError) {
-      this.update({ error: String(invokeError) });
+      // Gracefully degrade if merge queue isn't supported yet (stale supervisor)
+      const msg = String(invokeError);
+      if (msg.includes("unsupported_operation") || msg.includes("Unsupported method")) {
+        this.update({
+          mergeQueueByProject: { ...this.state.mergeQueueByProject, [projectId]: [] },
+        });
+      } else {
+        this.update({ error: msg });
+      }
     } finally {
       this.setLoading("merge-queue", false);
     }

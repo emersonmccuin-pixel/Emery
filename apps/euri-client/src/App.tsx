@@ -46,9 +46,6 @@ function buildWorkspacePayloadV2(navigation: NavigationLayer): WorkspacePayloadV
 export default function App() {
   const bootstrap = useAppStore((s) => s.bootstrap);
   const error = useAppStore((s) => s.error);
-  const pendingDispatch = useAppStore((s) => s.pendingDispatch);
-  const projectDetails = useAppStore((s) => s.projectDetails);
-  const workItemDetails = useAppStore((s) => s.workItemDetails);
   const focusProjectIds = useAppStore((s) => s.focusProjectIds);
   const navLayer = useNavLayer();
 
@@ -209,15 +206,21 @@ export default function App() {
   }, []);
 
   // --- Sync selectedProjectId from nav layer, load project data ---
+  const navProjectId = navLayer.layer === "project" || navLayer.layer === "agent"
+    ? navLayer.projectId
+    : null;
+
   useEffect(() => {
-    if (navLayer.layer === "project" || navLayer.layer === "agent") {
-      appStore.setSelectedProjectId(navLayer.projectId);
-      void appStore.loadProjectReads(navLayer.projectId);
-      void appStore.handleLoadMergeQueue(navLayer.projectId);
+    if (navProjectId) {
+      appStore.setSelectedProjectId(navProjectId);
+      void appStore.loadProjectReads(navProjectId);
+      void appStore.handleLoadMergeQueue(navProjectId);
     }
-  }, [navLayer]);
+  }, [navProjectId]);
 
   // --- Workspace persistence ---
+  const navSessionId = navLayer.layer === "agent" ? navLayer.sessionId : null;
+
   useEffect(() => {
     if (!bootstrap || !restoreApplied.current) return;
     if (persistTimeout.current) {
@@ -230,7 +233,7 @@ export default function App() {
         newCorrelationId("workspace-save"),
       ).catch((invokeError: unknown) => appStore.setError(String(invokeError)));
     }, 250);
-  }, [bootstrap, navLayer, focusProjectIds]);
+  }, [bootstrap, navLayer.layer, navProjectId, navSessionId, focusProjectIds]);
 
   // --- Keyboard shortcuts ---
   const lastEscapeRef = useRef<number>(0);
