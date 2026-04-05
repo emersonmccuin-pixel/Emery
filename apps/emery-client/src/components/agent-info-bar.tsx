@@ -108,7 +108,6 @@ export function AgentInfoBar({
           workItemId && projectId ? (
             <button
               className="agent-info-callsign-link"
-              style={{ cursor: "pointer", textDecoration: "underline dotted", textUnderlineOffset: "3px", background: "none", border: "none", padding: 0, font: "inherit", color: "inherit" }}
               onClick={() => navStore.goToWorkItem(projectId, workItemId)}
               title="View work item"
             >

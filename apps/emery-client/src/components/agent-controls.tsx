@@ -68,7 +68,7 @@ export function AgentControls({
 
       <div className="agent-controls-spacer" />
 
-      <span style={{ fontSize: "0.7rem", color: "var(--text-secondary)", opacity: 0.5 }}>
+      <span className="agent-escape-hint">
         or press Esc twice
       </span>
       <button className="agent-control-btn" onClick={onDetach}>

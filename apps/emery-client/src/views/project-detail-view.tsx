@@ -437,10 +437,10 @@ export function ProjectDetailView({ projectId }: { projectId: string }) {
           {activeTab === "work-items" && (
             <div className="project-work-items-tab">
               {isLoadingProject && workItems.length === 0 ? (
-                <div className="project-skeleton-placeholder" style={{ padding: "16px 0" }}>
-                  <span className="skeleton-line" style={{ width: "60%" }} />
-                  <span className="skeleton-line" style={{ width: "80%" }} />
-                  <span className="skeleton-line" style={{ width: "45%" }} />
+                <div className="project-skeleton-placeholder">
+                  <span className="skeleton-line w-[60%]" />
+                  <span className="skeleton-line w-[80%]" />
+                  <span className="skeleton-line w-[45%]" />
                 </div>
               ) : null}
               <WorkItemsSection
