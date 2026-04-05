@@ -742,6 +742,39 @@ class AppStore {
     }
   }
 
+  async fetchWorkItemBundle(projectId: string, workItemId: string) {
+    const correlationId = newCorrelationId("work-item-bundle");
+    this.setLoading(`work-item-bundle:${workItemId}`, true);
+    try {
+      const [workItem, docs] = await Promise.all([
+        getWorkItem(workItemId, correlationId),
+        listDocuments(projectId, workItemId, correlationId),
+      ]);
+
+      this.applyWorkItemDetail(workItem);
+
+      // Merge linked documents into existing project documents
+      const allProjectDocs = this.state.documentsByProject[projectId] ?? [];
+      const updatedDocs = [...allProjectDocs];
+      for (const doc of docs) {
+        if (!updatedDocs.some((d) => d.id === doc.id)) {
+          updatedDocs.push(doc);
+        }
+      }
+      this.update({
+        documentsByProject: {
+          ...this.state.documentsByProject,
+          [projectId]: updatedDocs.sort(compareDocuments),
+        },
+      });
+      this.clearError();
+    } catch (invokeError) {
+      this.update({ error: String(invokeError) });
+    } finally {
+      this.setLoading(`work-item-bundle:${workItemId}`, false);
+    }
+  }
+
   // --- Session helpers ---
 
   private async reconcileSessionState(sessionId: string) {

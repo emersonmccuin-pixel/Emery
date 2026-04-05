@@ -3,6 +3,7 @@ import { HomeView } from "./views/home-view";
 import { ProjectCommandView } from "./views/project-command-view";
 import { AgentView } from "./views/agent-view";
 import { DocumentView } from "./views/document-view";
+import { WorkItemView } from "./views/work-item-view";
 
 export function LayerRouter() {
   const layer = useNavLayer();
@@ -18,5 +19,7 @@ export function LayerRouter() {
       return <DocumentView documentId={layer.documentId} projectId={layer.projectId} />;
     case "new-document":
       return <DocumentView documentId="new" projectId={layer.projectId} workItemId={layer.workItemId} />;
+    case "work_item":
+      return <WorkItemView projectId={layer.projectId} workItemId={layer.workItemId} />;
   }
 }

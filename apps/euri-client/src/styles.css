@@ -2928,3 +2928,141 @@ button {
   color: rgba(242, 237, 225, 0.7);
   background: rgba(242, 237, 225, 0.05);
 }
+
+/* ── Work item detail view ── */
+
+.work-item-detail-view {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  max-width: 800px;
+  overflow-y: auto;
+}
+
+.wi-detail-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wi-detail-callsign {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.78rem;
+  color: rgba(242, 237, 225, 0.45);
+}
+
+.wi-detail-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.wi-detail-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.wi-detail-priority {
+  font-size: 0.72rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(242, 237, 225, 0.08);
+  text-transform: capitalize;
+}
+
+.wi-detail-type {
+  font-size: 0.72rem;
+  color: rgba(242, 237, 225, 0.45);
+  text-transform: capitalize;
+}
+
+.wi-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wi-detail-section h3 {
+  font-size: 0.72rem;
+  font-weight: 600;
+  margin: 0;
+  color: rgba(242, 237, 225, 0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.wi-detail-description,
+.wi-detail-criteria {
+  font-size: 0.82rem;
+  line-height: 1.6;
+  color: rgba(242, 237, 225, 0.85);
+}
+
+.wi-detail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wi-detail-list-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.82rem;
+}
+
+.wi-detail-list-row.clickable:hover {
+  background: rgba(242, 237, 225, 0.05);
+  cursor: pointer;
+}
+
+.wi-session-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.indicator-running { background: #22c55e; }
+.indicator-starting { background: #f59e0b; }
+.indicator-stopping { background: #f59e0b; }
+.indicator-exited,
+.indicator-failed { background: #ef4444; }
+
+.wi-session-title { flex: 1; }
+.wi-session-branch {
+  font-family: "IBM Plex Mono", monospace;
+  color: rgba(242, 237, 225, 0.45);
+  font-size: 0.72rem;
+}
+.wi-session-state {
+  color: rgba(242, 237, 225, 0.45);
+  font-size: 0.72rem;
+}
+
+.wi-doc-type {
+  font-size: 0.72rem;
+  color: rgba(242, 237, 225, 0.45);
+  min-width: 60px;
+  text-transform: capitalize;
+}
+.wi-doc-title { flex: 1; }
+
+.wi-child-callsign {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+  min-width: 80px;
+  color: rgba(242, 237, 225, 0.6);
+}
+.wi-child-title { flex: 1; }
+
+.wi-detail-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(242, 237, 225, 0.08);
+}

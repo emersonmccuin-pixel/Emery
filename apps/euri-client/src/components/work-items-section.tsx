@@ -9,6 +9,7 @@ type WorkItemsSectionProps = {
   onClearSelection: () => void;
   onDispatch: (workItemId: string) => void;
   onMultiDispatch: () => void;
+  onNavigate: (workItemId: string) => void;
   assignments: PlanningAssignmentSummary[];
   dayCadenceKey: string;
   weekCadenceKey: string;
@@ -29,6 +30,7 @@ export function WorkItemsSection({
   onClearSelection,
   onDispatch,
   onMultiDispatch,
+  onNavigate,
   assignments,
   dayCadenceKey,
   weekCadenceKey,
@@ -70,6 +72,7 @@ export function WorkItemsSection({
         selected={selectedIds.includes(item.id)}
         onToggleSelect={() => onToggleSelect(item.id)}
         onDispatch={() => onDispatch(item.id)}
+        onNavigate={() => onNavigate(item.id)}
         assignments={assignmentsByWorkItem[item.id] ?? []}
         dayCadenceKey={dayCadenceKey}
         weekCadenceKey={weekCadenceKey}
