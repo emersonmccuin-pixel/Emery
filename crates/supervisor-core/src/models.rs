@@ -1155,3 +1155,94 @@ pub struct SessionWatchResponse {
     /// True if the timeout expired with no state change.
     pub timed_out: bool,
 }
+
+// --- Inbox ---
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InboxEntrySummary {
+    pub id: String,
+    pub project_id: String,
+    pub session_id: Option<String>,
+    pub work_item_id: Option<String>,
+    pub worktree_id: Option<String>,
+    pub entry_type: String,
+    pub title: String,
+    pub summary: String,
+    pub status: String,
+    pub branch_name: Option<String>,
+    pub diff_stat_json: Option<String>,
+    pub metadata_json: Option<String>,
+    pub read_at: Option<i64>,
+    pub resolved_at: Option<i64>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    /// Joined from sessions table
+    pub session_title: Option<String>,
+    /// Joined from knowledge.work_items table
+    pub work_item_callsign: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InboxEntryDetail {
+    #[serde(flatten)]
+    pub summary: InboxEntrySummary,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewInboxEntryRecord {
+    pub id: String,
+    pub project_id: String,
+    pub session_id: Option<String>,
+    pub work_item_id: Option<String>,
+    pub worktree_id: Option<String>,
+    pub entry_type: String,
+    pub title: String,
+    pub summary: String,
+    pub status: String,
+    pub branch_name: Option<String>,
+    pub diff_stat_json: Option<String>,
+    pub metadata_json: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateInboxEntryRequest {
+    pub project_id: String,
+    pub session_id: Option<String>,
+    pub work_item_id: Option<String>,
+    pub worktree_id: Option<String>,
+    pub entry_type: Option<String>,
+    pub title: String,
+    pub summary: Option<String>,
+    pub status: Option<String>,
+    pub branch_name: Option<String>,
+    pub diff_stat_json: Option<String>,
+    pub metadata_json: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateInboxEntryRequest {
+    pub inbox_entry_id: String,
+    pub status: Option<String>,
+    pub read_at: Option<i64>,
+    pub resolved_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct InboxEntryListFilter {
+    pub project_id: String,
+    pub status: Option<String>,
+    pub entry_type: Option<String>,
+    pub unread_only: Option<bool>,
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct InboxEntryUpdateRecord {
+    pub id: String,
+    pub status: Option<String>,
+    pub read_at: Option<i64>,
+    pub resolved_at: Option<i64>,
+    pub updated_at: i64,
+}

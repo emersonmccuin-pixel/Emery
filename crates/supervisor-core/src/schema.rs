@@ -40,6 +40,10 @@ const APP_MIGRATIONS: &[(&str, &str)] = &[
         "0009_default_model",
         include_str!("migrations/app/0009_default_model.sql"),
     ),
+    (
+        "0010_inbox",
+        include_str!("migrations/app/0010_inbox.sql"),
+    ),
 ];
 const KNOWLEDGE_MIGRATIONS: &[(&str, &str)] = &[(
     "0001_initial",

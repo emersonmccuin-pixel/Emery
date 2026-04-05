@@ -11,23 +11,25 @@ use crate::diagnostics::{
 };
 use crate::models::{
     AccountDetail, AccountSummary, AccountUpdateRecord, CreateAccountRequest,
-    CreateDiagnosticsBundleRequest, CreateDocumentRequest, CreatePlanningAssignmentRequest,
-    CreateProjectRequest, CreateProjectRootRequest, CreateSessionRequest, CreateSessionSpecRequest,
-    CreateWorkItemRequest, CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
+    CreateDiagnosticsBundleRequest, CreateDocumentRequest, CreateInboxEntryRequest,
+    CreatePlanningAssignmentRequest, CreateProjectRequest, CreateProjectRootRequest,
+    CreateSessionRequest, CreateSessionSpecRequest, CreateWorkItemRequest,
+    CreateWorkflowReconciliationProposalRequest, CreateWorktreeRequest,
     DeletePlanningAssignmentRequest, DocumentDetail, DocumentListFilter, DocumentSummary,
-    DocumentUpdateRecord, GetWorkspaceStateRequest, MergeQueueEntry, MergeQueueListFilter,
-    NewAccountRecord, NewDocumentRecord, NewMergeQueueRecord, NewPlanningAssignmentRecord,
-    NewProjectRecord, NewProjectRootRecord, NewSessionRecord, NewSessionSpecRecord,
-    NewWorkItemRecord, NewWorkflowReconciliationProposalRecord, NewWorktreeRecord,
-    PlanningAssignmentDetail, PlanningAssignmentListFilter, PlanningAssignmentSummary,
-    PlanningAssignmentUpdateRecord, ProjectDetail, ProjectRootSummary, ProjectRootUpdateRecord,
-    ProjectSummary, ProjectUpdateRecord, RemoveProjectRootRequest, SessionArtifactRecord,
-    SessionAttachResponse, SessionDetachResponse, SessionDetail, SessionListFilter,
-    SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary,
+    DocumentUpdateRecord, GetWorkspaceStateRequest, InboxEntryDetail, InboxEntryListFilter,
+    InboxEntrySummary, InboxEntryUpdateRecord, MergeQueueEntry, MergeQueueListFilter,
+    NewAccountRecord, NewDocumentRecord, NewInboxEntryRecord, NewMergeQueueRecord,
+    NewPlanningAssignmentRecord, NewProjectRecord, NewProjectRootRecord, NewSessionRecord,
+    NewSessionSpecRecord, NewWorkItemRecord, NewWorkflowReconciliationProposalRecord,
+    NewWorktreeRecord, PlanningAssignmentDetail, PlanningAssignmentListFilter,
+    PlanningAssignmentSummary, PlanningAssignmentUpdateRecord, ProjectDetail, ProjectRootSummary,
+    ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord, RemoveProjectRootRequest,
+    SessionArtifactRecord, SessionAttachResponse, SessionDetachResponse, SessionDetail,
+    SessionListFilter, SessionSpecDetail, SessionSpecListFilter, SessionSpecSummary,
     SessionSpecUpdateRecord, SessionStateChangedEvent, SessionSummary, SessionWatchResponse,
-    UpdateAccountRequest,
-    UpdateDocumentRequest, UpdatePlanningAssignmentRequest, UpdateProjectRequest,
-    UpdateProjectRootRequest, UpdateSessionSpecRequest, UpdateWorkItemRequest,
+    UpdateAccountRequest, UpdateInboxEntryRequest, UpdateDocumentRequest,
+    UpdatePlanningAssignmentRequest, UpdateProjectRequest, UpdateProjectRootRequest,
+    UpdateSessionSpecRequest, UpdateWorkItemRequest,
     UpdateWorkflowReconciliationProposalRequest, UpdateWorkspaceStateRequest,
     UpdateWorktreeRequest, WorkItemDetail, WorkItemListFilter, WorkItemSummary,
     WorkItemUpdateRecord, WorkflowReconciliationProposalDetail,
@@ -2795,6 +2797,71 @@ impl SupervisorService {
         }
 
         Ok(conflicts)
+    }
+
+    // --- Inbox ---
+
+    pub fn create_inbox_entry(
+        &self,
+        request: CreateInboxEntryRequest,
+    ) -> Result<InboxEntryDetail> {
+        let now = unix_time_seconds();
+        let id = format!("inbox_{}", Uuid::new_v4().simple());
+        let record = NewInboxEntryRecord {
+            id: id.clone(),
+            project_id: request.project_id,
+            session_id: request.session_id,
+            work_item_id: request.work_item_id,
+            worktree_id: request.worktree_id,
+            entry_type: request
+                .entry_type
+                .unwrap_or_else(|| "session_complete".to_string()),
+            title: required_trimmed("inbox entry title", &request.title)?,
+            summary: request.summary.unwrap_or_default(),
+            status: request.status.unwrap_or_else(|| "success".to_string()),
+            branch_name: request.branch_name,
+            diff_stat_json: request.diff_stat_json,
+            metadata_json: request.metadata_json,
+            created_at: now,
+            updated_at: now,
+        };
+        self.databases.insert_inbox_entry(&record)?;
+        self.databases
+            .get_inbox_entry(&id)?
+            .ok_or_else(|| anyhow!("inbox entry {} was not found after insert", id))
+    }
+
+    pub fn list_inbox_entries(
+        &self,
+        filter: InboxEntryListFilter,
+    ) -> Result<Vec<InboxEntrySummary>> {
+        self.databases.list_inbox_entries(&filter)
+    }
+
+    pub fn get_inbox_entry(&self, id: &str) -> Result<Option<InboxEntryDetail>> {
+        self.databases.get_inbox_entry(id)
+    }
+
+    pub fn update_inbox_entry(
+        &self,
+        request: UpdateInboxEntryRequest,
+    ) -> Result<InboxEntryDetail> {
+        let now = unix_time_seconds();
+        let record = InboxEntryUpdateRecord {
+            id: request.inbox_entry_id.clone(),
+            status: request.status,
+            read_at: request.read_at,
+            resolved_at: request.resolved_at,
+            updated_at: now,
+        };
+        self.databases.update_inbox_entry(&record)?;
+        self.databases
+            .get_inbox_entry(&request.inbox_entry_id)?
+            .ok_or_else(|| anyhow!("inbox entry {} was not found", request.inbox_entry_id))
+    }
+
+    pub fn count_unread_inbox_entries(&self, project_id: &str) -> Result<i64> {
+        self.databases.count_unread_inbox_entries(project_id)
     }
 }
 
