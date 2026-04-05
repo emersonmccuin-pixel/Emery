@@ -1144,6 +1144,9 @@ class AppStore {
         type: "success",
         message: `Dispatcher launched for ${project.name}`,
       });
+
+      // Navigate to agent view to show the dispatcher terminal
+      navStore.goToAgent(projectId, detail.id);
     } catch (err) {
       this.update({ error: String(err) });
     } finally {
