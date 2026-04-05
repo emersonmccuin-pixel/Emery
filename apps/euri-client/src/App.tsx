@@ -211,6 +211,7 @@ export default function App() {
     if (navLayer.layer === "project" || navLayer.layer === "agent") {
       appStore.setSelectedProjectId(navLayer.projectId);
       void appStore.loadProjectReads(navLayer.projectId);
+      void appStore.handleLoadMergeQueue(navLayer.projectId);
     }
   }, [navLayer]);
 
