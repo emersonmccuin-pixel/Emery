@@ -291,27 +291,24 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
             })}
           </ul>
 
-          {/* New project link */}
-          {!collapsed && (
-            <div className="sidebar-project-links">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="sidebar-project-link justify-start px-3 py-2"
-                onClick={() => navStore.openModal({ modal: "create_project" })}
-                title="Create a new project"
-              >
-                + New Project
-              </Button>
-            </div>
-          )}
         </div>
 
         {/* Flex spacer */}
         <div className="sidebar-spacer" />
 
-        {/* Bottom nav — Settings only */}
+        {/* Bottom nav — New Project + Settings */}
         <div className="sidebar-bottom">
+          {!collapsed && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="sidebar-project-link justify-start px-3 py-2"
+              onClick={() => navStore.openModal({ modal: "create_project" })}
+              title="Create a new project"
+            >
+              + New Project
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"

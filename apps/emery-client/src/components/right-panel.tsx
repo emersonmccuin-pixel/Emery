@@ -1,14 +1,15 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useAppStore } from "../store";
 import { navStore, useNavLayer } from "../nav-store";
 import { WorktreeRow } from "./worktree-row";
 
 type RightPanelProps = {
   projectId: string;
+  collapsed: boolean;
+  onToggle: () => void;
 };
 
-export function RightPanel({ projectId }: RightPanelProps) {
-  const [collapsed, setCollapsed] = useState(false);
+export function RightPanel({ projectId, collapsed, onToggle }: RightPanelProps) {
   const navLayer = useNavLayer();
 
   const project = useAppStore(
@@ -65,7 +66,7 @@ export function RightPanel({ projectId }: RightPanelProps) {
       <div className="right-panel-toggle-rail">
         <button
           className="right-panel-toggle"
-          onClick={() => setCollapsed((c) => !c)}
+          onClick={onToggle}
           title={collapsed ? "Expand panel" : "Collapse panel"}
         >
           {collapsed ? "\u25C4" : "\u25BA"}

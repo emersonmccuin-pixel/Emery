@@ -121,9 +121,14 @@ export default function App() {
     }
   });
 
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
+
   const toggleSidebarRef = useRef<() => void>(() => {});
+  const autoRightRef = useRef(false);
+  const autoSidebarRef = useRef(false);
 
   function toggleSidebar() {
+    autoSidebarRef.current = false; // manual toggle clears auto-collapse tracking
     setSidebarCollapsed((prev) => {
       const next = !prev;
       try {
@@ -137,6 +142,61 @@ export default function App() {
 
   // Keep ref in sync so the keydown handler (registered once) always calls the latest version
   toggleSidebarRef.current = toggleSidebar;
+
+  // Auto-collapse panels to protect center content min-width (~700px for 80-col terminal).
+  // Right panel collapses first, then sidebar. Restores in reverse when space opens up.
+  useEffect(() => {
+    const MIN_CENTER = 700;
+    const SIDEBAR_EXPANDED = 240;
+    const SIDEBAR_COLLAPSED = 48;
+    const RIGHT_EXPANDED = 320;
+    const RIGHT_COLLAPSED = 28;
+
+    function handleResize() {
+      const w = window.innerWidth;
+
+      // Calculate center width with current panel states
+      const sidebarW = sidebarCollapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED;
+      const rightW = rightPanelCollapsed ? RIGHT_COLLAPSED : RIGHT_EXPANDED;
+      const centerW = w - sidebarW - rightW;
+
+      if (centerW < MIN_CENTER) {
+        // Need to collapse something — right panel first
+        if (!rightPanelCollapsed) {
+          autoRightRef.current = true;
+          setRightPanelCollapsed(true);
+          return; // re-evaluate on next frame after state update
+        }
+        // Right already collapsed, try sidebar
+        if (!sidebarCollapsed) {
+          autoSidebarRef.current = true;
+          setSidebarCollapsed(true);
+        }
+      } else {
+        // Enough space — try to restore (sidebar first, then right panel)
+        if (sidebarCollapsed && autoSidebarRef.current) {
+          const wouldBe = w - SIDEBAR_EXPANDED - rightW;
+          if (wouldBe >= MIN_CENTER) {
+            autoSidebarRef.current = false;
+            setSidebarCollapsed(false);
+            return;
+          }
+        }
+        if (rightPanelCollapsed && autoRightRef.current) {
+          const sidebarW2 = sidebarCollapsed ? SIDEBAR_COLLAPSED : SIDEBAR_EXPANDED;
+          const wouldBe = w - sidebarW2 - RIGHT_EXPANDED;
+          if (wouldBe >= MIN_CENTER) {
+            autoRightRef.current = false;
+            setRightPanelCollapsed(false);
+          }
+        }
+      }
+    }
+
+    window.addEventListener("resize", handleResize);
+    handleResize();
+    return () => window.removeEventListener("resize", handleResize);
+  }, [sidebarCollapsed, rightPanelCollapsed]);
 
   const restoreApplied = useRef(false);
   const persistTimeout = useRef<number | null>(null);
@@ -532,7 +592,16 @@ export default function App() {
             <LayerRouter />
           </div>
         </div>
-        {navProjectId ? <RightPanel projectId={navProjectId} /> : null}
+        {navProjectId ? (
+          <RightPanel
+            projectId={navProjectId}
+            collapsed={rightPanelCollapsed}
+            onToggle={() => {
+              autoRightRef.current = false;
+              setRightPanelCollapsed((c) => !c);
+            }}
+          />
+        ) : null}
       </div>
       <ModalOverlay />
       <ToastStack />

@@ -926,7 +926,7 @@ html[data-theme="vaporwave"] .sidebar {
 
 .main-content {
   flex: 1;
-  min-width: 0;
+  min-width: 700px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -2178,6 +2178,7 @@ html[data-theme="vaporwave"] .topbar {
 .terminal-surface {
   border-radius: var(--radius-md);
   min-height: 0;
+  min-width: 672px; /* ~80 columns at 14px JetBrains Mono */
   overflow: hidden;
   contain: layout size;
   background: var(--surface-sunken);
@@ -7297,22 +7298,8 @@ html[data-theme="vaporwave"] .right-panel {
   border-radius: var(--radius-sm);
 }
 
-/* ── Responsive: sidebar collapses to icon rail below 800px ── */
-@media (max-width: 800px) {
-  .sidebar:not(.collapsed) {
-    width: var(--sidebar-collapsed-width, 48px);
-  }
-}
+/* Sidebar auto-collapse is handled in App.tsx via JS resize listener */
 
-/* ── Responsive: right panel auto-collapses below 1100px ── */
-@media (max-width: 1100px) {
-  .right-panel:not(.collapsed) {
-    width: 28px;
-  }
-  .right-panel:not(.collapsed) .right-panel-body {
-    display: none;
-  }
-  .right-panel:not(.collapsed) .right-panel-toggle-rail {
-    border-right: none;
-  }
-}
+/* Resize handles removed — panels collapse automatically via JS */
+
+/* Right panel auto-collapse is handled in App.tsx via JS resize listener */

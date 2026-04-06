@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { listen } from "@tauri-apps/api/event";
@@ -124,6 +124,18 @@ export const TerminalSurface = memo(function TerminalSurface({
   const liveRef = useRef(live);
   liveRef.current = live;
 
+  // Dimension overlay — shows cols×rows during resize
+  const [dims, setDims] = useState<{ cols: number; rows: number } | null>(null);
+  const [dimsVisible, setDimsVisible] = useState(false);
+  const dimsFadeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flashDims = useCallback((cols: number, rows: number) => {
+    setDims({ cols, rows });
+    setDimsVisible(true);
+    if (dimsFadeRef.current) clearTimeout(dimsFadeRef.current);
+    dimsFadeRef.current = setTimeout(() => setDimsVisible(false), 1500);
+  }, []);
+
   // Main setup effect — runs once per sessionId
   useEffect(() => {
     const host = hostRef.current;
@@ -180,10 +192,11 @@ export const TerminalSurface = memo(function TerminalSurface({
     terminal.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
       if (ev.type !== "keydown") return true;
 
-      // Shift+Enter → send literal newline instead of carriage return
+      // Shift+Enter → send escape sequence that Claude Code recognizes as newline
+      // Uses kitty keyboard protocol: CSI 13;2u (Enter with Shift modifier)
       if (ev.key === "Enter" && ev.shiftKey && !ev.ctrlKey && !ev.altKey) {
         if (liveRef.current) {
-          sendSessionInput(sessionId, "\n", newCorrelationId("shift-enter")).catch(() => {});
+          sendSessionInput(sessionId, "\x1b[13;2u", newCorrelationId("shift-enter")).catch(() => {});
         }
         return false;
       }
@@ -269,6 +282,7 @@ export const TerminalSurface = memo(function TerminalSurface({
       if (cols <= 0 || rows <= 0) return;
       if (lastGeometryRef.current && lastGeometryRef.current.cols === cols && lastGeometryRef.current.rows === rows) return;
       lastGeometryRef.current = { cols, rows };
+      flashDims(cols, rows);
       // Re-check live after fit() — it may have changed during an async turn
       if (!liveRef.current) return;
       resizeSession(sessionId, cols, rows, newCorrelationId("surface-resize")).catch(() => {});
@@ -333,7 +347,7 @@ export const TerminalSurface = memo(function TerminalSurface({
         detachSession(sessionId, attachmentIdRef.current, newCorrelationId("surface-detach")).catch(() => {});
       }
     };
-  }, [sessionId]);
+  }, [sessionId, flashDims]);
 
   // React to live → false transition: detach from the backend subscription,
   // disable the cursor, and blur the terminal so it becomes read-only.
@@ -362,6 +376,30 @@ export const TerminalSurface = memo(function TerminalSurface({
       ref={hostRef}
       className={`terminal-surface ${live ? "live" : "readonly"}`}
       aria-label={`Terminal for session ${sessionId}`}
-    />
+      style={{ position: "relative" }}
+    >
+      {dims && (
+        <div
+          style={{
+            position: "absolute",
+            bottom: 8,
+            right: 12,
+            padding: "3px 8px",
+            borderRadius: 4,
+            background: "rgba(0, 0, 0, 0.7)",
+            border: "1px solid rgba(0, 212, 255, 0.3)",
+            color: "#7df9ff",
+            fontFamily: '"JetBrains Mono", monospace',
+            fontSize: 11,
+            pointerEvents: "none",
+            opacity: dimsVisible ? 1 : 0,
+            transition: "opacity 0.4s ease-out",
+            zIndex: 10,
+          }}
+        >
+          {dims.cols}×{dims.rows}
+        </div>
+      )}
+    </div>
   );
 });

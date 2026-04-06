@@ -14,7 +14,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $root
 
-$installDir = Join-Path $env:USERPROFILE ".emery" "bin"
+$installDir = Join-Path (Join-Path $env:USERPROFILE ".emery") "bin"
 
 # --- Ensure install directory exists ---
 if (-not (Test-Path $installDir)) {
@@ -44,9 +44,9 @@ $commitHash = (git rev-parse --short HEAD).Trim()
 $commitMsg = (git log -1 --format="%s").Trim()
 Write-Host "=== Building from $commitHash ($commitMsg) ===" -ForegroundColor Cyan
 
-# --- Build supervisor (release) ---
-Write-Host "=== Building supervisor (release) ===" -ForegroundColor Cyan
-cargo build --release -p emery-supervisor
+# --- Build supervisor + MCP server (release) ---
+Write-Host "=== Building supervisor + emery-mcp (release) ===" -ForegroundColor Cyan
+cargo build --release -p emery-supervisor -p emery-mcp
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Supervisor build failed!" -ForegroundColor Red
     if ($originalBranch -ne "") { git checkout $originalBranch; if ($stashed) { git stash pop } }
@@ -74,6 +74,9 @@ Write-Host "=== Installing to $installDir ===" -ForegroundColor Green
 
 Copy-Item "$root\target\release\emery-supervisor.exe" "$installDir\emery-supervisor.exe" -Force
 Write-Host "  emery-supervisor.exe  -> $installDir" -ForegroundColor Gray
+
+Copy-Item "$root\target\release\emery-mcp.exe" "$installDir\emery-mcp.exe" -Force
+Write-Host "  emery-mcp.exe         -> $installDir" -ForegroundColor Gray
 
 if (-not $SkipClient) {
     # Tauri release build outputs to target/release

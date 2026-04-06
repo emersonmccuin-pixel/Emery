@@ -8,7 +8,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$installDir = Join-Path $env:USERPROFILE ".emery" "bin"
+$installDir = Join-Path (Join-Path $env:USERPROFILE ".emery") "bin"
 
 # --- Verify installation exists ---
 if (-not (Test-Path "$installDir\emery-supervisor.exe")) {
@@ -25,15 +25,26 @@ if (Test-Path "$installDir\version.json") {
     Write-Host "  Commit:    $($ver.message)" -ForegroundColor Gray
 }
 
-# --- Kill any running instances ---
-Write-Host "=== Stopping existing Emery processes ===" -ForegroundColor Yellow
-Get-Process -Name "emery-supervisor","emery-client" -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep -Seconds 1
+# --- Kill previous stable instance (by PID file, not process name) ---
+$pidFile = Join-Path $installDir "stable.pid"
+if (Test-Path $pidFile) {
+    Write-Host "=== Stopping previous stable instance ===" -ForegroundColor Yellow
+    $pids = Get-Content $pidFile | ConvertFrom-Json
+    foreach ($p in @($pids.supervisor, $pids.client)) {
+        if ($p) {
+            Get-Process -Id $p -ErrorAction SilentlyContinue | Stop-Process -Force
+        }
+    }
+    Remove-Item $pidFile
+    Start-Sleep -Seconds 1
+}
 
 # --- Launch supervisor ---
 Write-Host "=== Launching stable supervisor ===" -ForegroundColor Green
-Start-Process "$installDir\emery-supervisor.exe"
+$supProc = Start-Process "$installDir\emery-supervisor.exe" -PassThru
 Start-Sleep -Seconds 2
+
+$clientPid = $null
 
 # --- Launch client ---
 if (-not $SupervisorOnly) {
@@ -42,8 +53,12 @@ if (-not $SupervisorOnly) {
         Write-Host "Use -SkipClient when installing, or reinstall with client." -ForegroundColor Gray
     } else {
         Write-Host "=== Launching stable client ===" -ForegroundColor Green
-        Start-Process "$installDir\emery-client.exe"
+        $clientProc = Start-Process "$installDir\emery-client.exe" -PassThru
+        $clientPid = $clientProc.Id
     }
 }
+
+# --- Write PID file ---
+@{ supervisor = $supProc.Id; client = $clientPid } | ConvertTo-Json | Set-Content $pidFile
 
 Write-Host "=== Emery stable is running ===" -ForegroundColor Green
