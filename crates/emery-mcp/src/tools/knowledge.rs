@@ -18,7 +18,8 @@ pub fn tool_work_item_list() -> Value {
                 "root_work_item_id": { "type": "string", "description": "Filter by root work item ID" },
                 "status":           { "type": "string", "description": "Filter by status (e.g. backlog, in_progress, done)" },
                 "work_item_type":   { "type": "string", "description": "Filter by type (e.g. task, bug, feature)" },
-                "limit":            { "type": "integer", "description": "Max items to return" }
+                "limit":            { "type": "integer", "description": "Max items to return" },
+                "compact":          { "type": "boolean", "description": "If true, return only callsign, title, status, priority, and type (much smaller response). Default false." }
             }
         }
     })
@@ -172,11 +173,34 @@ pub fn handle_work_item_list(input: Value) -> Result<String> {
     if let Some(v) = input["work_item_type"].as_str() { params["work_item_type"] = json!(v); }
     if let Some(v) = input["limit"].as_u64() { params["limit"] = json!(v); }
 
+    let compact = input["compact"].as_bool().unwrap_or(false);
+
     let mut rpc = RpcClient::connect()?;
     let result = rpc.call("work_item.list", params)?;
 
     let items = result.as_array().map(|a| a.len()).unwrap_or(0);
-    Ok(format!("{} work item(s) returned:\n{}", items, serde_json::to_string_pretty(&result)?))
+
+    if compact {
+        // Return only essential fields to keep response small
+        let summary: Vec<Value> = result
+            .as_array()
+            .unwrap_or(&vec![])
+            .iter()
+            .map(|item| {
+                json!({
+                    "id": item["id"],
+                    "callsign": item["callsign"],
+                    "title": item["title"],
+                    "status": item["status"],
+                    "priority": item["priority"],
+                    "work_item_type": item["work_item_type"],
+                })
+            })
+            .collect();
+        Ok(format!("{} work item(s):\n{}", items, serde_json::to_string_pretty(&summary)?))
+    } else {
+        Ok(format!("{} work item(s) returned:\n{}", items, serde_json::to_string_pretty(&result)?))
+    }
 }
 
 pub fn handle_work_item_get(input: Value) -> Result<String> {
