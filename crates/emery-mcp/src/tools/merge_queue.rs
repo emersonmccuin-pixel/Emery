@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
 
 use crate::rpc_client::RpcClient;
+use super::resolve::resolve_project;
 
 // ── Tool descriptors ─────────────────────────────────────────────────────────
 
@@ -12,13 +13,12 @@ pub fn tool_merge_queue_list() -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "project_id": { "type": "string", "description": "Project ID" },
+                "project_id": { "type": "string", "description": "Project ID (auto-resolved if omitted)" },
                 "status": {
                     "type": "string",
                     "description": "Filter by status: queued|ready|conflict|merging|merged|parked"
                 }
-            },
-            "required": ["project_id"]
+            }
         }
     })
 }
@@ -82,7 +82,8 @@ pub fn tool_merge_queue_park() -> Value {
 // ── Tool handlers ─────────────────────────────────────────────────────────────
 
 pub fn handle_merge_queue_list(input: Value) -> Result<String> {
-    let project_id = required_str(&input, "project_id")?;
+    let mut rpc = RpcClient::connect()?;
+    let project_id = resolve_project(&input, &mut rpc)?;
     let status = input["status"].as_str().map(str::to_string);
 
     let mut params = json!({ "project_id": project_id });
@@ -90,7 +91,6 @@ pub fn handle_merge_queue_list(input: Value) -> Result<String> {
         params["status"] = json!(s);
     }
 
-    let mut rpc = RpcClient::connect()?;
     let entries = rpc.call("merge_queue.list", params)?;
 
     let items = match entries.as_array() {

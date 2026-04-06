@@ -8,21 +8,23 @@ use supervisor_core::git::symlink_dependencies;
 use supervisor_core::AppPaths;
 
 use crate::rpc_client::RpcClient;
+use super::resolve::resolve_project;
 
 // ── Tool descriptors ─────────────────────────────────────────────────────────
 
 pub fn tool_worktree_create() -> Value {
     json!({
         "name": "emery_worktree_create",
-        "description": "Create a git worktree for a work item. Creates branch emery/{callsign} and registers the worktree directory.",
+        "description": "Create a git worktree for a work item. Creates branch emery/{callsign} and registers the worktree directory. project_id is auto-resolved if omitted.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "project_id":  { "type": "string", "description": "Project ID" },
                 "callsign":    { "type": "string", "description": "Work item callsign (e.g. Emery-58)" },
+                "project_id":  { "type": "string", "description": "Project ID (auto-resolved if omitted)" },
+                "work_item_id": { "type": "string", "description": "Work item ID to link to the worktree (optional)" },
                 "base_ref":    { "type": "string", "description": "Base branch to create from (default: current HEAD)" }
             },
-            "required": ["project_id", "callsign"]
+            "required": ["callsign"]
         }
     })
 }
@@ -30,13 +32,12 @@ pub fn tool_worktree_create() -> Value {
 pub fn tool_worktree_list() -> Value {
     json!({
         "name": "emery_worktree_list",
-        "description": "List active worktrees for a project with status and session counts.",
+        "description": "List active worktrees for a project with status and session counts. project_id is auto-resolved if omitted.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "project_id": { "type": "string", "description": "Project ID" }
-            },
-            "required": ["project_id"]
+                "project_id": { "type": "string", "description": "Project ID (auto-resolved if omitted)" }
+            }
         }
     })
 }
@@ -44,14 +45,13 @@ pub fn tool_worktree_list() -> Value {
 pub fn tool_worktree_cleanup() -> Value {
     json!({
         "name": "emery_worktree_cleanup",
-        "description": "Remove worktrees for merged/closed branches. Only removes worktrees with no running sessions.",
+        "description": "Remove worktrees for merged/closed branches. Only removes worktrees with no running sessions. project_id is auto-resolved if omitted.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "project_id": { "type": "string", "description": "Project ID" },
+                "project_id": { "type": "string", "description": "Project ID (auto-resolved if omitted)" },
                 "dry_run": { "type": "boolean", "description": "If true, list what would be removed without removing" }
-            },
-            "required": ["project_id"]
+            }
         }
     })
 }
@@ -73,8 +73,9 @@ pub fn tool_open_editor() -> Value {
 // ── Tool handlers ─────────────────────────────────────────────────────────────
 
 pub fn handle_worktree_create(input: Value) -> Result<String> {
-    let project_id = required_str(&input, "project_id")?;
     let callsign = required_str(&input, "callsign")?;
+    let mut rpc = RpcClient::connect()?;
+    let project_id = resolve_project(&input, &mut rpc)?;
     let base_ref = input["base_ref"].as_str().map(str::to_string);
 
     let branch_name = format!("emery/{}", callsign.to_lowercase());
@@ -82,8 +83,6 @@ pub fn handle_worktree_create(input: Value) -> Result<String> {
     let worktree_path = paths
         .worktrees_dir
         .join(branch_name.replace('/', "-"));
-
-    let mut rpc = RpcClient::connect()?;
 
     // Resolve project root
     let roots = rpc.call("project_root.list", json!({ "project_id": project_id }))?;
@@ -145,9 +144,8 @@ pub fn handle_worktree_create(input: Value) -> Result<String> {
 }
 
 pub fn handle_worktree_list(input: Value) -> Result<String> {
-    let project_id = required_str(&input, "project_id")?;
-
     let mut rpc = RpcClient::connect()?;
+    let project_id = resolve_project(&input, &mut rpc)?;
     let worktrees = rpc.call("worktree.list", json!({ "project_id": project_id }))?;
 
     let items = match worktrees.as_array() {
@@ -167,10 +165,10 @@ pub fn handle_worktree_list(input: Value) -> Result<String> {
 }
 
 pub fn handle_worktree_cleanup(input: Value) -> Result<String> {
-    let project_id = required_str(&input, "project_id")?;
     let dry_run = input["dry_run"].as_bool().unwrap_or(false);
 
     let mut rpc = RpcClient::connect()?;
+    let project_id = resolve_project(&input, &mut rpc)?;
     let worktrees = rpc.call("worktree.list", json!({ "project_id": project_id }))?;
 
     let items = worktrees.as_array().cloned().unwrap_or_default();

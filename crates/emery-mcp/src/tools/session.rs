@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 use supervisor_core::agent_profile::{AgentProfile, GuardKind, InstructionDisposition};
 
 use crate::rpc_client::RpcClient;
+use super::resolve::{resolve_project, resolve_account};
 
 // ── Stop rules ───────────────────────────────────────────────────────────────
 
@@ -74,14 +75,14 @@ fn build_stop_rules_section(origin_mode: &str, explicit_rules: Option<&Value>) -
 pub fn tool_session_create() -> Value {
     json!({
         "name": "emery_session_create",
-        "description": "Create a builder session in a worktree. Launches a Claude Code agent process.",
+        "description": "Create a builder session in a worktree. Launches a Claude Code agent process. project_id and account_id are auto-resolved if omitted.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "project_id":    { "type": "string", "description": "Project ID" },
                 "worktree_id":   { "type": "string", "description": "Worktree ID to run the session in" },
+                "project_id":    { "type": "string", "description": "Project ID (auto-resolved from worktree or single project)" },
+                "account_id":    { "type": "string", "description": "Account ID (auto-resolved from project default)" },
                 "work_item_id":  { "type": "string", "description": "Work item ID to associate with the session (optional)" },
-                "account_id":    { "type": "string", "description": "Account ID that owns this session" },
                 "prompt":        { "type": "string", "description": "Initial prompt to pass to the agent via -p flag (optional)" },
                 "origin_mode":   { "type": "string", "description": "Origin mode for the session (default: execution)" },
                 "title":         { "type": "string", "description": "Human-readable title for the session (optional)" },
@@ -99,7 +100,7 @@ pub fn tool_session_create() -> Value {
                     "description": "Explicit stop rules for this session. Each entry is a constraint the agent must obey. If provided, replaces the role-based defaults."
                 }
             },
-            "required": ["project_id", "worktree_id", "account_id"]
+            "required": ["worktree_id"]
         }
     })
 }
@@ -146,16 +147,15 @@ pub fn tool_session_create_batch() -> Value {
 pub fn tool_session_list() -> Value {
     json!({
         "name": "emery_session_list",
-        "description": "List sessions for a project, optionally filtered by status, runtime state, or work item.",
+        "description": "List sessions for a project, optionally filtered by status, runtime state, or work item. project_id is auto-resolved if omitted.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "project_id":    { "type": "string", "description": "Project ID" },
+                "project_id":    { "type": "string", "description": "Project ID (auto-resolved if omitted)" },
                 "status":        { "type": "string", "description": "Filter by session status (optional)" },
                 "runtime_state": { "type": "string", "description": "Filter by runtime state (optional)" },
                 "work_item_id":  { "type": "string", "description": "Filter by work item ID (optional)" }
-            },
-            "required": ["project_id"]
+            }
         }
     })
 }
@@ -213,9 +213,7 @@ pub fn tool_session_terminate() -> Value {
 // ── Tool handlers ─────────────────────────────────────────────────────────────
 
 pub fn handle_session_create(input: Value) -> Result<String> {
-    let project_id = required_str(&input, "project_id")?;
     let worktree_id = required_str(&input, "worktree_id")?;
-    let account_id = required_str(&input, "account_id")?;
     let work_item_id = input["work_item_id"].as_str().map(str::to_string);
     let mut prompt = input["prompt"].as_str().map(str::to_string);
     let origin_mode = input["origin_mode"].as_str().unwrap_or("execution").to_string();
@@ -227,6 +225,10 @@ pub fn handle_session_create(input: Value) -> Result<String> {
         .unwrap_or_default();
 
     let mut rpc = RpcClient::connect()?;
+
+    // Auto-resolve project_id and account_id
+    let project_id = resolve_project(&input, &mut rpc)?;
+    let account_id = resolve_account(&input, &project_id, &mut rpc)?;
 
     // Resolve agent profile from account
     let account = rpc.call("account.get", json!({ "account_id": account_id }))?;
@@ -519,7 +521,8 @@ pub fn handle_session_create_batch(input: Value) -> Result<String> {
 }
 
 pub fn handle_session_list(input: Value) -> Result<String> {
-    let project_id = required_str(&input, "project_id")?;
+    let mut rpc = RpcClient::connect()?;
+    let project_id = resolve_project(&input, &mut rpc)?;
 
     let mut params = json!({ "project_id": project_id });
     if let Some(s) = input["status"].as_str() {
@@ -532,7 +535,6 @@ pub fn handle_session_list(input: Value) -> Result<String> {
         params["work_item_id"] = json!(wid);
     }
 
-    let mut rpc = RpcClient::connect()?;
     let sessions = rpc.call("session.list", params)?;
 
     let items = match sessions.as_array() {

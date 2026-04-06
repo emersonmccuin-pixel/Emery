@@ -1,6 +1,8 @@
 mod instructions;
 mod knowledge;
 mod merge_queue;
+mod project;
+mod resolve;
 mod session;
 mod vault;
 mod worktree;
@@ -33,6 +35,8 @@ pub fn all_tools() -> Value {
         vault::tool_vault_list(),
         vault::tool_vault_set(),
         vault::tool_vault_delete(),
+        project::tool_project_list(),
+        project::tool_project_get(),
         knowledge::tool_work_item_list(),
         knowledge::tool_work_item_get(),
         knowledge::tool_work_item_create(),
@@ -69,6 +73,8 @@ pub fn call_tool(name: &str, input: Value) -> Result<String> {
         "emery_vault_list" => vault::handle_vault_list(input),
         "emery_vault_set" => vault::handle_vault_set(input),
         "emery_vault_delete" => vault::handle_vault_delete(input),
+        "emery_project_list" => project::handle_project_list(input),
+        "emery_project_get" => project::handle_project_get(input),
         "emery_work_item_list" => knowledge::handle_work_item_list(input),
         "emery_work_item_get" => knowledge::handle_work_item_get(input),
         "emery_work_item_create" => knowledge::handle_work_item_create(input),
