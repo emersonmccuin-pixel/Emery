@@ -57,7 +57,7 @@ export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPan
     navStore.goToAgent(projectId, detail.id);
   }
 
-  async function handleCreateWorktree(launchSession = false) {
+  async function handleCreateWorktree() {
     const callsign = worktreeCallsign.trim() || `scratch-${Math.floor(Date.now() / 1000)}`;
     setWorktreeLoading(true);
     try {
@@ -65,9 +65,7 @@ export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPan
       await appStore.handleLoadWorktrees(projectId);
       setWorktreeCallsign("");
       setShowWorktreeInput(false);
-      if (launchSession) {
-        await launchSessionInWorktree(result.worktree);
-      }
+      await launchSessionInWorktree(result.worktree);
     } catch (err) {
       console.error("[right-panel] worktree provision failed", err);
     } finally {
@@ -186,7 +184,7 @@ export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPan
                 value={worktreeCallsign}
                 onChange={(e) => setWorktreeCallsign(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") handleCreateWorktree();
+                  if (e.key === "Enter") void handleCreateWorktree();
                   if (e.key === "Escape") {
                     setShowWorktreeInput(false);
                     setWorktreeCallsign("");
@@ -197,18 +195,11 @@ export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPan
               />
               <button
                 className="right-panel-worktree-go"
-                onClick={() => void handleCreateWorktree(false)}
+                onClick={() => void handleCreateWorktree()}
                 disabled={worktreeLoading}
+                title="Create worktree and open session"
               >
-                {worktreeLoading ? "..." : "Go"}
-              </button>
-              <button
-                className="right-panel-worktree-go"
-                onClick={() => void handleCreateWorktree(true)}
-                disabled={worktreeLoading}
-                title="Create worktree and launch a session"
-              >
-                {worktreeLoading ? "..." : "Launch"}
+                {worktreeLoading ? "..." : "Create"}
               </button>
             </div>
           )}
