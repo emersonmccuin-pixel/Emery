@@ -1217,6 +1217,10 @@ impl SupervisorService {
         let now = unix_time_seconds();
         let record = WorkItemUpdateRecord {
             id: existing.summary.id.clone(),
+            namespace: match request.namespace {
+                Some(ns) => optional_trimmed(Some(ns)),
+                None => None,
+            },
             title: match request.title.as_deref() {
                 Some(title) => required_trimmed("work item title", title)?,
                 None => existing.summary.title.clone(),

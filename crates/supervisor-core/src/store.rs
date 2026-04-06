@@ -1416,18 +1416,20 @@ impl DatabaseSet {
         let connection = open_connection(&self.paths.knowledge_db)?;
         let updated = connection.execute(
             "UPDATE work_items
-             SET title = ?2,
-                 description = ?3,
-                 acceptance_criteria = ?4,
-                 work_item_type = ?5,
-                 status = ?6,
-                 priority = ?7,
-                 created_by = ?8,
-                 updated_at = ?9,
-                 closed_at = ?10
+             SET namespace = COALESCE(?2, namespace),
+                 title = ?3,
+                 description = ?4,
+                 acceptance_criteria = ?5,
+                 work_item_type = ?6,
+                 status = ?7,
+                 priority = ?8,
+                 created_by = ?9,
+                 updated_at = ?10,
+                 closed_at = ?11
              WHERE id = ?1",
             params![
                 record.id,
+                record.namespace,
                 record.title,
                 record.description,
                 record.acceptance_criteria,
