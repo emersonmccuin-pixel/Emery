@@ -6606,6 +6606,72 @@ html[data-theme="vaporwave"] .right-panel {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   margin-bottom: var(--space-2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.right-panel-add-btn {
+  background: none;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  cursor: pointer;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.right-panel-add-btn:hover {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.right-panel-worktree-input {
+  display: flex;
+  gap: var(--space-1);
+  margin-bottom: var(--space-2);
+}
+
+.right-panel-worktree-input input {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  padding: var(--space-1) var(--space-2);
+}
+
+.right-panel-worktree-input input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.right-panel-worktree-go {
+  background: var(--color-primary);
+  color: var(--surface-base);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+}
+
+.right-panel-worktree-go:hover {
+  opacity: 0.85;
+}
+
+.right-panel-worktree-go:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .right-panel-dispatch-row {

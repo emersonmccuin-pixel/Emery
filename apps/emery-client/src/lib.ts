@@ -405,6 +405,27 @@ export async function mergeQueueCheckConflicts(
   return invoke("merge_queue_check_conflicts", { mergeQueueId, correlationId });
 }
 
+export async function provisionWorktree(
+  projectId: string,
+  callsign: string,
+  workItemId?: string | null,
+  baseRef?: string | null,
+  correlationId?: string,
+): Promise<{
+  worktree: { id: string; path: string; branch_name: string; status: string };
+  branch_name: string;
+  symlinked: string[];
+  symlink_warnings: string[];
+}> {
+  return invoke("provision_worktree", {
+    projectId,
+    callsign,
+    workItemId,
+    baseRef,
+    correlationId,
+  });
+}
+
 export async function saveClipboardImage(
   imageBase64: string,
   sessionId?: string | null,

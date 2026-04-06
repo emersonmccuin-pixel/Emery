@@ -1,6 +1,7 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useAppStore } from "../store";
 import { navStore, useNavLayer } from "../nav-store";
+import { provisionWorktree } from "../lib";
 import { WorktreeRow } from "./worktree-row";
 
 type RightPanelProps = {
@@ -11,6 +12,24 @@ type RightPanelProps = {
 
 export function RightPanel({ projectId, collapsed, onToggle }: RightPanelProps) {
   const navLayer = useNavLayer();
+  const [showWorktreeInput, setShowWorktreeInput] = useState(false);
+  const [worktreeCallsign, setWorktreeCallsign] = useState("");
+  const [worktreeLoading, setWorktreeLoading] = useState(false);
+
+  async function handleCreateWorktree() {
+    const callsign = worktreeCallsign.trim();
+    if (!callsign) return;
+    setWorktreeLoading(true);
+    try {
+      await provisionWorktree(projectId, callsign);
+      setWorktreeCallsign("");
+      setShowWorktreeInput(false);
+    } catch (err) {
+      console.error("[right-panel] worktree provision failed", err);
+    } finally {
+      setWorktreeLoading(false);
+    }
+  }
 
   const project = useAppStore(
     (s) => s.bootstrap?.projects.find((p) => p.id === projectId) ?? null,
@@ -105,8 +124,41 @@ export function RightPanel({ projectId, collapsed, onToggle }: RightPanelProps) 
         <div className="right-panel-section">
           <div className="right-panel-section-label">
             WORKTREES ({uniqueWorktrees.length})
+            <button
+              className="right-panel-add-btn"
+              onClick={() => setShowWorktreeInput((v) => !v)}
+              title="Create worktree"
+            >
+              +
+            </button>
           </div>
-          {uniqueWorktrees.length === 0 ? (
+          {showWorktreeInput && (
+            <div className="right-panel-worktree-input">
+              <input
+                type="text"
+                placeholder="Callsign (e.g. EMERY-58)"
+                value={worktreeCallsign}
+                onChange={(e) => setWorktreeCallsign(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleCreateWorktree();
+                  if (e.key === "Escape") {
+                    setShowWorktreeInput(false);
+                    setWorktreeCallsign("");
+                  }
+                }}
+                disabled={worktreeLoading}
+                autoFocus
+              />
+              <button
+                className="right-panel-worktree-go"
+                onClick={handleCreateWorktree}
+                disabled={worktreeLoading || !worktreeCallsign.trim()}
+              >
+                {worktreeLoading ? "..." : "Go"}
+              </button>
+            </div>
+          )}
+          {uniqueWorktrees.length === 0 && !showWorktreeInput ? (
             <div className="right-panel-empty">No active worktrees</div>
           ) : (
             <div className="right-panel-worktree-list">

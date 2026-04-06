@@ -1364,6 +1364,31 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
 }
 
 #[tauri::command]
+fn provision_worktree(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    project_id: String,
+    callsign: String,
+    work_item_id: Option<String>,
+    base_ref: Option<String>,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    let mut payload = json!({
+        "project_id": project_id,
+        "callsign": callsign,
+    });
+    if let Some(wi) = work_item_id {
+        payload["work_item_id"] = json!(wi);
+    }
+    if let Some(br) = base_ref {
+        payload["base_ref"] = json!(br);
+    }
+    manager
+        .request_value(&app, "worktree.provision", payload, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
 async fn pick_folder(app: AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     let folder = app.dialog().file().blocking_pick_folder();
@@ -1806,6 +1831,7 @@ fn main() {
             update_inbox_entry,
             count_unread_inbox_entries,
             save_clipboard_image,
+            provision_worktree,
             pick_folder,
             create_project_root,
             list_project_roots,
