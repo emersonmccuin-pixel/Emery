@@ -1143,6 +1143,32 @@ impl SupervisorService {
     }
 
     pub fn create_work_item(&self, request: CreateWorkItemRequest) -> Result<WorkItemDetail> {
+        // Validate namespace against existing projects when explicitly provided
+        if let Some(ref ns) = request.namespace {
+            let projects = self.list_projects()?;
+            let valid_namespaces: Vec<String> = projects
+                .into_iter()
+                .filter_map(|p| p.wcp_namespace)
+                .collect();
+            let is_valid = valid_namespaces
+                .iter()
+                .any(|v| v.eq_ignore_ascii_case(ns));
+            if !is_valid {
+                if valid_namespaces.is_empty() {
+                    return Err(anyhow!(
+                        "namespace '{}' is not valid — no projects have a namespace configured",
+                        ns
+                    ));
+                } else {
+                    return Err(anyhow!(
+                        "namespace '{}' is not valid — valid namespaces: {}",
+                        ns,
+                        valid_namespaces.join(", ")
+                    ));
+                }
+            }
+        }
+
         // Resolve namespace: explicit namespace takes priority, then project's wcp_namespace
         let namespace = match request.namespace {
             Some(ref ns) => Some(ns.clone()),
