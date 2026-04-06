@@ -122,6 +122,7 @@ export default function App() {
   });
 
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
+  const [rightPanelConstrained, setRightPanelConstrained] = useState(false);
 
   const toggleSidebarRef = useRef<() => void>(() => {});
   const autoRightRef = useRef(false);
@@ -164,6 +165,7 @@ export default function App() {
         // Need to collapse something — right panel first
         if (!rightPanelCollapsed) {
           autoRightRef.current = true;
+          setRightPanelConstrained(true);
           setRightPanelCollapsed(true);
           return; // re-evaluate on next frame after state update
         }
@@ -187,6 +189,7 @@ export default function App() {
           const wouldBe = w - sidebarW2 - RIGHT_EXPANDED;
           if (wouldBe >= MIN_CENTER) {
             autoRightRef.current = false;
+            setRightPanelConstrained(false);
             setRightPanelCollapsed(false);
           }
         }
@@ -596,16 +599,15 @@ export default function App() {
           <RightPanel
             projectId={navProjectId}
             collapsed={rightPanelCollapsed}
-            overlay={autoRightRef.current && !rightPanelCollapsed}
+            overlay={rightPanelConstrained && !rightPanelCollapsed}
             onToggle={() => {
-              if (autoRightRef.current && rightPanelCollapsed) {
-                // Not enough room inline — open as overlay, keep autoRight tracking
+              if (rightPanelConstrained && rightPanelCollapsed) {
                 setRightPanelCollapsed(false);
-              } else if (autoRightRef.current && !rightPanelCollapsed) {
-                // Close the overlay
+              } else if (rightPanelConstrained && !rightPanelCollapsed) {
                 setRightPanelCollapsed(true);
               } else {
                 autoRightRef.current = false;
+                setRightPanelConstrained(false);
                 setRightPanelCollapsed((c) => !c);
               }
             }}

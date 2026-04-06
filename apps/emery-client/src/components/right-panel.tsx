@@ -18,8 +18,7 @@ export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPan
   const [worktreeLoading, setWorktreeLoading] = useState(false);
 
   async function handleCreateWorktree() {
-    const callsign = worktreeCallsign.trim();
-    if (!callsign) return;
+    const callsign = worktreeCallsign.trim() || `scratch-${Math.floor(Date.now() / 1000)}`;
     setWorktreeLoading(true);
     try {
       await provisionWorktree(projectId, callsign);
@@ -137,7 +136,7 @@ export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPan
             <div className="right-panel-worktree-input">
               <input
                 type="text"
-                placeholder="Callsign (e.g. EMERY-58)"
+                placeholder="Branch name (optional)"
                 value={worktreeCallsign}
                 onChange={(e) => setWorktreeCallsign(e.target.value)}
                 onKeyDown={(e) => {
@@ -153,7 +152,7 @@ export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPan
               <button
                 className="right-panel-worktree-go"
                 onClick={handleCreateWorktree}
-                disabled={worktreeLoading || !worktreeCallsign.trim()}
+                disabled={worktreeLoading}
               >
                 {worktreeLoading ? "..." : "Go"}
               </button>

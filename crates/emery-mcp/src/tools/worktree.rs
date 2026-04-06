@@ -12,16 +12,16 @@ use super::resolve::resolve_project;
 pub fn tool_worktree_create() -> Value {
     json!({
         "name": "emery_worktree_create",
-        "description": "Create a git worktree for a work item. Creates branch emery/{callsign} and registers the worktree directory. project_id is auto-resolved if omitted.",
+        "description": "Create a git worktree. Provide callsign (e.g. EMERY-58) to link to a work item, or branch_name for a standalone worktree. If neither is given, auto-generates a timestamped branch name.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "callsign":    { "type": "string", "description": "Work item callsign (e.g. Emery-58)" },
-                "project_id":  { "type": "string", "description": "Project ID (auto-resolved if omitted)" },
-                "work_item_id": { "type": "string", "description": "Work item ID to link to the worktree (optional)" },
-                "base_ref":    { "type": "string", "description": "Base branch to create from (default: current HEAD)" }
-            },
-            "required": ["callsign"]
+                "callsign":     { "type": "string", "description": "Work item callsign — creates branch emery/{callsign}" },
+                "branch_name":  { "type": "string", "description": "Explicit branch name (alternative to callsign)" },
+                "project_id":   { "type": "string", "description": "Project ID (auto-resolved if omitted)" },
+                "work_item_id": { "type": "string", "description": "Work item ID to link (optional)" },
+                "base_ref":     { "type": "string", "description": "Base branch to create from (default: current HEAD)" }
+            }
         }
     })
 }
@@ -70,9 +70,24 @@ pub fn tool_open_editor() -> Value {
 // ── Tool handlers ─────────────────────────────────────────────────────────────
 
 pub fn handle_worktree_create(input: Value) -> Result<String> {
-    let callsign = required_str(&input, "callsign")?;
     let mut rpc = RpcClient::connect()?;
     let project_id = resolve_project(&input, &mut rpc)?;
+
+    // Resolve callsign: explicit callsign > branch_name > auto-generated
+    let callsign = if let Some(cs) = input["callsign"].as_str() {
+        cs.to_string()
+    } else if let Some(bn) = input["branch_name"].as_str() {
+        // Strip emery/ prefix if provided, use as-is for the callsign
+        bn.strip_prefix("emery/").unwrap_or(bn).to_string()
+    } else {
+        // Auto-generate: scratch-{timestamp}
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        format!("scratch-{}", ts)
+    };
+
     let work_item_id = input["work_item_id"].as_str();
     let base_ref = input["base_ref"].as_str();
 

@@ -193,11 +193,10 @@ export const TerminalSurface = memo(function TerminalSurface({
     terminal.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
       if (ev.type !== "keydown") return true;
 
-      // Shift+Enter → send escape sequence that Claude Code recognizes as newline
-      // Uses kitty keyboard protocol: CSI 13;2u (Enter with Shift modifier)
+      // Shift+Enter → send ESC + CR, which Claude Code interprets as "insert newline"
       if (ev.key === "Enter" && ev.shiftKey && !ev.ctrlKey && !ev.altKey) {
         if (liveRef.current) {
-          sendSessionInput(sessionId, "\x1b[13;2u", newCorrelationId("shift-enter")).catch(() => {});
+          sendSessionInput(sessionId, "\x1b\r", newCorrelationId("shift-enter")).catch(() => {});
         }
         return false;
       }
