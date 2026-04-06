@@ -14,6 +14,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { pickFolder } from "../lib";
+import {
+  type AppearanceOverrides,
+  loadOverrides,
+  saveOverrides,
+  applyOverrides,
+  resetOverrides,
+} from "../appearance";
 
 type SettingsTab = "accounts" | "appearance" | "agent-defaults" | "github" | "knowledge" | "resolution";
 
@@ -463,45 +470,353 @@ const THEMES = [
   { id: "neutral-dark", label: "Neutral Dark", description: "Clean blue-grey on dark" },
 ] as const;
 
+const FONT_OPTIONS = [
+  { value: "", label: "Theme default" },
+  { value: '"IBM Plex Sans", system-ui, sans-serif', label: "IBM Plex Sans" },
+  { value: '"Inter", system-ui, sans-serif', label: "Inter" },
+  { value: '"Segoe UI", system-ui, sans-serif', label: "Segoe UI" },
+  { value: 'system-ui, sans-serif', label: "System UI" },
+  { value: '"JetBrains Mono", monospace', label: "JetBrains Mono" },
+  { value: '"Fira Sans", system-ui, sans-serif', label: "Fira Sans" },
+];
+
+const MONO_OPTIONS = [
+  { value: "", label: "Theme default" },
+  { value: '"JetBrains Mono", monospace', label: "JetBrains Mono" },
+  { value: '"Fira Code", monospace', label: "Fira Code" },
+  { value: '"Cascadia Code", monospace', label: "Cascadia Code" },
+  { value: '"IBM Plex Mono", monospace', label: "IBM Plex Mono" },
+  { value: '"Source Code Pro", monospace', label: "Source Code Pro" },
+  { value: '"Consolas", monospace', label: "Consolas" },
+];
+
+const ADVANCED_TOKEN_GROUPS = [
+  {
+    label: "Surfaces",
+    tokens: [
+      { var: "--surface-base", label: "Base" },
+      { var: "--surface-raised", label: "Raised" },
+      { var: "--surface-overlay", label: "Overlay" },
+      { var: "--surface-sunken", label: "Sunken" },
+    ],
+  },
+  {
+    label: "Text",
+    tokens: [
+      { var: "--text-primary", label: "Primary" },
+      { var: "--text-secondary", label: "Secondary" },
+      { var: "--text-tertiary", label: "Tertiary" },
+    ],
+  },
+  {
+    label: "Borders",
+    tokens: [
+      { var: "--border-subtle", label: "Subtle" },
+      { var: "--border-default", label: "Default" },
+    ],
+  },
+  {
+    label: "Status",
+    tokens: [
+      { var: "--color-success", label: "Success" },
+      { var: "--color-warning", label: "Warning" },
+      { var: "--color-error", label: "Error" },
+      { var: "--color-info", label: "Info" },
+    ],
+  },
+];
+
+function useAppearance() {
+  const [overrides, setOverrides] = useState<AppearanceOverrides>(loadOverrides);
+
+  function update(patch: Partial<AppearanceOverrides>) {
+    setOverrides((prev) => {
+      const next = { ...prev, ...patch };
+      saveOverrides(next);
+      applyOverrides(next);
+      return next;
+    });
+  }
+
+  function setToken(varName: string, value: string) {
+    setOverrides((prev) => {
+      const tokens = { ...prev.tokens };
+      if (value) {
+        tokens[varName] = value;
+      } else {
+        delete tokens[varName];
+      }
+      const next = { ...prev, tokens };
+      saveOverrides(next);
+      applyOverrides(next);
+      return next;
+    });
+  }
+
+  function reset() {
+    resetOverrides();
+    setOverrides({ brightness: 1.0, fontScale: 1.0, fontSans: "", fontMono: "", accentColor: "", uiDensity: "default", tokens: {} });
+  }
+
+  return { overrides, update, setToken, reset };
+}
+
+/** Read the computed value of a CSS variable from the current theme (ignoring inline overrides). */
+function getThemeTokenValue(varName: string): string {
+  // Temporarily read from computed style — this includes inline overrides,
+  // but for color inputs we just need a reasonable starting value
+  return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+}
+
 function AppearanceSection() {
   const [currentTheme, setCurrentTheme] = useState(
     () => document.documentElement.dataset.theme ?? "cyberpunk",
   );
+  const { overrides, update, setToken, reset } = useAppearance();
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const hasOverrides =
+    overrides.brightness !== 1.0 ||
+    overrides.fontScale !== 1.0 ||
+    overrides.fontSans !== "" ||
+    overrides.fontMono !== "" ||
+    overrides.accentColor !== "" ||
+    overrides.uiDensity !== "default" ||
+    Object.keys(overrides.tokens).length > 0;
 
   function applyTheme(theme: string) {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("emery.theme", theme);
     localStorage.removeItem("euri.theme");
     setCurrentTheme(theme);
+    // Re-apply overrides on top of the new theme
+    applyOverrides(overrides);
   }
 
   return (
-    <Card className="settings-panel">
-      <CardHeader>
-        <CardTitle className="settings-section-title">Appearance</CardTitle>
-        <CardDescription>Choose the active shell palette and visual treatment.</CardDescription>
-      </CardHeader>
-      <CardContent>
-      <div className="settings-field-group">
-        <label className="settings-label">Theme</label>
-        <div className="settings-theme-cards">
-          {THEMES.map((theme) => (
-            <Button
-              key={theme.id}
-              variant={currentTheme === theme.id ? "default" : "ghost"}
-              className={`settings-theme-card h-auto flex-col items-start px-4 py-4 ${currentTheme === theme.id ? " active" : ""}`}
-              onClick={() => applyTheme(theme.id)}
-              data-theme-preview={theme.id}
-            >
-              <span className="settings-theme-card-name">{theme.label}</span>
-              <span className="settings-theme-card-desc">{theme.description}</span>
-            </Button>
-          ))}
-        </div>
-      </div>
-      </CardContent>
-    </Card>
+    <div className="appearance-section">
+      {/* Theme picker */}
+      <Card className="settings-panel">
+        <CardHeader>
+          <CardTitle className="settings-section-title">Theme</CardTitle>
+          <CardDescription>Choose the active shell palette and visual treatment.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="settings-theme-cards">
+            {THEMES.map((theme) => (
+              <Button
+                key={theme.id}
+                variant={currentTheme === theme.id ? "default" : "ghost"}
+                className={`settings-theme-card h-auto flex-col items-start px-4 py-4 ${currentTheme === theme.id ? " active" : ""}`}
+                onClick={() => applyTheme(theme.id)}
+                data-theme-preview={theme.id}
+              >
+                <span className="settings-theme-card-name">{theme.label}</span>
+                <span className="settings-theme-card-desc">{theme.description}</span>
+              </Button>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Customization controls */}
+      <Card className="settings-panel">
+        <CardHeader>
+          <div className="settings-panel-header-row">
+            <div>
+              <CardTitle className="settings-section-title">Customization</CardTitle>
+              <CardDescription>Override theme defaults. Changes apply live.</CardDescription>
+            </div>
+            {hasOverrides && (
+              <Button variant="ghost" size="sm" onClick={reset}>
+                Reset all
+              </Button>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="appearance-controls">
+            {/* Brightness */}
+            <div className="appearance-control-row">
+              <label className="settings-label">Brightness</label>
+              <div className="appearance-slider-row">
+                <input
+                  type="range"
+                  className="appearance-slider"
+                  min="0.5"
+                  max="1.5"
+                  step="0.05"
+                  value={overrides.brightness}
+                  onChange={(e) => update({ brightness: parseFloat(e.target.value) })}
+                />
+                <span className="appearance-slider-value">{Math.round(overrides.brightness * 100)}%</span>
+              </div>
+            </div>
+
+            {/* Font size */}
+            <div className="appearance-control-row">
+              <label className="settings-label">Font size</label>
+              <div className="appearance-slider-row">
+                <input
+                  type="range"
+                  className="appearance-slider"
+                  min="0.75"
+                  max="1.5"
+                  step="0.05"
+                  value={overrides.fontScale}
+                  onChange={(e) => update({ fontScale: parseFloat(e.target.value) })}
+                />
+                <span className="appearance-slider-value">{Math.round(overrides.fontScale * 100)}%</span>
+              </div>
+            </div>
+
+            {/* Font family */}
+            <div className="appearance-control-row">
+              <label className="settings-label">UI font</label>
+              <Select
+                className="settings-select"
+                value={overrides.fontSans}
+                onChange={(e) => update({ fontSans: e.target.value })}
+              >
+                {FONT_OPTIONS.map((f) => (
+                  <option key={f.value} value={f.value}>{f.label}</option>
+                ))}
+              </Select>
+            </div>
+
+            {/* Mono font */}
+            <div className="appearance-control-row">
+              <label className="settings-label">Mono font</label>
+              <Select
+                className="settings-select"
+                value={overrides.fontMono}
+                onChange={(e) => update({ fontMono: e.target.value })}
+              >
+                {MONO_OPTIONS.map((f) => (
+                  <option key={f.value} value={f.value}>{f.label}</option>
+                ))}
+              </Select>
+            </div>
+
+            {/* Accent color */}
+            <div className="appearance-control-row">
+              <label className="settings-label">Accent color</label>
+              <div className="appearance-color-row">
+                <input
+                  type="color"
+                  className="appearance-color-input"
+                  value={overrides.accentColor || getThemeTokenValue("--accent") || "#d8a25a"}
+                  onChange={(e) => update({ accentColor: e.target.value })}
+                />
+                <span className="appearance-color-hex">
+                  {overrides.accentColor || "Theme default"}
+                </span>
+                {overrides.accentColor && (
+                  <Button variant="ghost" size="sm" onClick={() => update({ accentColor: "" })}>
+                    Reset
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {/* UI density */}
+            <div className="appearance-control-row">
+              <label className="settings-label">UI density</label>
+              <div className="appearance-density-row">
+                {(["compact", "default", "comfortable"] as const).map((d) => (
+                  <Button
+                    key={d}
+                    variant={overrides.uiDensity === d ? "default" : "ghost"}
+                    size="sm"
+                    className="appearance-density-btn"
+                    onClick={() => update({ uiDensity: d })}
+                  >
+                    {d.charAt(0).toUpperCase() + d.slice(1)}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Advanced token overrides */}
+      <Card className="settings-panel">
+        <CardHeader>
+          <button
+            className="appearance-advanced-toggle"
+            onClick={() => setShowAdvanced((v) => !v)}
+          >
+            <span className="settings-section-title" style={{ cursor: "pointer" }}>
+              Advanced
+            </span>
+            <span className="appearance-advanced-arrow" data-open={showAdvanced}>
+              {showAdvanced ? "\u25B4" : "\u25BE"}
+            </span>
+          </button>
+          {!showAdvanced && (
+            <CardDescription>Per-token color overrides for surfaces, text, borders, and status.</CardDescription>
+          )}
+        </CardHeader>
+        {showAdvanced && (
+          <CardContent>
+            <div className="appearance-advanced-groups">
+              {ADVANCED_TOKEN_GROUPS.map((group) => (
+                <div key={group.label} className="appearance-token-group">
+                  <span className="appearance-token-group-label">{group.label}</span>
+                  <div className="appearance-token-list">
+                    {group.tokens.map((tok) => {
+                      const currentVal = overrides.tokens[tok.var] || "";
+                      const themeVal = getThemeTokenValue(tok.var) || "#000000";
+                      // Normalize to hex for color input
+                      const inputVal = currentVal || normalizeToHex(themeVal);
+                      return (
+                        <div key={tok.var} className="appearance-token-row">
+                          <input
+                            type="color"
+                            className="appearance-color-input appearance-color-input-sm"
+                            value={inputVal}
+                            onChange={(e) => setToken(tok.var, e.target.value)}
+                          />
+                          <span className="appearance-token-label">{tok.label}</span>
+                          {currentVal && (
+                            <button
+                              className="appearance-token-reset"
+                              onClick={() => setToken(tok.var, "")}
+                              title="Reset to theme default"
+                            >
+                              x
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        )}
+      </Card>
+    </div>
   );
+}
+
+/** Best-effort convert CSS color value to hex for color inputs. */
+function normalizeToHex(cssColor: string): string {
+  if (cssColor.startsWith("#")) {
+    // Expand shorthand
+    if (cssColor.length === 4) {
+      return "#" + cssColor[1] + cssColor[1] + cssColor[2] + cssColor[2] + cssColor[3] + cssColor[3];
+    }
+    return cssColor.slice(0, 7); // strip alpha if 8-digit
+  }
+  // Try to parse rgb/rgba
+  const m = cssColor.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+  if (m) {
+    return "#" + [m[1], m[2], m[3]].map(c => parseInt(c).toString(16).padStart(2, "0")).join("");
+  }
+  return "#000000";
 }
 
 // --- Agent Defaults Section ---
