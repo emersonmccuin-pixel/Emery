@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 
 const CURRENT_APP_DATA_DIR_ENV: &str = "EMERY_APP_DATA_DIR";
 const LEGACY_APP_DATA_DIR_ENV: &str = "EURI_APP_DATA_DIR";
+const KNOWLEDGE_DB_ENV: &str = "EMERY_KNOWLEDGE_DB";
 const CURRENT_APP_DIR_NAME: &str = "Emery";
 const LEGACY_APP_DIR_NAME: &str = "EURI";
 
@@ -40,9 +41,13 @@ impl AppPaths {
     }
 
     pub fn from_root(root: PathBuf) -> Result<Self> {
+        let knowledge_db = env::var(KNOWLEDGE_DB_ENV)
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| root.join("knowledge.db"));
+
         let paths = Self {
             app_db: root.join("app.db"),
-            knowledge_db: root.join("knowledge.db"),
+            knowledge_db,
             sessions_dir: root.join("sessions"),
             worktrees_dir: root.join("worktrees"),
             logs_dir: root.join("logs"),
