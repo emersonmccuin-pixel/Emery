@@ -19,7 +19,7 @@ export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPan
   const [worktreeCallsign, setWorktreeCallsign] = useState("");
   const [worktreeLoading, setWorktreeLoading] = useState(false);
 
-  async function launchSessionInWorktree(worktree: WorktreeSummary) {
+  async function launchSessionInWorktree(worktree: Pick<WorktreeSummary, "id" | "path" | "branch_name">) {
     const account =
       (project?.default_account_id
         ? bootstrap?.accounts.find((entry) => entry.id === project.default_account_id)
