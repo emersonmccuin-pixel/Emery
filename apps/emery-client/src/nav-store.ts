@@ -14,6 +14,7 @@ export type NavigationLayer = MainLayer;
 
 export type ModalLayer =
   | null
+  | { modal: "dispatch_launcher"; projectId: string }
   | { modal: "dispatch_single"; projectId: string; workItemId: string; originMode: string }
   | { modal: "dispatch_multi"; projectId: string; workItemIds: string[] }
   | { modal: "create_work_item"; projectId: string; parentId?: string }

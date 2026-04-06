@@ -1,4 +1,5 @@
 mod instructions;
+mod knowledge;
 mod merge_queue;
 mod session;
 mod vault;
@@ -32,6 +33,14 @@ pub fn all_tools() -> Value {
         vault::tool_vault_list(),
         vault::tool_vault_set(),
         vault::tool_vault_delete(),
+        knowledge::tool_work_item_list(),
+        knowledge::tool_work_item_get(),
+        knowledge::tool_work_item_create(),
+        knowledge::tool_work_item_update(),
+        knowledge::tool_document_list(),
+        knowledge::tool_document_get(),
+        knowledge::tool_document_create(),
+        knowledge::tool_document_update(),
     ])
 }
 
@@ -60,6 +69,14 @@ pub fn call_tool(name: &str, input: Value) -> Result<String> {
         "emery_vault_list" => vault::handle_vault_list(input),
         "emery_vault_set" => vault::handle_vault_set(input),
         "emery_vault_delete" => vault::handle_vault_delete(input),
+        "emery_work_item_list" => knowledge::handle_work_item_list(input),
+        "emery_work_item_get" => knowledge::handle_work_item_get(input),
+        "emery_work_item_create" => knowledge::handle_work_item_create(input),
+        "emery_work_item_update" => knowledge::handle_work_item_update(input),
+        "emery_document_list" => knowledge::handle_document_list(input),
+        "emery_document_get" => knowledge::handle_document_get(input),
+        "emery_document_create" => knowledge::handle_document_create(input),
+        "emery_document_update" => knowledge::handle_document_update(input),
         _ => Err(anyhow::anyhow!("unknown tool: {}", name)),
     }
 }

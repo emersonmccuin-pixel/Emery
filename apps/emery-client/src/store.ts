@@ -1089,16 +1089,38 @@ class AppStore {
   }
 
   async handleLaunchDispatcher(projectId: string) {
-    const loadKey = `dispatch:${projectId}`;
-    this.setLoading(loadKey, true);
     const correlationId = newCorrelationId("launch-dispatcher");
     try {
       const project =
         this.state.projectDetails[projectId] ?? (await getProject(projectId, correlationId));
       this.applyProjectDetail(project);
 
+      if (!project.roots[0]) {
+        throw new Error("Project needs at least one root before launching.");
+      }
+
+      navStore.openModal({ modal: "dispatch_launcher", projectId });
+    } catch (err) {
+      this.update({ error: String(err) });
+    }
+  }
+
+  async confirmLaunchDispatcher(opts: {
+    projectId: string;
+    accountId: string;
+    safetyMode?: string;
+    model?: string;
+  }) {
+    const loadKey = `dispatch:${opts.projectId}`;
+    this.setLoading(loadKey, true);
+    const correlationId = newCorrelationId("launch-dispatcher");
+    try {
+      const project =
+        this.state.projectDetails[opts.projectId] ?? (await getProject(opts.projectId, correlationId));
+      this.applyProjectDetail(project);
+
       const account =
-        this.state.bootstrap?.accounts.find((a) => a.id === project.default_account_id) ??
+        this.state.bootstrap?.accounts.find((a) => a.id === opts.accountId) ??
         this.state.bootstrap?.accounts[0] ??
         null;
       if (!account) {
@@ -1112,7 +1134,7 @@ class AppStore {
 
       const detail = await createSession(
         {
-          project_id: projectId,
+          project_id: opts.projectId,
           project_root_id: root.id,
           worktree_id: null,
           work_item_id: null,
@@ -1130,8 +1152,8 @@ class AppStore {
           initial_terminal_cols: 120,
           initial_terminal_rows: 40,
           auto_worktree: false,
-          safety_mode: "yolo",
-          model: "opus",
+          safety_mode: opts.safetyMode ?? "yolo",
+          model: opts.model ?? "opus",
         },
         correlationId,
       );
@@ -1146,7 +1168,7 @@ class AppStore {
       });
 
       // Navigate to agent view to show the dispatcher terminal
-      navStore.goToAgent(projectId, detail.id);
+      navStore.goToAgent(opts.projectId, detail.id);
     } catch (err) {
       this.update({ error: String(err) });
     } finally {
@@ -1240,7 +1262,7 @@ class AppStore {
     }
   }
 
-  async confirmDispatch(opts: { autoWorktree: boolean; originMode: string; safetyMode?: string; model?: string }) {
+  async confirmDispatch(opts: { autoWorktree: boolean; originMode: string; accountId?: string; safetyMode?: string; model?: string }) {
     const dispatch = this.state.pendingDispatch;
     if (!dispatch || dispatch.mode !== "single") return;
 
@@ -1257,10 +1279,11 @@ class AppStore {
       const workItem = s.workItemDetails[workItemId];
       if (!workItem) throw new Error("Work item detail not loaded.");
 
-      const account =
-        s.bootstrap?.accounts.find((entry) => entry.id === project.default_account_id) ??
-        s.bootstrap?.accounts[0] ??
-        null;
+      const account = opts.accountId
+        ? s.bootstrap?.accounts.find((entry) => entry.id === opts.accountId) ?? null
+        : s.bootstrap?.accounts.find((entry) => entry.id === project.default_account_id) ??
+          s.bootstrap?.accounts[0] ??
+          null;
       if (!account) {
         throw new Error("No account is configured for this project yet.");
       }

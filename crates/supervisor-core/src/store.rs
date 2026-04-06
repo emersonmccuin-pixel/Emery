@@ -477,11 +477,11 @@ impl DatabaseSet {
             params![project_id],
         )?;
         connection.execute(
-            "DELETE FROM planning_assignments WHERE project_id = ?1",
+            "DELETE FROM planning_assignments WHERE work_item_id IN (SELECT DISTINCT work_item_id FROM sessions WHERE project_id = ?1 AND work_item_id IS NOT NULL)",
             params![project_id],
         )?;
         connection.execute(
-            "DELETE FROM workflow_reconciliation_proposals WHERE project_id = ?1",
+            "DELETE FROM workflow_reconciliation_proposals WHERE source_session_id IN (SELECT id FROM sessions WHERE project_id = ?1)",
             params![project_id],
         )?;
         connection.execute(

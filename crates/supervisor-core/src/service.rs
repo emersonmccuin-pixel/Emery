@@ -1665,10 +1665,24 @@ impl SupervisorService {
             }
         }
 
-        // Write dispatcher guard and instructions
+        // Discover emery-mcp binary for MCP auto-registration
+        let mcp_servers = discover_emery_mcp_config();
+
+        // Write guard and MCP config into settings.local.json
         let mut guard_instructions: Option<String> = None;
         if request.origin_mode == "dispatch" {
-            guard_instructions = profile.write_guard(&request.cwd, GuardKind::Dispatcher)?;
+            guard_instructions = profile.write_settings_local(
+                &request.cwd,
+                Some(GuardKind::Dispatcher),
+                mcp_servers.clone(),
+            )?;
+        } else if mcp_servers.is_some() {
+            // For non-dispatch modes without a worktree guard (planning, research, chat),
+            // still write MCP config. Execution/follow_up modes get MCP config later when
+            // the worktree guard is written.
+            if request.origin_mode != "execution" && request.origin_mode != "follow_up" {
+                profile.write_settings_local(&request.cwd, None, mcp_servers.clone())?;
+            }
         }
 
         if request.origin_mode == "dispatch" {
@@ -1763,7 +1777,16 @@ impl SupervisorService {
             )?;
 
             request.worktree_id = Some(worktree_id);
-            request.cwd = worktree_path;
+            request.cwd = worktree_path.clone();
+
+            // Write worktree guard + MCP config for execution/follow_up sessions
+            // created directly through the supervisor (not via emery-mcp tools)
+            let normalized = worktree_path.replace('\\', "/").to_lowercase();
+            profile.write_settings_local(
+                &worktree_path,
+                Some(GuardKind::Worktree { normalized_path: normalized }),
+                mcp_servers.clone(),
+            )?;
         }
 
         let dispatch_group = request.dispatch_group.clone();
@@ -4049,6 +4072,31 @@ fn extract_file_paths(text: &str) -> Vec<String> {
     paths
 }
 
+
+/// Discover the emery-mcp binary as a sibling of the current supervisor binary.
+/// Returns an MCP servers config Value suitable for settings.local.json, or None if not found.
+fn discover_emery_mcp_config() -> Option<Value> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+
+    #[cfg(windows)]
+    let mcp_name = "emery-mcp.exe";
+    #[cfg(not(windows))]
+    let mcp_name = "emery-mcp";
+
+    let mcp_path = dir.join(mcp_name);
+    if mcp_path.exists() {
+        let path_str = mcp_path.to_string_lossy().replace('\\', "/");
+        Some(json!({
+            "emery": {
+                "command": path_str,
+                "args": []
+            }
+        }))
+    } else {
+        None
+    }
+}
 
 fn build_dispatcher_instructions(
     project_name: &str,

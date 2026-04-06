@@ -36,6 +36,8 @@ const DocumentView = lazy(async () => {
 
 export function ModalRouter({ modal }: { modal: NonNullable<ModalLayer> }) {
   switch (modal.modal) {
+    case "dispatch_launcher":
+      return <DispatchLauncherModal projectId={modal.projectId} />;
     case "dispatch_single":
       return (
         <DispatchSingleModal
@@ -230,6 +232,129 @@ function getOriginModeMeta(mode: string) {
 
 // ── Dispatch Single Modal ─────────────────────────────────────────────────
 
+// ── Dispatch Launcher Modal (for dispatcher sessions) ────────────────────
+
+function DispatchLauncherModal({ projectId }: { projectId: string }) {
+  const projectDetails = useAppStore((s) => s.projectDetails);
+  const bootstrap = useAppStore((s) => s.bootstrap);
+
+  const project = projectDetails[projectId];
+  const accounts = bootstrap?.accounts ?? [];
+  const defaultAccount =
+    accounts.find((a) => a.id === project?.default_account_id) ?? accounts[0] ?? null;
+
+  const [accountId, setAccountId] = useState<string>(defaultAccount?.id ?? "");
+  const [safetyMode, setSafetyMode] = useState<string>("");
+  const [model, setModel] = useState<string>("");
+
+  if (!project) {
+    return <div className="modal-loading">Loading...</div>;
+  }
+
+  const selectedAccount = accounts.find((a) => a.id === accountId) ?? defaultAccount;
+  const resolvedDefault = selectedAccount?.default_safety_mode ?? "yolo";
+  const modeMeta = getOriginModeMeta("dispatch");
+
+  function handleConfirm() {
+    if (!selectedAccount) return;
+    void appStore.confirmLaunchDispatcher({
+      projectId,
+      accountId: selectedAccount.id,
+      safetyMode: safetyMode || undefined,
+      model: model || undefined,
+    });
+    navStore.closeModal();
+  }
+
+  return (
+    <div className="modal-dispatch">
+      <div className="dispatch-header">
+        <div className="dispatch-header-left">
+          <h3 className="modal-title" style={{ marginBottom: 0 }}>Launch Dispatcher</h3>
+          <div className="dispatch-mode-badge" style={{ "--mode-accent": modeMeta.accent } as React.CSSProperties}>
+            {modeMeta.label}
+          </div>
+        </div>
+        <p className="dispatch-mode-desc">{modeMeta.description}</p>
+      </div>
+
+      <div className="dispatch-target-card">
+        <span className="dispatch-target-title">{project.name}</span>
+      </div>
+
+      <div className="dispatch-fields">
+        {accounts.length > 1 && (
+          <div className="dispatch-field">
+            <label className="dispatch-field-label">Account</label>
+            <div className="dispatch-field-control">
+              <Select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.label || a.agent_kind}{a.id === defaultAccount?.id ? " (default)" : ""}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+        )}
+
+        <div className="dispatch-field">
+          <label className="dispatch-field-label">Safety Mode</label>
+          <div className="dispatch-field-control">
+            <Select value={safetyMode} onChange={(e) => setSafetyMode(e.target.value)}>
+              <option value="">Default ({resolvedDefault})</option>
+              <option value="cautious">Cautious</option>
+              <option value="autonomous">Autonomous</option>
+              <option value="yolo">Yolo (Skip Permissions)</option>
+            </Select>
+            {(safetyMode || resolvedDefault) && (
+              <p className="dispatch-field-hint">
+                {safetyModeDescription(safetyMode || resolvedDefault)}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="dispatch-field">
+          <label className="dispatch-field-label">Model</label>
+          <div className="dispatch-field-control">
+            <ModelSelect value={model} onChange={setModel} defaultLabel="Default (opus)" />
+          </div>
+        </div>
+      </div>
+
+      <div className="dispatch-preview">
+        <p className="dispatch-preview-label">Will launch</p>
+        <div className="dispatch-preview-rows">
+          <div className="dispatch-preview-row">
+            <span className="dispatch-preview-key">Account</span>
+            <span className="dispatch-preview-val">{selectedAccount?.label ?? selectedAccount?.agent_kind ?? "—"}</span>
+          </div>
+          <div className="dispatch-preview-row">
+            <span className="dispatch-preview-key">Working dir</span>
+            <span className="dispatch-preview-val">{project.roots[0]?.path ?? "Project root"}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="modal-actions">
+        <Button variant="ghost" size="sm" onClick={() => navStore.closeModal()}>
+          Cancel
+        </Button>
+        {selectedAccount ? (
+          <Button variant="terminal" size="sm" onClick={handleConfirm}>
+            Launch Dispatcher
+          </Button>
+        ) : (
+          <span className="dispatch-no-accounts">No accounts available. Add one in Settings &gt; Accounts.</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Dispatch Single Modal (for work item sessions) ───────────────────────
+
 function DispatchSingleModal({
   projectId,
   workItemId,
@@ -249,6 +374,7 @@ function DispatchSingleModal({
   const defaultAccount =
     accounts.find((a) => a.id === project?.default_account_id) ?? accounts[0] ?? null;
 
+  const [accountId, setAccountId] = useState<string>(defaultAccount?.id ?? "");
   const [safetyMode, setSafetyMode] = useState<string>("");
   const [model, setModel] = useState<string>("");
 
@@ -256,10 +382,11 @@ function DispatchSingleModal({
     return <div className="modal-loading">Loading...</div>;
   }
 
+  const selectedAccount = accounts.find((a) => a.id === accountId) ?? defaultAccount;
   const branchName = `emery/${workItem.callsign.toLowerCase()}`;
   const root = project.roots[0] ?? null;
   const isExecution = originMode === "execution";
-  const resolvedDefault = defaultAccount?.default_safety_mode ?? "cautious";
+  const resolvedDefault = selectedAccount?.default_safety_mode ?? "cautious";
   const resolvedDefaultModel = isExecution ? "sonnet" : "opus";
   const modeMeta = getOriginModeMeta(originMode);
   const stopRules = getDefaultStopRules(originMode);
@@ -268,6 +395,7 @@ function DispatchSingleModal({
     void appStore.confirmDispatch({
       autoWorktree: isExecution,
       originMode,
+      accountId: selectedAccount?.id,
       safetyMode: safetyMode || undefined,
       model: model || undefined,
     });
@@ -296,6 +424,21 @@ function DispatchSingleModal({
 
       {/* Session configuration fields */}
       <div className="dispatch-fields">
+        {accounts.length > 1 && (
+          <div className="dispatch-field">
+            <label className="dispatch-field-label">Account</label>
+            <div className="dispatch-field-control">
+              <Select value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.label || a.agent_kind}{a.id === defaultAccount?.id ? " (default)" : ""}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+        )}
+
         <div className="dispatch-field">
           <label className="dispatch-field-label">Safety Mode</label>
           <div className="dispatch-field-control">
@@ -327,7 +470,7 @@ function DispatchSingleModal({
         <div className="dispatch-preview-rows">
           <div className="dispatch-preview-row">
             <span className="dispatch-preview-key">Account</span>
-            <span className="dispatch-preview-val">{defaultAccount?.label ?? defaultAccount?.agent_kind ?? "—"}</span>
+            <span className="dispatch-preview-val">{selectedAccount?.label ?? selectedAccount?.agent_kind ?? "—"}</span>
           </div>
           {isExecution ? (
             <>
@@ -363,7 +506,7 @@ function DispatchSingleModal({
         <Button variant="ghost" size="sm" onClick={() => navStore.closeModal()}>
           Cancel
         </Button>
-        {defaultAccount ? (
+        {selectedAccount ? (
           <Button variant="terminal" size="sm" onClick={handleConfirm}>
             {isExecution ? "Launch on Branch" : "Launch on Main"}
           </Button>

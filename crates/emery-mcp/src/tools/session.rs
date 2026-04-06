@@ -276,14 +276,18 @@ pub fn handle_session_create(input: Value) -> Result<String> {
         instruction_parts.push(stop_rules_md);
     }
 
-    // Write worktree guard hooks for execution and follow_up modes
+    // Discover own binary path for MCP auto-registration in spawned sessions
+    let mcp_servers = discover_mcp_config();
+
+    // Write worktree guard hooks + MCP config for execution and follow_up modes
     // Guard runs first — it may prepend text to instruction_parts for non-hook agents
     if origin_mode == "execution" || origin_mode == "follow_up" {
-        let guard_text = profile.write_guard(
+        let guard_text = profile.write_settings_local(
             &worktree_path,
-            GuardKind::Worktree {
+            Some(GuardKind::Worktree {
                 normalized_path: worktree_path.replace('\\', "/").to_lowercase(),
-            },
+            }),
+            mcp_servers,
         )?;
         if let Some(text) = guard_text {
             instruction_parts.insert(0, text);
@@ -439,14 +443,18 @@ pub fn handle_session_create_batch(input: Value) -> Result<String> {
             instruction_parts.push(stop_rules_md);
         }
 
-        // Write worktree guard hooks for execution and follow_up modes
+        // Discover own binary path for MCP auto-registration
+        let batch_mcp_servers = discover_mcp_config();
+
+        // Write worktree guard hooks + MCP config for execution and follow_up modes
         // Guard runs first — it may prepend text to instruction_parts for non-hook agents
         if origin_mode == "execution" || origin_mode == "follow_up" {
-            let guard_text = profile.write_guard(
+            let guard_text = profile.write_settings_local(
                 &worktree_path,
-                GuardKind::Worktree {
+                Some(GuardKind::Worktree {
                     normalized_path: worktree_path.replace('\\', "/").to_lowercase(),
-                },
+                }),
+                batch_mcp_servers,
             )?;
             if let Some(text) = guard_text {
                 instruction_parts.insert(0, text);
@@ -697,3 +705,18 @@ exit 0
     Ok(())
 }
 
+/// Discover the current emery-mcp binary path for MCP auto-registration in spawned sessions.
+fn discover_mcp_config() -> Option<serde_json::Value> {
+    let exe = std::env::current_exe().ok()?;
+    if exe.exists() {
+        let path_str = exe.to_string_lossy().replace('\\', "/");
+        Some(json!({
+            "emery": {
+                "command": path_str,
+                "args": []
+            }
+        }))
+    } else {
+        None
+    }
+}
