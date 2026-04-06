@@ -6789,9 +6789,25 @@ html[data-theme="vaporwave"] .right-panel {
   animation: wt-blink 1.2s ease-in-out infinite;
 }
 
+.wt-dirty-badge {
+  font-size: 10px;
+  line-height: 1;
+  color: var(--status-warning, #f59e0b);
+  border: 1px solid var(--status-warning, #f59e0b);
+  border-radius: 3px;
+  padding: 2px 4px;
+  margin-top: var(--space-1);
+  animation: wt-dirty-blink 2.5s ease-in-out infinite;
+}
+
 @keyframes wt-blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
+}
+
+@keyframes wt-dirty-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
 }
 
 /* ── Project Tab Bar ── */

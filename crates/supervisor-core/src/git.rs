@@ -388,6 +388,17 @@ pub fn git_status(path: &Path) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+/// Check if a worktree has uncommitted changes (staged, unstaged, or untracked).
+/// Returns false if the path doesn't exist or isn't a git repo.
+pub fn git_has_uncommitted_changes(path: &Path) -> bool {
+    if !path.exists() {
+        return false;
+    }
+    git_status(path)
+        .map(|status| !status.trim().is_empty())
+        .unwrap_or(false)
+}
+
 /// Stage all changes in the repository at `path`.
 pub fn git_add_all(path: &Path) -> Result<()> {
     let output = Command::new("git")

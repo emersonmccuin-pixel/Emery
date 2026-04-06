@@ -3637,6 +3637,8 @@ fn map_worktree_summary(row: &Row<'_>) -> rusqlite::Result<WorktreeSummary> {
         updated_at: row.get(11)?,
         closed_at: row.get(12)?,
         active_session_count: row.get(13)?,
+        // Populated by service layer via git status check
+        has_uncommitted_changes: false,
     })
 }
 

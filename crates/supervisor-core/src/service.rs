@@ -675,7 +675,17 @@ impl SupervisorService {
             self.ensure_project_root_exists(project_root_id)?;
         }
 
-        self.databases.list_worktrees(&filter)
+        let mut worktrees = self.databases.list_worktrees(&filter)?;
+
+        // Check git status for each active worktree
+        for worktree in &mut worktrees {
+            if worktree.status == "active" {
+                worktree.has_uncommitted_changes =
+                    git::git_has_uncommitted_changes(std::path::Path::new(&worktree.path));
+            }
+        }
+
+        Ok(worktrees)
     }
 
     pub fn get_worktree(&self, worktree_id: &str) -> Result<Option<WorktreeDetail>> {
