@@ -90,6 +90,7 @@ pub struct WorktreeSummary {
     pub status: String,
     pub created_by_session_id: Option<String>,
     pub last_used_at: Option<i64>,
+    pub sort_order: i64,
     pub created_at: i64,
     pub updated_at: i64,
     pub closed_at: Option<i64>,
@@ -390,6 +391,12 @@ pub struct UpdateWorktreeRequest {
     pub created_by_session_id: Option<String>,
     pub last_used_at: Option<i64>,
     pub closed_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorktreeReorderParams {
+    pub project_id: String,
+    pub ordered_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -764,6 +771,7 @@ pub struct NewWorktreeRecord {
     pub status: String,
     pub created_by_session_id: Option<String>,
     pub last_used_at: Option<i64>,
+    pub sort_order: i64,
     pub created_at: i64,
     pub updated_at: i64,
     pub closed_at: Option<i64>,

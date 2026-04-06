@@ -737,6 +737,7 @@ impl DatabaseSet {
                 w.status,
                 w.created_by_session_id,
                 w.last_used_at,
+                w.sort_order,
                 w.created_at,
                 w.updated_at,
                 w.closed_at,
@@ -777,10 +778,11 @@ impl DatabaseSet {
                 w.status,
                 w.created_by_session_id,
                 w.last_used_at,
+                w.sort_order,
                 w.created_at,
                 w.updated_at,
                 w.closed_at
-              ORDER BY w.updated_at DESC, w.created_at DESC",
+              ORDER BY w.sort_order ASC, w.created_at DESC",
         );
 
         if let Some(limit) = filter.limit {
@@ -849,6 +851,7 @@ impl DatabaseSet {
                 w.status,
                 w.created_by_session_id,
                 w.last_used_at,
+                w.sort_order,
                 w.created_at,
                 w.updated_at,
                 w.closed_at,
@@ -870,6 +873,7 @@ impl DatabaseSet {
                 w.status,
                 w.created_by_session_id,
                 w.last_used_at,
+                w.sort_order,
                 w.created_at,
                 w.updated_at,
                 w.closed_at",
@@ -919,11 +923,12 @@ impl DatabaseSet {
                 status,
                 created_by_session_id,
                 last_used_at,
+                sort_order,
                 created_at,
                 updated_at,
                 closed_at
              ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
              )",
             params![
                 record.id,
@@ -936,6 +941,7 @@ impl DatabaseSet {
                 record.status,
                 record.created_by_session_id,
                 record.last_used_at,
+                record.sort_order,
                 record.created_at,
                 record.updated_at,
                 record.closed_at,
@@ -978,6 +984,28 @@ impl DatabaseSet {
             return Err(anyhow!("worktree {} was not found", record.id));
         }
 
+        Ok(())
+    }
+
+    pub fn next_worktree_sort_order(&self, project_id: &str) -> Result<i64> {
+        let connection = open_connection(&self.paths.app_db)?;
+        Ok(connection.query_row(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM worktrees WHERE project_id = ?1",
+            [project_id],
+            |row| row.get(0),
+        )?)
+    }
+
+    pub fn reorder_worktrees(&self, project_id: &str, ordered_ids: &[String]) -> Result<()> {
+        let mut connection = open_connection(&self.paths.app_db)?;
+        let tx = connection.transaction()?;
+        for (index, id) in ordered_ids.iter().enumerate() {
+            tx.execute(
+                "UPDATE worktrees SET sort_order = ?2 WHERE id = ?1 AND project_id = ?3",
+                params![id, index as i64, project_id],
+            )?;
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -3633,10 +3661,11 @@ fn map_worktree_summary(row: &Row<'_>) -> rusqlite::Result<WorktreeSummary> {
         status: row.get(7)?,
         created_by_session_id: row.get(8)?,
         last_used_at: row.get(9)?,
-        created_at: row.get(10)?,
-        updated_at: row.get(11)?,
-        closed_at: row.get(12)?,
-        active_session_count: row.get(13)?,
+        sort_order: row.get(10)?,
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
+        closed_at: row.get(13)?,
+        active_session_count: row.get(14)?,
     })
 }
 

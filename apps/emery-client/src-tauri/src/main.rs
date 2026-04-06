@@ -1427,6 +1427,24 @@ fn close_worktree(
 }
 
 #[tauri::command]
+fn reorder_worktrees(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    project_id: String,
+    ordered_ids: Vec<String>,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "worktree.reorder",
+            json!({ "project_id": project_id, "ordered_ids": ordered_ids }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
 async fn pick_folder(app: AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     let folder = app.dialog().file().blocking_pick_folder();
@@ -1872,6 +1890,7 @@ fn main() {
             list_worktrees,
             provision_worktree,
             close_worktree,
+            reorder_worktrees,
             pick_folder,
             create_project_root,
             list_project_roots,

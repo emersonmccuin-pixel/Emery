@@ -13,7 +13,7 @@ use supervisor_core::{
     DeletePlanningAssignmentRequest, DiagnosticContext, DocumentListFilter,
     GitInitProjectRootRequest, InboxEntryListFilter, MergeQueueCheckConflictsParams,
     MergeQueueGetDiffParams, MergeQueueGetParams, MergeQueueListFilter, MergeQueueMergeParams,
-    MergeQueueParkParams, MergeQueueReorderParams, OutputOrResync, PlanningAssignmentListFilter,
+    MergeQueueParkParams, MergeQueueReorderParams, OutputOrResync, PlanningAssignmentListFilter, WorktreeReorderParams,
     RemoveProjectRootRequest, SessionListFilter, SessionSpecListFilter, SetProjectRootRemoteRequest,
     Supervisor, UpdateAccountRequest, UpdateAgentTemplateRequest, UpdateDocumentRequest,
     UpdateInboxEntryRequest, UpdatePlanningAssignmentRequest, UpdateProjectRequest,
@@ -351,6 +351,12 @@ impl SupervisorRpc {
                 Ok(serde_json::to_value(
                     self.supervisor.close_worktree(request)?,
                 )?)
+            }
+            Method::WorktreeReorder => {
+                let params: WorktreeReorderParams = serde_json::from_value(params)?;
+                self.supervisor
+                    .reorder_worktrees(&params.project_id, &params.ordered_ids)?;
+                Ok(json!({ "ok": true }))
             }
             Method::SessionSpecList => {
                 let filter: SessionSpecListFilter = serde_json::from_value(params)?;
@@ -951,6 +957,7 @@ impl SupervisorRpc {
                 Method::WorktreeProvision.as_str(),
                 Method::WorktreeUpdate.as_str(),
                 Method::WorktreeClose.as_str(),
+                Method::WorktreeReorder.as_str(),
                 Method::SessionSpecList.as_str(),
                 Method::SessionSpecGet.as_str(),
                 Method::SessionSpecCreate.as_str(),

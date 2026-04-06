@@ -188,6 +188,7 @@ export type WorktreeSummary = {
   status: string;
   created_by_session_id: string | null;
   last_used_at: number | null;
+  sort_order: number;
   created_at: number;
   updated_at: number;
   closed_at: number | null;

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useRef } from "react";
 import { appStore, useAppStore } from "../store";
 import { navStore, useNavLayer } from "../nav-store";
 import { createSession, provisionWorktree, watchLiveSessions } from "../lib";
@@ -18,6 +18,8 @@ export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPan
   const [showWorktreeInput, setShowWorktreeInput] = useState(false);
   const [worktreeCallsign, setWorktreeCallsign] = useState("");
   const [worktreeLoading, setWorktreeLoading] = useState(false);
+  const draggedIndex = useRef<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
   async function launchSessionInWorktree(worktree: Pick<WorktreeSummary, "id" | "path" | "branch_name">) {
     const account =
@@ -216,17 +218,52 @@ export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPan
             <div className="right-panel-empty">No active worktrees</div>
           ) : (
             <div className="right-panel-worktree-list">
-              {worktreeRows.map(({ worktree, session }) => (
-                <WorktreeRow
+              {worktreeRows.map(({ worktree, session }, index) => (
+                <div
                   key={worktree.id}
-                  worktree={worktree}
-                  session={session}
-                  isActive={session?.id === activeSessionId}
-                  onClick={session
-                    ? () => navStore.goToAgent(projectId, session.id)
-                    : () => void launchSessionInWorktree(worktree)
-                  }
-                />
+                  draggable
+                  onDragStart={() => {
+                    draggedIndex.current = index;
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    if (draggedIndex.current !== null && draggedIndex.current !== index) {
+                      setDragOverIndex(index);
+                    }
+                  }}
+                  onDragLeave={() => {
+                    setDragOverIndex(null);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (draggedIndex.current !== null && draggedIndex.current !== index) {
+                      const newOrder = [...worktreeRows];
+                      const [dragged] = newOrder.splice(draggedIndex.current, 1);
+                      newOrder.splice(index, 0, dragged);
+                      void appStore.handleReorderWorktrees(
+                        projectId,
+                        newOrder.map((r) => r.worktree.id),
+                      );
+                    }
+                    draggedIndex.current = null;
+                    setDragOverIndex(null);
+                  }}
+                  onDragEnd={() => {
+                    draggedIndex.current = null;
+                    setDragOverIndex(null);
+                  }}
+                  className={dragOverIndex === index ? "worktree-drag-over" : ""}
+                >
+                  <WorktreeRow
+                    worktree={worktree}
+                    session={session}
+                    isActive={session?.id === activeSessionId}
+                    onClick={session
+                      ? () => navStore.goToAgent(projectId, session.id)
+                      : () => void launchSessionInWorktree(worktree)
+                    }
+                  />
+                </div>
               ))}
             </div>
           )}
@@ -238,19 +275,10 @@ export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPan
 
 function compareWorktreeRows(
   leftWorktree: WorktreeSummary,
-  leftSession: SessionSummary | null,
+  _leftSession: SessionSummary | null,
   rightWorktree: WorktreeSummary,
-  rightSession: SessionSummary | null,
+  _rightSession: SessionSummary | null,
 ) {
-  const leftLive = leftSession && (leftSession.runtime_state === "running" || leftSession.runtime_state === "starting") ? 0 : 1;
-  const rightLive = rightSession && (rightSession.runtime_state === "running" || rightSession.runtime_state === "starting") ? 0 : 1;
-  if (leftLive !== rightLive) return leftLive - rightLive;
-
-  const leftNeedsInput = leftSession?.activity_state === "needs_input" ? 0 : 1;
-  const rightNeedsInput = rightSession?.activity_state === "needs_input" ? 0 : 1;
-  if (leftNeedsInput !== rightNeedsInput) return leftNeedsInput - rightNeedsInput;
-
-  const leftUpdated = leftSession?.updated_at ?? leftWorktree.updated_at;
-  const rightUpdated = rightSession?.updated_at ?? rightWorktree.updated_at;
-  return rightUpdated - leftUpdated;
+  // Sort by user-defined sort_order (ascending)
+  return leftWorktree.sort_order - rightWorktree.sort_order;
 }
