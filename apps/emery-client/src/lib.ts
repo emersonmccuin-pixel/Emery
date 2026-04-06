@@ -448,6 +448,18 @@ export async function closeWorktree(
   });
 }
 
+export async function reorderWorktrees(
+  projectId: string,
+  orderedIds: string[],
+  correlationId?: string,
+): Promise<void> {
+  await invoke("reorder_worktrees", {
+    projectId,
+    orderedIds,
+    correlationId,
+  });
+}
+
 export async function saveClipboardImage(
   imageBase64: string,
   sessionId?: string | null,

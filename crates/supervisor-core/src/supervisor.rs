@@ -224,6 +224,10 @@ impl Supervisor {
         self.service.close_worktree(request)
     }
 
+    pub fn reorder_worktrees(&self, project_id: &str, ordered_ids: &[String]) -> Result<()> {
+        self.service.reorder_worktrees(project_id, ordered_ids)
+    }
+
     pub fn list_session_specs(
         &self,
         filter: SessionSpecListFilter,

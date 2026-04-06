@@ -6769,6 +6769,12 @@ html[data-theme="vaporwave"] .right-panel {
   margin-top: 2px;
 }
 
+/* Drag-and-drop indicator */
+.worktree-drag-over {
+  border-top: 2px solid var(--accent, var(--text-primary));
+  margin-top: -2px;
+}
+
 /* ── Status dots (worktree) ── */
 
 .wt-dot {

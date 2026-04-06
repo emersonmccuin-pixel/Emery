@@ -31,6 +31,7 @@ import {
   mergeQueueCheckConflicts,
   mergeQueueMerge,
   mergeQueuePark,
+  reorderWorktrees,
   terminateSession,
   updateDocument,
   updateProject,
@@ -693,6 +694,32 @@ class AppStore {
       await this.handleLoadWorktrees(projectId);
       await this.handleLoadMergeQueue(projectId);
       this.setLoading(`close-worktree:${worktreeId}`, false);
+    }
+  }
+
+  async handleReorderWorktrees(projectId: string, orderedIds: string[]) {
+    // Optimistic update: immediately reorder in local state
+    const currentWorktrees = this.state.worktreesByProject[projectId] ?? [];
+    const reordered = orderedIds
+      .map((id, index) => {
+        const wt = currentWorktrees.find((w) => w.id === id);
+        return wt ? { ...wt, sort_order: index } : null;
+      })
+      .filter((w): w is NonNullable<typeof w> => w !== null);
+
+    this.update({
+      worktreesByProject: { ...this.state.worktreesByProject, [projectId]: reordered },
+    });
+
+    // Persist to backend
+    try {
+      const correlationId = newCorrelationId("worktree-reorder");
+      await reorderWorktrees(projectId, orderedIds, correlationId);
+      this.clearError();
+    } catch (invokeError) {
+      this.update({ error: String(invokeError) });
+      // Revert on error by reloading from backend
+      await this.handleLoadWorktrees(projectId);
     }
   }
 

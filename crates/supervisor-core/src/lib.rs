@@ -39,7 +39,7 @@ pub use models::{
     UpdateWorkspaceStateRequest, UpdateWorktreeRequest, GitHealthStatus, WorkItemDetail,
     WorkItemListFilter, WorkItemSummary, WorkflowReconciliationProposalDetail,
     WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
-    WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary,
+    WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary, WorktreeReorderParams,
     CreateVaultEntryRequest, UpdateVaultEntryRequest, VaultAuditEntry, VaultEntry, VaultLockState,
     McpServerSummary, CreateMcpServerRequest, UpdateMcpServerRequest, DeleteMcpServerRequest,
     ProvisionWorktreeRequest, CloseWorktreeRequest, CloseWorktreeResult,

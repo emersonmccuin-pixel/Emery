@@ -714,6 +714,7 @@ impl SupervisorService {
         let closed_at = closed_at_for_worktree_status(status.as_str(), None, unix_time_seconds());
         let now = unix_time_seconds();
         let worktree_id = format!("wt_{}", Uuid::new_v4().simple());
+        let sort_order = self.databases.next_worktree_sort_order(&request.project_id)?;
 
         let record = NewWorktreeRecord {
             id: worktree_id.clone(),
@@ -726,6 +727,7 @@ impl SupervisorService {
             status,
             created_by_session_id,
             last_used_at: request.last_used_at,
+            sort_order,
             created_at: now,
             updated_at: now,
             closed_at,
@@ -1063,6 +1065,10 @@ impl SupervisorService {
             conflicts,
             status: "closed".to_string(),
         })
+    }
+
+    pub fn reorder_worktrees(&self, project_id: &str, ordered_ids: &[String]) -> Result<()> {
+        self.databases.reorder_worktrees(project_id, ordered_ids)
     }
 
     pub fn list_session_specs(
