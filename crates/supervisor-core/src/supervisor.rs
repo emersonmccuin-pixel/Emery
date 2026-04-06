@@ -28,7 +28,7 @@ use crate::models::{
     WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary, GitHealthStatus,
     CreateVaultEntryRequest, VaultAuditEntry, VaultEntry, VaultLockState,
     McpServerSummary, CreateMcpServerRequest, UpdateMcpServerRequest, DeleteMcpServerRequest,
-    ProvisionWorktreeRequest,
+    ProvisionWorktreeRequest, CloseWorktreeRequest, CloseWorktreeResult,
 };
 use crate::runtime::SessionRegistry;
 use crate::service::SupervisorService;
@@ -218,6 +218,10 @@ impl Supervisor {
 
     pub fn update_worktree(&self, request: UpdateWorktreeRequest) -> Result<WorktreeDetail> {
         self.service.update_worktree(request)
+    }
+
+    pub fn close_worktree(&self, request: CloseWorktreeRequest) -> Result<CloseWorktreeResult> {
+        self.service.close_worktree(request)
     }
 
     pub fn list_session_specs(

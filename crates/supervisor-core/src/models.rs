@@ -349,6 +349,14 @@ pub struct ProvisionWorktreeRequest {
     pub project_root_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct CloseWorktreeRequest {
+    pub worktree_id: String,
+    pub commit_message: Option<String>,
+    #[serde(default)]
+    pub skip_merge: bool,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct WorktreeListFilter {
     pub project_id: Option<String>,
@@ -1258,6 +1266,16 @@ pub struct MergeQueueListFilter {
 #[derive(Debug, Clone, Deserialize)]
 pub struct MergeQueueGetParams {
     pub merge_queue_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CloseWorktreeResult {
+    pub worktree_id: String,
+    pub merge_queue_id: Option<String>,
+    pub committed: bool,
+    pub merged: bool,
+    pub conflicts: Vec<String>,
+    pub status: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

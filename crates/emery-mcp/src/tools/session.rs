@@ -105,6 +105,10 @@ pub fn tool_session_create() -> Value {
     })
 }
 
+pub(crate) fn create_session_with_rpc(rpc: &mut RpcClient, input: &Value) -> Result<String> {
+    create_session_with_rpc_inner(rpc, input)
+}
+
 pub fn tool_session_create_batch() -> Value {
     json!({
         "name": "emery_session_create_batch",
@@ -213,7 +217,12 @@ pub fn tool_session_terminate() -> Value {
 // ── Tool handlers ─────────────────────────────────────────────────────────────
 
 pub fn handle_session_create(input: Value) -> Result<String> {
-    let worktree_id = required_str(&input, "worktree_id")?;
+    let mut rpc = RpcClient::connect()?;
+    create_session_with_rpc_inner(&mut rpc, &input)
+}
+
+fn create_session_with_rpc_inner(rpc: &mut RpcClient, input: &Value) -> Result<String> {
+    let worktree_id = required_str(input, "worktree_id")?;
     let work_item_id = input["work_item_id"].as_str().map(str::to_string);
     let mut prompt = input["prompt"].as_str().map(str::to_string);
     let origin_mode = input["origin_mode"].as_str().unwrap_or("execution").to_string();
@@ -224,11 +233,9 @@ pub fn handle_session_create(input: Value) -> Result<String> {
         .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
         .unwrap_or_default();
 
-    let mut rpc = RpcClient::connect()?;
-
     // Auto-resolve project_id and account_id
-    let project_id = resolve_project(&input, &mut rpc)?;
-    let account_id = resolve_account(&input, &project_id, &mut rpc)?;
+    let project_id = resolve_project(input, rpc)?;
+    let account_id = resolve_account(input, &project_id, rpc)?;
 
     // Resolve agent profile from account
     let account = rpc.call("account.get", json!({ "account_id": account_id }))?;

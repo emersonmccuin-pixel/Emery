@@ -1,8 +1,10 @@
 import { useMemo, useState } from "react";
-import { useAppStore } from "../store";
+import { appStore, useAppStore } from "../store";
 import { navStore, useNavLayer } from "../nav-store";
-import { provisionWorktree } from "../lib";
+import { createSession, provisionWorktree, watchLiveSessions } from "../lib";
 import { WorktreeRow } from "./worktree-row";
+import type { SessionSummary, WorktreeSummary } from "../types";
+import { newCorrelationId } from "../diagnostics";
 
 type RightPanelProps = {
   projectId: string;
@@ -17,11 +19,48 @@ export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPan
   const [worktreeCallsign, setWorktreeCallsign] = useState("");
   const [worktreeLoading, setWorktreeLoading] = useState(false);
 
-  async function handleCreateWorktree() {
+  async function handleCreateWorktree(launchSession = false) {
     const callsign = worktreeCallsign.trim() || `scratch-${Math.floor(Date.now() / 1000)}`;
     setWorktreeLoading(true);
     try {
-      await provisionWorktree(projectId, callsign);
+      const result = await provisionWorktree(projectId, callsign);
+      if (launchSession) {
+        const account =
+          (project?.default_account_id
+            ? bootstrap?.accounts.find((entry) => entry.id === project.default_account_id)
+            : null) ??
+          bootstrap?.accounts[0] ??
+          null;
+        if (!account) {
+          throw new Error("No account is configured for this project yet.");
+        }
+
+        const correlationId = newCorrelationId("worktree-launch");
+        const detail = await createSession(
+          {
+            project_id: projectId,
+            worktree_id: result.worktree.id,
+            account_id: account.id,
+            agent_kind: account.agent_kind,
+            cwd: result.worktree.path,
+            command: account.binary_path ?? account.agent_kind,
+            args: [],
+            env_preset_ref: account.env_preset_ref,
+            origin_mode: "execution",
+            current_mode: "execution",
+            title: callsign.toUpperCase(),
+            title_policy: "manual",
+            restore_policy: "reattach",
+            initial_terminal_cols: 120,
+            initial_terminal_rows: 40,
+          },
+          correlationId,
+        );
+        appStore.applySessionDetail(detail);
+        await watchLiveSessions([detail.id], correlationId);
+        navStore.goToAgent(projectId, detail.id);
+      }
+      void appStore.handleLoadWorktrees(projectId);
       setWorktreeCallsign("");
       setShowWorktreeInput(false);
     } catch (err) {
@@ -34,7 +73,9 @@ export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPan
   const project = useAppStore(
     (s) => s.bootstrap?.projects.find((p) => p.id === projectId) ?? null,
   );
+  const bootstrap = useAppStore((s) => s.bootstrap);
   const projectDetail = useAppStore((s) => s.projectDetails[projectId]);
+  const worktrees = useAppStore((s) => s.worktreesByProject[projectId] ?? []);
   const sessions = useAppStore((s) => s.sessions);
 
   const projectSessions = useMemo(
@@ -57,24 +98,24 @@ export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPan
     return { dispatchSession: dispatch, worktreeSessions: worktrees };
   }, [projectSessions]);
 
-  // Deduplicate by worktree_branch: pick latest session per branch
-  const uniqueWorktrees = useMemo(() => {
-    const byBranch = new Map<string, typeof worktreeSessions[0]>();
-    for (const s of worktreeSessions) {
-      const branch = s.worktree_branch!;
-      const existing = byBranch.get(branch);
-      if (!existing || s.updated_at > existing.updated_at) {
-        byBranch.set(branch, s);
+  const worktreeRows = useMemo(() => {
+    const latestSessionByWorktreeId = new Map<string, SessionSummary>();
+    for (const session of worktreeSessions) {
+      if (!session.worktree_id) continue;
+      const existing = latestSessionByWorktreeId.get(session.worktree_id);
+      if (!existing || session.updated_at > existing.updated_at) {
+        latestSessionByWorktreeId.set(session.worktree_id, session);
       }
     }
-    // Running first, then by updated_at desc
-    return Array.from(byBranch.values()).sort((a, b) => {
-      const aRunning = a.runtime_state === "running" || a.runtime_state === "starting" ? 0 : 1;
-      const bRunning = b.runtime_state === "running" || b.runtime_state === "starting" ? 0 : 1;
-      if (aRunning !== bRunning) return aRunning - bRunning;
-      return b.updated_at - a.updated_at;
-    });
-  }, [worktreeSessions]);
+
+    return worktrees
+      .filter((worktree) => worktree.status !== "removed")
+      .map((worktree) => ({
+        worktree,
+        session: latestSessionByWorktreeId.get(worktree.id) ?? null,
+      }))
+      .sort((left, right) => compareWorktreeRows(left.worktree, left.session, right.worktree, right.session));
+  }, [worktreeSessions, worktrees]);
 
   const activeSessionId = navLayer.layer === "agent" ? navLayer.sessionId : null;
   const namespace = projectDetail?.slug?.toUpperCase() ?? project?.slug?.toUpperCase() ?? "";
@@ -123,7 +164,7 @@ export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPan
         {/* Worktrees */}
         <div className="right-panel-section">
           <div className="right-panel-section-label">
-            WORKTREES ({uniqueWorktrees.length})
+            WORKTREES ({worktreeRows.length})
             <button
               className="right-panel-add-btn"
               onClick={() => setShowWorktreeInput((v) => !v)}
@@ -151,23 +192,32 @@ export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPan
               />
               <button
                 className="right-panel-worktree-go"
-                onClick={handleCreateWorktree}
+                onClick={() => void handleCreateWorktree(false)}
                 disabled={worktreeLoading}
               >
                 {worktreeLoading ? "..." : "Go"}
               </button>
+              <button
+                className="right-panel-worktree-go"
+                onClick={() => void handleCreateWorktree(true)}
+                disabled={worktreeLoading}
+                title="Create worktree and launch a session"
+              >
+                {worktreeLoading ? "..." : "Launch"}
+              </button>
             </div>
           )}
-          {uniqueWorktrees.length === 0 && !showWorktreeInput ? (
+          {worktreeRows.length === 0 && !showWorktreeInput ? (
             <div className="right-panel-empty">No active worktrees</div>
           ) : (
             <div className="right-panel-worktree-list">
-              {uniqueWorktrees.map((s) => (
+              {worktreeRows.map(({ worktree, session }) => (
                 <WorktreeRow
-                  key={s.id}
-                  session={s}
-                  isActive={s.id === activeSessionId}
-                  onClick={() => navStore.goToAgent(projectId, s.id)}
+                  key={worktree.id}
+                  worktree={worktree}
+                  session={session}
+                  isActive={session?.id === activeSessionId}
+                  onClick={session ? () => navStore.goToAgent(projectId, session.id) : undefined}
                 />
               ))}
             </div>
@@ -176,4 +226,23 @@ export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPan
       </div>
     </div>
   );
+}
+
+function compareWorktreeRows(
+  leftWorktree: WorktreeSummary,
+  leftSession: SessionSummary | null,
+  rightWorktree: WorktreeSummary,
+  rightSession: SessionSummary | null,
+) {
+  const leftLive = leftSession && (leftSession.runtime_state === "running" || leftSession.runtime_state === "starting") ? 0 : 1;
+  const rightLive = rightSession && (rightSession.runtime_state === "running" || rightSession.runtime_state === "starting") ? 0 : 1;
+  if (leftLive !== rightLive) return leftLive - rightLive;
+
+  const leftNeedsInput = leftSession?.activity_state === "needs_input" ? 0 : 1;
+  const rightNeedsInput = rightSession?.activity_state === "needs_input" ? 0 : 1;
+  if (leftNeedsInput !== rightNeedsInput) return leftNeedsInput - rightNeedsInput;
+
+  const leftUpdated = leftSession?.updated_at ?? leftWorktree.updated_at;
+  const rightUpdated = rightSession?.updated_at ?? rightWorktree.updated_at;
+  return rightUpdated - leftUpdated;
 }

@@ -177,6 +177,32 @@ export type SessionDetail = {
   runtime: SessionRuntimeView | null;
 } & SessionSummary;
 
+export type WorktreeSummary = {
+  id: string;
+  project_id: string;
+  project_root_id: string;
+  branch_name: string;
+  head_commit: string | null;
+  base_ref: string | null;
+  path: string;
+  status: string;
+  created_by_session_id: string | null;
+  last_used_at: number | null;
+  created_at: number;
+  updated_at: number;
+  closed_at: number | null;
+  active_session_count: number;
+};
+
+export type CloseWorktreeResult = {
+  worktree_id: string;
+  merge_queue_id: string | null;
+  committed: boolean;
+  merged: boolean;
+  conflicts: string[];
+  status: string;
+};
+
 export type ConflictWarning = {
   item_a: string;
   item_b: string;

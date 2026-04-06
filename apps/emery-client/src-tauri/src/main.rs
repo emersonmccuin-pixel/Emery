@@ -1364,6 +1364,23 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
 }
 
 #[tauri::command]
+fn list_worktrees(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    project_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "worktree.list",
+            json!({ "project_id": project_id }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
 fn provision_worktree(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
@@ -1385,6 +1402,27 @@ fn provision_worktree(
     }
     manager
         .request_value(&app, "worktree.provision", payload, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn close_worktree(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    worktree_id: String,
+    commit_message: Option<String>,
+    skip_merge: Option<bool>,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    let mut payload = json!({ "worktree_id": worktree_id });
+    if let Some(message) = commit_message {
+        payload["commit_message"] = json!(message);
+    }
+    if let Some(skip_merge) = skip_merge {
+        payload["skip_merge"] = json!(skip_merge);
+    }
+    manager
+        .request_value(&app, "worktree.close", payload, correlation_id)
         .map_err(error_string)
 }
 
@@ -1831,7 +1869,9 @@ fn main() {
             update_inbox_entry,
             count_unread_inbox_entries,
             save_clipboard_image,
+            list_worktrees,
             provision_worktree,
+            close_worktree,
             pick_folder,
             create_project_root,
             list_project_roots,

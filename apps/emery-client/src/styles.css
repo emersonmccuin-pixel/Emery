@@ -1482,7 +1482,7 @@ html[data-theme="vaporwave"] .topbar {
 
 .project-create-input {
   flex: 1;
-  font-size: 0.85rem;
+  font-size: var(--text-base);
 }
 
 .project-create-path-input {
@@ -2228,7 +2228,7 @@ html[data-theme="vaporwave"] .topbar {
   place-items: center;
   min-height: 40vh;
   color: var(--text-secondary);
-  font-size: 0.85rem;
+  font-size: var(--text-base);
 }
 
 /* ── Work item selection ── */
@@ -2798,7 +2798,7 @@ html[data-theme="vaporwave"] .topbar {
   justify-content: center;
   height: 100%;
   color: var(--text-tertiary);
-  font-size: 0.85rem;
+  font-size: var(--text-base);
 }
 
 .document-view-header {
@@ -3695,7 +3695,7 @@ html[data-theme="vaporwave"] .topbar {
 
 .settings-input {
   flex: 1;
-  font-size: 0.85rem;
+  font-size: var(--text-base);
   min-width: 0;
 }
 
@@ -3774,7 +3774,7 @@ html[data-theme="vaporwave"] .topbar {
 }
 
 .settings-danger-zone-label {
-  font-size: 0.85rem;
+  font-size: var(--text-base);
   font-weight: var(--weight-medium);
   color: var(--text-primary);
 }
@@ -3842,7 +3842,7 @@ html[data-theme="vaporwave"] .topbar {
 }
 
 .settings-root-label {
-  font-size: 0.85rem;
+  font-size: var(--text-base);
   color: var(--text-primary);
   font-weight: var(--weight-medium);
   white-space: nowrap;
@@ -4339,7 +4339,7 @@ html[data-theme="vaporwave"] .topbar {
 }
 
 .settings-account-label {
-  font-size: var(--text-base, 0.85rem);
+  font-size: var(--text-base);
   font-weight: var(--weight-medium);
   color: var(--text-primary);
 }
@@ -4391,7 +4391,7 @@ html[data-theme="vaporwave"] .topbar {
 }
 
 .settings-theme-card-name {
-  font-size: var(--text-base, 0.85rem);
+  font-size: var(--text-base);
   font-weight: var(--weight-semibold);
   color: var(--text-primary);
 }
@@ -4612,14 +4612,14 @@ html[data-theme="vaporwave"] .topbar {
 }
 
 .settings-agent-defaults-account-name {
-  font-size: var(--text-base, 0.85rem);
+  font-size: var(--text-base);
   font-weight: var(--weight-semibold);
   color: var(--text-primary);
 }
 
 .settings-select {
   width: 100%;
-  font-size: 0.85rem;
+  font-size: var(--text-base);
   cursor: pointer;
 }
 
@@ -4680,7 +4680,7 @@ html[data-theme="vaporwave"] .topbar {
 }
 
 .knowledge-store-option-desc {
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
   color: var(--text-muted);
   line-height: 1.4;
 }
@@ -4876,7 +4876,7 @@ html[data-theme="vaporwave"] .topbar {
 }
 
 .agent-template-label {
-  font-size: 0.85rem;
+  font-size: var(--text-base);
   font-weight: var(--weight-medium);
   color: var(--text-primary);
 }
@@ -4912,7 +4912,7 @@ html[data-theme="vaporwave"] .topbar {
   border: 1px solid var(--border-default);
   background: var(--bg-elevated, var(--surface-overlay));
   color: var(--text-primary);
-  font-size: 0.85rem;
+  font-size: var(--text-base);
   outline: none;
   cursor: pointer;
 }
@@ -4999,7 +4999,7 @@ html[data-theme="vaporwave"] .topbar {
 }
 
 .config-resolution-step {
-  font-size: var(--text-xs, 0.72rem);
+  font-size: var(--text-xs);
   color: var(--text-secondary);
   padding: 2px 6px;
   border-radius: var(--radius-sm, 4px);
@@ -5013,7 +5013,7 @@ html[data-theme="vaporwave"] .topbar {
 }
 
 .config-resolution-arrow {
-  font-size: var(--text-xs, 0.72rem);
+  font-size: var(--text-xs);
   color: var(--text-muted, var(--text-secondary));
 }
 
@@ -5039,7 +5039,7 @@ html[data-theme="vaporwave"] .topbar {
 
 .config-preview-note {
   color: var(--text-muted, var(--text-secondary));
-  font-size: var(--text-xs, 0.72rem);
+  font-size: var(--text-xs);
   font-style: italic;
 }
 
@@ -5048,7 +5048,7 @@ html[data-theme="vaporwave"] .topbar {
 }
 
 .config-preview-block-title {
-  font-size: var(--text-xs, 0.72rem);
+  font-size: var(--text-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -5068,18 +5068,18 @@ html[data-theme="vaporwave"] .topbar {
 .config-preview-field {
   color: var(--text-secondary);
   font-family: var(--font-mono, monospace);
-  font-size: var(--text-xs, 0.72rem);
+  font-size: var(--text-xs);
 }
 
 .config-preview-resolved {
   color: var(--text-primary);
   font-family: var(--font-mono, monospace);
-  font-size: var(--text-xs, 0.72rem);
+  font-size: var(--text-xs);
 }
 
 .config-preview-source {
   color: var(--text-muted, var(--text-secondary));
-  font-size: var(--text-xs, 0.72rem);
+  font-size: var(--text-xs);
   font-style: italic;
 }
 
@@ -5098,7 +5098,7 @@ html[data-theme="vaporwave"] .topbar {
 
 .settings-code-input {
   font-family: var(--font-mono, monospace);
-  font-size: var(--text-xs, 0.72rem);
+  font-size: var(--text-xs);
   line-height: 1.5;
 }
 
@@ -5138,7 +5138,7 @@ html[data-theme="vaporwave"] .topbar {
   border-radius: 50%;
   background: var(--color-primary, var(--text-secondary));
   color: var(--bg-base, #fff);
-  font-size: var(--text-xs, 0.72rem);
+  font-size: var(--text-xs);
   font-weight: 700;
   flex-shrink: 0;
 }
@@ -5150,7 +5150,7 @@ html[data-theme="vaporwave"] .topbar {
 }
 
 .config-resolution-tier-scope {
-  font-size: var(--text-xs, 0.72rem);
+  font-size: var(--text-xs);
   color: var(--text-muted, var(--text-secondary));
   margin-left: auto;
   font-style: italic;
@@ -5177,7 +5177,7 @@ html[data-theme="vaporwave"] .topbar {
 
 .config-resolution-list li {
   color: var(--text-secondary);
-  font-size: var(--text-xs, 0.72rem);
+  font-size: var(--text-xs);
   line-height: 1.4;
 }
 
@@ -5193,7 +5193,7 @@ html[data-theme="vaporwave"] .topbar {
   text-align: center;
   padding: 4px 0;
   color: var(--text-muted, var(--text-secondary));
-  font-size: var(--text-xs, 0.72rem);
+  font-size: var(--text-xs);
 }
 
 .config-resolution-note {
@@ -5912,7 +5912,7 @@ html[data-theme="vaporwave"] .topbar {
 }
 
 .vault-add-form-title {
-  font-size: var(--text-base, 0.85rem);
+  font-size: var(--text-base);
   font-weight: var(--weight-semibold);
   color: var(--text-primary);
 }
@@ -5948,7 +5948,7 @@ html[data-theme="vaporwave"] .topbar {
 }
 
 .vault-scope-count {
-  font-size: var(--text-xs, 0.72rem);
+  font-size: var(--text-xs);
   color: var(--text-muted);
 }
 
@@ -6725,6 +6725,14 @@ html[data-theme="vaporwave"] .right-panel {
 
 .worktree-row:hover {
   background: var(--surface-hover);
+}
+
+.worktree-row-disabled {
+  cursor: default;
+}
+
+.worktree-row-disabled:hover {
+  background: transparent;
 }
 
 .worktree-row-active {

@@ -6,13 +6,14 @@ use serde_json::{Value, json};
 
 use crate::rpc_client::RpcClient;
 use super::resolve::resolve_project;
+use super::session::create_session_with_rpc;
 
 // ── Tool descriptors ─────────────────────────────────────────────────────────
 
 pub fn tool_worktree_create() -> Value {
     json!({
         "name": "emery_worktree_create",
-        "description": "Create a git worktree. Provide callsign (e.g. EMERY-58) to link to a work item, or branch_name for a standalone worktree. If neither is given, auto-generates a timestamped branch name.",
+        "description": "Create a git worktree. Provide callsign (e.g. EMERY-58) to link to a work item, or branch_name for a standalone worktree. If launch_session is true, also launch a builder session in the new worktree.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -20,7 +21,25 @@ pub fn tool_worktree_create() -> Value {
                 "branch_name":  { "type": "string", "description": "Explicit branch name (alternative to callsign)" },
                 "project_id":   { "type": "string", "description": "Project ID (auto-resolved if omitted)" },
                 "work_item_id": { "type": "string", "description": "Work item ID to link (optional)" },
-                "base_ref":     { "type": "string", "description": "Base branch to create from (default: current HEAD)" }
+                "base_ref":     { "type": "string", "description": "Base branch to create from (default: current HEAD)" },
+                "launch_session": { "type": "boolean", "description": "If true, create a session after the worktree is provisioned" },
+                "prompt":       { "type": "string", "description": "Initial prompt for the session (optional)" },
+                "origin_mode":  { "type": "string", "description": "Origin mode for the session (optional)" },
+                "title":        { "type": "string", "description": "Human-readable session title (optional)" },
+                "instructions": { "type": "string", "description": "Per-session instructions (optional)" },
+                "round_instructions": { "type": "string", "description": "Round instructions applied to the session (optional)" },
+                "model":        { "type": "string", "description": "Model override for the session (optional)" },
+                "stop_rules": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Explicit stop rules for the session (optional)"
+                },
+                "args": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Extra CLI args to append when launching the session (optional)"
+                },
+                "account_id":   { "type": "string", "description": "Account ID to use for the session (optional)" }
             }
         }
     })
@@ -48,6 +67,23 @@ pub fn tool_worktree_cleanup() -> Value {
             "properties": {
                 "project_id": { "type": "string", "description": "Project ID (auto-resolved if omitted)" },
                 "dry_run": { "type": "boolean", "description": "If true, list what would be removed without removing" }
+            }
+        }
+    })
+}
+
+pub fn tool_worktree_close() -> Value {
+    json!({
+        "name": "emery_worktree_close",
+        "description": "Close a worktree, optionally merge it, and clean it up. Provide worktree_id directly or branch_name to resolve a worktree within a project.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "worktree_id": { "type": "string", "description": "Worktree ID to close" },
+                "branch_name": { "type": "string", "description": "Branch name to resolve to a worktree (for example emery/euri-185)" },
+                "project_id": { "type": "string", "description": "Project ID used when resolving by branch_name (auto-resolved if omitted)" },
+                "commit_message": { "type": "string", "description": "Optional commit message when auto-committing dirty changes" },
+                "skip_merge": { "type": "boolean", "description": "If true, close without merging" }
             }
         }
     })
@@ -92,7 +128,7 @@ pub fn handle_worktree_create(input: Value) -> Result<String> {
     let base_ref = input["base_ref"].as_str();
 
     let mut params = json!({
-        "project_id": project_id,
+        "project_id": project_id.clone(),
         "callsign": callsign,
     });
     if let Some(wi) = work_item_id { params["work_item_id"] = json!(wi); }
@@ -119,6 +155,52 @@ pub fn handle_worktree_create(input: Value) -> Result<String> {
         for w in warnings {
             if let Some(s) = w.as_str() {
                 out.push_str(&format!("\nSymlink warning: {}", s));
+            }
+        }
+    }
+
+    if input["launch_session"].as_bool().unwrap_or(false) {
+        let mut session_input = json!({
+            "project_id": project_id,
+            "worktree_id": id,
+        });
+        for key in [
+            "work_item_id",
+            "account_id",
+            "prompt",
+            "origin_mode",
+            "title",
+            "instructions",
+            "round_instructions",
+            "model",
+        ] {
+            if let Some(value) = input.get(key) {
+                if !value.is_null() {
+                    session_input[key] = value.clone();
+                }
+            }
+        }
+        if let Some(value) = input.get("args") {
+            if !value.is_null() {
+                session_input["args"] = value.clone();
+            }
+        }
+        if let Some(value) = input.get("stop_rules") {
+            if !value.is_null() {
+                session_input["stop_rules"] = value.clone();
+            }
+        }
+
+        match create_session_with_rpc(&mut rpc, &session_input) {
+            Ok(session_out) => {
+                out.push_str("\n\n");
+                out.push_str(&session_out);
+            }
+            Err(err) => {
+                out.push_str(&format!(
+                    "\n\nWorktree created, but session launch failed: {}",
+                    err
+                ));
             }
         }
     }
@@ -217,6 +299,46 @@ pub fn handle_worktree_cleanup(input: Value) -> Result<String> {
     Ok(out)
 }
 
+pub fn handle_worktree_close(input: Value) -> Result<String> {
+    let mut rpc = RpcClient::connect()?;
+    let worktree_id = resolve_worktree_id(&input, &mut rpc)?;
+
+    let mut params = json!({ "worktree_id": worktree_id });
+    if let Some(message) = input["commit_message"].as_str() {
+        params["commit_message"] = json!(message);
+    }
+    if let Some(skip_merge) = input["skip_merge"].as_bool() {
+        params["skip_merge"] = json!(skip_merge);
+    }
+
+    let result = rpc.call("worktree.close", params)?;
+    let status = result["status"].as_str().unwrap_or("unknown");
+    let committed = result["committed"].as_bool().unwrap_or(false);
+    let merged = result["merged"].as_bool().unwrap_or(false);
+    let merge_queue_id = result["merge_queue_id"].as_str();
+    let conflicts = result["conflicts"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let mut out = format!(
+        "Closed worktree `{}`\nStatus: {}\nCommitted: {}\nMerged: {}",
+        worktree_id, status, committed, merged
+    );
+    if let Some(id) = merge_queue_id {
+        out.push_str(&format!("\nMerge queue entry: {}", id));
+    }
+    if !conflicts.is_empty() {
+        out.push_str(&format!("\nConflicts:\n- {}", conflicts.join("\n- ")));
+    }
+    Ok(out)
+}
+
 pub fn handle_open_editor(input: Value) -> Result<String> {
     let path = required_str(&input, "worktree_path")?;
     Command::new("code")
@@ -248,4 +370,32 @@ fn required_str<'a>(input: &'a Value, key: &str) -> Result<String> {
         .as_str()
         .map(str::to_string)
         .ok_or_else(|| anyhow!("missing required field: {}", key))
+}
+
+fn resolve_worktree_id(input: &Value, rpc: &mut RpcClient) -> Result<String> {
+    if let Some(worktree_id) = input["worktree_id"].as_str() {
+        return Ok(worktree_id.to_string());
+    }
+
+    let branch_name = input["branch_name"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing required field: worktree_id or branch_name"))?;
+    let project_id = resolve_project(input, rpc)?;
+    let worktrees = rpc.call("worktree.list", json!({ "project_id": project_id }))?;
+    let items = worktrees
+        .as_array()
+        .ok_or_else(|| anyhow!("worktree.list returned an unexpected payload"))?;
+
+    items
+        .iter()
+        .find(|worktree| branch_matches(worktree["branch_name"].as_str().unwrap_or_default(), branch_name))
+        .and_then(|worktree| worktree["id"].as_str())
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("no worktree found for branch {}", branch_name))
+}
+
+fn branch_matches(actual: &str, requested: &str) -> bool {
+    actual == requested
+        || actual.strip_prefix("emery/").unwrap_or(actual) == requested
+        || requested.strip_prefix("emery/").unwrap_or(requested) == actual
 }

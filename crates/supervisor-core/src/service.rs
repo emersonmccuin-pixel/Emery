@@ -42,6 +42,7 @@ use crate::models::{
     WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary, WorktreeUpdateRecord,
     McpServerSummary, CreateMcpServerRequest, UpdateMcpServerRequest, DeleteMcpServerRequest,
     NewMcpServerRecord, McpServerUpdateRecord, ProvisionWorktreeRequest,
+    CloseWorktreeRequest, CloseWorktreeResult,
 };
 use crate::runtime::{SessionLaunchRequest, SessionRegistry, SessionRuntimeRegistration};
 use crate::store::DatabaseSet;
@@ -873,6 +874,185 @@ impl SupervisorService {
         self.databases.update_worktree(&record)?;
         self.get_worktree(&existing.summary.id)?
             .ok_or_else(|| anyhow!("worktree {} was not found", existing.summary.id))
+    }
+
+    pub fn close_worktree(&self, request: CloseWorktreeRequest) -> Result<CloseWorktreeResult> {
+        let worktree = self
+            .databases
+            .get_worktree(&request.worktree_id)?
+            .ok_or_else(|| anyhow!("worktree {} was not found", request.worktree_id))?;
+
+        if matches!(worktree.summary.status.as_str(), "merged" | "removed" | "archived") {
+            return Err(anyhow!(
+                "worktree {} is already {}",
+                worktree.summary.id,
+                worktree.summary.status
+            ));
+        }
+
+        let sessions = self.databases.list_sessions_by_worktree(&worktree.summary.id)?;
+        let active_sessions: Vec<&SessionSummary> = sessions
+            .iter()
+            .filter(|session| {
+                session.status == "active"
+                    && matches!(
+                        session.runtime_state.as_str(),
+                        "starting" | "running" | "stopping"
+                    )
+            })
+            .collect();
+        if !active_sessions.is_empty() {
+            return Err(anyhow!(
+                "worktree {} still has {} active session(s)",
+                worktree.summary.id,
+                active_sessions.len()
+            ));
+        }
+
+        let worktree_path = Path::new(&worktree.summary.path);
+        if !worktree_path.exists() {
+            return Err(anyhow!(
+                "worktree path does not exist: {}",
+                worktree.summary.path
+            ));
+        }
+
+        let root = self
+            .databases
+            .get_project_root(&worktree.summary.project_root_id)?
+            .ok_or_else(|| anyhow!("project root not found"))?;
+        let git_root = Path::new(root.git_root_path.as_deref().unwrap_or(&root.path));
+
+        let mut committed = false;
+        let status_output = git::git_status(worktree_path)?;
+        if !status_output.trim().is_empty() {
+            let commit_message = request
+                .commit_message
+                .as_deref()
+                .map(str::trim)
+                .filter(|message| !message.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("Close {}", worktree.summary.branch_name));
+            git::git_add_all(worktree_path)?;
+            git::git_commit(worktree_path, &commit_message)?;
+            committed = true;
+        }
+
+        let head_commit = git::git_head_commit(worktree_path).ok();
+        let now = unix_time_seconds();
+
+        let merge_queue_entry = if let Some(entry) = self
+            .databases
+            .get_active_merge_queue_entry_for_worktree(&worktree.summary.id)?
+        {
+            self.databases
+                .update_merge_queue_has_uncommitted_changes(&entry.id, false)?;
+            if let Ok(diff_stat) = git::git_diff_stat(
+                git_root,
+                &entry.base_ref,
+                &entry.branch_name,
+            ) {
+                self.databases.update_merge_queue_diff_stat(
+                    &entry.id,
+                    &serde_json::to_string(&diff_stat)?,
+                )?;
+            }
+            entry
+        } else {
+            let session_id = sessions
+                .first()
+                .map(|session| session.id.clone())
+                .or_else(|| worktree.summary.created_by_session_id.clone())
+                .ok_or_else(|| {
+                    anyhow!(
+                        "worktree {} has no session to associate with merge queue entry",
+                        worktree.summary.id
+                    )
+                })?;
+            let base_ref = worktree
+                .summary
+                .base_ref
+                .clone()
+                .unwrap_or_else(|| "main".to_string());
+            let diff_stat = git::git_diff_stat(git_root, &base_ref, &worktree.summary.branch_name)
+                .ok()
+                .map(|stat| serde_json::to_string(&stat).unwrap_or_default());
+            let entry_id = format!("mq_{}", Uuid::new_v4().simple());
+            let record = NewMergeQueueRecord {
+                id: entry_id.clone(),
+                project_id: worktree.summary.project_id.clone(),
+                session_id,
+                worktree_id: worktree.summary.id.clone(),
+                branch_name: worktree.summary.branch_name.clone(),
+                base_ref,
+                position: self
+                    .databases
+                    .next_merge_queue_position(&worktree.summary.project_id)?,
+                status: "ready".to_string(),
+                diff_stat_json: diff_stat,
+                conflict_files_json: None,
+                has_uncommitted_changes: false,
+                queued_at: now,
+            };
+            self.databases.insert_merge_queue_entry(&record)?;
+            self.databases
+                .get_merge_queue_entry(&entry_id)?
+                .ok_or_else(|| {
+                    anyhow!(
+                        "failed to load merge queue entry for worktree {}",
+                        worktree.summary.id
+                    )
+                })?
+        };
+        let merge_queue_id = merge_queue_entry.id.clone();
+
+        self.databases
+            .update_merge_queue_has_uncommitted_changes(&merge_queue_id, false)?;
+        if let Ok(diff_stat) = git::git_diff_stat(git_root, &merge_queue_entry.base_ref, &merge_queue_entry.branch_name) {
+            self.databases.update_merge_queue_diff_stat(
+                &merge_queue_id,
+                &serde_json::to_string(&diff_stat)?,
+            )?;
+        }
+
+        let conflicts = self.check_merge_conflicts(&merge_queue_id)?;
+
+        if !request.skip_merge {
+            if !conflicts.is_empty() {
+                self.close_worktree_record(&worktree, head_commit.clone(), now)?;
+                return Ok(CloseWorktreeResult {
+                    worktree_id: worktree.summary.id,
+                    merge_queue_id: Some(merge_queue_id),
+                    committed,
+                    merged: false,
+                    conflicts,
+                    status: "conflict".to_string(),
+                });
+            }
+
+            self.close_worktree_record(&worktree, head_commit.clone(), now)?;
+            self.execute_merge(&merge_queue_id)?;
+
+            return Ok(CloseWorktreeResult {
+                worktree_id: worktree.summary.id,
+                merge_queue_id: Some(merge_queue_id),
+                committed,
+                merged: true,
+                conflicts,
+                status: "merged".to_string(),
+            });
+        }
+
+        self.close_worktree_record(&worktree, head_commit, now)?;
+
+        Ok(CloseWorktreeResult {
+            worktree_id: worktree.summary.id,
+            merge_queue_id: Some(merge_queue_id),
+            committed,
+            merged: false,
+            conflicts,
+            status: "closed".to_string(),
+        })
     }
 
     pub fn list_session_specs(
@@ -3481,6 +3661,31 @@ impl SupervisorService {
         }
 
         Ok(conflicts)
+    }
+
+    fn close_worktree_record(
+        &self,
+        worktree: &WorktreeDetail,
+        head_commit: Option<String>,
+        closed_at: i64,
+    ) -> Result<WorktreeDetail> {
+        let summary = &worktree.summary;
+        let record = WorktreeUpdateRecord {
+            id: summary.id.clone(),
+            project_root_id: summary.project_root_id.clone(),
+            branch_name: summary.branch_name.clone(),
+            head_commit,
+            base_ref: summary.base_ref.clone(),
+            path: summary.path.clone(),
+            status: "closed".to_string(),
+            created_by_session_id: summary.created_by_session_id.clone(),
+            last_used_at: Some(closed_at),
+            updated_at: closed_at,
+            closed_at: Some(closed_at),
+        };
+        self.databases.update_worktree(&record)?;
+        self.get_worktree(&summary.id)?
+            .ok_or_else(|| anyhow!("worktree {} was not found", summary.id))
     }
 
     // --- Inbox ---

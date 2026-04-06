@@ -448,6 +448,7 @@ export default function App() {
     if (navProjectId) {
       appStore.setSelectedProjectId(navProjectId);
       void appStore.loadProjectReads(navProjectId, true);
+      void appStore.handleLoadWorktrees(navProjectId);
       void appStore.handleLoadMergeQueue(navProjectId);
     }
   }, [navProjectId]);

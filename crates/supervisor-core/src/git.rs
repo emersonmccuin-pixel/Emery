@@ -388,6 +388,38 @@ pub fn git_status(path: &Path) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+/// Stage all changes in the repository at `path`.
+pub fn git_add_all(path: &Path) -> Result<()> {
+    let output = Command::new("git")
+        .current_dir(path)
+        .args(["add", "-A"])
+        .output()
+        .context("failed to run git add -A")?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "git add failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
+/// Create a commit in the repository at `path`.
+pub fn git_commit(path: &Path, message: &str) -> Result<()> {
+    let output = Command::new("git")
+        .current_dir(path)
+        .args(["commit", "-m", message])
+        .output()
+        .context("failed to run git commit")?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "git commit failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
 /// Get diff stat between two refs (e.g., main...emery/emery-31).
 pub fn git_diff_stat(repo_root: &Path, base_ref: &str, head_ref: &str) -> Result<DiffStat> {
     let output = Command::new("git")

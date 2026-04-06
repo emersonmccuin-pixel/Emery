@@ -794,6 +794,47 @@ impl DatabaseSet {
             .map_err(Into::into)
     }
 
+    pub fn list_sessions_by_worktree(&self, worktree_id: &str) -> Result<Vec<SessionSummary>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let mut statement = connection.prepare(
+            "SELECT
+                s.id,
+                s.session_spec_id,
+                s.project_id,
+                s.project_root_id,
+                s.worktree_id,
+                w.branch_name,
+                s.work_item_id,
+                s.account_id,
+                s.agent_kind,
+                s.origin_mode,
+                s.current_mode,
+                s.title,
+                s.title_source,
+                s.runtime_state,
+                s.status,
+                s.activity_state,
+                s.needs_input_reason,
+                s.pty_owner_key,
+                s.cwd,
+                s.started_at,
+                s.ended_at,
+                s.last_output_at,
+                s.last_attached_at,
+                s.created_at,
+                s.updated_at,
+                s.archived_at,
+                s.dispatch_group
+             FROM sessions s
+             LEFT JOIN worktrees w ON s.worktree_id = w.id
+             WHERE s.worktree_id = ?1
+             ORDER BY s.created_at DESC",
+        )?;
+        let rows = statement.query_map([worktree_id], map_session_summary)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
     pub fn get_worktree(&self, worktree_id: &str) -> Result<Option<WorktreeDetail>> {
         let connection = open_connection(&self.paths.app_db)?;
         let mut statement = connection.prepare(
@@ -2914,6 +2955,34 @@ impl DatabaseSet {
             .map_err(Into::into)
     }
 
+    pub fn get_active_merge_queue_entry_for_worktree(
+        &self,
+        worktree_id: &str,
+    ) -> Result<Option<MergeQueueEntry>> {
+        let connection = open_app_connection_with_knowledge(&self.paths)?;
+        connection
+            .query_row(
+                "SELECT
+                    mq.id, mq.project_id, mq.session_id, mq.worktree_id,
+                    mq.branch_name, mq.base_ref, mq.position, mq.status,
+                    mq.diff_stat_json, mq.conflict_files_json,
+                    mq.has_uncommitted_changes, mq.queued_at, mq.merged_at,
+                    s.title AS session_title,
+                    wi.callsign AS work_item_callsign
+                 FROM merge_queue mq
+                 LEFT JOIN sessions s ON s.id = mq.session_id
+                 LEFT JOIN knowledge.work_items wi ON wi.id = s.work_item_id
+                 WHERE mq.worktree_id = ?1
+                   AND mq.status IN ('queued', 'ready', 'merging', 'conflict')
+                 ORDER BY mq.queued_at DESC, mq.position DESC
+                 LIMIT 1",
+                [worktree_id],
+                map_merge_queue_entry,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
     pub fn update_merge_queue_status(
         &self,
         id: &str,
@@ -2946,6 +3015,19 @@ impl DatabaseSet {
         connection.execute(
             "UPDATE merge_queue SET conflict_files_json = ?2 WHERE id = ?1",
             params![id, conflict_files_json],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_merge_queue_has_uncommitted_changes(
+        &self,
+        id: &str,
+        has_uncommitted_changes: bool,
+    ) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "UPDATE merge_queue SET has_uncommitted_changes = ?2 WHERE id = ?1",
+            params![id, bool_to_sqlite(has_uncommitted_changes)],
         )?;
         Ok(())
     }

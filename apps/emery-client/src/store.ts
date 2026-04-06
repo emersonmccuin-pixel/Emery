@@ -4,6 +4,7 @@ import {
   deleteProject,
   bootstrapShell,
   checkDispatchConflicts,
+  closeWorktree,
   createDocument,
   createProject,
   createProjectRoot,
@@ -23,6 +24,7 @@ import {
   listMergeQueue,
   listWorkflowReconciliationProposals,
   listAccounts,
+  listWorktrees,
   createAccount,
   updateAccount,
   listWorkItems,
@@ -104,6 +106,7 @@ import type {
   SessionStateChangedEvent,
   SessionSummary,
   ShellBootstrap,
+  WorktreeSummary,
   WorkItemDetail,
   WorkItemSummary,
   WorkflowReconciliationProposalSummary,
@@ -217,6 +220,7 @@ export type AppState = {
   projectDetails: Record<string, ProjectDetail>;
   workItemsByProject: Record<string, WorkItemSummary[]>;
   documentsByProject: Record<string, DocumentSummary[]>;
+  worktreesByProject: Record<string, WorktreeSummary[]>;
   workItemDetails: Record<string, WorkItemDetail>;
   documentDetails: Record<string, DocumentDetail>;
   reconciliationByWorkItem: Record<string, WorkflowReconciliationProposalSummary[]>;
@@ -264,6 +268,7 @@ function initialState(): AppState {
     projectDetails: {},
     workItemsByProject: {},
     documentsByProject: {},
+    worktreesByProject: {},
     workItemDetails: {},
     documentDetails: {},
     reconciliationByWorkItem: {},
@@ -634,6 +639,37 @@ class AppStore {
       this.update({ error: String(invokeError) });
     } finally {
       this.setLoading(`project:${projectId}`, false);
+    }
+  }
+
+  async handleLoadWorktrees(projectId: string) {
+    this.setLoading(`worktrees:${projectId}`, true);
+    try {
+      const correlationId = newCorrelationId("worktrees-load");
+      const worktrees = await listWorktrees(projectId, correlationId);
+      this.update({
+        worktreesByProject: { ...this.state.worktreesByProject, [projectId]: worktrees },
+      });
+      this.clearError();
+    } catch (invokeError) {
+      this.update({ error: String(invokeError) });
+    } finally {
+      this.setLoading(`worktrees:${projectId}`, false);
+    }
+  }
+
+  async handleCloseWorktree(projectId: string, worktreeId: string, skipMerge = false) {
+    this.setLoading(`close-worktree:${worktreeId}`, true);
+    try {
+      const correlationId = newCorrelationId("worktree-close");
+      await closeWorktree(worktreeId, { skipMerge }, correlationId);
+      await this.handleLoadWorktrees(projectId);
+      await this.handleLoadMergeQueue(projectId);
+      this.clearError();
+    } catch (invokeError) {
+      this.update({ error: String(invokeError) });
+    } finally {
+      this.setLoading(`close-worktree:${worktreeId}`, false);
     }
   }
 

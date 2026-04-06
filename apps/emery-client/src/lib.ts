@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AgentTemplateDetail,
   AgentTemplateSummary,
+  CloseWorktreeResult,
   ConflictWarning,
   ConnectionStatusEvent,
   DiagnosticsBundleResult,
@@ -21,6 +22,7 @@ import type {
   VaultLockStatus,
   WorkflowReconciliationProposalDetail,
   WorkflowReconciliationProposalSummary,
+  WorktreeSummary,
   WorkItemDetail,
   WorkItemSummary,
   WorkspacePayload,
@@ -422,6 +424,26 @@ export async function provisionWorktree(
     callsign,
     workItemId,
     baseRef,
+    correlationId,
+  });
+}
+
+export async function listWorktrees(
+  projectId: string,
+  correlationId?: string,
+): Promise<WorktreeSummary[]> {
+  return invoke("list_worktrees", { projectId, correlationId });
+}
+
+export async function closeWorktree(
+  worktreeId: string,
+  options?: { commitMessage?: string | null; skipMerge?: boolean },
+  correlationId?: string,
+): Promise<CloseWorktreeResult> {
+  return invoke("close_worktree", {
+    worktreeId,
+    commitMessage: options?.commitMessage,
+    skipMerge: options?.skipMerge,
     correlationId,
   });
 }

@@ -1,11 +1,21 @@
-import type { SessionSummary } from "../types";
+import { useState } from "react";
+import { appStore } from "../store";
+import type { SessionSummary, WorktreeSummary } from "../types";
 import { DurationDisplay } from "./duration-display";
+import { ContextMenu, type ContextMenuItem } from "./context-menu";
 
 type WorktreeRowProps = {
-  session: SessionSummary;
+  worktree: WorktreeSummary;
+  session: SessionSummary | null;
   isActive: boolean;
-  onClick: () => void;
+  onClick?: () => void;
 };
+
+type WorktreeContextMenu = {
+  x: number;
+  y: number;
+  items: ContextMenuItem[];
+} | null;
 
 function deriveCallsign(branch: string | null): string {
   if (!branch) return "???";
@@ -15,7 +25,10 @@ function deriveCallsign(branch: string | null): string {
   return last.toUpperCase();
 }
 
-function statusDot(session: SessionSummary): { symbol: string; className: string } {
+function statusDot(session: SessionSummary | null): { symbol: string; className: string } {
+  if (!session) {
+    return { symbol: "\u25C9", className: "wt-dot wt-dot-idle" };
+  }
   if (session.activity_state === "needs_input") {
     return { symbol: "\u26A0", className: "wt-dot wt-dot-warning" };
   }
@@ -25,27 +38,61 @@ function statusDot(session: SessionSummary): { symbol: string; className: string
   return { symbol: "\u25C9", className: "wt-dot wt-dot-idle" };
 }
 
-export function WorktreeRow({ session, isActive, onClick }: WorktreeRowProps) {
-  const callsign = deriveCallsign(session.worktree_branch);
+export function WorktreeRow({ worktree, session, isActive, onClick }: WorktreeRowProps) {
+  const [contextMenu, setContextMenu] = useState<WorktreeContextMenu>(null);
+  const callsign = deriveCallsign(worktree.branch_name);
   const dot = statusDot(session);
-  const isLive = session.runtime_state === "running" || session.runtime_state === "starting";
+  const isLive = session ? session.runtime_state === "running" || session.runtime_state === "starting" : false;
+  const subtitle = session?.title ?? (session ? session.current_mode : "idle");
+
+  function handleContextMenu(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        {
+          label: "Close & Merge",
+          onClick: () => void appStore.handleCloseWorktree(worktree.project_id, worktree.id, false),
+        },
+        {
+          label: "Close (skip merge)",
+          onClick: () => void appStore.handleCloseWorktree(worktree.project_id, worktree.id, true),
+        },
+      ],
+    });
+  }
 
   return (
-    <div
-      className={`worktree-row${isActive ? " worktree-row-active" : ""}`}
-      onClick={onClick}
-      title={`${session.worktree_branch ?? "no branch"} \u00b7 ${session.current_mode}`}
-    >
-      <div className="worktree-row-header">
-        <span className="worktree-row-callsign">{callsign}</span>
-        <span className={dot.className}>{dot.symbol}</span>
-      </div>
-      <div className="worktree-row-title">{session.title ?? session.current_mode}</div>
-      {isLive && session.started_at ? (
-        <div className="worktree-row-duration">
-          <DurationDisplay startedAt={session.started_at} />
+    <>
+      <div
+        className={`worktree-row${isActive ? " worktree-row-active" : ""}${onClick ? "" : " worktree-row-disabled"}`}
+        onClick={onClick}
+        onContextMenu={handleContextMenu}
+        title={`${worktree.branch_name} \u00b7 ${subtitle}`}
+      >
+        <div className="worktree-row-header">
+          <span className="worktree-row-callsign">{callsign}</span>
+          <span className={dot.className}>{dot.symbol}</span>
         </div>
-      ) : null}
-    </div>
+        <div className="worktree-row-title">{subtitle}</div>
+        {isLive && session?.started_at ? (
+          <div className="worktree-row-duration">
+            <DurationDisplay startedAt={session!.started_at} />
+          </div>
+        ) : null}
+      </div>
+
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={contextMenu.items}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+    </>
   );
 }
