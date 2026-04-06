@@ -315,6 +315,7 @@ type Listener = () => void;
 class AppStore {
   private state: AppState = initialState();
   private listeners = new Set<Listener>();
+  private unknownSessionRefreshTimer: number | null = null;
 
   subscribe = (listener: Listener): (() => void) => {
     this.listeners.add(listener);
@@ -518,7 +519,12 @@ class AppStore {
   applySessionStateChange(payload: SessionStateChangedEvent) {
     const s = this.state;
     const index = s.sessions.findIndex((entry) => entry.id === payload.session_id);
-    if (index === -1) return;
+    if (index === -1) {
+      // Unknown session — schedule a debounced refresh of sessions and worktrees
+      // This handles cases where dispatch agents create new sessions via MCP
+      this.scheduleUnknownSessionRefresh();
+      return;
+    }
     const entry = s.sessions[index];
     if (
       entry.runtime_state === payload.runtime_state &&
@@ -594,6 +600,22 @@ class AppStore {
       }
 
     }
+  }
+
+  private scheduleUnknownSessionRefresh() {
+    // Debounce: if a refresh is already scheduled, don't schedule another
+    if (this.unknownSessionRefreshTimer !== null) return;
+
+    this.unknownSessionRefreshTimer = window.setTimeout(() => {
+      this.unknownSessionRefreshTimer = null;
+      const projectId = this.state.selectedProjectId;
+      if (!projectId) return;
+
+      // Re-bootstrap to get fresh session list, then refresh worktrees
+      void this.rebootstrap().then(() => {
+        void this.handleLoadWorktrees(projectId);
+      });
+    }, 500);
   }
 
   // --- Data loading ---
