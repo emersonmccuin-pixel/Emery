@@ -26,15 +26,34 @@ function decodeBase64Utf8(base64: string): string {
 // by BEL (0x07) or ST (ESC \).
 const DANGEROUS_OSC_RE = /\x1b\](?:0|2|52);[^\x07\x1b]*(?:\x07|\x1b\\)/g;
 
+// Boost user message backgrounds from Claude Code for better visibility.
+// Claude Code uses subtle backgrounds for user messages - we replace with
+// a more visible tinted background. Matches SGR 48;2;r;g;b (RGB background).
+// Target: dark grays (r,g,b all between 20-80, roughly equal) → tinted dark cyan
+// Also catches light grays (230-250) for light theme users
+const DARK_GRAY_BG_RE = /\x1b\[48;2;([2-7]\d);([2-7]\d);([2-7]\d)m/g;
+const LIGHT_GRAY_BG_RE = /\x1b\[48;2;(2[3-5]\d);(2[3-5]\d);(2[3-5]\d)m/g;
+const BOOSTED_USER_BG = "\x1b[48;2;15;40;55m"; // Dark teal/cyan tint - visible but not harsh
+
+function boostUserMessageBackground(data: string): string {
+  // Replace dark gray backgrounds (dark theme)
+  let result = data.replace(DARK_GRAY_BG_RE, BOOSTED_USER_BG);
+  // Replace light gray backgrounds (light theme) with same tint for consistency
+  result = result.replace(LIGHT_GRAY_BG_RE, BOOSTED_USER_BG);
+  return result;
+}
+
 function sanitizeTerminalOutput(data: string): string {
-  const stripped = data.replace(DANGEROUS_OSC_RE, "");
-  if (stripped.length !== data.length) {
+  let result = data.replace(DANGEROUS_OSC_RE, "");
+  if (result.length !== data.length) {
     console.debug("[terminal-surface] stripped OSC sequence(s)", {
       originalLength: data.length,
-      strippedLength: stripped.length,
+      strippedLength: result.length,
     });
   }
-  return stripped;
+  // Boost user message backgrounds for better visibility
+  result = boostUserMessageBackground(result);
+  return result;
 }
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
@@ -150,7 +169,7 @@ export const TerminalSurface = memo(function TerminalSurface({
       scrollback: 5000,
       theme: {
         background: "#08080d",
-        foreground: "#d8e7df",
+        foreground: "#a8b5ac",           // Muted gray-green for Claude's response text
         cursor: "#00ff88",
         cursorAccent: "#08080d",
         selectionBackground: "rgba(0, 212, 255, 0.55)",
@@ -158,18 +177,18 @@ export const TerminalSurface = memo(function TerminalSurface({
         black: "#0a0a0f",
         red: "#ff3366",
         green: "#00ff88",
-        yellow: "#f4ff61",
+        yellow: "#ffdd33",               // Warmer, more visible yellow
         blue: "#00d4ff",
-        magenta: "#ff00ff",
-        cyan: "#7df9ff",
-        white: "#e0e0e0",
-        brightBlack: "#2a2a3a",
+        magenta: "#ff66ff",              // Slightly softer magenta
+        cyan: "#00ffff",                 // Pure bright cyan for user prompts
+        white: "#ffffff",                // Bright white for user input text
+        brightBlack: "#4a4a5a",          // Lighter for better visibility
         brightRed: "#ff6b8f",
         brightGreen: "#7dffbf",
-        brightYellow: "#f9ff9b",
-        brightBlue: "#58e3ff",
-        brightMagenta: "#ff7cff",
-        brightCyan: "#aaf9ff",
+        brightYellow: "#ffee77",
+        brightBlue: "#66e0ff",           // Vivid bright blue
+        brightMagenta: "#ff99ff",
+        brightCyan: "#66ffff",           // Very bright cyan for emphasis
         brightWhite: "#ffffff",
       },
     });
