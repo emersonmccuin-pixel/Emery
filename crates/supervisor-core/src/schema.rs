@@ -64,6 +64,10 @@ const APP_MIGRATIONS: &[(&str, &str)] = &[
         "0015_mcp_servers",
         include_str!("migrations/app/0015_mcp_servers.sql"),
     ),
+    (
+        "0016_worktree_sort_order",
+        include_str!("migrations/app/0016_worktree_sort_order.sql"),
+    ),
 ];
 const KNOWLEDGE_MIGRATIONS: &[(&str, &str)] = &[
     (
