@@ -518,11 +518,10 @@ pub fn handle_session_create_batch(input: Value) -> Result<String> {
     let mut table = String::from("| ID | Title | Worktree | Runtime State |\n|----|-------|----------|---------------|\n");
     for s in &created {
         let id = s["id"].as_str().unwrap_or("-");
-        let short_id = if id.len() >= 8 { &id[..8] } else { id };
         let title = s["title"].as_str().unwrap_or("-");
         let worktree = s["worktree_id"].as_str().unwrap_or("-");
         let runtime_state = s["runtime_state"].as_str().unwrap_or("-");
-        table.push_str(&format!("| {} | {} | {} | {} |\n", short_id, title, worktree, runtime_state));
+        table.push_str(&format!("| {} | {} | {} | {} |\n", id, title, worktree, runtime_state));
     }
     Ok(format!("Created {} session(s).\n\n{}", created.len(), table))
 }
@@ -552,7 +551,6 @@ pub fn handle_session_list(input: Value) -> Result<String> {
     let mut table = String::from("| ID | Title | Branch | Status | Activity | Runtime |\n|----|-------|--------|--------|----------|---------|\n");
     for s in items {
         let id = s["id"].as_str().unwrap_or("-");
-        let short_id = if id.len() >= 8 { &id[..8] } else { id };
         let title = s["title"].as_str().unwrap_or("-");
         let branch = s["branch_name"].as_str().unwrap_or("-");
         let status = s["status"].as_str().unwrap_or("-");
@@ -560,7 +558,7 @@ pub fn handle_session_list(input: Value) -> Result<String> {
         let runtime = s["runtime_state"].as_str().unwrap_or("-");
         table.push_str(&format!(
             "| {} | {} | {} | {} | {} | {} |\n",
-            short_id, title, branch, status, activity, runtime
+            id, title, branch, status, activity, runtime
         ));
     }
     Ok(table)
