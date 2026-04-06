@@ -953,6 +953,23 @@ impl SupervisorService {
         let head_commit = git::git_head_commit(worktree_path).ok();
         let now = unix_time_seconds();
 
+        // When skip_merge is true, close the worktree without touching the merge queue,
+        // and clean up the git worktree directory and branch.
+        if request.skip_merge {
+            self.close_worktree_record(&worktree, head_commit, now)?;
+            let _ = git::git_worktree_remove(git_root, worktree_path);
+            let _ = git::git_branch_delete(git_root, &worktree.summary.branch_name);
+            return Ok(CloseWorktreeResult {
+                worktree_id: worktree.summary.id,
+                merge_queue_id: None,
+                committed,
+                merged: false,
+                conflicts: vec![],
+                status: "closed".to_string(),
+            });
+        }
+
+        // For merge path: find or create a merge queue entry
         let merge_queue_entry = if let Some(entry) = self
             .databases
             .get_active_merge_queue_entry_for_worktree(&worktree.summary.id)?
@@ -975,12 +992,7 @@ impl SupervisorService {
                 .first()
                 .map(|session| session.id.clone())
                 .or_else(|| worktree.summary.created_by_session_id.clone())
-                .ok_or_else(|| {
-                    anyhow!(
-                        "worktree {} has no session to associate with merge queue entry",
-                        worktree.summary.id
-                    )
-                })?;
+                .unwrap_or_else(|| "unknown".to_string());
             let base_ref = worktree
                 .summary
                 .base_ref
@@ -1029,41 +1041,28 @@ impl SupervisorService {
 
         let conflicts = self.check_merge_conflicts(&merge_queue_id)?;
 
-        if !request.skip_merge {
-            if !conflicts.is_empty() {
-                self.close_worktree_record(&worktree, head_commit.clone(), now)?;
-                return Ok(CloseWorktreeResult {
-                    worktree_id: worktree.summary.id,
-                    merge_queue_id: Some(merge_queue_id),
-                    committed,
-                    merged: false,
-                    conflicts,
-                    status: "conflict".to_string(),
-                });
-            }
-
+        if !conflicts.is_empty() {
             self.close_worktree_record(&worktree, head_commit.clone(), now)?;
-            self.execute_merge(&merge_queue_id)?;
-
             return Ok(CloseWorktreeResult {
                 worktree_id: worktree.summary.id,
                 merge_queue_id: Some(merge_queue_id),
                 committed,
-                merged: true,
+                merged: false,
                 conflicts,
-                status: "merged".to_string(),
+                status: "conflict".to_string(),
             });
         }
 
-        self.close_worktree_record(&worktree, head_commit, now)?;
+        self.close_worktree_record(&worktree, head_commit.clone(), now)?;
+        self.execute_merge(&merge_queue_id)?;
 
         Ok(CloseWorktreeResult {
             worktree_id: worktree.summary.id,
             merge_queue_id: Some(merge_queue_id),
             committed,
-            merged: false,
-            conflicts,
-            status: "closed".to_string(),
+            merged: true,
+            conflicts: vec![],
+            status: "merged".to_string(),
         })
     }
 
@@ -4119,9 +4118,9 @@ fn validate_account_status(value: &str) -> Result<String> {
 fn validate_worktree_status(value: &str) -> Result<String> {
     let normalized = required_trimmed("worktree status", value)?.to_lowercase();
     match normalized.as_str() {
-        "active" | "merged" | "archived" | "closed" => Ok(normalized),
+        "active" | "merged" | "archived" | "closed" | "removed" => Ok(normalized),
         _ => Err(anyhow!(
-            "worktree status must be one of: active, merged, archived, closed"
+            "worktree status must be one of: active, merged, archived, closed, removed"
         )),
     }
 }
