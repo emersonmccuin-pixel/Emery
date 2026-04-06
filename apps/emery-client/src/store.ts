@@ -607,10 +607,11 @@ class AppStore {
     const correlationId = newCorrelationId("project-load");
     this.setLoading(`project:${projectId}`, true);
     try {
-      const [projectDetail, workItems, documents] = await Promise.all([
-        getProject(projectId, correlationId),
-        listWorkItems(projectId, correlationId),
-        listDocuments(projectId, undefined, correlationId),
+      const projectDetail = await getProject(projectId, correlationId);
+      const ns = projectDetail.wcp_namespace ?? undefined;
+      const [workItems, documents] = await Promise.all([
+        listWorkItems(ns ? undefined : projectId, ns, correlationId),
+        listDocuments(ns ? undefined : projectId, ns, undefined, correlationId),
       ]);
       this.applyProjectDetail(projectDetail);
       this.update({
@@ -713,7 +714,7 @@ class AppStore {
     try {
       const [workItem, docs] = await Promise.all([
         getWorkItem(workItemId, correlationId),
-        listDocuments(projectId, workItemId, correlationId),
+        listDocuments(projectId, undefined, workItemId, correlationId),
       ]);
 
       this.applyWorkItemDetail(workItem);
@@ -961,9 +962,12 @@ class AppStore {
     const correlationId = newCorrelationId("work-item-create");
     this.setLoading("create-work-item", true);
     try {
+      const project = s.projectDetails[s.selectedProjectId];
+      const ns = project?.wcp_namespace ?? undefined;
       const detail = await createWorkItem(
         {
           project_id: s.selectedProjectId,
+          namespace: ns,
           parent_id: s.workItemCreateForm.parent_id || null,
           title: s.workItemCreateForm.title,
           description: s.workItemCreateForm.description,

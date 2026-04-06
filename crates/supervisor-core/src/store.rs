@@ -1151,6 +1151,7 @@ impl DatabaseSet {
             "SELECT
                 w.id,
                 w.project_id,
+                w.namespace,
                 w.parent_id,
                 w.root_work_item_id,
                 w.callsign,
@@ -1178,6 +1179,11 @@ impl DatabaseSet {
             values.push(project_id.to_string());
         }
 
+        if let Some(namespace) = filter.namespace.as_deref() {
+            sql.push_str(" AND w.namespace = ?");
+            values.push(namespace.to_string());
+        }
+
         if let Some(parent_id) = filter.parent_id.as_deref() {
             sql.push_str(" AND w.parent_id = ?");
             values.push(parent_id.to_string());
@@ -1202,6 +1208,7 @@ impl DatabaseSet {
             " GROUP BY
                 w.id,
                 w.project_id,
+                w.namespace,
                 w.parent_id,
                 w.root_work_item_id,
                 w.callsign,
@@ -1236,6 +1243,7 @@ impl DatabaseSet {
             "SELECT
                 w.id,
                 w.project_id,
+                w.namespace,
                 w.parent_id,
                 w.root_work_item_id,
                 w.callsign,
@@ -1258,6 +1266,7 @@ impl DatabaseSet {
              GROUP BY
                 w.id,
                 w.project_id,
+                w.namespace,
                 w.parent_id,
                 w.root_work_item_id,
                 w.callsign,
@@ -1290,6 +1299,7 @@ impl DatabaseSet {
             "INSERT INTO work_items (
                 id,
                 project_id,
+                namespace,
                 parent_id,
                 root_work_item_id,
                 callsign,
@@ -1305,11 +1315,12 @@ impl DatabaseSet {
                 updated_at,
                 closed_at
              ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
              )",
             params![
                 record.id,
                 record.project_id,
+                record.namespace,
                 record.parent_id,
                 record.root_work_item_id,
                 record.callsign,
@@ -1439,12 +1450,27 @@ impl DatabaseSet {
             .map_err(Into::into)
     }
 
+    pub fn list_root_work_item_callsigns_ns(&self, namespace: &str) -> Result<Vec<String>> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let mut statement = connection.prepare(
+            "SELECT callsign
+             FROM work_items
+             WHERE namespace = ?1
+               AND parent_id IS NULL
+             ORDER BY created_at ASC, callsign ASC",
+        )?;
+        let rows = statement.query_map([namespace], |row| row.get(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
     pub fn list_documents(&self, filter: &DocumentListFilter) -> Result<Vec<DocumentSummary>> {
         let connection = open_connection(&self.paths.knowledge_db)?;
         let mut sql = String::from(
             "SELECT
                 id,
                 project_id,
+                namespace,
                 work_item_id,
                 session_id,
                 doc_type,
@@ -1463,6 +1489,11 @@ impl DatabaseSet {
         if let Some(project_id) = filter.project_id.as_deref() {
             sql.push_str(" AND project_id = ?");
             values.push(project_id.to_string());
+        }
+
+        if let Some(namespace) = filter.namespace.as_deref() {
+            sql.push_str(" AND namespace = ?");
+            values.push(namespace.to_string());
         }
 
         if let Some(work_item_id) = filter.work_item_id.as_deref() {
@@ -1505,6 +1536,7 @@ impl DatabaseSet {
                 "SELECT
                     id,
                     project_id,
+                    namespace,
                     work_item_id,
                     session_id,
                     doc_type,
@@ -1534,6 +1566,7 @@ impl DatabaseSet {
             "INSERT INTO documents (
                 id,
                 project_id,
+                namespace,
                 work_item_id,
                 session_id,
                 doc_type,
@@ -1545,11 +1578,12 @@ impl DatabaseSet {
                 updated_at,
                 archived_at
              ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13
              )",
             params![
                 record.id,
                 record.project_id,
+                record.namespace,
                 record.work_item_id,
                 record.session_id,
                 record.doc_type,
@@ -3399,21 +3433,22 @@ fn map_work_item_summary(row: &Row<'_>) -> rusqlite::Result<WorkItemSummary> {
     Ok(WorkItemSummary {
         id: row.get(0)?,
         project_id: row.get(1)?,
-        parent_id: row.get(2)?,
-        root_work_item_id: row.get(3)?,
-        callsign: row.get(4)?,
-        child_sequence: row.get(5)?,
-        title: row.get(6)?,
-        description: row.get(7)?,
-        acceptance_criteria: row.get(8)?,
-        work_item_type: row.get(9)?,
-        status: row.get(10)?,
-        priority: row.get(11)?,
-        created_by: row.get(12)?,
-        created_at: row.get(13)?,
-        updated_at: row.get(14)?,
-        closed_at: row.get(15)?,
-        child_count: row.get(16)?,
+        namespace: row.get(2)?,
+        parent_id: row.get(3)?,
+        root_work_item_id: row.get(4)?,
+        callsign: row.get(5)?,
+        child_sequence: row.get(6)?,
+        title: row.get(7)?,
+        description: row.get(8)?,
+        acceptance_criteria: row.get(9)?,
+        work_item_type: row.get(10)?,
+        status: row.get(11)?,
+        priority: row.get(12)?,
+        created_by: row.get(13)?,
+        created_at: row.get(14)?,
+        updated_at: row.get(15)?,
+        closed_at: row.get(16)?,
+        child_count: row.get(17)?,
     })
 }
 
@@ -3421,16 +3456,17 @@ fn map_document_summary(row: &Row<'_>) -> rusqlite::Result<DocumentSummary> {
     Ok(DocumentSummary {
         id: row.get(0)?,
         project_id: row.get(1)?,
-        work_item_id: row.get(2)?,
-        session_id: row.get(3)?,
-        doc_type: row.get(4)?,
-        title: row.get(5)?,
-        slug: row.get(6)?,
-        status: row.get(7)?,
-        content_markdown: row.get(8)?,
-        created_at: row.get(9)?,
-        updated_at: row.get(10)?,
-        archived_at: row.get(11)?,
+        namespace: row.get(2)?,
+        work_item_id: row.get(3)?,
+        session_id: row.get(4)?,
+        doc_type: row.get(5)?,
+        title: row.get(6)?,
+        slug: row.get(7)?,
+        status: row.get(8)?,
+        content_markdown: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
+        archived_at: row.get(12)?,
     })
 }
 

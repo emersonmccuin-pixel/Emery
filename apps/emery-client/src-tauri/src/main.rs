@@ -679,7 +679,8 @@ fn save_workspace_state(
 fn list_work_items(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
-    project_id: String,
+    project_id: Option<String>,
+    namespace: Option<String>,
     correlation_id: Option<String>,
 ) -> Result<Value, String> {
     manager
@@ -687,7 +688,8 @@ fn list_work_items(
             &app,
             "work_item.list",
             json!({
-                "project_id": project_id
+                "project_id": project_id,
+                "namespace": namespace
             }),
             correlation_id,
         )
@@ -912,7 +914,8 @@ fn delete_planning_assignment(
 fn list_documents(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
-    project_id: String,
+    project_id: Option<String>,
+    namespace: Option<String>,
     work_item_id: Option<String>,
     correlation_id: Option<String>,
 ) -> Result<Value, String> {
@@ -922,6 +925,7 @@ fn list_documents(
             "document.list",
             json!({
                 "project_id": project_id,
+                "namespace": namespace,
                 "work_item_id": work_item_id
             }),
             correlation_id,

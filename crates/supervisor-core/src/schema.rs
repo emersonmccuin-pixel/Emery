@@ -61,10 +61,16 @@ const APP_MIGRATIONS: &[(&str, &str)] = &[
         include_str!("migrations/app/0014_wcp_namespace.sql"),
     ),
 ];
-const KNOWLEDGE_MIGRATIONS: &[(&str, &str)] = &[(
-    "0001_initial",
-    include_str!("migrations/knowledge/0001_initial.sql"),
-)];
+const KNOWLEDGE_MIGRATIONS: &[(&str, &str)] = &[
+    (
+        "0001_initial",
+        include_str!("migrations/knowledge/0001_initial.sql"),
+    ),
+    (
+        "0002_namespace_scoping",
+        include_str!("migrations/knowledge/0002_namespace_scoping.sql"),
+    ),
+];
 
 pub fn migrate_app_db(path: &Path) -> Result<()> {
     migrate(path, APP_MIGRATIONS)

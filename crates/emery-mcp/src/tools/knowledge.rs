@@ -8,18 +8,18 @@ use crate::rpc_client::RpcClient;
 pub fn tool_work_item_list() -> Value {
     json!({
         "name": "emery_work_item_list",
-        "description": "List work items for a project, optionally filtered by status, type, or parent.",
+        "description": "List work items, scoped by namespace (preferred) or project_id. Provide at least one.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "project_id":       { "type": "string", "description": "Project ID (required)" },
+                "namespace":        { "type": "string", "description": "Namespace to list work items from (e.g. EURI, FORGE). Preferred over project_id." },
+                "project_id":       { "type": "string", "description": "Project ID (fallback if namespace not provided)" },
                 "parent_id":        { "type": "string", "description": "Filter by parent work item ID" },
                 "root_work_item_id": { "type": "string", "description": "Filter by root work item ID" },
                 "status":           { "type": "string", "description": "Filter by status (e.g. backlog, in_progress, done)" },
                 "work_item_type":   { "type": "string", "description": "Filter by type (e.g. task, bug, feature)" },
                 "limit":            { "type": "integer", "description": "Max items to return" }
-            },
-            "required": ["project_id"]
+            }
         }
     })
 }
@@ -41,11 +41,12 @@ pub fn tool_work_item_get() -> Value {
 pub fn tool_work_item_create() -> Value {
     json!({
         "name": "emery_work_item_create",
-        "description": "Create a new work item in the knowledge store.",
+        "description": "Create a new work item in the knowledge store. Provide namespace (preferred) or project_id.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "project_id":          { "type": "string", "description": "Project ID" },
+                "namespace":           { "type": "string", "description": "Namespace for the work item (e.g. EURI). Preferred over project_id." },
+                "project_id":          { "type": "string", "description": "Project ID (fallback if namespace not provided)" },
                 "parent_id":           { "type": "string", "description": "Parent work item ID (for sub-tasks)" },
                 "title":               { "type": "string", "description": "Work item title" },
                 "description":         { "type": "string", "description": "Detailed description (markdown)" },
@@ -55,7 +56,7 @@ pub fn tool_work_item_create() -> Value {
                 "priority":            { "type": "string", "description": "Priority: critical, high, medium, low" },
                 "created_by":          { "type": "string", "description": "Creator identifier (e.g. session ID)" }
             },
-            "required": ["project_id", "title", "description", "work_item_type"]
+            "required": ["title", "description", "work_item_type"]
         }
     })
 }
@@ -86,18 +87,18 @@ pub fn tool_work_item_update() -> Value {
 pub fn tool_document_list() -> Value {
     json!({
         "name": "emery_document_list",
-        "description": "List documents for a project, optionally filtered by type, status, or associated work item.",
+        "description": "List documents, scoped by namespace (preferred) or project_id. Provide at least one.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "project_id":    { "type": "string", "description": "Project ID (required)" },
+                "namespace":     { "type": "string", "description": "Namespace to list documents from (e.g. EURI). Preferred over project_id." },
+                "project_id":    { "type": "string", "description": "Project ID (fallback if namespace not provided)" },
                 "work_item_id":  { "type": "string", "description": "Filter by associated work item" },
                 "session_id":    { "type": "string", "description": "Filter by originating session" },
                 "doc_type":      { "type": "string", "description": "Filter by document type (e.g. prd, architecture, notes)" },
                 "status":        { "type": "string", "description": "Filter by status (e.g. draft, published, archived)" },
                 "limit":         { "type": "integer", "description": "Max items to return" }
-            },
-            "required": ["project_id"]
+            }
         }
     })
 }
@@ -119,11 +120,12 @@ pub fn tool_document_get() -> Value {
 pub fn tool_document_create() -> Value {
     json!({
         "name": "emery_document_create",
-        "description": "Create a new document in the knowledge store.",
+        "description": "Create a new document in the knowledge store. Provide namespace (preferred) or project_id.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "project_id":       { "type": "string", "description": "Project ID" },
+                "namespace":        { "type": "string", "description": "Namespace for the document (e.g. EURI). Preferred over project_id." },
+                "project_id":       { "type": "string", "description": "Project ID (fallback if namespace not provided)" },
                 "work_item_id":     { "type": "string", "description": "Associated work item ID (optional)" },
                 "session_id":       { "type": "string", "description": "Originating session ID (optional)" },
                 "doc_type":         { "type": "string", "description": "Document type: prd, architecture, notes, decision, runbook" },
@@ -132,7 +134,7 @@ pub fn tool_document_create() -> Value {
                 "status":           { "type": "string", "description": "Initial status (default: draft)" },
                 "content_markdown": { "type": "string", "description": "Document content in markdown" }
             },
-            "required": ["project_id", "doc_type", "title", "content_markdown"]
+            "required": ["doc_type", "title", "content_markdown"]
         }
     })
 }
@@ -161,8 +163,9 @@ pub fn tool_document_update() -> Value {
 // ── Work Item Handlers ───────────────────────────────────────────────────────
 
 pub fn handle_work_item_list(input: Value) -> Result<String> {
-    let project_id = required_str(&input, "project_id")?;
-    let mut params = json!({ "project_id": project_id });
+    let mut params = json!({});
+    if let Some(v) = input["namespace"].as_str() { params["namespace"] = json!(v); }
+    if let Some(v) = input["project_id"].as_str() { params["project_id"] = json!(v); }
     if let Some(v) = input["parent_id"].as_str() { params["parent_id"] = json!(v); }
     if let Some(v) = input["root_work_item_id"].as_str() { params["root_work_item_id"] = json!(v); }
     if let Some(v) = input["status"].as_str() { params["status"] = json!(v); }
@@ -184,17 +187,17 @@ pub fn handle_work_item_get(input: Value) -> Result<String> {
 }
 
 pub fn handle_work_item_create(input: Value) -> Result<String> {
-    let project_id = required_str(&input, "project_id")?;
     let title = required_str(&input, "title")?;
     let description = required_str(&input, "description")?;
     let work_item_type = required_str(&input, "work_item_type")?;
 
     let mut params = json!({
-        "project_id": project_id,
         "title": title,
         "description": description,
         "work_item_type": work_item_type,
     });
+    if let Some(v) = input["namespace"].as_str() { params["namespace"] = json!(v); }
+    if let Some(v) = input["project_id"].as_str() { params["project_id"] = json!(v); }
     if let Some(v) = input["parent_id"].as_str() { params["parent_id"] = json!(v); }
     if let Some(v) = input["acceptance_criteria"].as_str() { params["acceptance_criteria"] = json!(v); }
     if let Some(v) = input["status"].as_str() { params["status"] = json!(v); }
@@ -231,8 +234,9 @@ pub fn handle_work_item_update(input: Value) -> Result<String> {
 // ── Document Handlers ────────────────────────────────────────────────────────
 
 pub fn handle_document_list(input: Value) -> Result<String> {
-    let project_id = required_str(&input, "project_id")?;
-    let mut params = json!({ "project_id": project_id });
+    let mut params = json!({});
+    if let Some(v) = input["namespace"].as_str() { params["namespace"] = json!(v); }
+    if let Some(v) = input["project_id"].as_str() { params["project_id"] = json!(v); }
     if let Some(v) = input["work_item_id"].as_str() { params["work_item_id"] = json!(v); }
     if let Some(v) = input["session_id"].as_str() { params["session_id"] = json!(v); }
     if let Some(v) = input["doc_type"].as_str() { params["doc_type"] = json!(v); }
@@ -254,17 +258,17 @@ pub fn handle_document_get(input: Value) -> Result<String> {
 }
 
 pub fn handle_document_create(input: Value) -> Result<String> {
-    let project_id = required_str(&input, "project_id")?;
     let doc_type = required_str(&input, "doc_type")?;
     let title = required_str(&input, "title")?;
     let content_markdown = required_str(&input, "content_markdown")?;
 
     let mut params = json!({
-        "project_id": project_id,
         "doc_type": doc_type,
         "title": title,
         "content_markdown": content_markdown,
     });
+    if let Some(v) = input["namespace"].as_str() { params["namespace"] = json!(v); }
+    if let Some(v) = input["project_id"].as_str() { params["project_id"] = json!(v); }
     if let Some(v) = input["work_item_id"].as_str() { params["work_item_id"] = json!(v); }
     if let Some(v) = input["session_id"].as_str() { params["session_id"] = json!(v); }
     if let Some(v) = input["slug"].as_str() { params["slug"] = json!(v); }

@@ -874,15 +874,37 @@ impl SupervisorService {
     }
 
     pub fn create_work_item(&self, request: CreateWorkItemRequest) -> Result<WorkItemDetail> {
-        self.ensure_project_exists(&request.project_id)?;
+        // Resolve namespace: explicit namespace takes priority, then project's wcp_namespace
+        let namespace = match request.namespace {
+            Some(ref ns) => Some(ns.clone()),
+            None => {
+                if let Some(ref pid) = request.project_id {
+                    self.ensure_project_exists(pid)?;
+                    let project = self.get_project(pid)?;
+                    project.and_then(|p| p.wcp_namespace.clone())
+                } else {
+                    None
+                }
+            }
+        };
+        let resolved_project_id = request.project_id.clone().unwrap_or_default();
 
         let now = unix_time_seconds();
-        let parent = self.resolve_work_item_parent(&request.project_id, request.parent_id)?;
-        let callsign = self.allocate_work_item_callsign(&request.project_id, parent.as_ref())?;
+        let parent = if resolved_project_id.is_empty() {
+            None
+        } else {
+            self.resolve_work_item_parent(&resolved_project_id, request.parent_id)?
+        };
+        let callsign = self.allocate_work_item_callsign_ns(
+            namespace.as_deref(),
+            request.project_id.as_deref(),
+            parent.as_ref(),
+        )?;
         let status = validate_work_item_status(request.status.as_deref().unwrap_or("backlog"))?;
         let record = NewWorkItemRecord {
             id: format!("wi_{}", Uuid::new_v4().simple()),
-            project_id: request.project_id,
+            project_id: resolved_project_id,
+            namespace,
             parent_id: parent.as_ref().map(|item| item.id.clone()),
             root_work_item_id: parent.as_ref().map(|item| {
                 item.root_work_item_id
@@ -976,23 +998,43 @@ impl SupervisorService {
     }
 
     pub fn create_document(&self, request: CreateDocumentRequest) -> Result<DocumentDetail> {
-        self.ensure_project_exists(&request.project_id)?;
-        self.validate_document_refs(
-            &request.project_id,
-            request.work_item_id.as_deref(),
-            request.session_id.as_deref(),
-        )?;
+        // Resolve namespace: explicit namespace takes priority, then project's wcp_namespace
+        let namespace = match request.namespace {
+            Some(ref ns) => Some(ns.clone()),
+            None => {
+                if let Some(ref pid) = request.project_id {
+                    self.ensure_project_exists(pid)?;
+                    let project = self.get_project(pid)?;
+                    project.and_then(|p| p.wcp_namespace.clone())
+                } else {
+                    None
+                }
+            }
+        };
+        let resolved_project_id = request.project_id.clone().unwrap_or_default();
+
+        if !resolved_project_id.is_empty() {
+            self.validate_document_refs(
+                &resolved_project_id,
+                request.work_item_id.as_deref(),
+                request.session_id.as_deref(),
+            )?;
+        }
 
         let title = required_trimmed("document title", &request.title)?;
-        let slug =
-            self.resolve_document_slug(&request.project_id, request.slug.as_deref(), &title, None)?;
+        let slug = if !resolved_project_id.is_empty() {
+            self.resolve_document_slug(&resolved_project_id, request.slug.as_deref(), &title, None)?
+        } else {
+            request.slug.unwrap_or_else(|| slugify_name(&title))
+        };
         let status = validate_document_status(request.status.as_deref().unwrap_or("draft"))?;
         let now = unix_time_seconds();
         let document_id = format!("doc_{}", Uuid::new_v4().simple());
 
         let record = NewDocumentRecord {
             id: document_id.clone(),
-            project_id: request.project_id,
+            project_id: resolved_project_id,
+            namespace,
             work_item_id: optional_trimmed(request.work_item_id),
             session_id: optional_trimmed(request.session_id),
             doc_type: validate_document_type(&request.doc_type)?,
@@ -2568,6 +2610,15 @@ impl SupervisorService {
         project_id: &str,
         parent: Option<&ResolvedWorkItemParent>,
     ) -> Result<String> {
+        self.allocate_work_item_callsign_ns(None, Some(project_id), parent)
+    }
+
+    fn allocate_work_item_callsign_ns(
+        &self,
+        namespace: Option<&str>,
+        project_id: Option<&str>,
+        parent: Option<&ResolvedWorkItemParent>,
+    ) -> Result<String> {
         if let Some(parent) = parent {
             return Ok(format!(
                 "{}.{:03}",
@@ -2575,11 +2626,25 @@ impl SupervisorService {
             ));
         }
 
-        let project = self
-            .get_project(project_id)?
-            .ok_or_else(|| anyhow!("project {} was not found", project_id))?;
-        let prefix = project.slug.to_ascii_uppercase();
-        let next_sequence = self.next_root_work_item_sequence(project_id, &prefix)?;
+        // Resolve the callsign prefix: namespace takes priority, then project slug
+        let prefix = if let Some(ns) = namespace {
+            ns.to_ascii_uppercase()
+        } else if let Some(pid) = project_id {
+            let project = self
+                .get_project(pid)?
+                .ok_or_else(|| anyhow!("project {} was not found", pid))?;
+            project.slug.to_ascii_uppercase()
+        } else {
+            return Err(anyhow!("either namespace or project_id is required to allocate a callsign"));
+        };
+
+        let next_sequence = if let Some(ns) = namespace {
+            self.next_root_work_item_sequence_ns(ns, &prefix)?
+        } else if let Some(pid) = project_id {
+            self.next_root_work_item_sequence(pid, &prefix)?
+        } else {
+            1
+        };
         Ok(format!("{prefix}-{next_sequence}"))
     }
 
@@ -2587,6 +2652,29 @@ impl SupervisorService {
         let mut max_sequence = 0_i64;
         let prefix_with_dash = format!("{prefix}-");
         for callsign in self.databases.list_root_work_item_callsigns(project_id)? {
+            let Some(number) = callsign.strip_prefix(&prefix_with_dash) else {
+                continue;
+            };
+            if !number.chars().all(|ch| ch.is_ascii_digit()) {
+                continue;
+            }
+            let value = number.parse::<i64>().map_err(|error| {
+                anyhow!(
+                    "failed to parse work item callsign sequence from {}: {}",
+                    callsign,
+                    error
+                )
+            })?;
+            max_sequence = max_sequence.max(value);
+        }
+
+        Ok(max_sequence + 1)
+    }
+
+    fn next_root_work_item_sequence_ns(&self, namespace: &str, prefix: &str) -> Result<i64> {
+        let mut max_sequence = 0_i64;
+        let prefix_with_dash = format!("{prefix}-");
+        for callsign in self.databases.list_root_work_item_callsigns_ns(namespace)? {
             let Some(number) = callsign.strip_prefix(&prefix_with_dash) else {
                 continue;
             };

@@ -146,6 +146,7 @@ pub struct SessionSpecDetail {
 pub struct WorkItemSummary {
     pub id: String,
     pub project_id: String,
+    pub namespace: Option<String>,
     pub parent_id: Option<String>,
     pub root_work_item_id: Option<String>,
     pub callsign: String,
@@ -173,6 +174,7 @@ pub struct WorkItemDetail {
 pub struct DocumentSummary {
     pub id: String,
     pub project_id: String,
+    pub namespace: Option<String>,
     pub work_item_id: Option<String>,
     pub session_id: Option<String>,
     pub doc_type: String,
@@ -429,6 +431,7 @@ pub struct UpdateSessionSpecRequest {
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct WorkItemListFilter {
     pub project_id: Option<String>,
+    pub namespace: Option<String>,
     pub parent_id: Option<String>,
     pub root_work_item_id: Option<String>,
     pub status: Option<String>,
@@ -438,7 +441,8 @@ pub struct WorkItemListFilter {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateWorkItemRequest {
-    pub project_id: String,
+    pub project_id: Option<String>,
+    pub namespace: Option<String>,
     pub parent_id: Option<String>,
     pub title: String,
     pub description: String,
@@ -464,6 +468,7 @@ pub struct UpdateWorkItemRequest {
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct DocumentListFilter {
     pub project_id: Option<String>,
+    pub namespace: Option<String>,
     pub work_item_id: Option<String>,
     pub session_id: Option<String>,
     pub doc_type: Option<String>,
@@ -495,7 +500,8 @@ pub struct WorkflowReconciliationProposalListFilter {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateDocumentRequest {
-    pub project_id: String,
+    pub project_id: Option<String>,
+    pub namespace: Option<String>,
     pub work_item_id: Option<String>,
     pub session_id: Option<String>,
     pub doc_type: String,
@@ -741,6 +747,7 @@ pub struct SessionSpecUpdateRecord {
 pub struct NewWorkItemRecord {
     pub id: String,
     pub project_id: String,
+    pub namespace: Option<String>,
     pub parent_id: Option<String>,
     pub root_work_item_id: Option<String>,
     pub callsign: String,
@@ -775,6 +782,7 @@ pub struct WorkItemUpdateRecord {
 pub struct NewDocumentRecord {
     pub id: String,
     pub project_id: String,
+    pub namespace: Option<String>,
     pub work_item_id: Option<String>,
     pub session_id: Option<String>,
     pub doc_type: String,

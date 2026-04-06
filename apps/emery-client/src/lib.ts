@@ -100,10 +100,11 @@ export async function watchLiveSessions(
 }
 
 export async function listWorkItems(
-  projectId: string,
+  projectId?: string | null,
+  namespace?: string | null,
   correlationId?: string,
 ): Promise<WorkItemSummary[]> {
-  return invoke("list_work_items", { projectId, correlationId });
+  return invoke("list_work_items", { projectId, namespace, correlationId });
 }
 
 export async function getProject(
@@ -171,6 +172,7 @@ export async function getWorkItem(
 export async function createWorkItem(
   input: {
     project_id: string;
+    namespace?: string;
     parent_id?: string | null;
     title: string;
     description: string;
@@ -227,11 +229,12 @@ export async function deletePlanningAssignment(
 }
 
 export async function listDocuments(
-  projectId: string,
+  projectId?: string | null,
+  namespace?: string | null,
   workItemId?: string | null,
   correlationId?: string,
 ): Promise<DocumentSummary[]> {
-  return invoke("list_documents", { projectId, workItemId, correlationId });
+  return invoke("list_documents", { projectId, namespace, workItemId, correlationId });
 }
 
 export async function getDocument(
@@ -244,6 +247,7 @@ export async function getDocument(
 export async function createDocument(
   input: {
     project_id: string;
+    namespace?: string;
     work_item_id?: string | null;
     session_id?: string | null;
     doc_type: string;
