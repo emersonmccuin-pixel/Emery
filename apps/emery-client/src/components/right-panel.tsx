@@ -7,10 +7,11 @@ import { WorktreeRow } from "./worktree-row";
 type RightPanelProps = {
   projectId: string;
   collapsed: boolean;
+  overlay?: boolean;
   onToggle: () => void;
 };
 
-export function RightPanel({ projectId, collapsed, onToggle }: RightPanelProps) {
+export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPanelProps) {
   const navLayer = useNavLayer();
   const [showWorktreeInput, setShowWorktreeInput] = useState(false);
   const [worktreeCallsign, setWorktreeCallsign] = useState("");
@@ -80,7 +81,7 @@ export function RightPanel({ projectId, collapsed, onToggle }: RightPanelProps) 
   const namespace = projectDetail?.slug?.toUpperCase() ?? project?.slug?.toUpperCase() ?? "";
 
   return (
-    <div className={`right-panel${collapsed ? " collapsed" : ""}`}>
+    <div className={`right-panel${collapsed ? " collapsed" : ""}${overlay ? " overlay" : ""}`}>
       {/* Toggle rail — always visible */}
       <div className="right-panel-toggle-rail">
         <button

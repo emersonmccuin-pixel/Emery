@@ -596,9 +596,18 @@ export default function App() {
           <RightPanel
             projectId={navProjectId}
             collapsed={rightPanelCollapsed}
+            overlay={autoRightRef.current && !rightPanelCollapsed}
             onToggle={() => {
-              autoRightRef.current = false;
-              setRightPanelCollapsed((c) => !c);
+              if (autoRightRef.current && rightPanelCollapsed) {
+                // Not enough room inline — open as overlay, keep autoRight tracking
+                setRightPanelCollapsed(false);
+              } else if (autoRightRef.current && !rightPanelCollapsed) {
+                // Close the overlay
+                setRightPanelCollapsed(true);
+              } else {
+                autoRightRef.current = false;
+                setRightPanelCollapsed((c) => !c);
+              }
             }}
           />
         ) : null}

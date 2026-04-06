@@ -163,12 +163,12 @@ html[data-theme="dark"] {
   /* Typography */
   --font-sans:       "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   --font-mono:       "IBM Plex Mono", "Cascadia Code", "Fira Code", monospace;
-  --text-xs:         0.69rem;
-  --text-sm:         0.77rem;
-  --text-base:       0.85rem;
-  --text-md:         1rem;
-  --text-lg:         1.15rem;
-  --text-xl:         1.38rem;
+  --text-xs:         0.75rem;   /* 12px */
+  --text-sm:         0.84rem;   /* ~13.5px */
+  --text-base:       0.94rem;   /* 15px */
+  --text-md:         1.1rem;    /* 17.5px */
+  --text-lg:         1.3rem;    /* 21px */
+  --text-xl:         1.6rem;    /* 25.5px */
   --weight-normal:   400;
   --weight-medium:   500;
   --weight-semibold: 600;
@@ -450,6 +450,7 @@ html[data-theme="vaporwave"] .app-shell {
   min-height: 0;
   overflow: hidden;
   background-color: var(--surface-base);
+  position: relative;
 }
 
 /* ── Sidebar ── */
@@ -6526,6 +6527,15 @@ html[data-theme="vaporwave"] .right-panel {
   width: 28px;
 }
 
+.right-panel.overlay {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 50;
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.4);
+}
+
 /* Toggle rail — always visible, on the left edge of the right panel */
 .right-panel-toggle-rail {
   flex-shrink: 0;
@@ -6754,7 +6764,7 @@ html[data-theme="vaporwave"] .right-panel {
 /* ── Status dots (worktree) ── */
 
 .wt-dot {
-  font-size: 10px;
+  font-size: var(--text-xs);
   line-height: 1;
 }
 

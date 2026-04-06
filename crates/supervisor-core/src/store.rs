@@ -1401,11 +1401,44 @@ impl DatabaseSet {
             return Ok(());
         }
 
+        // Auto-fix: if the work item exists but under a different project_id,
+        // re-associate it. This handles knowledge.db/app.db project ID drift
+        // (e.g. after recreating the project or switching between dev/prod instances).
+        if exists(
+            &connection,
+            "SELECT 1 FROM work_items WHERE id = ?1",
+            params![work_item_id],
+        )? {
+            connection.execute(
+                "UPDATE work_items SET project_id = ?1 WHERE id = ?2",
+                params![project_id, work_item_id],
+            )?;
+            return Ok(());
+        }
+
         Err(anyhow!(
-            "work item {} does not belong to project {}",
+            "work item {} was not found",
             work_item_id,
-            project_id
         ))
+    }
+
+    /// Re-associate all work items and documents in a namespace to a new project_id.
+    /// Used to fix project ID drift between knowledge.db and app.db.
+    pub fn reassociate_namespace_to_project(
+        &self,
+        namespace: &str,
+        project_id: &str,
+    ) -> Result<(usize, usize)> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let wi_count = connection.execute(
+            "UPDATE work_items SET project_id = ?1 WHERE namespace = ?2 AND project_id != ?1",
+            params![project_id, namespace],
+        )?;
+        let doc_count = connection.execute(
+            "UPDATE documents SET project_id = ?1 WHERE namespace = ?2 AND project_id != ?1",
+            params![project_id, namespace],
+        )?;
+        Ok((wi_count, doc_count))
     }
 
     pub fn next_work_item_child_sequence(&self, parent_id: &str) -> Result<i64> {
