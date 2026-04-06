@@ -1641,6 +1641,63 @@ fn vault_status(
         .map_err(error_string)
 }
 
+// ── MCP Servers ───────────────────────────────────────────────────────────
+
+#[tauri::command]
+fn list_mcp_servers(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(&app, "mcp_server.list", json!({}), correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn create_mcp_server(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    input: Value,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(&app, "mcp_server.create", input, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn update_mcp_server(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    mcp_server_id: String,
+    input: Value,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    let mut payload = input;
+    payload["mcp_server_id"] = json!(mcp_server_id);
+    manager
+        .request_value(&app, "mcp_server.update", payload, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn delete_mcp_server(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    mcp_server_id: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "mcp_server.delete",
+            json!({ "mcp_server_id": mcp_server_id }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
 fn main() {
     if let Err(error) = debug_dev_server_preflight() {
         eprintln!("{error}");
@@ -1717,7 +1774,11 @@ fn main() {
             vault_delete,
             vault_unlock,
             vault_lock,
-            vault_status
+            vault_status,
+            list_mcp_servers,
+            create_mcp_server,
+            update_mcp_server,
+            delete_mcp_server
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Emery client");

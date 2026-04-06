@@ -523,6 +523,78 @@ pub struct UpdateDocumentRequest {
     pub content_markdown: Option<String>,
 }
 
+// ── MCP Servers ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct McpServerSummary {
+    pub id: String,
+    pub name: String,
+    pub server_type: String,
+    pub command: Option<String>,
+    pub args_json: Option<String>,
+    pub env_json: Option<String>,
+    pub url: Option<String>,
+    pub is_builtin: bool,
+    pub enabled: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateMcpServerRequest {
+    pub name: String,
+    pub server_type: Option<String>,
+    pub command: Option<String>,
+    pub args: Option<Vec<String>>,
+    pub env: Option<serde_json::Value>,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateMcpServerRequest {
+    pub mcp_server_id: String,
+    pub name: Option<String>,
+    pub server_type: Option<String>,
+    pub command: Option<String>,
+    pub args: Option<Vec<String>>,
+    pub env: Option<serde_json::Value>,
+    pub url: Option<String>,
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeleteMcpServerRequest {
+    pub mcp_server_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewMcpServerRecord {
+    pub id: String,
+    pub name: String,
+    pub server_type: String,
+    pub command: Option<String>,
+    pub args_json: Option<String>,
+    pub env_json: Option<String>,
+    pub url: Option<String>,
+    pub is_builtin: bool,
+    pub enabled: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct McpServerUpdateRecord {
+    pub id: String,
+    pub name: String,
+    pub server_type: String,
+    pub command: Option<String>,
+    pub args_json: Option<String>,
+    pub env_json: Option<String>,
+    pub url: Option<String>,
+    pub enabled: bool,
+    pub updated_at: i64,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreatePlanningAssignmentRequest {
     pub work_item_id: String,

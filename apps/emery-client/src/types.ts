@@ -82,6 +82,20 @@ export type AccountSummary = {
   updated_at: number;
 };
 
+export type McpServerSummary = {
+  id: string;
+  name: string;
+  server_type: "stdio" | "http";
+  command: string | null;
+  args_json: string | null;
+  env_json: string | null;
+  url: string | null;
+  is_builtin: boolean;
+  enabled: boolean;
+  created_at: number;
+  updated_at: number;
+};
+
 export type BootstrapCounts = {
   project_count: number;
   account_count: number;

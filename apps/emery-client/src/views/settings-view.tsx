@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { appStore, useAppStore } from "../store";
 import { navStore } from "../nav-store";
-import type { AccountSummary } from "../types";
+import type { AccountSummary, McpServerSummary } from "../types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { pickFolder } from "../lib";
+import { pickFolder, listMcpServers, createMcpServer, updateMcpServer, deleteMcpServer } from "../lib";
 import {
   type AppearanceOverrides,
   loadOverrides,
@@ -22,7 +22,7 @@ import {
   resetOverrides,
 } from "../appearance";
 
-type SettingsTab = "accounts" | "appearance" | "agent-defaults" | "github" | "knowledge" | "resolution";
+type SettingsTab = "accounts" | "appearance" | "agent-defaults" | "mcp-servers" | "github" | "knowledge" | "resolution";
 
 export function SettingsView() {
   const [activeTab, setActiveTab] = useState<SettingsTab>("accounts");
@@ -31,6 +31,7 @@ export function SettingsView() {
     { id: "accounts", label: "Accounts" },
     { id: "appearance", label: "Appearance" },
     { id: "agent-defaults", label: "Agent Defaults" },
+    { id: "mcp-servers", label: "MCP Servers" },
     { id: "github", label: "GitHub" },
     { id: "knowledge", label: "Knowledge Store" },
     { id: "resolution", label: "Config Resolution" },
@@ -66,6 +67,7 @@ export function SettingsView() {
             {activeTab === "accounts" && <AccountsSection />}
             {activeTab === "appearance" && <AppearanceSection />}
             {activeTab === "agent-defaults" && <AgentDefaultsSection />}
+            {activeTab === "mcp-servers" && <McpServersSection />}
             {activeTab === "github" && <GitHubSection />}
             {activeTab === "knowledge" && <KnowledgeStoreSection />}
             {activeTab === "resolution" && <ConfigResolutionSection />}
@@ -1003,6 +1005,200 @@ function AgentDefaultsRow({
 }
 
 // --- GitHub Section ---
+
+// ── MCP Servers Section ──────────────────────────────────────────────────
+
+function McpServersSection() {
+  const [servers, setServers] = useState<McpServerSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [addType, setAddType] = useState<"stdio" | "http">("stdio");
+  const [addName, setAddName] = useState("");
+  const [addCommand, setAddCommand] = useState("");
+  const [addArgs, setAddArgs] = useState("");
+  const [addUrl, setAddUrl] = useState("");
+  const [addError, setAddError] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  async function refresh() {
+    try {
+      const result = await listMcpServers();
+      setServers(result);
+    } catch { /* ignore */ }
+    setLoading(false);
+  }
+
+  useEffect(() => { void refresh(); }, []);
+
+  async function handleCreate() {
+    setAddError("");
+    if (!addName.trim()) { setAddError("Name is required"); return; }
+    if (addType === "stdio" && !addCommand.trim()) { setAddError("Command is required for stdio servers"); return; }
+    if (addType === "http" && !addUrl.trim()) { setAddError("URL is required for HTTP servers"); return; }
+
+    setCreating(true);
+    try {
+      const args = addArgs.trim() ? addArgs.split(/\s+/) : undefined;
+      await createMcpServer({
+        name: addName.trim(),
+        server_type: addType,
+        command: addType === "stdio" ? addCommand.trim() : null,
+        args: addType === "stdio" ? args : undefined,
+        url: addType === "http" ? addUrl.trim() : null,
+      });
+      setShowAddForm(false);
+      setAddName(""); setAddCommand(""); setAddArgs(""); setAddUrl("");
+      await refresh();
+    } catch (err) {
+      setAddError(String(err));
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function handleToggle(server: McpServerSummary) {
+    try {
+      await updateMcpServer(server.id, { enabled: !server.enabled });
+      await refresh();
+    } catch { /* ignore */ }
+  }
+
+  async function handleDelete(serverId: string) {
+    try {
+      await deleteMcpServer(serverId);
+      await refresh();
+    } catch { /* ignore */ }
+  }
+
+  if (loading) return <div className="modal-loading">Loading...</div>;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <CardTitle>MCP Servers</CardTitle>
+            <CardDescription>
+              MCP servers are injected into every agent session launched through Emery via <code>--mcp-config</code>.
+              Stdio servers run a local binary. HTTP servers connect to a remote URL.
+            </CardDescription>
+          </div>
+          {!showAddForm && (
+            <Button variant="ghost" size="sm" onClick={() => setShowAddForm(true)}>+ Add</Button>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {showAddForm && (
+          <div className="settings-add-form" style={{ marginBottom: 16, padding: 12, border: "1px solid var(--border-primary)", borderRadius: 6 }}>
+            <div className="dispatch-field" style={{ marginBottom: 8 }}>
+              <label className="dispatch-field-label">Type</label>
+              <Select value={addType} onChange={(e) => setAddType(e.target.value as "stdio" | "http")}>
+                <option value="stdio">Stdio (local binary)</option>
+                <option value="http">HTTP (remote URL)</option>
+              </Select>
+            </div>
+            <div className="dispatch-field" style={{ marginBottom: 8 }}>
+              <label className="dispatch-field-label">Name</label>
+              <Input value={addName} onChange={(e) => setAddName(e.target.value)} placeholder="e.g. my-tools" />
+            </div>
+            {addType === "stdio" ? (
+              <>
+                <div className="dispatch-field" style={{ marginBottom: 8 }}>
+                  <label className="dispatch-field-label">Command</label>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <Input value={addCommand} onChange={(e) => setAddCommand(e.target.value)} placeholder="Path to MCP server binary" style={{ flex: 1 }} />
+                    <Button variant="ghost" size="sm" onClick={async () => {
+                      const folder = await pickFolder();
+                      if (folder) setAddCommand(folder);
+                    }}>Browse</Button>
+                  </div>
+                </div>
+                <div className="dispatch-field" style={{ marginBottom: 8 }}>
+                  <label className="dispatch-field-label">Args</label>
+                  <Input value={addArgs} onChange={(e) => setAddArgs(e.target.value)} placeholder="Space-separated arguments (optional)" />
+                </div>
+              </>
+            ) : (
+              <div className="dispatch-field" style={{ marginBottom: 8 }}>
+                <label className="dispatch-field-label">URL</label>
+                <Input value={addUrl} onChange={(e) => setAddUrl(e.target.value)} placeholder="https://example.com/mcp" />
+              </div>
+            )}
+            {addError && <p style={{ color: "var(--text-danger)", fontSize: 12, marginBottom: 8 }}>{addError}</p>}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <Button variant="ghost" size="sm" onClick={() => { setShowAddForm(false); setAddError(""); }}>Cancel</Button>
+              <Button variant="default" size="sm" onClick={handleCreate} disabled={creating}>
+                {creating ? "Creating..." : "Add Server"}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {servers.length === 0 && !showAddForm && (
+          <p style={{ color: "var(--text-secondary)", fontSize: 13 }}>No MCP servers configured. The built-in emery server will be added on next supervisor restart.</p>
+        )}
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {servers.map((server) => (
+            <McpServerRow key={server.id} server={server} onToggle={handleToggle} onDelete={handleDelete} />
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function McpServerRow({ server, onToggle, onDelete }: {
+  server: McpServerSummary;
+  onToggle: (s: McpServerSummary) => void;
+  onDelete: (id: string) => void;
+}) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 8, padding: "8px 12px",
+      border: "1px solid var(--border-primary)", borderRadius: 6,
+      opacity: server.enabled ? 1 : 0.5,
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontWeight: 600, fontSize: 13 }}>{server.name}</span>
+          <Badge variant={server.server_type === "http" ? "outline" : "secondary"} style={{ fontSize: 10 }}>
+            {server.server_type}
+          </Badge>
+          {server.is_builtin && (
+            <Badge variant="outline" style={{ fontSize: 10 }}>built-in</Badge>
+          )}
+        </div>
+        <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {server.server_type === "http"
+            ? server.url ?? "—"
+            : server.command ?? "—"
+          }
+          {server.args_json && server.args_json !== "[]" && (
+            <span style={{ marginLeft: 4, opacity: 0.7 }}>{server.args_json}</span>
+          )}
+        </div>
+      </div>
+      <Button variant="ghost" size="sm" onClick={() => onToggle(server)}>
+        {server.enabled ? "Disable" : "Enable"}
+      </Button>
+      {!server.is_builtin && (
+        confirmDelete ? (
+          <Button variant="secondary" size="sm" onClick={() => { onDelete(server.id); setConfirmDelete(false); }}>
+            Confirm
+          </Button>
+        ) : (
+          <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(true)}>
+            Remove
+          </Button>
+        )
+      )}
+    </div>
+  );
+}
 
 function GitHubSection() {
   const githubToken = useAppStore((s) => s.githubToken);

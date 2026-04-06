@@ -13,6 +13,7 @@ pub struct AgentProfile {
     pub model_flag: Option<&'static str>,
     pub prompt_flag: Option<&'static str>,
     pub supports_model_injection: bool,
+    pub mcp_config_flag: Option<&'static str>,
 }
 
 pub enum InstructionDisposition {
@@ -38,6 +39,7 @@ impl AgentProfile {
                 model_flag: Some("--model"),
                 prompt_flag: Some("-p"),
                 supports_model_injection: true,
+                mcp_config_flag: Some("--mcp-config"),
             }),
             "codex" => Ok(Self {
                 kind: "codex",
@@ -49,6 +51,7 @@ impl AgentProfile {
                 model_flag: None,
                 prompt_flag: None,
                 supports_model_injection: false,
+                mcp_config_flag: None,
             }),
             "gemini" => Ok(Self {
                 kind: "gemini",
@@ -60,6 +63,7 @@ impl AgentProfile {
                 model_flag: None,
                 prompt_flag: None,
                 supports_model_injection: false,
+                mcp_config_flag: None,
             }),
             other => Err(anyhow!(
                 "unsupported agent kind '{}' — must be one of: claude, codex, gemini",

@@ -8,6 +8,7 @@ import type {
   DocumentDetail,
   DocumentSummary,
   GitHealthStatus,
+  McpServerSummary,
   MergeQueueEntry,
   PlanningAssignmentDetail,
   PlanningAssignmentSummary,
@@ -564,6 +565,51 @@ export async function updateAccount(
   correlationId?: string,
 ): Promise<unknown> {
   return invoke("update_account", { accountId, input, correlationId });
+}
+
+// ── MCP Servers ───────────────────────────────────────────────────────────
+
+export async function listMcpServers(
+  correlationId?: string,
+): Promise<McpServerSummary[]> {
+  return invoke("list_mcp_servers", { correlationId });
+}
+
+export async function createMcpServer(
+  input: {
+    name: string;
+    server_type?: string;
+    command?: string | null;
+    args?: string[];
+    env?: Record<string, string>;
+    url?: string | null;
+  },
+  correlationId?: string,
+): Promise<McpServerSummary> {
+  return invoke("create_mcp_server", { input, correlationId });
+}
+
+export async function updateMcpServer(
+  mcpServerId: string,
+  input: {
+    name?: string;
+    server_type?: string;
+    command?: string | null;
+    args?: string[];
+    env?: Record<string, string>;
+    url?: string | null;
+    enabled?: boolean;
+  },
+  correlationId?: string,
+): Promise<McpServerSummary> {
+  return invoke("update_mcp_server", { mcpServerId, input, correlationId });
+}
+
+export async function deleteMcpServer(
+  mcpServerId: string,
+  correlationId?: string,
+): Promise<unknown> {
+  return invoke("delete_mcp_server", { mcpServerId, correlationId });
 }
 
 export async function getProjectRootGitStatus(

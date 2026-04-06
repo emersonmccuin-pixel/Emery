@@ -26,6 +26,7 @@ use crate::models::{
     WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
     WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary, GitHealthStatus,
     CreateVaultEntryRequest, VaultAuditEntry, VaultEntry, VaultLockState,
+    McpServerSummary, CreateMcpServerRequest, UpdateMcpServerRequest, DeleteMcpServerRequest,
 };
 use crate::runtime::SessionRegistry;
 use crate::service::SupervisorService;
@@ -587,6 +588,28 @@ impl Supervisor {
         limit: usize,
     ) -> Result<Vec<VaultAuditEntry>> {
         self.vault.list_audit(entry_id, limit)
+    }
+
+    // ── MCP Servers ─────────────────────────────────────────────────────────
+
+    pub fn list_mcp_servers(&self) -> Result<Vec<McpServerSummary>> {
+        self.service.list_mcp_servers()
+    }
+
+    pub fn create_mcp_server(&self, request: CreateMcpServerRequest) -> Result<McpServerSummary> {
+        self.service.create_mcp_server(request)
+    }
+
+    pub fn update_mcp_server(&self, request: UpdateMcpServerRequest) -> Result<McpServerSummary> {
+        self.service.update_mcp_server(request)
+    }
+
+    pub fn delete_mcp_server(&self, request: DeleteMcpServerRequest) -> Result<()> {
+        self.service.delete_mcp_server(request)
+    }
+
+    pub fn resolve_mcp_config_json(&self) -> Result<Option<String>> {
+        self.service.resolve_mcp_config_json()
     }
 }
 

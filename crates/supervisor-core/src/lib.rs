@@ -41,6 +41,7 @@ pub use models::{
     WorkflowReconciliationProposalListFilter, WorkflowReconciliationProposalSummary,
     WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary,
     CreateVaultEntryRequest, UpdateVaultEntryRequest, VaultAuditEntry, VaultEntry, VaultLockState,
+    McpServerSummary, CreateMcpServerRequest, UpdateMcpServerRequest, DeleteMcpServerRequest,
 };
 pub use runtime::SessionRegistry;
 pub use service::SupervisorService;

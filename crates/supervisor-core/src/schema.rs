@@ -60,6 +60,10 @@ const APP_MIGRATIONS: &[(&str, &str)] = &[
         "0014_wcp_namespace",
         include_str!("migrations/app/0014_wcp_namespace.sql"),
     ),
+    (
+        "0015_mcp_servers",
+        include_str!("migrations/app/0015_mcp_servers.sql"),
+    ),
 ];
 const KNOWLEDGE_MIGRATIONS: &[(&str, &str)] = &[
     (

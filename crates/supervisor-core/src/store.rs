@@ -25,9 +25,10 @@ use crate::models::{
     WorkflowReconciliationProposalSummary, WorkflowReconciliationProposalUpdateRecord,
     WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary, WorktreeUpdateRecord,
     VaultEntry, VaultEntryRow, VaultAuditEntry, NewVaultEntryRecord, VaultEntryUpdateRecord,
-    NewVaultAuditRecord,
+    NewVaultAuditRecord, McpServerSummary, NewMcpServerRecord, McpServerUpdateRecord,
 };
 use crate::schema::{migrate_app_db, migrate_knowledge_db};
+use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct DatabaseSet {
@@ -61,9 +62,11 @@ impl DatabaseSet {
     pub fn initialize(paths: &AppPaths) -> Result<Self> {
         migrate_app_db(&paths.app_db)?;
         migrate_knowledge_db(&paths.knowledge_db)?;
-        Ok(Self {
+        let db = Self {
             paths: paths.clone(),
-        })
+        };
+        db.seed_builtin_mcp_servers()?;
+        Ok(db)
     }
 
     pub fn health_snapshot(&self) -> Result<HealthSnapshot> {
@@ -1632,6 +1635,158 @@ impl DatabaseSet {
         }
 
         Ok(())
+    }
+
+    // ── MCP Servers ───────────────────────────────────────────────────────────
+
+    pub fn seed_builtin_mcp_servers(&self) -> Result<()> {
+        let mcp_path = discover_emery_mcp_path();
+        if let Some(path) = mcp_path {
+            let connection = open_connection(&self.paths.app_db)?;
+            let exists: bool = connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM mcp_servers WHERE name = 'emery' AND is_builtin = 1)",
+                [],
+                |row| row.get(0),
+            )?;
+            if !exists {
+                let now = unix_time_seconds();
+                connection.execute(
+                    "INSERT INTO mcp_servers (id, name, server_type, command, args_json, is_builtin, enabled, created_at, updated_at)
+                     VALUES (?1, 'emery', 'stdio', ?2, '[]', 1, 1, ?3, ?3)",
+                    params![format!("mcp_{}", Uuid::new_v4().simple()), path, now],
+                )?;
+            } else {
+                // Update command path in case binary moved
+                connection.execute(
+                    "UPDATE mcp_servers SET command = ?1, updated_at = ?2 WHERE name = 'emery' AND is_builtin = 1",
+                    params![path, unix_time_seconds()],
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn list_mcp_servers(&self) -> Result<Vec<McpServerSummary>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let mut statement = connection.prepare(
+            "SELECT id, name, server_type, command, args_json, env_json, url, is_builtin, enabled, created_at, updated_at
+             FROM mcp_servers
+             ORDER BY is_builtin DESC, name ASC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(McpServerSummary {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                server_type: row.get(2)?,
+                command: row.get(3)?,
+                args_json: row.get(4)?,
+                env_json: row.get(5)?,
+                url: row.get(6)?,
+                is_builtin: row.get(7)?,
+                enabled: row.get(8)?,
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn list_enabled_mcp_servers(&self) -> Result<Vec<McpServerSummary>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let mut statement = connection.prepare(
+            "SELECT id, name, server_type, command, args_json, env_json, url, is_builtin, enabled, created_at, updated_at
+             FROM mcp_servers
+             WHERE enabled = 1
+             ORDER BY is_builtin DESC, name ASC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(McpServerSummary {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                server_type: row.get(2)?,
+                command: row.get(3)?,
+                args_json: row.get(4)?,
+                env_json: row.get(5)?,
+                url: row.get(6)?,
+                is_builtin: row.get(7)?,
+                enabled: row.get(8)?,
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn insert_mcp_server(&self, record: &NewMcpServerRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        connection.execute(
+            "INSERT INTO mcp_servers (id, name, server_type, command, args_json, env_json, url, is_builtin, enabled, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                record.id, record.name, record.server_type, record.command,
+                record.args_json, record.env_json, record.url,
+                record.is_builtin, record.enabled, record.created_at, record.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_mcp_server(&self, record: &McpServerUpdateRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let updated = connection.execute(
+            "UPDATE mcp_servers
+             SET name = ?2, server_type = ?3, command = ?4, args_json = ?5,
+                 env_json = ?6, url = ?7, enabled = ?8, updated_at = ?9
+             WHERE id = ?1",
+            params![
+                record.id, record.name, record.server_type, record.command,
+                record.args_json, record.env_json, record.url,
+                record.enabled, record.updated_at,
+            ],
+        )?;
+        if updated == 0 {
+            return Err(anyhow!("MCP server {} was not found", record.id));
+        }
+        Ok(())
+    }
+
+    pub fn delete_mcp_server(&self, mcp_server_id: &str) -> Result<()> {
+        let connection = open_connection(&self.paths.app_db)?;
+        // Prevent deleting built-in servers
+        let is_builtin: bool = connection.query_row(
+            "SELECT is_builtin FROM mcp_servers WHERE id = ?1",
+            [mcp_server_id],
+            |row| row.get(0),
+        ).optional()?.unwrap_or(false);
+        if is_builtin {
+            return Err(anyhow!("cannot delete built-in MCP server"));
+        }
+        let deleted = connection.execute(
+            "DELETE FROM mcp_servers WHERE id = ?1 AND is_builtin = 0",
+            [mcp_server_id],
+        )?;
+        if deleted == 0 {
+            return Err(anyhow!("MCP server {} was not found", mcp_server_id));
+        }
+        Ok(())
+    }
+
+    pub fn mcp_server_name_exists(&self, name: &str, exclude_id: Option<&str>) -> Result<bool> {
+        let connection = open_connection(&self.paths.app_db)?;
+        match exclude_id {
+            Some(id) => exists(
+                &connection,
+                "SELECT 1 FROM mcp_servers WHERE name = ?1 AND id <> ?2",
+                params![name, id],
+            ),
+            None => exists(
+                &connection,
+                "SELECT 1 FROM mcp_servers WHERE name = ?1",
+                params![name],
+            ),
+        }
     }
 
     pub fn document_slug_exists(
@@ -3637,4 +3792,29 @@ fn map_vault_audit_entry(row: &Row<'_>) -> rusqlite::Result<VaultAuditEntry> {
         details_json: row.get(4)?,
         created_at: row.get(5)?,
     })
+}
+
+fn unix_time_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+}
+
+/// Find the emery-mcp binary path as a sibling of the current executable.
+fn discover_emery_mcp_path() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+
+    #[cfg(windows)]
+    let mcp_name = "emery-mcp.exe";
+    #[cfg(not(windows))]
+    let mcp_name = "emery-mcp";
+
+    let mcp_path = dir.join(mcp_name);
+    if mcp_path.exists() {
+        Some(mcp_path.to_string_lossy().replace('\\', "/"))
+    } else {
+        None
+    }
 }

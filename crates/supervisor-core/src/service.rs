@@ -40,6 +40,8 @@ use crate::models::{
     WorkflowReconciliationProposalDetail, WorkflowReconciliationProposalListFilter,
     WorkflowReconciliationProposalSummary, WorkflowReconciliationProposalUpdateRecord,
     WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary, WorktreeUpdateRecord,
+    McpServerSummary, CreateMcpServerRequest, UpdateMcpServerRequest, DeleteMcpServerRequest,
+    NewMcpServerRecord, McpServerUpdateRecord,
 };
 use crate::runtime::{SessionLaunchRequest, SessionRegistry, SessionRuntimeRegistration};
 use crate::store::DatabaseSet;
@@ -1118,6 +1120,122 @@ impl SupervisorService {
             .ok_or_else(|| anyhow!("document {} was not found", existing.summary.id))
     }
 
+    // ── MCP Servers ───────────────────────────────────────────────────────────
+
+    pub fn list_mcp_servers(&self) -> Result<Vec<McpServerSummary>> {
+        self.databases.list_mcp_servers()
+    }
+
+    pub fn create_mcp_server(&self, request: CreateMcpServerRequest) -> Result<McpServerSummary> {
+        let name = required_trimmed("MCP server name", &request.name)?;
+        let server_type = request.server_type.as_deref().unwrap_or("stdio");
+        if server_type != "stdio" && server_type != "http" {
+            return Err(anyhow!("server_type must be 'stdio' or 'http'"));
+        }
+        if self.databases.mcp_server_name_exists(&name, None)? {
+            return Err(anyhow!("MCP server name '{}' is already in use", name));
+        }
+
+        let now = unix_time_seconds();
+        let record = NewMcpServerRecord {
+            id: format!("mcp_{}", Uuid::new_v4().simple()),
+            name,
+            server_type: server_type.to_string(),
+            command: optional_trimmed(request.command),
+            args_json: request.args.map(|a| serde_json::to_string(&a).unwrap_or_else(|_| "[]".to_string())),
+            env_json: request.env.map(|e| serde_json::to_string(&e).unwrap_or_else(|_| "{}".to_string())),
+            url: optional_trimmed(request.url),
+            is_builtin: false,
+            enabled: true,
+            created_at: now,
+            updated_at: now,
+        };
+        self.databases.insert_mcp_server(&record)?;
+
+        // Return the created server
+        self.databases.list_mcp_servers()?
+            .into_iter()
+            .find(|s| s.id == record.id)
+            .ok_or_else(|| anyhow!("MCP server {} was not found after creation", record.id))
+    }
+
+    pub fn update_mcp_server(&self, request: UpdateMcpServerRequest) -> Result<McpServerSummary> {
+        let existing = self.databases.list_mcp_servers()?
+            .into_iter()
+            .find(|s| s.id == request.mcp_server_id)
+            .ok_or_else(|| anyhow!("MCP server {} was not found", request.mcp_server_id))?;
+
+        let name = match request.name {
+            Some(ref n) => {
+                let trimmed = required_trimmed("MCP server name", n)?;
+                if self.databases.mcp_server_name_exists(&trimmed, Some(&existing.id))? {
+                    return Err(anyhow!("MCP server name '{}' is already in use", trimmed));
+                }
+                trimmed
+            }
+            None => existing.name.clone(),
+        };
+
+        let now = unix_time_seconds();
+        let record = McpServerUpdateRecord {
+            id: existing.id.clone(),
+            name,
+            server_type: request.server_type.unwrap_or(existing.server_type),
+            command: request.command.or(existing.command),
+            args_json: request.args
+                .map(|a| serde_json::to_string(&a).unwrap_or_else(|_| "[]".to_string()))
+                .or(existing.args_json),
+            env_json: request.env
+                .map(|e| serde_json::to_string(&e).unwrap_or_else(|_| "{}".to_string()))
+                .or(existing.env_json),
+            url: request.url.or(existing.url),
+            enabled: request.enabled.unwrap_or(existing.enabled),
+            updated_at: now,
+        };
+        self.databases.update_mcp_server(&record)?;
+
+        self.databases.list_mcp_servers()?
+            .into_iter()
+            .find(|s| s.id == existing.id)
+            .ok_or_else(|| anyhow!("MCP server {} was not found after update", existing.id))
+    }
+
+    pub fn delete_mcp_server(&self, request: DeleteMcpServerRequest) -> Result<()> {
+        self.databases.delete_mcp_server(&request.mcp_server_id)
+    }
+
+    /// Build the `--mcp-config` JSON string from all enabled MCP servers.
+    pub fn resolve_mcp_config_json(&self) -> Result<Option<String>> {
+        let servers = self.databases.list_enabled_mcp_servers()?;
+        if servers.is_empty() {
+            return Ok(None);
+        }
+
+        let mut mcp_servers = serde_json::Map::new();
+        for server in &servers {
+            let entry = if server.server_type == "http" {
+                let url = server.url.as_deref().unwrap_or("");
+                serde_json::json!({ "type": "http", "url": url })
+            } else {
+                let command = server.command.as_deref().unwrap_or("");
+                let args: Vec<String> = server.args_json.as_deref()
+                    .and_then(|j| serde_json::from_str(j).ok())
+                    .unwrap_or_default();
+                let mut entry = serde_json::json!({ "command": command, "args": args });
+                if let Some(ref env_str) = server.env_json {
+                    if let Ok(env) = serde_json::from_str::<serde_json::Value>(env_str) {
+                        entry["env"] = env;
+                    }
+                }
+                entry
+            };
+            mcp_servers.insert(server.name.clone(), entry);
+        }
+
+        let config = serde_json::json!({ "mcpServers": mcp_servers });
+        Ok(Some(serde_json::to_string(&config)?))
+    }
+
     pub fn list_planning_assignments(
         &self,
         filter: PlanningAssignmentListFilter,
@@ -1707,24 +1825,10 @@ impl SupervisorService {
             }
         }
 
-        // Discover emery-mcp binary for MCP auto-registration
-        let mcp_servers = discover_emery_mcp_config();
-
-        // Write guard and MCP config into settings.local.json
+        // Write dispatcher guard hooks
         let mut guard_instructions: Option<String> = None;
         if request.origin_mode == "dispatch" {
-            guard_instructions = profile.write_settings_local(
-                &request.cwd,
-                Some(GuardKind::Dispatcher),
-                mcp_servers.clone(),
-            )?;
-        } else if mcp_servers.is_some() {
-            // For non-dispatch modes without a worktree guard (planning, research, chat),
-            // still write MCP config. Execution/follow_up modes get MCP config later when
-            // the worktree guard is written.
-            if request.origin_mode != "execution" && request.origin_mode != "follow_up" {
-                profile.write_settings_local(&request.cwd, None, mcp_servers.clone())?;
-            }
+            guard_instructions = profile.write_guard(&request.cwd, GuardKind::Dispatcher)?;
         }
 
         if request.origin_mode == "dispatch" {
@@ -1800,6 +1904,16 @@ impl SupervisorService {
             }
         }
 
+        // Inject MCP server config via --mcp-config CLI flag
+        if let Some(mcp_flag) = profile.mcp_config_flag {
+            if let Ok(Some(mcp_json)) = self.resolve_mcp_config_json() {
+                if !request.args.iter().any(|a| a == mcp_flag) {
+                    request.args.push(mcp_flag.to_string());
+                    request.args.push(mcp_json);
+                }
+            }
+        }
+
         // Auto-create git worktree when requested
         if request.auto_worktree
             && request.work_item_id.is_some()
@@ -1821,13 +1935,11 @@ impl SupervisorService {
             request.worktree_id = Some(worktree_id);
             request.cwd = worktree_path.clone();
 
-            // Write worktree guard + MCP config for execution/follow_up sessions
-            // created directly through the supervisor (not via emery-mcp tools)
+            // Write worktree guard for execution/follow_up sessions
             let normalized = worktree_path.replace('\\', "/").to_lowercase();
-            profile.write_settings_local(
+            profile.write_guard(
                 &worktree_path,
-                Some(GuardKind::Worktree { normalized_path: normalized }),
-                mcp_servers.clone(),
+                GuardKind::Worktree { normalized_path: normalized },
             )?;
         }
 
@@ -4161,30 +4273,6 @@ fn extract_file_paths(text: &str) -> Vec<String> {
 }
 
 
-/// Discover the emery-mcp binary as a sibling of the current supervisor binary.
-/// Returns an MCP servers config Value suitable for settings.local.json, or None if not found.
-fn discover_emery_mcp_config() -> Option<Value> {
-    let exe = std::env::current_exe().ok()?;
-    let dir = exe.parent()?;
-
-    #[cfg(windows)]
-    let mcp_name = "emery-mcp.exe";
-    #[cfg(not(windows))]
-    let mcp_name = "emery-mcp";
-
-    let mcp_path = dir.join(mcp_name);
-    if mcp_path.exists() {
-        let path_str = mcp_path.to_string_lossy().replace('\\', "/");
-        Some(json!({
-            "emery": {
-                "command": path_str,
-                "args": []
-            }
-        }))
-    } else {
-        None
-    }
-}
 
 fn build_dispatcher_instructions(
     project_name: &str,

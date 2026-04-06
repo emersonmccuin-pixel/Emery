@@ -87,6 +87,10 @@ pub enum Method {
     VaultLock,
     VaultStatus,
     VaultAuditLog,
+    McpServerList,
+    McpServerCreate,
+    McpServerUpdate,
+    McpServerDelete,
 }
 
 impl Method {
@@ -176,6 +180,10 @@ impl Method {
             Self::VaultLock => "vault.lock",
             Self::VaultStatus => "vault.status",
             Self::VaultAuditLog => "vault.audit_log",
+            Self::McpServerList => "mcp_server.list",
+            Self::McpServerCreate => "mcp_server.create",
+            Self::McpServerUpdate => "mcp_server.update",
+            Self::McpServerDelete => "mcp_server.delete",
         }
     }
 }
@@ -273,6 +281,10 @@ impl TryFrom<&str> for Method {
             "vault.lock" => Ok(Self::VaultLock),
             "vault.status" => Ok(Self::VaultStatus),
             "vault.audit_log" => Ok(Self::VaultAuditLog),
+            "mcp_server.list" => Ok(Self::McpServerList),
+            "mcp_server.create" => Ok(Self::McpServerCreate),
+            "mcp_server.update" => Ok(Self::McpServerUpdate),
+            "mcp_server.delete" => Ok(Self::McpServerDelete),
             _ => Err(()),
         }
     }

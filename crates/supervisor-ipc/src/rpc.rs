@@ -20,6 +20,7 @@ use supervisor_core::{
     UpdateProjectRootRequest, UpdateSessionSpecRequest, UpdateWorkItemRequest,
     UpdateWorkflowReconciliationProposalRequest, UpdateWorkspaceStateRequest, UpdateWorktreeRequest,
     WorkItemListFilter, WorkflowReconciliationProposalListFilter, WorktreeListFilter,
+    CreateMcpServerRequest, UpdateMcpServerRequest, DeleteMcpServerRequest,
 };
 
 
@@ -746,6 +747,22 @@ impl SupervisorRpc {
                 Ok(serde_json::to_value(
                     self.supervisor.vault_list_audit(params.entry_id.as_deref(), limit)?,
                 )?)
+            }
+            Method::McpServerList => {
+                Ok(serde_json::to_value(self.supervisor.list_mcp_servers()?)?)
+            }
+            Method::McpServerCreate => {
+                let request: CreateMcpServerRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(self.supervisor.create_mcp_server(request)?)?)
+            }
+            Method::McpServerUpdate => {
+                let request: UpdateMcpServerRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(self.supervisor.update_mcp_server(request)?)?)
+            }
+            Method::McpServerDelete => {
+                let request: DeleteMcpServerRequest = serde_json::from_value(params)?;
+                self.supervisor.delete_mcp_server(request)?;
+                Ok(json!({ "ok": true }))
             }
             Method::SubscriptionOpen => {
                 let params: SubscriptionOpenParams = serde_json::from_value(params)?;
