@@ -85,22 +85,109 @@ struct NsSummary {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Only renames EURI callsigns. All other namespaces are left unchanged.
+/// Simple namespace prefix rename for non-EURI namespaces.
 fn maybe_rename_callsign(s: &str, namespace: &str) -> String {
     if namespace == "EURI" {
-        s.replace("EURI-", "EMERY-").replace("EURI/", "EMERY/")
+        // For EURI, we defer callsign computation to the dotted-callsign pass.
+        // Only handle doc slug renames here (EURI/ → EMERY/).
+        s.replace("EURI/", "EMERY/")
     } else {
         s.to_string()
     }
 }
 
-/// Rename body text (only for EURI namespace).
-fn maybe_rename_body(s: &str, namespace: &str) -> String {
-    if namespace == "EURI" {
-        s.replace("EURI-", "EMERY-").replace("EURI/", "EMERY/")
-    } else {
-        s.to_string()
+/// Apply a callsign rename mapping to body text. Replaces all occurrences of
+/// original callsigns with their new dotted equivalents, plus EURI/ → EMERY/
+/// for doc slug references.
+fn apply_rename_map(s: &str, rename_map: &[(String, String)]) -> String {
+    let mut result = s.to_string();
+    // rename_map is sorted longest-first to avoid partial matches
+    for (old, new) in rename_map {
+        result = result.replace(old.as_str(), new.as_str());
     }
+    // Also handle doc slug prefix
+    result = result.replace("EURI/", "EMERY/");
+    result
+}
+
+/// Compute dotted child callsigns for EURI namespace items.
+/// Root items keep flat callsigns: EMERY-1, EMERY-57, etc.
+/// Children get dotted notation: EMERY-1.001, EMERY-1.002, etc.
+/// Grandchildren: EMERY-1.003.001, etc.
+fn compute_dotted_callsigns(work_items: &mut [WorkItem]) {
+    // Build index: id → index
+    let _id_to_idx: HashMap<String, usize> = work_items
+        .iter()
+        .enumerate()
+        .map(|(i, wi)| (wi.id.clone(), i))
+        .collect();
+
+    // Build children map: parent_id → sorted child indices
+    let mut children_map: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, wi) in work_items.iter().enumerate() {
+        if let Some(ref pid) = wi.parent_id {
+            children_map.entry(pid.clone()).or_default().push(i);
+        }
+    }
+    // Sort each child list by original callsign number for stable ordering
+    for children in children_map.values_mut() {
+        children.sort_by_key(|&i| parse_sequence(&work_items[i].original_callsign).unwrap_or(0));
+    }
+
+    // Find roots (no parent)
+    let mut roots: Vec<usize> = work_items
+        .iter()
+        .enumerate()
+        .filter(|(_, wi)| wi.parent_id.is_none())
+        .map(|(i, _)| i)
+        .collect();
+    roots.sort_by_key(|&i| parse_sequence(&work_items[i].original_callsign).unwrap_or(0));
+
+    // Assign dotted callsigns via BFS
+    let mut queue: Vec<(usize, String)> = Vec::new();
+
+    // Root items: EMERY-{original_number}
+    for &i in &roots {
+        let num = parse_sequence(&work_items[i].original_callsign).unwrap_or(0);
+        let new_callsign = format!("EMERY-{}", num);
+        queue.push((i, new_callsign));
+    }
+
+    while let Some((idx, new_callsign)) = queue.pop() {
+        work_items[idx].callsign = new_callsign.clone();
+
+        if let Some(children) = children_map.get(&work_items[idx].id) {
+            for (seq, &child_idx) in children.iter().enumerate() {
+                let child_callsign = format!("{}.{:03}", new_callsign, seq + 1);
+                queue.push((child_idx, child_callsign));
+            }
+        }
+    }
+
+    // Update child_sequence based on the dotted callsign
+    for wi in work_items.iter_mut() {
+        if wi.parent_id.is_some() {
+            // child_sequence is the last dotted segment
+            if let Some(last_dot) = wi.callsign.rfind('.') {
+                wi.child_sequence = wi.callsign[last_dot + 1..].parse().ok();
+            }
+        } else {
+            wi.child_sequence = parse_sequence(&wi.callsign);
+        }
+    }
+}
+
+/// Build a rename map from original callsigns → new callsigns, sorted
+/// longest-first to prevent partial-match replacements.
+fn build_rename_map(work_items: &[WorkItem]) -> Vec<(String, String)> {
+    let mut map: Vec<(String, String)> = work_items
+        .iter()
+        .filter(|wi| wi.original_callsign != wi.callsign)
+        .map(|wi| (wi.original_callsign.clone(), wi.callsign.clone()))
+        .collect();
+    // Sort longest original first so "EURI-152" is replaced before "EURI-15"
+    map.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then(b.0.cmp(&a.0)));
+    map
 }
 
 fn date_to_epoch(date_str: &str) -> i64 {
@@ -190,7 +277,8 @@ fn normalize_status(s: &str) -> String {
 fn discover_namespaces(file_names: &[String]) -> Vec<(String, String)> {
     // Returns Vec of (namespace_key, prefix) where prefix includes trailing slash
     // e.g. ("EURI", "EURI/") or ("EURI", "export/EURI/")
-    let wi_pattern = Regex::new(r"^(.+?/)?([A-Z][A-Z0-9]+)/\2-\d+\.md$").unwrap();
+    // Rust regex doesn't support backreferences, so we match the pattern and verify manually.
+    let wi_pattern = Regex::new(r"^(.+?/)?([A-Z][A-Z0-9]+)/([A-Z][A-Z0-9]+-\d+)\.md$").unwrap();
 
     let mut seen: HashSet<String> = HashSet::new();
     let mut namespaces: Vec<(String, String)> = Vec::new();
@@ -199,6 +287,11 @@ fn discover_namespaces(file_names: &[String]) -> Vec<(String, String)> {
         if let Some(caps) = wi_pattern.captures(name) {
             let outer_prefix = caps.get(1).map(|m| m.as_str()).unwrap_or("");
             let ns = caps[2].to_string();
+            let callsign = &caps[3];
+            // Verify the callsign starts with the namespace prefix
+            if !callsign.starts_with(&format!("{}-", ns)) {
+                continue;
+            }
             if seen.insert(ns.clone()) {
                 let prefix = format!("{}{}/", outer_prefix, ns);
                 namespaces.push((ns, prefix));
@@ -382,8 +475,8 @@ fn import_namespace(
         callsign_map.insert(original_callsign.clone(), id.clone());
 
         let callsign = maybe_rename_callsign(original_callsign, namespace);
-        let body_renamed = maybe_rename_body(&body_raw, namespace);
-        let (description, activity_log) = split_activity_log(&body_renamed);
+        // For EURI, body renaming is deferred until after dotted callsigns are computed
+        let (description, activity_log) = split_activity_log(&body_raw);
 
         let title = fm.title.unwrap_or_else(|| callsign.clone());
         let work_item_type = normalize_type(&fm.item_type.unwrap_or_else(|| "task".to_string()));
@@ -465,6 +558,34 @@ fn import_namespace(
             }
         }
         work_items[i].root_work_item_id = Some(root);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 2.5: Compute dotted callsigns (EURI only)
+    // -----------------------------------------------------------------------
+    let rename_map = if namespace == "EURI" {
+        compute_dotted_callsigns(&mut work_items);
+        let map = build_rename_map(&work_items);
+        println!(
+            "  Computed dotted callsigns for {} EURI items ({} renamed)",
+            work_items.len(),
+            map.len()
+        );
+        map
+    } else {
+        Vec::new()
+    };
+
+    // -----------------------------------------------------------------------
+    // Phase 2.6: Apply rename map to body text
+    // -----------------------------------------------------------------------
+    if !rename_map.is_empty() {
+        for wi in work_items.iter_mut() {
+            wi.description = apply_rename_map(&wi.description, &rename_map);
+            if let Some(ref log) = wi.activity_log {
+                wi.activity_log = Some(apply_rename_map(log, &rename_map));
+            }
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -555,7 +676,13 @@ fn import_namespace(
     for (parent_callsign, filename, zip_name) in &artifact_files {
         let content = read_zip_entry(archive, zip_name)?;
         let (fm_str, body_raw) = split_frontmatter(&content);
-        let body = maybe_rename_body(&body_raw, namespace);
+        let body = if !rename_map.is_empty() {
+            apply_rename_map(&body_raw, &rename_map)
+        } else if namespace != "EURI" {
+            body_raw
+        } else {
+            body_raw.replace("EURI/", "EMERY/")
+        };
 
         let stem = filename.trim_end_matches(".md");
         let title: String = if !fm_str.is_empty() {
@@ -573,7 +700,17 @@ fn import_namespace(
         }
 
         let doc_id = Uuid::new_v4().to_string();
-        let renamed_parent = maybe_rename_callsign(parent_callsign, namespace);
+        // For artifact slugs, use the parent's new dotted callsign
+        let renamed_parent = if namespace == "EURI" {
+            // Find the work item for this parent and use its (dotted) callsign
+            callsign_map
+                .get(parent_callsign)
+                .and_then(|uuid| work_items.iter().find(|wi| wi.id == *uuid))
+                .map(|wi| wi.callsign.clone())
+                .unwrap_or_else(|| maybe_rename_callsign(parent_callsign, namespace))
+        } else {
+            maybe_rename_callsign(parent_callsign, namespace)
+        };
         let slug = format!("{}-{}", renamed_parent.to_lowercase(), slug_from_filename(stem));
 
         let result = knowledge_conn.execute(
@@ -609,7 +746,13 @@ fn import_namespace(
     for (filename, zip_name) in &doc_files {
         let content = read_zip_entry(archive, zip_name)?;
         let (fm_str, body_raw) = split_frontmatter(&content);
-        let body = maybe_rename_body(&body_raw, namespace);
+        let body = if !rename_map.is_empty() {
+            apply_rename_map(&body_raw, &rename_map)
+        } else if namespace != "EURI" {
+            body_raw
+        } else {
+            body_raw.replace("EURI/", "EMERY/")
+        };
 
         let stem = filename.trim_end_matches(".md");
         let title: String = if !fm_str.is_empty() {
@@ -659,8 +802,8 @@ fn import_namespace(
         .map(|wi| (wi.callsign.clone(), wi.id.clone()))
         .collect();
 
-    // Pattern: any UPPERCASE-NNN callsign (e.g. EMERY-42, PROJ-7)
-    let callsign_re = Regex::new(r"^[A-Z][A-Z0-9]*-\d+$").unwrap();
+    // Pattern: any callsign — flat (PROJ-7) or dotted (EMERY-1.003.001)
+    let callsign_re = Regex::new(r"^[A-Z][A-Z0-9]*-\d+(\.\d+)*$").unwrap();
 
     for (source_type, source_id, link_target) in &link_queue {
         let (target_type, target_id) = if callsign_re.is_match(link_target) {
