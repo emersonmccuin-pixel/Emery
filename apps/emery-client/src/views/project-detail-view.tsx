@@ -69,50 +69,12 @@ function SessionRow({ session }: { session: SessionSummary }) {
 // ── Overview tab ───────────────────────────────────────────────────────────
 
 function OverviewTab({
-  projectId,
-  description,
   recentSessions,
-  workItemCount,
-  openWorkItemCount,
-  liveSessionCount,
 }: {
-  projectId: string;
-  description: string | null;
   recentSessions: SessionSummary[];
-  workItemCount: number;
-  openWorkItemCount: number;
-  liveSessionCount: number;
 }) {
   return (
     <div className="pd-overview-tab">
-      {description ? (
-        <div className="pd-section">
-          <h4 className="pd-section-label">Description</h4>
-          <p className="pd-description">{description}</p>
-        </div>
-      ) : (
-        <div className="pd-section">
-          <p className="pd-empty-hint">No description set. Configure one in Settings.</p>
-        </div>
-      )}
-
-      <div className="pd-metrics-grid">
-        <div className="pd-metric-card">
-          <span className="pd-metric-value">{workItemCount}</span>
-          <span className="pd-metric-label">Work items</span>
-        </div>
-        <div className="pd-metric-card">
-          <span className="pd-metric-value">{openWorkItemCount}</span>
-          <span className="pd-metric-label">Open</span>
-        </div>
-        <div className="pd-metric-card">
-          <span className={`pd-metric-value ${liveSessionCount > 0 ? "pd-metric-value--live" : ""}`}>
-            {liveSessionCount}
-          </span>
-          <span className="pd-metric-label">Active sessions</span>
-        </div>
-      </div>
-
       {recentSessions.length > 0 && (
         <div className="pd-section">
           <h4 className="pd-section-label">Recent sessions</h4>
@@ -227,7 +189,6 @@ export function ProjectDetailView({ projectId }: { projectId: string }) {
   const workItemsByProject = useAppStore((s) => s.workItemsByProject);
   const documentsByProject = useAppStore((s) => s.documentsByProject);
   const mergeQueueByProject = useAppStore((s) => s.mergeQueueByProject);
-  const mergeQueueDiffs = useAppStore((s) => s.mergeQueueDiffs);
   const loadingKeys = useAppStore((s) => s.loadingKeys);
   const projectDetails = useAppStore((s) => s.projectDetails);
   const sessions = useAppStore((s) => s.sessions);
@@ -247,7 +208,6 @@ export function ProjectDetailView({ projectId }: { projectId: string }) {
   }, [projectId, projectDetails]);
 
   const project = bootstrap?.projects.find((p) => p.id === projectId) ?? null;
-  const projectDetail = projectDetails[projectId] ?? null;
   const isLoadingProject = loadingKeys[`project:${projectId}`] ?? false;
   const workItems = workItemsByProject[projectId] ?? [];
   const documents = documentsByProject[projectId] ?? [];
@@ -270,16 +230,6 @@ export function ProjectDetailView({ projectId }: { projectId: string }) {
     [projectSessions]
   );
 
-  // Stats
-  const openWorkItemCount = useMemo(
-    () =>
-      workItems.filter(
-        (w) =>
-          w.status !== "done" && w.status !== "archived"
-      ).length,
-    [workItems]
-  );
-
   const liveSessionCount = useMemo(
     () =>
       projectSessions.filter(
@@ -293,9 +243,6 @@ export function ProjectDetailView({ projectId }: { projectId: string }) {
     () => [...projectSessions].sort((a, b) => b.updated_at - a.updated_at),
     [projectSessions]
   );
-
-  // Description from project detail instructions or type
-  const projectDescription = projectDetail?.instructions_md ?? null;
 
   if (!project) {
     return <div className="empty-pane">Project not found.</div>;
@@ -331,9 +278,6 @@ export function ProjectDetailView({ projectId }: { projectId: string }) {
         <div className="pd-header">
           <div className="pd-header-main">
             <h2 className="pd-project-title">{project.name}</h2>
-            {project.project_type && (
-              <span className="pd-project-type-chip">{project.project_type}</span>
-            )}
           </div>
 
           <div className="pd-header-actions">
@@ -352,52 +296,24 @@ export function ProjectDetailView({ projectId }: { projectId: string }) {
               )}
             </Button>
             {dispatchSession ? (
-              <Button
-                variant="secondary"
-                size="sm"
+              <button
+                className="pd-dispatch-btn pd-dispatch-btn--active"
                 onClick={() => navStore.goToAgent(projectId, dispatchSession.id)}
               >
                 View Dispatcher
-              </Button>
+              </button>
             ) : (
-              <Button
-                variant="default"
-                size="sm"
+              <button
+                className="pd-dispatch-btn"
                 onClick={() => void appStore.handleLaunchDispatcher(projectId)}
                 disabled={loadingKeys[`dispatch:${projectId}`] ?? false}
               >
                 {loadingKeys[`dispatch:${projectId}`] ? "Launching..." : "Launch Dispatcher"}
-              </Button>
+              </button>
             )}
           </div>
         </div>
 
-        {/* ── Stats line ── */}
-        <div className="pd-stats-line">
-          <span className="pd-stat">
-            <span className="pd-stat-value">{openWorkItemCount}</span>
-            <span className="pd-stat-label">open items</span>
-          </span>
-          <span className="pd-stat-sep" />
-          <span className="pd-stat">
-            <span
-              className={`pd-stat-value ${liveSessionCount > 0 ? "pd-stat-value--live" : ""}`}
-            >
-              {liveSessionCount}
-            </span>
-            <span className="pd-stat-label">
-              {liveSessionCount === 1 ? "active session" : "active sessions"}
-            </span>
-          </span>
-          <span className="pd-stat-sep" />
-          <span className="pd-stat">
-            <span className="pd-stat-value">{mergeQueue.length}</span>
-            <span className="pd-stat-label">in merge queue</span>
-          </span>
-          {isLoadingProject && (
-            <span className="pd-stat-loading">Loading...</span>
-          )}
-        </div>
 
         {/* ── Tab bar ── */}
         <div className="project-tab-bar">
@@ -425,12 +341,7 @@ export function ProjectDetailView({ projectId }: { projectId: string }) {
         <div className="pd-tab-content">
           {activeTab === "overview" && (
             <OverviewTab
-              projectId={projectId}
-              description={projectDescription}
               recentSessions={recentSessions}
-              workItemCount={workItems.length}
-              openWorkItemCount={openWorkItemCount}
-              liveSessionCount={liveSessionCount}
             />
           )}
 
