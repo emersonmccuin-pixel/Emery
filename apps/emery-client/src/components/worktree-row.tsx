@@ -38,10 +38,15 @@ function statusDot(session: SessionSummary | null): { symbol: string; className:
   return { symbol: "\u25C9", className: "wt-dot wt-dot-idle" };
 }
 
+function dirtyIndicator(hasUncommittedChanges: boolean): boolean {
+  return hasUncommittedChanges;
+}
+
 export function WorktreeRow({ worktree, session, isActive, onClick }: WorktreeRowProps) {
   const [contextMenu, setContextMenu] = useState<WorktreeContextMenu>(null);
   const callsign = deriveCallsign(worktree.branch_name);
   const dot = statusDot(session);
+  const hasDirty = dirtyIndicator(worktree.has_uncommitted_changes);
   const isLive = session ? session.runtime_state === "running" || session.runtime_state === "starting" : false;
   const subtitle = session?.title ?? (session ? session.current_mode : "idle");
 
@@ -77,6 +82,7 @@ export function WorktreeRow({ worktree, session, isActive, onClick }: WorktreeRo
           <span className="worktree-row-callsign">{callsign}</span>
           <span className={dot.className}>{dot.symbol}</span>
         </div>
+        {hasDirty && <span className="wt-dirty-badge">uncommitted changes</span>}
         <div className="worktree-row-title">{subtitle}</div>
         {isLive && session?.started_at ? (
           <div className="worktree-row-duration">

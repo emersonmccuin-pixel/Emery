@@ -192,6 +192,7 @@ export type WorktreeSummary = {
   updated_at: number;
   closed_at: number | null;
   active_session_count: number;
+  has_uncommitted_changes: boolean;
 };
 
 export type CloseWorktreeResult = {

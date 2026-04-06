@@ -94,6 +94,7 @@ pub struct WorktreeSummary {
     pub updated_at: i64,
     pub closed_at: Option<i64>,
     pub active_session_count: i64,
+    pub has_uncommitted_changes: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
