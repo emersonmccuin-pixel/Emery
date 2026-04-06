@@ -1,0 +1,10 @@
+#!/bin/sh
+# Pre-commit hook: enforce that commits only land on the assigned worktree branch.
+expected="emery/scratch-3"
+current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+if [ "$current" != "$expected" ]; then
+  echo "ERROR: Expected branch '$expected' but current branch is '$current'."
+  echo "Commits outside your assigned worktree branch are not allowed."
+  exit 1
+fi
+exit 0
