@@ -191,15 +191,16 @@ export const TerminalSurface = memo(function TerminalSurface({
     // ── Keyboard overrides ──────────────────────────────────────────────
     // Shift+Enter → newline (not submit), copy/paste via Ctrl+C/V
     terminal.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
-      if (ev.type !== "keydown") return true;
-
-      // Shift+Enter → send ESC + CR, which Claude Code interprets as "insert newline"
+      // Block Shift+Enter on ALL event types (keydown, keypress, keyup) to prevent
+      // xterm from generating a bare \r via keypress after we send \x1b\r on keydown.
       if (ev.key === "Enter" && ev.shiftKey && !ev.ctrlKey && !ev.altKey) {
-        if (liveRef.current) {
+        if (ev.type === "keydown" && liveRef.current) {
           sendSessionInput(sessionId, "\x1b\r", newCorrelationId("shift-enter")).catch(() => {});
         }
         return false;
       }
+
+      if (ev.type !== "keydown") return true;
 
       // Ctrl+C with selection → copy to clipboard (no selection → normal ^C)
       if (ev.key === "c" && ev.ctrlKey && !ev.shiftKey && !ev.altKey) {

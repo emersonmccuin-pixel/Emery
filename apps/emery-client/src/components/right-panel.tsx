@@ -19,50 +19,55 @@ export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPan
   const [worktreeCallsign, setWorktreeCallsign] = useState("");
   const [worktreeLoading, setWorktreeLoading] = useState(false);
 
+  async function launchSessionInWorktree(worktree: WorktreeSummary) {
+    const account =
+      (project?.default_account_id
+        ? bootstrap?.accounts.find((entry) => entry.id === project.default_account_id)
+        : null) ??
+      bootstrap?.accounts[0] ??
+      null;
+    if (!account) {
+      throw new Error("No account is configured for this project yet.");
+    }
+
+    const label = worktree.branch_name.replace(/^emery\//, "").toUpperCase();
+    const correlationId = newCorrelationId("worktree-launch");
+    const detail = await createSession(
+      {
+        project_id: projectId,
+        worktree_id: worktree.id,
+        account_id: account.id,
+        agent_kind: account.agent_kind,
+        cwd: worktree.path,
+        command: account.binary_path ?? account.agent_kind,
+        args: [],
+        env_preset_ref: account.env_preset_ref,
+        origin_mode: "execution",
+        current_mode: "execution",
+        title: label,
+        title_policy: "manual",
+        restore_policy: "reattach",
+        initial_terminal_cols: 120,
+        initial_terminal_rows: 40,
+      },
+      correlationId,
+    );
+    appStore.applySessionDetail(detail);
+    await watchLiveSessions([detail.id], correlationId);
+    navStore.goToAgent(projectId, detail.id);
+  }
+
   async function handleCreateWorktree(launchSession = false) {
     const callsign = worktreeCallsign.trim() || `scratch-${Math.floor(Date.now() / 1000)}`;
     setWorktreeLoading(true);
     try {
       const result = await provisionWorktree(projectId, callsign);
-      if (launchSession) {
-        const account =
-          (project?.default_account_id
-            ? bootstrap?.accounts.find((entry) => entry.id === project.default_account_id)
-            : null) ??
-          bootstrap?.accounts[0] ??
-          null;
-        if (!account) {
-          throw new Error("No account is configured for this project yet.");
-        }
-
-        const correlationId = newCorrelationId("worktree-launch");
-        const detail = await createSession(
-          {
-            project_id: projectId,
-            worktree_id: result.worktree.id,
-            account_id: account.id,
-            agent_kind: account.agent_kind,
-            cwd: result.worktree.path,
-            command: account.binary_path ?? account.agent_kind,
-            args: [],
-            env_preset_ref: account.env_preset_ref,
-            origin_mode: "execution",
-            current_mode: "execution",
-            title: callsign.toUpperCase(),
-            title_policy: "manual",
-            restore_policy: "reattach",
-            initial_terminal_cols: 120,
-            initial_terminal_rows: 40,
-          },
-          correlationId,
-        );
-        appStore.applySessionDetail(detail);
-        await watchLiveSessions([detail.id], correlationId);
-        navStore.goToAgent(projectId, detail.id);
-      }
-      void appStore.handleLoadWorktrees(projectId);
+      await appStore.handleLoadWorktrees(projectId);
       setWorktreeCallsign("");
       setShowWorktreeInput(false);
+      if (launchSession) {
+        await launchSessionInWorktree(result.worktree);
+      }
     } catch (err) {
       console.error("[right-panel] worktree provision failed", err);
     } finally {
@@ -109,7 +114,7 @@ export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPan
     }
 
     return worktrees
-      .filter((worktree) => worktree.status !== "removed")
+      .filter((worktree) => worktree.status === "active")
       .map((worktree) => ({
         worktree,
         session: latestSessionByWorktreeId.get(worktree.id) ?? null,
@@ -217,7 +222,10 @@ export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPan
                   worktree={worktree}
                   session={session}
                   isActive={session?.id === activeSessionId}
-                  onClick={session ? () => navStore.goToAgent(projectId, session.id) : undefined}
+                  onClick={session
+                    ? () => navStore.goToAgent(projectId, session.id)
+                    : () => void launchSessionInWorktree(worktree)
+                  }
                 />
               ))}
             </div>

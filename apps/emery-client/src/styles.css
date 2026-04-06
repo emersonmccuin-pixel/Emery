@@ -163,9 +163,9 @@ html[data-theme="dark"] {
   /* Typography */
   --font-sans:       "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   --font-mono:       "IBM Plex Mono", "Cascadia Code", "Fira Code", monospace;
-  --text-xs:         0.75rem;   /* 12px */
-  --text-sm:         0.84rem;   /* ~13.5px */
-  --text-base:       0.94rem;   /* 15px */
+  --text-xs:         0.84rem;   /* ~13.5px */
+  --text-sm:         0.94rem;   /* 15px */
+  --text-base:       1.0rem;    /* 16px */
   --text-md:         1.1rem;    /* 17.5px */
   --text-lg:         1.3rem;    /* 21px */
   --text-xl:         1.6rem;    /* 25.5px */
@@ -4242,7 +4242,7 @@ html[data-theme="vaporwave"] .topbar {
   text-align: left;
   padding: 7px 10px;
   border-radius: var(--radius-sm, 4px);
-  font-size: var(--text-sm, 0.83rem);
+  font-size: var(--text-sm);
   color: var(--text-secondary);
   background: transparent;
   border: none;
@@ -4282,7 +4282,7 @@ html[data-theme="vaporwave"] .topbar {
 }
 
 .settings-section-desc {
-  font-size: var(--text-sm, 0.83rem);
+  font-size: var(--text-sm);
   color: var(--text-muted);
   line-height: 1.5;
   margin: 0;
@@ -4305,7 +4305,7 @@ html[data-theme="vaporwave"] .topbar {
 }
 
 .settings-empty-note {
-  font-size: var(--text-sm, 0.83rem);
+  font-size: var(--text-sm);
   color: var(--text-muted);
   padding: 8px 0;
 }
@@ -4626,7 +4626,7 @@ html[data-theme="vaporwave"] .topbar {
 /* --- GitHub --- */
 
 .settings-github-status {
-  font-size: var(--text-sm, 0.83rem);
+  font-size: var(--text-sm);
   color: var(--color-success);
   padding: 4px 0;
 }
@@ -4674,7 +4674,7 @@ html[data-theme="vaporwave"] .topbar {
 }
 
 .knowledge-store-option-title {
-  font-size: var(--text-sm, 0.83rem);
+  font-size: var(--text-sm);
   font-weight: var(--weight-medium, 500);
   color: var(--text-primary);
 }
@@ -4686,7 +4686,7 @@ html[data-theme="vaporwave"] .topbar {
 }
 
 .knowledge-store-info {
-  font-size: var(--text-sm, 0.83rem);
+  font-size: var(--text-sm);
   padding: 8px 12px;
   border-radius: var(--radius-md, 6px);
   border-left: 3px solid transparent;
@@ -5601,7 +5601,7 @@ html[data-theme="vaporwave"] .topbar {
   border-radius: var(--radius-sm, 4px);
   color: inherit;
   cursor: pointer;
-  font-size: var(--text-xs, 0.69rem);
+  font-size: var(--text-xs);
   padding: 2px 8px;
   white-space: nowrap;
   transition: opacity var(--transition-fast, 0.1s ease);
@@ -5705,7 +5705,7 @@ html[data-theme="vaporwave"] .topbar {
 }
 
 .parent-picker-callsign {
-  font-size: var(--text-xs, 0.69rem);
+  font-size: var(--text-xs);
   color: var(--color-primary, #00e5ff);
   font-family: var(--font-mono, monospace);
   flex-shrink: 0;
@@ -5841,7 +5841,7 @@ html[data-theme="vaporwave"] .topbar {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: var(--text-sm, 0.83rem);
+  font-size: var(--text-sm);
   padding: 3px 8px;
   border-radius: var(--radius-sm, 4px);
 }
@@ -5887,7 +5887,7 @@ html[data-theme="vaporwave"] .topbar {
 
 .vault-loading,
 .vault-empty-note {
-  font-size: var(--text-sm, 0.83rem);
+  font-size: var(--text-sm);
   color: var(--text-muted);
   padding: 8px 0;
 }
@@ -5896,7 +5896,7 @@ html[data-theme="vaporwave"] .topbar {
   padding: 8px 16px;
   background: var(--status-danger-bg);
   color: var(--status-danger-text);
-  font-size: var(--text-sm, 0.83rem);
+  font-size: var(--text-sm);
   border-radius: var(--radius-sm, 4px);
   margin: 0 24px;
 }
@@ -5928,7 +5928,7 @@ html[data-theme="vaporwave"] .topbar {
 }
 
 .vault-form-error {
-  font-size: var(--text-sm, 0.83rem);
+  font-size: var(--text-sm);
   color: var(--status-danger-text);
   padding: 4px 0;
 }
@@ -5972,7 +5972,7 @@ html[data-theme="vaporwave"] .topbar {
 }
 
 .vault-empty-scope {
-  font-size: var(--text-sm, 0.83rem);
+  font-size: var(--text-sm);
   color: var(--text-muted);
   padding: 4px 0;
 }
@@ -6011,13 +6011,13 @@ html[data-theme="vaporwave"] .topbar {
 
 .vault-entry-key {
   font-family: var(--font-mono);
-  font-size: var(--text-sm, 0.83rem);
+  font-size: var(--text-sm);
   font-weight: var(--weight-semibold);
   color: var(--text-primary);
 }
 
 .vault-entry-desc {
-  font-size: var(--text-sm, 0.83rem);
+  font-size: var(--text-sm);
   color: var(--text-secondary);
 }
 
@@ -6066,7 +6066,7 @@ html[data-theme="vaporwave"] .topbar {
   background: none;
   border: none;
   color: var(--text-secondary);
-  font-size: var(--text-sm, 0.83rem);
+  font-size: var(--text-sm);
   cursor: pointer;
   padding: 2px 0;
   display: flex;
@@ -6128,7 +6128,7 @@ html[data-theme="vaporwave"] .topbar {
 }
 
 .vault-audit-empty {
-  font-size: var(--text-sm, 0.83rem);
+  font-size: var(--text-sm);
   color: var(--text-muted);
   padding: 4px 0;
   font-family: var(--font-sans);

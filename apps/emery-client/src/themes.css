@@ -219,7 +219,7 @@ html[data-theme="fallout"] .sidebar-section-label {
   text-shadow: 0 0 6px rgba(51, 255, 0, 0.3);
   letter-spacing: 0.2em;
   text-transform: uppercase;
-  font-size: 0.6rem;
+  font-size: var(--text-xs);
 }
 html[data-theme="fallout"] .sidebar-project-btn.active {
   background: rgba(51, 255, 0, 0.1);
@@ -327,7 +327,7 @@ html[data-theme="fallout"] .status-chip {
   border-radius: 0;
   text-transform: uppercase;
   letter-spacing: 0.18em;
-  font-size: 0.6rem;
+  font-size: var(--text-xs);
   text-shadow: 0 0 4px rgba(51, 255, 0, 0.3);
 }
 
@@ -383,7 +383,7 @@ html[data-theme="fallout"] .app-shell::after {
   bottom: 12px;
   right: 14px;
   font-family: "Courier New", monospace;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.25;
   color: rgba(51, 255, 0, 0.12);
   pointer-events: none;
@@ -932,7 +932,7 @@ html[data-theme="amber"] .sidebar-section-label {
   text-shadow: 0 0 4px rgba(255, 176, 0, 0.25);
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  font-size: 0.6rem;
+  font-size: var(--text-xs);
 }
 html[data-theme="amber"] .sidebar-project-btn.active {
   background: rgba(255, 176, 0, 0.08);
@@ -1006,7 +1006,7 @@ html[data-theme="amber"] .status-chip {
   border-radius: 0;
   text-transform: uppercase;
   letter-spacing: 0.15em;
-  font-size: 0.6rem;
+  font-size: var(--text-xs);
 }
 
 /* Amber: breadcrumb */
@@ -1029,7 +1029,7 @@ html[data-theme="amber"] .app-shell::after {
   bottom: 12px;
   right: 16px;
   font-family: "Courier New", monospace;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.3;
   color: rgba(255, 176, 0, 0.12);
   pointer-events: none;
@@ -1822,7 +1822,7 @@ html[data-theme="mars"] .app-shell::after {
   bottom: 12px;
   right: 16px;
   font-family: "Courier New", monospace;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.3;
   color: rgba(232, 112, 64, 0.12);
   pointer-events: none;
@@ -1980,7 +1980,7 @@ html[data-theme="mission-control"] .sidebar-section-label {
   color: #e8a820;
   text-transform: uppercase;
   letter-spacing: 0.22em;
-  font-size: 0.58rem;
+  font-size: var(--text-xs);
   text-shadow: 0 0 10px rgba(232, 168, 32, 0.35);
 }
 html[data-theme="mission-control"] .sidebar-project-btn {
@@ -2153,7 +2153,7 @@ html[data-theme="mission-control"] .status-chip {
   border-radius: 3px;
   text-transform: uppercase;
   letter-spacing: 0.14em;
-  font-size: 0.6rem;
+  font-size: var(--text-xs);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
@@ -2359,7 +2359,7 @@ html[data-theme="mission-control"] .app-shell::after {
   bottom: 12px;
   right: 16px;
   font-family: "Courier New", monospace;
-  font-size: 9px;
+  font-size: 11px;
   line-height: 1.3;
   color: rgba(232, 168, 32, 0.12);
   pointer-events: none;

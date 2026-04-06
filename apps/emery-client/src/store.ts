@@ -663,12 +663,13 @@ class AppStore {
     try {
       const correlationId = newCorrelationId("worktree-close");
       await closeWorktree(worktreeId, { skipMerge }, correlationId);
-      await this.handleLoadWorktrees(projectId);
-      await this.handleLoadMergeQueue(projectId);
       this.clearError();
     } catch (invokeError) {
       this.update({ error: String(invokeError) });
     } finally {
+      // Always refresh worktrees — even on error the backend state may have changed
+      await this.handleLoadWorktrees(projectId);
+      await this.handleLoadMergeQueue(projectId);
       this.setLoading(`close-worktree:${worktreeId}`, false);
     }
   }
