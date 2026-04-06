@@ -7,6 +7,7 @@ import {
   attachSession,
   detachSession,
   resizeSession,
+  saveClipboardImage,
   sendSessionInput,
   watchLiveSessions,
 } from "./lib";
@@ -34,6 +35,60 @@ function sanitizeTerminalOutput(data: string): string {
     });
   }
   return stripped;
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+async function handlePaste(sessionId: string, _terminal: Terminal) {
+  try {
+    // Try reading clipboard items first (supports images)
+    if (navigator.clipboard.read) {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        // Check for image types
+        const imageType = item.types.find((t) => t.startsWith("image/"));
+        if (imageType) {
+          const blob = await item.getType(imageType);
+          const buf = await blob.arrayBuffer();
+          const base64 = arrayBufferToBase64(buf);
+          const savedPath = await saveClipboardImage(base64, sessionId);
+          await sendSessionInput(sessionId, savedPath, newCorrelationId("image-paste"));
+          return;
+        }
+        // Check for text
+        if (item.types.includes("text/plain")) {
+          const blob = await item.getType("text/plain");
+          const text = await blob.text();
+          if (text) {
+            await sendSessionInput(sessionId, text, newCorrelationId("paste-input"));
+          }
+          return;
+        }
+      }
+    }
+    // Fallback: read as plain text
+    const text = await navigator.clipboard.readText();
+    if (text) {
+      await sendSessionInput(sessionId, text, newCorrelationId("paste-input"));
+    }
+  } catch {
+    // Clipboard API may be denied — try readText as last resort
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        await sendSessionInput(sessionId, text, newCorrelationId("paste-input"));
+      }
+    } catch {
+      console.warn("[terminal-surface] clipboard access denied");
+    }
+  }
 }
 
 // Global registry so the poll loop can write directly to xterm without React
@@ -120,6 +175,81 @@ export const TerminalSurface = memo(function TerminalSurface({
       });
     });
 
+    // ── Keyboard overrides ──────────────────────────────────────────────
+    // Shift+Enter → newline (not submit), copy/paste via Ctrl+C/V
+    terminal.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
+      if (ev.type !== "keydown") return true;
+
+      // Shift+Enter → send literal newline instead of carriage return
+      if (ev.key === "Enter" && ev.shiftKey && !ev.ctrlKey && !ev.altKey) {
+        if (liveRef.current) {
+          sendSessionInput(sessionId, "\n", newCorrelationId("shift-enter")).catch(() => {});
+        }
+        return false;
+      }
+
+      // Ctrl+C with selection → copy to clipboard (no selection → normal ^C)
+      if (ev.key === "c" && ev.ctrlKey && !ev.shiftKey && !ev.altKey) {
+        const sel = terminal.getSelection();
+        if (sel) {
+          navigator.clipboard.writeText(sel).catch(() => {});
+          terminal.clearSelection();
+          return false;
+        }
+        return true; // let xterm send ^C
+      }
+
+      // Ctrl+Shift+C → always copy selection
+      if (ev.key === "C" && ev.ctrlKey && ev.shiftKey && !ev.altKey) {
+        const sel = terminal.getSelection();
+        if (sel) {
+          navigator.clipboard.writeText(sel).catch(() => {});
+          terminal.clearSelection();
+        }
+        return false;
+      }
+
+      // Ctrl+V or Ctrl+Shift+V → paste from clipboard
+      if ((ev.key === "v" || ev.key === "V") && ev.ctrlKey && !ev.altKey) {
+        if (!liveRef.current) return false;
+        handlePaste(sessionId, terminal);
+        return false;
+      }
+
+      return true;
+    });
+
+    // ── Image paste via DOM event ───────────────────────────────────────
+    // Catches paste events with image data (e.g. screenshot from clipboard)
+    const onPaste = (ev: ClipboardEvent) => {
+      if (!liveRef.current) return;
+      const items = ev.clipboardData?.items;
+      if (!items) return;
+
+      for (const item of items) {
+        if (item.type.startsWith("image/")) {
+          ev.preventDefault();
+          const blob = item.getAsFile();
+          if (!blob) return;
+          blob.arrayBuffer().then((buf) => {
+            const base64 = arrayBufferToBase64(buf);
+            saveClipboardImage(base64, sessionId).then((savedPath) => {
+              sendSessionInput(
+                sessionId,
+                savedPath,
+                newCorrelationId("image-paste"),
+              ).catch(() => {});
+            }).catch((err) => {
+              console.error("[terminal-surface] failed to save clipboard image", err);
+            });
+          });
+          return; // handled the image — don't process further
+        }
+      }
+      // Text paste falls through to the keyboard handler
+    };
+    host.addEventListener("paste", onPaste as EventListener);
+
     // Synchronous resize — NOT debounced
     // Guard: only send resize to the backend if the session is still live.
     // This prevents a resize event on an ended session from spuriously erroring,
@@ -191,6 +321,7 @@ export const TerminalSurface = memo(function TerminalSurface({
       terminalInstances.delete(sessionId);
       resizeObserver.disconnect();
       dataDisposable.dispose();
+      host.removeEventListener("paste", onPaste as EventListener);
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;

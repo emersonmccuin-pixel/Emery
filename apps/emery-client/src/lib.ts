@@ -405,6 +405,13 @@ export async function mergeQueueCheckConflicts(
   return invoke("merge_queue_check_conflicts", { mergeQueueId, correlationId });
 }
 
+export async function saveClipboardImage(
+  imageBase64: string,
+  sessionId?: string | null,
+): Promise<string> {
+  return invoke("save_clipboard_image", { imageBase64, sessionId });
+}
+
 export async function pickFolder(): Promise<string | null> {
   return invoke("pick_folder");
 }

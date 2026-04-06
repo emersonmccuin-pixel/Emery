@@ -1312,6 +1312,58 @@ fn count_unread_inbox_entries(
 }
 
 #[tauri::command]
+fn save_clipboard_image(
+    image_base64: String,
+    session_id: Option<String>,
+) -> Result<String, String> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let paths = AppPaths::discover().map_err(|e| e.to_string())?;
+    let images_dir = paths.root.join("images");
+    fs::create_dir_all(&images_dir).map_err(|e| format!("failed to create images dir: {e}"))?;
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let prefix = session_id
+        .as_deref()
+        .map(|s| &s[..8.min(s.len())])
+        .unwrap_or("paste");
+    let filename = format!("{prefix}-{ts}.png");
+    let filepath = images_dir.join(&filename);
+
+    let bytes = base64_decode(&image_base64)
+        .map_err(|e| format!("invalid base64: {e}"))?;
+    fs::write(&filepath, &bytes).map_err(|e| format!("failed to write image: {e}"))?;
+
+    Ok(filepath.to_string_lossy().into_owned())
+}
+
+fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
+    // Simple base64 decoder — avoids pulling in a crate for one call
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = Vec::with_capacity(input.len() * 3 / 4);
+    let mut buf: u32 = 0;
+    let mut bits: u32 = 0;
+    for &b in input.as_bytes() {
+        if b == b'=' || b == b'\n' || b == b'\r' || b == b' ' {
+            continue;
+        }
+        let val = TABLE.iter().position(|&c| c == b)
+            .ok_or_else(|| format!("invalid base64 char: {}", b as char))? as u32;
+        buf = (buf << 6) | val;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+            buf &= (1 << bits) - 1;
+        }
+    }
+    Ok(out)
+}
+
+#[tauri::command]
 async fn pick_folder(app: AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
     let folder = app.dialog().file().blocking_pick_folder();
@@ -1753,6 +1805,7 @@ fn main() {
             get_inbox_entry,
             update_inbox_entry,
             count_unread_inbox_entries,
+            save_clipboard_image,
             pick_folder,
             create_project_root,
             list_project_roots,
