@@ -1140,14 +1140,19 @@ impl SupervisorService {
                 }
             }
         };
-        let resolved_project_id = request.project_id.clone().unwrap_or_default();
+        let mut resolved_project_id = request.project_id.clone().unwrap_or_default();
+
+        // If project_id is empty but parent_id is provided, resolve project_id from the parent
+        if resolved_project_id.is_empty() {
+            if let Some(ref pid) = request.parent_id {
+                if let Some(parent_item) = self.databases.get_work_item(pid)? {
+                    resolved_project_id = parent_item.summary.project_id.clone();
+                }
+            }
+        }
 
         let now = unix_time_seconds();
-        let parent = if resolved_project_id.is_empty() {
-            None
-        } else {
-            self.resolve_work_item_parent(&resolved_project_id, request.parent_id)?
-        };
+        let parent = self.resolve_work_item_parent(&resolved_project_id, request.parent_id)?;
         let callsign = self.allocate_work_item_callsign_ns(
             namespace.as_deref(),
             request.project_id.as_deref(),
@@ -2929,7 +2934,7 @@ impl SupervisorService {
             .databases
             .get_work_item(&parent_id)?
             .ok_or_else(|| anyhow!("work item {} was not found", parent_id))?;
-        if parent.summary.project_id != project_id {
+        if !project_id.is_empty() && parent.summary.project_id != project_id {
             return Err(anyhow!(
                 "work item {} does not belong to project {}",
                 parent_id,
