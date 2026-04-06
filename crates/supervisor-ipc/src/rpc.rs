@@ -21,6 +21,7 @@ use supervisor_core::{
     UpdateWorkflowReconciliationProposalRequest, UpdateWorkspaceStateRequest, UpdateWorktreeRequest,
     WorkItemListFilter, WorkflowReconciliationProposalListFilter, WorktreeListFilter,
     CreateMcpServerRequest, UpdateMcpServerRequest, DeleteMcpServerRequest,
+    ProvisionWorktreeRequest,
 };
 
 
@@ -334,6 +335,10 @@ impl SupervisorRpc {
                 Ok(serde_json::to_value(
                     self.supervisor.create_worktree(request)?,
                 )?)
+            }
+            Method::WorktreeProvision => {
+                let request: ProvisionWorktreeRequest = serde_json::from_value(params)?;
+                Ok(self.supervisor.provision_worktree(request)?)
             }
             Method::WorktreeUpdate => {
                 let request: UpdateWorktreeRequest = serde_json::from_value(params)?;
@@ -937,6 +942,7 @@ impl SupervisorRpc {
                 Method::WorktreeList.as_str(),
                 Method::WorktreeGet.as_str(),
                 Method::WorktreeCreate.as_str(),
+                Method::WorktreeProvision.as_str(),
                 Method::WorktreeUpdate.as_str(),
                 Method::SessionSpecList.as_str(),
                 Method::SessionSpecGet.as_str(),

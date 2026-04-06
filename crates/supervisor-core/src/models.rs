@@ -340,6 +340,15 @@ pub struct UpdateAccountRequest {
     pub default_model: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProvisionWorktreeRequest {
+    pub project_id: String,
+    pub callsign: String,
+    pub work_item_id: Option<String>,
+    pub base_ref: Option<String>,
+    pub project_root_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct WorktreeListFilter {
     pub project_id: Option<String>,

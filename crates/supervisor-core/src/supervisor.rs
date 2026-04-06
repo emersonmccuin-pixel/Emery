@@ -1,6 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
+use serde_json::Value;
 
 use crate::bootstrap::AppPaths;
 use crate::diagnostics::{DiagnosticContext, DiagnosticsBundleResult, DiagnosticsHub};
@@ -27,6 +28,7 @@ use crate::models::{
     WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary, GitHealthStatus,
     CreateVaultEntryRequest, VaultAuditEntry, VaultEntry, VaultLockState,
     McpServerSummary, CreateMcpServerRequest, UpdateMcpServerRequest, DeleteMcpServerRequest,
+    ProvisionWorktreeRequest,
 };
 use crate::runtime::SessionRegistry;
 use crate::service::SupervisorService;
@@ -208,6 +210,10 @@ impl Supervisor {
 
     pub fn create_worktree(&self, request: CreateWorktreeRequest) -> Result<WorktreeDetail> {
         self.service.create_worktree(request)
+    }
+
+    pub fn provision_worktree(&self, request: ProvisionWorktreeRequest) -> Result<Value> {
+        self.service.provision_worktree(request)
     }
 
     pub fn update_worktree(&self, request: UpdateWorktreeRequest) -> Result<WorktreeDetail> {

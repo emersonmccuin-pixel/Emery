@@ -4,9 +4,6 @@ use std::process::Command;
 use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
 
-use supervisor_core::git::symlink_dependencies;
-use supervisor_core::AppPaths;
-
 use crate::rpc_client::RpcClient;
 use super::resolve::resolve_project;
 
@@ -76,69 +73,39 @@ pub fn handle_worktree_create(input: Value) -> Result<String> {
     let callsign = required_str(&input, "callsign")?;
     let mut rpc = RpcClient::connect()?;
     let project_id = resolve_project(&input, &mut rpc)?;
-    let base_ref = input["base_ref"].as_str().map(str::to_string);
+    let work_item_id = input["work_item_id"].as_str();
+    let base_ref = input["base_ref"].as_str();
 
-    let branch_name = format!("emery/{}", callsign.to_lowercase());
-    let paths = AppPaths::discover()?;
-    let worktree_path = paths
-        .worktrees_dir
-        .join(branch_name.replace('/', "-"));
-
-    // Resolve project root
-    let roots = rpc.call("project_root.list", json!({ "project_id": project_id }))?;
-    let root = roots
-        .as_array()
-        .and_then(|a| a.first())
-        .ok_or_else(|| anyhow!("project {} has no roots", project_id))?;
-
-    let project_root_id = root["id"]
-        .as_str()
-        .ok_or_else(|| anyhow!("project root missing id"))?
-        .to_string();
-    let git_root = root["git_root_path"]
-        .as_str()
-        .or_else(|| root["path"].as_str())
-        .ok_or_else(|| anyhow!("project root has no path"))?;
-
-    // Create the git worktree
-    git_worktree_add(Path::new(git_root), &branch_name, &worktree_path)?;
-
-    // Auto-symlink dependency directories (node_modules, .venv, etc.)
-    // Failures are reported as warnings in the output but do not abort creation.
-    let (linked, sym_warnings) = symlink_dependencies(Path::new(git_root), &worktree_path);
-
-    // Capture head commit
-    let head_commit = git_head_commit(&worktree_path).ok();
-
-    // Register in supervisor DB
     let mut params = json!({
         "project_id": project_id,
-        "project_root_id": project_root_id,
-        "branch_name": branch_name,
-        "path": worktree_path.to_string_lossy(),
-        "status": "active",
+        "callsign": callsign,
     });
-    if let Some(base) = base_ref {
-        params["base_ref"] = json!(base);
-    }
-    if let Some(commit) = head_commit {
-        params["head_commit"] = json!(commit);
-    }
+    if let Some(wi) = work_item_id { params["work_item_id"] = json!(wi); }
+    if let Some(br) = base_ref { params["base_ref"] = json!(br); }
 
-    let result = rpc.call("worktree.create", params)?;
+    let result = rpc.call("worktree.provision", params)?;
 
-    let worktree_id = result["id"].as_str().unwrap_or("?");
-    let path = result["path"].as_str().unwrap_or(worktree_path.to_str().unwrap_or("?"));
+    let branch = result["branch_name"].as_str().unwrap_or("?");
+    let path = result["worktree"]["path"].as_str()
+        .or_else(|| result["path"].as_str())
+        .unwrap_or("?");
+    let id = result["worktree"]["id"].as_str()
+        .or_else(|| result["id"].as_str())
+        .unwrap_or("?");
 
-    let mut out = format!(
-        "Created worktree `{}` at `{}`\nID: {}",
-        branch_name, path, worktree_id
-    );
-    if !linked.is_empty() {
-        out.push_str(&format!("\nSymlinked: {}", linked.join(", ")));
+    let mut out = format!("Created worktree `{}` at `{}`\nID: {}", branch, path, id);
+    if let Some(linked) = result["symlinked"].as_array() {
+        if !linked.is_empty() {
+            let names: Vec<&str> = linked.iter().filter_map(|v| v.as_str()).collect();
+            out.push_str(&format!("\nSymlinked: {}", names.join(", ")));
+        }
     }
-    for w in &sym_warnings {
-        out.push_str(&format!("\nSymlink warning: {}", w));
+    if let Some(warnings) = result["symlink_warnings"].as_array() {
+        for w in warnings {
+            if let Some(s) = w.as_str() {
+                out.push_str(&format!("\nSymlink warning: {}", s));
+            }
+        }
     }
     Ok(out)
 }
@@ -246,21 +213,6 @@ pub fn handle_open_editor(input: Value) -> Result<String> {
 
 // ── Git helpers ───────────────────────────────────────────────────────────────
 
-fn git_worktree_add(repo_root: &Path, branch_name: &str, worktree_path: &Path) -> Result<()> {
-    let output = Command::new("git")
-        .args(["worktree", "add", "-b", branch_name])
-        .arg(worktree_path)
-        .current_dir(repo_root)
-        .output()
-        .map_err(|e| anyhow!("failed to run git: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow!("git worktree add failed: {}", stderr.trim()));
-    }
-    Ok(())
-}
-
 fn git_worktree_remove(worktree_path: &str) -> Result<()> {
     let output = Command::new("git")
         .args(["worktree", "remove", "--force", worktree_path])
@@ -272,19 +224,6 @@ fn git_worktree_remove(worktree_path: &str) -> Result<()> {
         return Err(anyhow!("git worktree remove failed: {}", stderr.trim()));
     }
     Ok(())
-}
-
-fn git_head_commit(path: &Path) -> Result<String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(path)
-        .output()
-        .map_err(|e| anyhow!("failed to run git: {}", e))?;
-
-    if !output.status.success() {
-        return Err(anyhow!("git rev-parse HEAD failed"));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────

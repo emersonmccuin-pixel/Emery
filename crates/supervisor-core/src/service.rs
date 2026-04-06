@@ -41,7 +41,7 @@ use crate::models::{
     WorkflowReconciliationProposalSummary, WorkflowReconciliationProposalUpdateRecord,
     WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary, WorktreeUpdateRecord,
     McpServerSummary, CreateMcpServerRequest, UpdateMcpServerRequest, DeleteMcpServerRequest,
-    NewMcpServerRecord, McpServerUpdateRecord,
+    NewMcpServerRecord, McpServerUpdateRecord, ProvisionWorktreeRequest,
 };
 use crate::runtime::{SessionLaunchRequest, SessionRegistry, SessionRuntimeRegistration};
 use crate::store::DatabaseSet;
@@ -723,6 +723,77 @@ impl SupervisorService {
         self.databases.insert_worktree(&record)?;
         self.get_worktree(&worktree_id)?
             .ok_or_else(|| anyhow!("worktree {} was not found", worktree_id))
+    }
+
+    pub fn provision_worktree(&self, request: ProvisionWorktreeRequest) -> Result<Value> {
+        self.ensure_project_exists(&request.project_id)?;
+
+        // Resolve project root — use provided ID or fall back to the first root
+        let project_root_id = if let Some(ref id) = request.project_root_id {
+            id.clone()
+        } else {
+            let roots = self.databases.list_project_roots(&request.project_id)?;
+            let root = roots
+                .first()
+                .ok_or_else(|| anyhow!("project {} has no roots", request.project_id))?;
+            root.id.clone()
+        };
+
+        let root = self
+            .databases
+            .get_project_root(&project_root_id)?
+            .ok_or_else(|| anyhow!("project root {} not found", project_root_id))?;
+
+        let git_root = root.git_root_path.as_deref().unwrap_or(&root.path);
+        let git_root_path = Path::new(git_root);
+
+        if !git::git_is_repo(git_root_path) {
+            return Err(anyhow!(
+                "project root {} is not a git repository",
+                git_root
+            ));
+        }
+
+        let branch_name = format!("emery/{}", request.callsign.to_lowercase());
+        let worktree_path = self
+            .databases
+            .paths()
+            .worktrees_dir
+            .join(branch_name.replace('/', "-"));
+
+        // Create the git worktree
+        git::git_worktree_add(git_root_path, &branch_name, &worktree_path)?;
+
+        // Auto-symlink dependency directories (node_modules, .venv, etc.)
+        let (linked, sym_warnings) = git::symlink_dependencies(git_root_path, &worktree_path);
+
+        // Capture base ref and head commit
+        let base_ref_resolved = request.base_ref.clone().or_else(|| {
+            git::git_current_branch(git_root_path)
+                .ok()
+        });
+        let head_commit = git::git_head_commit(&worktree_path).ok();
+
+        // Register in supervisor DB
+        let create_req = CreateWorktreeRequest {
+            project_id: request.project_id,
+            project_root_id,
+            branch_name: branch_name.clone(),
+            head_commit,
+            base_ref: base_ref_resolved,
+            path: worktree_path.to_string_lossy().to_string(),
+            status: Some("active".to_string()),
+            created_by_session_id: None,
+            last_used_at: Some(unix_time_seconds()),
+        };
+        let worktree_detail = self.create_worktree(create_req)?;
+
+        Ok(json!({
+            "worktree": serde_json::to_value(&worktree_detail)?,
+            "branch_name": branch_name,
+            "symlinked": linked,
+            "symlink_warnings": sym_warnings,
+        }))
     }
 
     pub fn update_worktree(&self, request: UpdateWorktreeRequest) -> Result<WorktreeDetail> {
@@ -2163,68 +2234,46 @@ impl SupervisorService {
         project_id: &str,
         project_root_id: &str,
         work_item_id: &str,
-        now: i64,
+        _now: i64,
     ) -> Result<(String, String)> {
-        let root = self
-            .databases
-            .get_project_root(project_root_id)?
-            .ok_or_else(|| anyhow!("project root {} not found", project_root_id))?;
-
-        let git_root = root.git_root_path.as_deref().unwrap_or(&root.path);
-        let git_root_path = Path::new(git_root);
-
-        if !git::git_is_repo(git_root_path) {
-            return Err(anyhow!(
-                "project root {} is not a git repository",
-                git_root
-            ));
-        }
-
         let work_item = self
             .databases
             .get_work_item(work_item_id)?
             .ok_or_else(|| anyhow!("work item {} not found", work_item_id))?;
 
-        let branch_name = format!("emery/{}", work_item.summary.callsign.to_lowercase());
-        let worktree_dir = &self.databases.paths().worktrees_dir;
-        let worktree_path = worktree_dir.join(branch_name.replace('/', "-"));
-
-        git::git_worktree_add(git_root_path, &branch_name, &worktree_path)?;
-
-        // Auto-symlink dependency directories (node_modules, .venv, etc.)
-        // Failures are logged as warnings but do not abort worktree creation.
-        let (linked, sym_warnings) =
-            git::symlink_dependencies(git_root_path, &worktree_path);
-        if !linked.is_empty() {
-            eprintln!("worktree symlinks created: {}", linked.join(", "));
-        }
-        for w in &sym_warnings {
-            eprintln!("worktree symlink warning: {}", w);
-        }
-
-        let base_ref = git::git_current_branch(git_root_path)
-            .unwrap_or_else(|_| "HEAD".to_string());
-        let head_commit = git::git_head_commit(&worktree_path)?;
-
-        let worktree_id = format!("wt_{}", Uuid::new_v4().simple());
-        let record = NewWorktreeRecord {
-            id: worktree_id.clone(),
+        let result = self.provision_worktree(ProvisionWorktreeRequest {
             project_id: project_id.to_string(),
-            project_root_id: project_root_id.to_string(),
-            branch_name,
-            head_commit: Some(head_commit),
-            base_ref: Some(base_ref),
-            path: worktree_path.to_string_lossy().to_string(),
-            status: "active".to_string(),
-            created_by_session_id: None,
-            last_used_at: Some(now),
-            created_at: now,
-            updated_at: now,
-            closed_at: None,
-        };
-        self.databases.insert_worktree(&record)?;
+            callsign: work_item.summary.callsign.clone(),
+            work_item_id: Some(work_item_id.to_string()),
+            base_ref: None,
+            project_root_id: Some(project_root_id.to_string()),
+        })?;
 
-        Ok((worktree_id, worktree_path.to_string_lossy().to_string()))
+        // Log symlink info
+        if let Some(linked) = result["symlinked"].as_array() {
+            let names: Vec<&str> = linked.iter().filter_map(|v| v.as_str()).collect();
+            if !names.is_empty() {
+                eprintln!("worktree symlinks created: {}", names.join(", "));
+            }
+        }
+        if let Some(warnings) = result["symlink_warnings"].as_array() {
+            for w in warnings {
+                if let Some(s) = w.as_str() {
+                    eprintln!("worktree symlink warning: {}", s);
+                }
+            }
+        }
+
+        let worktree_id = result["worktree"]["id"]
+            .as_str()
+            .ok_or_else(|| anyhow!("provision_worktree did not return worktree id"))?
+            .to_string();
+        let worktree_path = result["worktree"]["path"]
+            .as_str()
+            .ok_or_else(|| anyhow!("provision_worktree did not return worktree path"))?
+            .to_string();
+
+        Ok((worktree_id, worktree_path))
     }
 
     pub fn forward_input(&self, session_id: &str, input: &[u8]) -> Result<()> {
