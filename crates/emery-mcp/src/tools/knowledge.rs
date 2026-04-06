@@ -70,6 +70,7 @@ pub fn tool_work_item_update() -> Value {
             "type": "object",
             "properties": {
                 "work_item_id":        { "type": "string", "description": "Work item ID to update" },
+                "namespace":           { "type": "string", "description": "Move item to a different namespace (e.g. EURI)" },
                 "title":               { "type": "string", "description": "New title" },
                 "description":         { "type": "string", "description": "New description" },
                 "acceptance_criteria":  { "type": "string", "description": "New acceptance criteria" },
@@ -240,6 +241,7 @@ pub fn handle_work_item_update(input: Value) -> Result<String> {
     let work_item_id = required_str(&input, "work_item_id")?;
 
     let mut params = json!({ "work_item_id": work_item_id });
+    if let Some(v) = input["namespace"].as_str() { params["namespace"] = json!(v); }
     if let Some(v) = input["title"].as_str() { params["title"] = json!(v); }
     if let Some(v) = input["description"].as_str() { params["description"] = json!(v); }
     if let Some(v) = input["acceptance_criteria"].as_str() { params["acceptance_criteria"] = json!(v); }

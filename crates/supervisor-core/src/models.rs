@@ -481,6 +481,7 @@ pub struct CreateWorkItemRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateWorkItemRequest {
     pub work_item_id: String,
+    pub namespace: Option<String>,
     pub title: Option<String>,
     pub description: Option<String>,
     pub acceptance_criteria: Option<String>,
@@ -865,6 +866,7 @@ pub struct NewWorkItemRecord {
 #[derive(Debug, Clone)]
 pub struct WorkItemUpdateRecord {
     pub id: String,
+    pub namespace: Option<String>,
     pub title: String,
     pub description: String,
     pub acceptance_criteria: Option<String>,
