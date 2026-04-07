@@ -39,6 +39,29 @@ const MODEL_OPTIONS = [
   { value: "claude-sonnet-4-5-20250514", label: "Claude Sonnet 4.5" },
 ];
 
+const AGENT_TEMPLATE_ORIGIN_MODES = [
+  "planning",
+  "research",
+  "execution",
+  "follow_up",
+  "dispatch",
+  "command_center",
+  "ad_hoc",
+] as const;
+
+function normalizeAgentTemplateOriginMode(mode: string | null | undefined): string {
+  switch (mode) {
+    case "code":
+      return "execution";
+    case "chat":
+      return "research";
+    default:
+      return mode && AGENT_TEMPLATE_ORIGIN_MODES.includes(mode as (typeof AGENT_TEMPLATE_ORIGIN_MODES)[number])
+        ? mode
+        : "execution";
+  }
+}
+
 function parseModelDefaults(json: string | null | undefined): ModelDefaults {
   const empty: ModelDefaults = {
     by_origin_mode: { planning: "", research: "", execution: "", follow_up: "" },
@@ -1013,7 +1036,9 @@ function TemplateRow({
   const [error, setError] = useState<string | null>(null);
   const [labelInput, setLabelInput] = useState(template.label);
   const [modelInput, setModelInput] = useState(template.default_model ?? "");
-  const [originModeInput, setOriginModeInput] = useState(template.origin_mode);
+  const [originModeInput, setOriginModeInput] = useState(
+    normalizeAgentTemplateOriginMode(template.origin_mode),
+  );
   const [instructionsMd, setInstructionsMd] = useState(template.instructions_md ?? "");
   const [stopRulesJson, setStopRulesJson] = useState(template.stop_rules_json ?? "");
 
@@ -1053,7 +1078,9 @@ function TemplateRow({
         <div className="agent-template-header">
           <span className="agent-template-key">{template.template_key}</span>
           <span className="agent-template-label">{template.label}</span>
-          <span className="agent-template-mode">{template.origin_mode}</span>
+          <span className="agent-template-mode">
+            {normalizeAgentTemplateOriginMode(template.origin_mode)}
+          </span>
         </div>
         {template.default_model && (
           <span className="agent-template-model">{template.default_model}</span>
@@ -1079,8 +1106,9 @@ function TemplateRow({
               value={originModeInput}
               onChange={(e) => { setOriginModeInput(e.target.value); setError(null); }}
             >
-              <option value="code">code</option>
-              <option value="chat">chat</option>
+              {AGENT_TEMPLATE_ORIGIN_MODES.map((mode) => (
+                <option key={mode} value={mode}>{mode}</option>
+              ))}
             </Select>
             <label className="settings-label">Instructions (markdown)</label>
             <Textarea
@@ -1128,7 +1156,7 @@ function TemplateRow({
             onClick={() => {
               setLabelInput(template.label);
               setModelInput(template.default_model ?? "");
-              setOriginModeInput(template.origin_mode);
+              setOriginModeInput(normalizeAgentTemplateOriginMode(template.origin_mode));
               setInstructionsMd(template.instructions_md ?? "");
               setStopRulesJson(template.stop_rules_json ?? "");
               setError(null);
@@ -1166,7 +1194,7 @@ function AddTemplateForm({
 }) {
   const [keyInput, setKeyInput] = useState("");
   const [labelInput, setLabelInput] = useState("");
-  const [originMode, setOriginMode] = useState("code");
+  const [originMode, setOriginMode] = useState("execution");
   const [modelInput, setModelInput] = useState("");
   const [instructionsMd, setInstructionsMd] = useState("");
   const [stopRulesJson, setStopRulesJson] = useState("");
@@ -1218,8 +1246,9 @@ function AddTemplateForm({
           value={originMode}
           onChange={(e) => { setOriginMode(e.target.value); setError(null); }}
         >
-          <option value="code">code</option>
-          <option value="chat">chat</option>
+          {AGENT_TEMPLATE_ORIGIN_MODES.map((mode) => (
+            <option key={mode} value={mode}>{mode}</option>
+          ))}
         </Select>
         <Input
           className="settings-input"

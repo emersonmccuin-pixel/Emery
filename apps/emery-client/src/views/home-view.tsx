@@ -115,7 +115,7 @@ export function HomeView() {
               </section>
             ) : (
               <div className="empty-pane bg-[var(--surface-sunken)] rounded-lg p-20 border border-[var(--border-subtle)] flex flex-col items-center justify-center text-center">
-                <p className="text-lg text-[var(--text-primary)] mb-4 font-semibold">Welcome to EURI</p>
+                <p className="text-lg text-[var(--text-primary)] mb-4 font-semibold">Welcome to Emery</p>
                 <p className="text-[var(--text-secondary)] mb-8 max-w-md">
                   Pin a project from the sidebar to get started, or create a new project to begin your workflow.
                 </p>

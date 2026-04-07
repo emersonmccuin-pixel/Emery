@@ -2056,7 +2056,7 @@ impl SupervisorService {
         // 1. Start with origin_mode defaults
         let default = match origin_mode {
             "planning" | "research" | "dispatch" | "command_center" => Some("opus".to_string()),
-            "execution" | "follow_up" => Some("sonnet".to_string()),
+            "ad_hoc" | "execution" | "follow_up" => Some("sonnet".to_string()),
             _ => None,
         };
 
@@ -2774,6 +2774,34 @@ impl SupervisorService {
             ));
         }
 
+        // Each subscription is seeded with the current state snapshot on open.
+        // Discard that initial event so this method waits for the next actual change.
+        for (sid, sub_id, rx) in &subscriptions {
+            match rx.try_recv() {
+                Ok(_) | Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => {
+                    for (s, existing_sub_id, _) in &subscriptions {
+                        let _ = self.unsubscribe_session_state_changed(s, existing_sub_id);
+                    }
+                    if let Some(detail) = self.get_session(sid)? {
+                        return Ok(SessionWatchResponse {
+                            session_id: sid.clone(),
+                            runtime_state: detail.summary.runtime_state,
+                            status: detail.summary.status,
+                            activity_state: detail.summary.activity_state,
+                            needs_input_reason: detail.summary.needs_input_reason,
+                            timed_out: false,
+                        });
+                    }
+                    return Err(anyhow!(
+                        "state subscription {} disconnected for session {}",
+                        sub_id,
+                        sid
+                    ));
+                }
+            }
+        }
+
         let poll_interval = std::time::Duration::from_millis(100);
         loop {
             for (sid, _sub_id, rx) in &subscriptions {
@@ -3160,14 +3188,6 @@ impl SupervisorService {
 
         self.databases.insert_work_item(&record)?;
         Ok(())
-    }
-
-    fn allocate_work_item_callsign(
-        &self,
-        project_id: &str,
-        parent: Option<&ResolvedWorkItemParent>,
-    ) -> Result<String> {
-        self.allocate_work_item_callsign_ns(None, Some(project_id), parent)
     }
 
     fn allocate_work_item_callsign_ns(
@@ -3987,8 +4007,7 @@ impl SupervisorService {
 
         let template_key = required_trimmed("template_key", &request.template_key)?;
         let label = required_trimmed("label", &request.label)?;
-        let origin_mode = optional_trimmed(request.origin_mode)
-            .unwrap_or_else(|| "code".to_string());
+        let origin_mode = normalize_agent_template_origin_mode(request.origin_mode)?;
 
         let sort_order = match request.sort_order {
             Some(s) => s,
@@ -4038,8 +4057,8 @@ impl SupervisorService {
             None => existing.summary.label.clone(),
         };
         let origin_mode = match request.origin_mode {
-            Some(om) => optional_trimmed(Some(om)).unwrap_or_else(|| "code".to_string()),
-            None => existing.summary.origin_mode.clone(),
+            Some(om) => normalize_agent_template_origin_mode(Some(om))?,
+            None => validate_session_mode(&existing.summary.origin_mode)?,
         };
         let default_model = match request.default_model {
             Some(v) => optional_trimmed(Some(v)),
@@ -4120,28 +4139,28 @@ fn default_templates_for_type(project_type: &str) -> Vec<TemplateSpec> {
             TemplateSpec {
                 template_key: "planner".to_string(),
                 label: "Planner".to_string(),
-                origin_mode: "code".to_string(),
+                origin_mode: "planning".to_string(),
                 default_model: Some("claude-opus-4-5".to_string()),
                 instructions_md: Some("You are a planning agent. Break down tasks into clear, actionable steps. Identify dependencies, risks, and acceptance criteria before any implementation begins.".to_string()),
             },
             TemplateSpec {
                 template_key: "architect".to_string(),
                 label: "Architect".to_string(),
-                origin_mode: "code".to_string(),
+                origin_mode: "planning".to_string(),
                 default_model: Some("claude-opus-4-5".to_string()),
                 instructions_md: Some("You are an architecture agent. Design system structure, define interfaces, and make high-level technical decisions. Document your reasoning.".to_string()),
             },
             TemplateSpec {
                 template_key: "implementer".to_string(),
                 label: "Implementer".to_string(),
-                origin_mode: "code".to_string(),
+                origin_mode: "execution".to_string(),
                 default_model: Some("claude-sonnet-4-5".to_string()),
                 instructions_md: Some("You are an implementation agent. Write clean, well-structured code following project conventions. Run build verification after each change.".to_string()),
             },
             TemplateSpec {
                 template_key: "reviewer".to_string(),
                 label: "Reviewer".to_string(),
-                origin_mode: "code".to_string(),
+                origin_mode: "follow_up".to_string(),
                 default_model: Some("claude-opus-4-5".to_string()),
                 instructions_md: Some("You are a code review agent. Check correctness, style, test coverage, and adherence to acceptance criteria. Provide specific, actionable feedback.".to_string()),
             },
@@ -4150,21 +4169,21 @@ fn default_templates_for_type(project_type: &str) -> Vec<TemplateSpec> {
             TemplateSpec {
                 template_key: "researcher".to_string(),
                 label: "Researcher".to_string(),
-                origin_mode: "chat".to_string(),
+                origin_mode: "research".to_string(),
                 default_model: Some("claude-opus-4-5".to_string()),
                 instructions_md: Some("You are a research agent. Gather, synthesize, and summarize information from available sources. Cite your reasoning and flag uncertainty.".to_string()),
             },
             TemplateSpec {
                 template_key: "analyst".to_string(),
                 label: "Analyst".to_string(),
-                origin_mode: "chat".to_string(),
+                origin_mode: "research".to_string(),
                 default_model: Some("claude-opus-4-5".to_string()),
                 instructions_md: Some("You are an analysis agent. Evaluate data, identify patterns, and draw well-reasoned conclusions. Present findings clearly with supporting evidence.".to_string()),
             },
             TemplateSpec {
                 template_key: "writer".to_string(),
                 label: "Writer".to_string(),
-                origin_mode: "chat".to_string(),
+                origin_mode: "follow_up".to_string(),
                 default_model: Some("claude-sonnet-4-5".to_string()),
                 instructions_md: Some("You are a writing agent. Produce clear, well-structured prose. Adapt tone and format to the audience and purpose of the document.".to_string()),
             },
@@ -4511,10 +4530,19 @@ fn required_document_content(value: &str) -> Result<String> {
 fn validate_session_mode(value: &str) -> Result<String> {
     let normalized = required_trimmed("session mode", value)?.to_lowercase();
     match normalized.as_str() {
+        "code" => Ok("execution".to_string()),
+        "chat" => Ok("research".to_string()),
         "ad_hoc" | "planning" | "research" | "execution" | "follow_up" | "dispatch" | "command_center" => Ok(normalized),
         _ => Err(anyhow!(
             "session mode must be one of: ad_hoc, planning, research, execution, follow_up, dispatch, command_center"
         )),
+    }
+}
+
+fn normalize_agent_template_origin_mode(value: Option<String>) -> Result<String> {
+    match value {
+        Some(mode) => validate_session_mode(&mode),
+        None => Ok("execution".to_string()),
     }
 }
 

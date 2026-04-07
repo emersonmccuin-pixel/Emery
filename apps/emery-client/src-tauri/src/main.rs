@@ -32,7 +32,7 @@ const LEGACY_DIAGNOSTICS_ENV: &str = "EURI_DEV_DIAGNOSTICS";
 
 #[derive(Debug)]
 struct SupervisorManager {
-    worker: Mutex<Option<WorkerHandle>>,
+    worker: Arc<Mutex<Option<WorkerHandle>>>,
     diagnostics: DiagnosticsState,
     event_buffer: Arc<Mutex<VecDeque<FrontendEvent>>>,
 }
@@ -114,11 +114,31 @@ struct IncomingErrorBody {
 impl SupervisorManager {
     fn new() -> Self {
         Self {
-            worker: Mutex::new(None),
+            worker: Arc::new(Mutex::new(None)),
             diagnostics: DiagnosticsState::from_env(),
             event_buffer: Arc::new(Mutex::new(VecDeque::new())),
         }
     }
+}
+
+fn parse_version_components(version: &str) -> Option<Vec<u64>> {
+    version
+        .split('.')
+        .map(|part| part.parse::<u64>().ok())
+        .collect()
+}
+
+fn version_is_newer(min_supported: &str, current: &str) -> bool {
+    let Some(mut min_parts) = parse_version_components(min_supported) else {
+        return false;
+    };
+    let Some(mut current_parts) = parse_version_components(current) else {
+        return false;
+    };
+    let width = min_parts.len().max(current_parts.len());
+    min_parts.resize(width, 0);
+    current_parts.resize(width, 0);
+    min_parts > current_parts
 }
 
 impl DiagnosticsState {
@@ -215,9 +235,16 @@ impl SupervisorManager {
                 app,
                 self.diagnostics.clone(),
                 Arc::clone(&self.event_buffer),
+                Arc::clone(&self.worker),
             )?);
         }
         Ok(guard)
+    }
+
+    fn invalidate_worker(&self) {
+        if let Ok(mut guard) = self.worker.lock() {
+            *guard = None;
+        }
     }
 
     fn request_value(
@@ -227,14 +254,15 @@ impl SupervisorManager {
         params: Value,
         correlation_id: Option<String>,
     ) -> Result<Value> {
-        let mut guard = self.ensure_worker(app)?;
+        let guard = self.ensure_worker(app)?;
         let handle = guard
-            .as_mut()
+            .as_ref()
             .ok_or_else(|| anyhow!("supervisor worker was not initialized"))?;
         let request_id = format!(
             "req_{}",
             handle.next_request_id.fetch_add(1, Ordering::Relaxed)
         );
+        let control_tx = handle.control_tx.clone();
         let envelope = RequestEnvelope {
             message_type: "request".to_string(),
             request_id,
@@ -254,13 +282,15 @@ impl SupervisorManager {
             }),
         );
         let (response_tx, response_rx) = mpsc::channel();
-        handle
-            .control_tx
+        control_tx
             .send(WorkerCommand::Request {
                 envelope,
                 response_tx,
             })
-            .map_err(|_| anyhow!("supervisor worker is offline"))?;
+            .map_err(|_| {
+                self.invalidate_worker();
+                anyhow!("supervisor worker is offline")
+            })?;
         drop(guard);
 
         match response_rx.recv_timeout(Duration::from_secs(10)) {
@@ -289,6 +319,7 @@ impl SupervisorManager {
                 Err(anyhow!(error))
             }
             Err(_) => {
+                self.invalidate_worker();
                 self.diagnostics.record(
                     "rpc.response_timeout",
                     request_correlation.as_deref(),
@@ -348,6 +379,50 @@ impl SupervisorManager {
                 .lock()
                 .map_err(|_| anyhow!("session state subscription lock poisoned"))?
                 .insert(session_id, subscription_id.to_string());
+        }
+
+        Ok(())
+    }
+
+    fn unwatch_live_sessions(
+        &self,
+        app: &AppHandle,
+        session_ids: &[String],
+        correlation_id: Option<String>,
+    ) -> Result<()> {
+        if session_ids.is_empty() {
+            return Ok(());
+        }
+
+        let subscription_ids = {
+            let guard = self.ensure_worker(app)?;
+            let handle = guard
+                .as_ref()
+                .ok_or_else(|| anyhow!("supervisor worker was not initialized"))?;
+            let mut subscriptions = handle
+                .session_state_subscriptions
+                .lock()
+                .map_err(|_| anyhow!("session state subscription lock poisoned"))?;
+
+            session_ids
+                .iter()
+                .filter_map(|session_id| {
+                    subscriptions
+                        .remove(session_id)
+                        .map(|subscription_id| (session_id.clone(), subscription_id))
+                })
+                .collect::<Vec<_>>()
+        };
+
+        for (_session_id, subscription_id) in subscription_ids {
+            let _ = self.request_value(
+                app,
+                "subscription.close",
+                json!({
+                    "subscription_id": subscription_id
+                }),
+                correlation_id.clone(),
+            );
         }
 
         Ok(())
@@ -453,6 +528,7 @@ impl SupervisorManager {
                 correlation_id.clone(),
             );
         }
+        let _ = self.unwatch_live_sessions(app, &[session_id.to_string()], correlation_id);
         Ok(())
     }
 }
@@ -470,7 +546,7 @@ fn bootstrap_shell(
         .get("min_supported_client_version")
         .and_then(Value::as_str)
         .unwrap_or("0.0.0");
-    if min_supported > CLIENT_VERSION {
+    if version_is_newer(min_supported, CLIENT_VERSION) {
         return Err(format!(
             "client {} is older than supervisor minimum {}",
             CLIENT_VERSION, min_supported
@@ -540,6 +616,18 @@ fn watch_live_sessions(
 ) -> Result<(), String> {
     manager
         .watch_live_sessions(&app, &session_ids, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn unwatch_live_sessions(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    session_ids: Vec<String>,
+    correlation_id: Option<String>,
+) -> Result<(), String> {
+    manager
+        .unwatch_live_sessions(&app, &session_ids, correlation_id)
         .map_err(error_string)
 }
 
@@ -1860,6 +1948,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             bootstrap_shell,
             watch_live_sessions,
+            unwatch_live_sessions,
             attach_session,
             detach_session,
             send_session_input,
@@ -1944,6 +2033,7 @@ fn connect_worker(
     app: &AppHandle,
     diagnostics: DiagnosticsState,
     event_buffer: Arc<Mutex<VecDeque<FrontendEvent>>>,
+    worker_slot: Arc<Mutex<Option<WorkerHandle>>>,
 ) -> Result<WorkerHandle> {
     let paths = AppPaths::discover()?;
     let endpoint = endpoint_name(paths.root.display().to_string().as_str());
@@ -1969,6 +2059,7 @@ fn connect_worker(
     let pending_for_reader = Arc::clone(&pending);
     let diagnostics_for_reader = diagnostics.clone();
     let event_buffer_for_reader = Arc::clone(&event_buffer);
+    let worker_slot_for_reader = Arc::clone(&worker_slot);
 
     thread::spawn(move || {
         let mut reader = BufReader::new(reader_stream);
@@ -1989,6 +2080,9 @@ fn connect_worker(
                         json!({ "detail": "supervisor pipe closed" }),
                     );
                     fail_pending_requests(&pending_for_reader, "supervisor connection closed");
+                    if let Ok(mut guard) = worker_slot_for_reader.lock() {
+                        *guard = None;
+                    }
                     break;
                 }
                 Ok(_) => match parse_incoming_message(line.trim_end()) {
@@ -2045,6 +2139,9 @@ fn connect_worker(
                             Some(error.to_string().as_str()),
                         );
                         fail_pending_requests(&pending_for_reader, &error.to_string());
+                        if let Ok(mut guard) = worker_slot_for_reader.lock() {
+                            *guard = None;
+                        }
                         break;
                     }
                 },
@@ -2061,12 +2158,16 @@ fn connect_worker(
                         Some(error.to_string().as_str()),
                     );
                     fail_pending_requests(&pending_for_reader, &error.to_string());
+                    if let Ok(mut guard) = worker_slot_for_reader.lock() {
+                        *guard = None;
+                    }
                     break;
                 }
             }
         }
     });
 
+    let worker_slot_for_writer = Arc::clone(&worker_slot);
     thread::spawn(move || {
         let mut writer = writer_stream;
         while let Ok(command) = control_rx.recv() {
@@ -2089,6 +2190,9 @@ fn connect_worker(
                         .map(|mut map| map.insert(envelope.request_id.clone(), response_tx))
                         .is_err()
                     {
+                        if let Ok(mut guard) = worker_slot_for_writer.lock() {
+                            *guard = None;
+                        }
                         break;
                     }
 
@@ -2097,6 +2201,9 @@ fn connect_worker(
                         || writer.flush().is_err()
                     {
                         fail_pending_requests(&pending, "failed to write request to supervisor");
+                        if let Ok(mut guard) = worker_slot_for_writer.lock() {
+                            *guard = None;
+                        }
                         break;
                     }
                 }

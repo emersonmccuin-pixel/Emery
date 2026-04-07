@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   attachSession,
   bootstrapShell,
+  detachSession,
   pollEvents,
   saveWorkspace,
   watchLiveSessions,
@@ -390,8 +391,10 @@ export default function App() {
     }
 
     async function resyncSession(sessionId: string) {
+      let attachmentId: string | null = null;
       try {
         const response = await attachSession(sessionId, newCorrelationId("resync"));
+        attachmentId = response.attachment_id;
         directResetTerminal(sessionId);
         for (const chunk of response.replay.chunks) {
           directWriteToTerminal(sessionId, decodeBase64Utf8(chunk.data));
@@ -399,6 +402,10 @@ export default function App() {
         sessionStore.setLastSeenSeq(sessionId, response.output_cursor);
       } catch {
         // session not live — ignore
+      } finally {
+        if (attachmentId) {
+          void detachSession(sessionId, attachmentId, newCorrelationId("resync-detach")).catch(() => {});
+        }
       }
     }
 

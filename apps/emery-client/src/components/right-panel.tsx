@@ -94,7 +94,11 @@ export function RightPanel({ projectId, collapsed, overlay, onToggle }: RightPan
     const worktrees = [];
     for (const s of projectSessions) {
       // A dispatch session runs on the main project root, not a worktree
-      if (!s.worktree_branch && (s.runtime_state === "running" || s.runtime_state === "starting")) {
+      if (
+        s.origin_mode === "dispatch" &&
+        !s.worktree_branch &&
+        (s.runtime_state === "running" || s.runtime_state === "starting")
+      ) {
         dispatch = s;
       } else if (s.worktree_branch) {
         worktrees.push(s);

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { appStore } from "../store";
+import { appStore, sessionNeedsInput } from "../store";
 import type { SessionSummary, WorktreeSummary } from "../types";
 import { DurationDisplay } from "./duration-display";
 import { ContextMenu, type ContextMenuItem } from "./context-menu";
@@ -29,7 +29,7 @@ function statusDot(session: SessionSummary | null): { symbol: string; className:
   if (!session) {
     return { symbol: "\u25C9", className: "wt-dot wt-dot-idle" };
   }
-  if (session.activity_state === "needs_input") {
+  if (sessionNeedsInput(session)) {
     return { symbol: "\u26A0", className: "wt-dot wt-dot-warning" };
   }
   if (session.runtime_state === "running" || session.runtime_state === "starting") {
