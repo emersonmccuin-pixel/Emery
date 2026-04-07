@@ -141,6 +141,33 @@ fn version_is_newer(min_supported: &str, current: &str) -> bool {
     min_parts > current_parts
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{parse_version_components, version_is_newer};
+
+    #[test]
+    fn parses_numeric_version_components() {
+        assert_eq!(parse_version_components("0.10.2"), Some(vec![0, 10, 2]));
+        assert_eq!(parse_version_components("1.2.3"), Some(vec![1, 2, 3]));
+        assert_eq!(parse_version_components("7"), Some(vec![7]));
+    }
+
+    #[test]
+    fn rejects_non_numeric_version_components() {
+        assert_eq!(parse_version_components(""), None);
+        assert_eq!(parse_version_components("1.2.beta"), None);
+        assert_eq!(parse_version_components("v1.2.3"), None);
+    }
+
+    #[test]
+    fn compares_versions_semantically() {
+        assert!(version_is_newer("0.10.0", "0.2.0"));
+        assert!(!version_is_newer("0.2.0", "0.10.0"));
+        assert!(!version_is_newer("0.1.0", "0.1.0"));
+        assert!(version_is_newer("1.0", "0.9.9"));
+    }
+}
+
 impl DiagnosticsState {
     fn from_env() -> Self {
         let enabled = diagnostics_enabled();

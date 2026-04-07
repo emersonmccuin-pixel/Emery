@@ -4631,6 +4631,56 @@ fn validate_restore_policy(value: &str) -> Result<String> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{normalize_agent_template_origin_mode, validate_session_mode};
+
+    #[test]
+    fn validate_session_mode_accepts_current_modes() {
+        for mode in [
+            "ad_hoc",
+            "planning",
+            "research",
+            "execution",
+            "follow_up",
+            "dispatch",
+            "command_center",
+        ] {
+            assert_eq!(validate_session_mode(mode).unwrap(), mode);
+        }
+    }
+
+    #[test]
+    fn validate_session_mode_normalizes_legacy_aliases() {
+        assert_eq!(validate_session_mode("code").unwrap(), "execution");
+        assert_eq!(validate_session_mode("chat").unwrap(), "research");
+        assert_eq!(validate_session_mode(" Code ").unwrap(), "execution");
+        assert_eq!(validate_session_mode("CHAT").unwrap(), "research");
+    }
+
+    #[test]
+    fn validate_session_mode_rejects_unknown_values() {
+        let error = validate_session_mode("builder").unwrap_err().to_string();
+        assert!(error.contains("session mode must be one of:"));
+    }
+
+    #[test]
+    fn agent_template_origin_mode_defaults_and_normalizes() {
+        assert_eq!(
+            normalize_agent_template_origin_mode(None).unwrap(),
+            "execution"
+        );
+        assert_eq!(
+            normalize_agent_template_origin_mode(Some("chat".to_string())).unwrap(),
+            "research"
+        );
+        assert_eq!(
+            normalize_agent_template_origin_mode(Some("planning".to_string())).unwrap(),
+            "planning"
+        );
+    }
+}
+
 fn validate_terminal_dimension(field_name: &str, value: i64) -> Result<i64> {
     if value <= 0 {
         return Err(anyhow!("{field_name} must be greater than zero"));

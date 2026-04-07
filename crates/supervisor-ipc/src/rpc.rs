@@ -1230,8 +1230,25 @@ fn normalize_rpc_string(value: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_rpc_string, normalize_rpc_value};
+    use super::{Method, SupervisorRpc, normalize_rpc_string, normalize_rpc_value};
     use serde_json::json;
+    use std::env;
+    use std::fs;
+    use std::path::PathBuf;
+    use supervisor_core::{AppPaths, Supervisor};
+
+    fn unique_temp_root() -> PathBuf {
+        let root = env::temp_dir().join(format!(
+            "emery-supervisor-ipc-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
 
     #[test]
     fn normalizes_common_middot_mojibake_sequences() {
@@ -1262,5 +1279,21 @@ mod tests {
             payload["nested"]["items"][1],
             "TEST-PROJECT-1 · verification"
         );
+    }
+
+    #[test]
+    fn hello_advertises_mcp_server_capabilities() {
+        let root = unique_temp_root();
+        let paths = AppPaths::from_root(root.clone()).unwrap();
+        let supervisor = Supervisor::bootstrap(paths).unwrap();
+        let rpc = SupervisorRpc::new(supervisor, "test-endpoint".to_string());
+        let hello = rpc.system_hello().unwrap();
+
+        assert!(hello.capabilities.contains(&Method::McpServerList.as_str()));
+        assert!(hello.capabilities.contains(&Method::McpServerCreate.as_str()));
+        assert!(hello.capabilities.contains(&Method::McpServerUpdate.as_str()));
+        assert!(hello.capabilities.contains(&Method::McpServerDelete.as_str()));
+
+        let _ = fs::remove_dir_all(root);
     }
 }
