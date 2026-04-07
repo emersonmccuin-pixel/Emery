@@ -4869,6 +4869,250 @@ impl SupervisorService {
         Ok(Some(outcome))
     }
 
+    // ── Gardener (EMERY-226.002) ─────────────────────────────────────────────
+
+    /// Run one gardener pass against the given namespace.
+    ///
+    /// Returns the run summary plus the proposals it produced. The pipeline
+    /// is **propose-only**: no memory is retired by this call. Approval is
+    /// `gardener_decide` with action `"approve"`.
+    ///
+    /// Rate-limited to once per 24h per namespace. Within the rate-limit
+    /// window, returns the most recent existing run instead of running again.
+    ///
+    /// Returns Err only on unexpected store/IO failures. LLM failures are
+    /// recorded as a `failed` run row and surfaced as `Ok((summary, []))`
+    /// with `summary.status == "failed"`.
+    pub fn gardener_run(
+        &self,
+        namespace: &str,
+        batch_size: Option<usize>,
+        context: Option<&str>,
+    ) -> Result<(crate::models::GardenerRunSummary, Vec<crate::models::GardenerProposal>)> {
+        use crate::librarian::gardener::{is_rate_limited, run_gardener};
+        use crate::models::{NewGardenerProposalRecord, NewGardenerRunRecord};
+
+        let now = unix_time_seconds();
+
+        // 1. Rate-limit check.
+        if let Some(prev) = self
+            .databases
+            .latest_gardener_run_for_namespace(namespace)?
+        {
+            if is_rate_limited(prev.started_at, now) {
+                let proposals = self.databases.list_gardener_proposals_for_run(&prev.id)?;
+                return Ok((prev, proposals));
+            }
+        }
+
+        // 2. Load currently-valid memories for this namespace.
+        let limit = batch_size.unwrap_or(50).clamp(1, 200);
+        let memories = self.databases.list_memories(&MemoryListRequest {
+            namespace: Some(namespace.to_string()),
+            limit: Some(limit),
+            include_superseded: false,
+        })?;
+
+        // 3. Build the run row up front so failures are still audited.
+        let run_id = format!("grun_{}", Uuid::new_v4().simple());
+        let run_record = NewGardenerRunRecord {
+            id: run_id.clone(),
+            namespace: namespace.to_string(),
+            prompt_version: crate::librarian::prompts::GARDENER_VERSION.to_string(),
+            status: "running".to_string(),
+            proposed_count: 0,
+            approved_count: None,
+            started_at: now,
+            finished_at: None,
+            failure_reason: None,
+        };
+        self.databases.insert_gardener_run(&run_record)?;
+
+        // 4. No memories → trivial completed run, zero proposals.
+        if memories.is_empty() {
+            self.databases
+                .finalize_gardener_run(&run_id, "proposed", Some(0), now, None)?;
+            let summary = self
+                .databases
+                .get_gardener_run(&run_id)?
+                .ok_or_else(|| anyhow!("gardener run {run_id} vanished"))?;
+            return Ok((summary, Vec::new()));
+        }
+
+        // 5. Get Anthropic key — no key = librarian disabled, mark as failed.
+        let Some(api_key) = self.anthropic_api_key() else {
+            self.databases.finalize_gardener_run(
+                &run_id,
+                "failed",
+                None,
+                unix_time_seconds(),
+                Some("ANTHROPIC_API_KEY missing"),
+            )?;
+            let summary = self
+                .databases
+                .get_gardener_run(&run_id)?
+                .ok_or_else(|| anyhow!("gardener run {run_id} vanished"))?;
+            return Ok((summary, Vec::new()));
+        };
+
+        // 6. Run the LLM pass.
+        let chat = crate::librarian::client::AnthropicChatClient::new(api_key);
+        let proposals = match run_gardener(&chat, &memories, context.unwrap_or("")) {
+            Ok(p) => p,
+            Err(e) => {
+                self.databases.finalize_gardener_run(
+                    &run_id,
+                    "failed",
+                    None,
+                    unix_time_seconds(),
+                    Some(&e),
+                )?;
+                let summary = self
+                    .databases
+                    .get_gardener_run(&run_id)?
+                    .ok_or_else(|| anyhow!("gardener run {run_id} vanished"))?;
+                return Ok((summary, Vec::new()));
+            }
+        };
+
+        // 7. Persist proposals.
+        for p in &proposals {
+            let proposal_record = NewGardenerProposalRecord {
+                id: format!("gprp_{}", Uuid::new_v4().simple()),
+                run_id: run_id.clone(),
+                memory_id: p.memory_id.clone(),
+                reason: p.reason.clone(),
+                created_at: unix_time_seconds(),
+            };
+            self.databases.insert_gardener_proposal(&proposal_record)?;
+        }
+
+        // 8. Finalize.
+        self.databases.finalize_gardener_run(
+            &run_id,
+            "proposed",
+            Some(0),
+            unix_time_seconds(),
+            None,
+        )?;
+        // Update proposed_count via a quick re-read+rewrite — the column is
+        // set at insert time, but we want it to reflect the actual proposal
+        // count after the cap was applied, so update it here.
+        // Cheap path: emit one extra UPDATE.
+        // (We don't expose a dedicated helper because this is the only caller.)
+        {
+            use rusqlite::params;
+            let conn = crate::store::open_connection(&self.databases.paths().knowledge_db)?;
+            conn.execute(
+                "UPDATE gardener_runs SET proposed_count = ?2 WHERE id = ?1",
+                params![run_id, proposals.len() as i64],
+            )?;
+        }
+
+        let summary = self
+            .databases
+            .get_gardener_run(&run_id)?
+            .ok_or_else(|| anyhow!("gardener run {run_id} vanished"))?;
+        let stored_proposals = self.databases.list_gardener_proposals_for_run(&run_id)?;
+
+        let _ = self.diagnostics.record(
+            "librarian",
+            "gardener.run_completed",
+            DiagnosticContext::default(),
+            serde_json::json!({
+                "run_id": summary.id,
+                "namespace": summary.namespace,
+                "proposed": stored_proposals.len(),
+                "batch_size": memories.len(),
+            }),
+        );
+
+        Ok((summary, stored_proposals))
+    }
+
+    /// List pending gardener proposals, optionally filtered by namespace.
+    pub fn gardener_review(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<crate::models::GardenerProposal>> {
+        self.databases.list_pending_gardener_proposals(namespace)
+    }
+
+    /// Apply a user decision to a single gardener proposal. `decision` must
+    /// be either "approve" or "reject". Approve retires the underlying memory
+    /// (sets `valid_to = now()`); reject leaves it alone. Either way the
+    /// proposal row is marked.
+    ///
+    /// Idempotent guard: a proposal that already has a decision returns
+    /// an error rather than silently overwriting it.
+    pub fn gardener_decide(
+        &self,
+        proposal_id: &str,
+        decision: &str,
+    ) -> Result<crate::models::GardenerProposal> {
+        let proposal = self
+            .databases
+            .get_gardener_proposal(proposal_id)?
+            .ok_or_else(|| anyhow!("gardener proposal {proposal_id} not found"))?;
+
+        if proposal.user_decision.is_some() {
+            return Err(anyhow!(
+                "gardener proposal {proposal_id} already has decision {:?}",
+                proposal.user_decision
+            ));
+        }
+
+        if decision != "approve" && decision != "reject" {
+            return Err(anyhow!(
+                "gardener decision must be 'approve' or 'reject' (got {decision:?})"
+            ));
+        }
+
+        let now = unix_time_seconds();
+        if decision == "approve" {
+            // Retire the underlying memory. Tolerate already-retired memories
+            // — `expire_memory` is idempotent on `valid_to`.
+            self.databases.expire_memory(&proposal.memory_id, now)?;
+        }
+        self.databases
+            .set_gardener_proposal_decision(proposal_id, decision, now)?;
+
+        let updated = self
+            .databases
+            .get_gardener_proposal(proposal_id)?
+            .ok_or_else(|| anyhow!("gardener proposal {proposal_id} vanished"))?;
+
+        let _ = self.diagnostics.record(
+            "librarian",
+            "gardener.decision_applied",
+            DiagnosticContext::default(),
+            serde_json::json!({
+                "proposal_id": proposal_id,
+                "memory_id": proposal.memory_id,
+                "decision": decision,
+            }),
+        );
+
+        Ok(updated)
+    }
+
+    /// Build the librarian digest. See `librarian::digest::build_digest`.
+    pub fn librarian_digest(
+        &self,
+        namespace: Option<&str>,
+        since_days: Option<i64>,
+        include_dropped: bool,
+    ) -> Result<crate::librarian::digest::LibrarianDigest> {
+        let since_secs = since_days.unwrap_or(7).max(1) * 24 * 60 * 60;
+        crate::librarian::digest::build_digest(
+            &self.databases,
+            namespace,
+            unix_time_seconds(),
+            since_secs,
+            include_dropped,
+        )
+    }
+
     /// Look up the wcp_namespace of the project that owns this session.
     /// Returns None if the session has no project, the project has no
     /// namespace, or any lookup step fails.
@@ -5421,7 +5665,10 @@ fn validate_restore_policy(value: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SupervisorService, normalize_agent_template_origin_mode, validate_session_mode};
+    use super::{
+        SupervisorService, normalize_agent_template_origin_mode, unix_time_seconds,
+        validate_session_mode,
+    };
     use crate::bootstrap::AppPaths;
     use crate::diagnostics::DiagnosticsHub;
     use crate::models::{
@@ -5850,6 +6097,196 @@ mod tests {
         assert_eq!(second.runtime_state, "failed");
         assert_eq!(second.status, "failed");
 
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // ── Gardener (EMERY-226.002) ─────────────────────────────────────────────
+
+    fn insert_test_memory(service: &SupervisorService, namespace: &str, content: &str) -> String {
+        use crate::models::NewMemoryRecord;
+        let id = format!("mem_test_{}", uuid::Uuid::new_v4().simple());
+        let now = unix_time_seconds();
+        service
+            .databases
+            .insert_memory(&NewMemoryRecord {
+                id: id.clone(),
+                namespace: namespace.to_string(),
+                content: content.to_string(),
+                source_ref: None,
+                embedding: None,
+                embedding_model: None,
+                input_hash: None,
+                valid_from: now,
+                valid_to: None,
+                supersedes_id: None,
+                created_at: now,
+                updated_at: now,
+            })
+            .unwrap();
+        id
+    }
+
+    fn insert_test_gardener_proposal(
+        service: &SupervisorService,
+        namespace: &str,
+        memory_id: &str,
+    ) -> (String, String) {
+        use crate::models::{NewGardenerProposalRecord, NewGardenerRunRecord};
+        let now = unix_time_seconds();
+        let run_id = format!("grun_test_{}", uuid::Uuid::new_v4().simple());
+        service
+            .databases
+            .insert_gardener_run(&NewGardenerRunRecord {
+                id: run_id.clone(),
+                namespace: namespace.to_string(),
+                prompt_version: "v1".to_string(),
+                status: "proposed".to_string(),
+                proposed_count: 1,
+                approved_count: None,
+                started_at: now,
+                finished_at: Some(now),
+                failure_reason: None,
+            })
+            .unwrap();
+        let prop_id = format!("gprp_test_{}", uuid::Uuid::new_v4().simple());
+        service
+            .databases
+            .insert_gardener_proposal(&NewGardenerProposalRecord {
+                id: prop_id.clone(),
+                run_id: run_id.clone(),
+                memory_id: memory_id.to_string(),
+                reason: "stale".to_string(),
+                created_at: now,
+            })
+            .unwrap();
+        (run_id, prop_id)
+    }
+
+    #[test]
+    fn gardener_run_with_no_memories_completes_zero_proposals() {
+        let (service, root) = build_test_service();
+        let (summary, proposals) = service.gardener_run("EMERY", None, None).unwrap();
+        assert_eq!(summary.status, "proposed");
+        assert_eq!(summary.proposed_count, 0);
+        assert!(proposals.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn gardener_run_without_api_key_records_failure() {
+        let (service, root) = build_test_service();
+        // Seed a memory so the no-memories short-circuit doesn't fire.
+        let _ = insert_test_memory(&service, "EMERY", "decision: use WAL");
+        let (summary, proposals) = service.gardener_run("EMERY", None, None).unwrap();
+        assert_eq!(summary.status, "failed");
+        assert!(
+            summary
+                .failure_reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("ANTHROPIC_API_KEY"),
+            "expected api key failure reason, got {:?}",
+            summary.failure_reason,
+        );
+        assert!(proposals.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn gardener_run_returns_existing_run_within_rate_limit() {
+        let (service, root) = build_test_service();
+        // First run hits no-memories path → completed.
+        let (first, _) = service.gardener_run("EMERY", None, None).unwrap();
+        // Second call within 24h should return the same run unchanged.
+        let (second, _) = service.gardener_run("EMERY", None, None).unwrap();
+        assert_eq!(first.id, second.id);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn gardener_review_lists_only_pending_proposals() {
+        let (service, root) = build_test_service();
+        let mem_id = insert_test_memory(&service, "EMERY", "decision: use WAL");
+        let (_run_id, prop_id) = insert_test_gardener_proposal(&service, "EMERY", &mem_id);
+
+        let pending = service.gardener_review(Some("EMERY")).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, prop_id);
+
+        // Decide it; no longer pending.
+        service.gardener_decide(&prop_id, "reject").unwrap();
+        let pending2 = service.gardener_review(Some("EMERY")).unwrap();
+        assert!(pending2.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn gardener_decide_approve_retires_underlying_memory() {
+        let (service, root) = build_test_service();
+        let mem_id = insert_test_memory(&service, "EMERY", "decision: use WAL");
+        let (_run, prop_id) = insert_test_gardener_proposal(&service, "EMERY", &mem_id);
+
+        // Memory starts valid.
+        let before = service.databases.get_memory(&mem_id).unwrap().unwrap();
+        assert!(before.valid_to.is_none());
+
+        service.gardener_decide(&prop_id, "approve").unwrap();
+
+        let after = service.databases.get_memory(&mem_id).unwrap().unwrap();
+        assert!(after.valid_to.is_some(), "approve should set valid_to");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn gardener_decide_reject_leaves_memory_valid() {
+        let (service, root) = build_test_service();
+        let mem_id = insert_test_memory(&service, "EMERY", "decision: use WAL");
+        let (_run, prop_id) = insert_test_gardener_proposal(&service, "EMERY", &mem_id);
+
+        service.gardener_decide(&prop_id, "reject").unwrap();
+
+        let after = service.databases.get_memory(&mem_id).unwrap().unwrap();
+        assert!(after.valid_to.is_none(), "reject must not retire memory");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn gardener_decide_refuses_double_decision() {
+        let (service, root) = build_test_service();
+        let mem_id = insert_test_memory(&service, "EMERY", "decision: use WAL");
+        let (_run, prop_id) = insert_test_gardener_proposal(&service, "EMERY", &mem_id);
+
+        service.gardener_decide(&prop_id, "reject").unwrap();
+        let err = service.gardener_decide(&prop_id, "approve").unwrap_err();
+        assert!(
+            err.to_string().contains("already has decision"),
+            "expected double-decision error, got {err}",
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn gardener_decide_rejects_invalid_action() {
+        let (service, root) = build_test_service();
+        let mem_id = insert_test_memory(&service, "EMERY", "decision: use WAL");
+        let (_run, prop_id) = insert_test_gardener_proposal(&service, "EMERY", &mem_id);
+
+        let err = service.gardener_decide(&prop_id, "maybe").unwrap_err();
+        assert!(
+            err.to_string().contains("must be 'approve' or 'reject'"),
+            "expected invalid-decision error, got {err}",
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn librarian_digest_wraps_build_digest() {
+        let (service, root) = build_test_service();
+        // Empty store → empty digest, should not error.
+        let d = service.librarian_digest(Some("EMERY"), Some(7), false).unwrap();
+        assert_eq!(d.namespace.as_deref(), Some("EMERY"));
+        assert_eq!(d.kept_counts.total(), 0);
+        assert_eq!(d.dropped_count, 0);
         let _ = fs::remove_dir_all(root);
     }
 }

@@ -1823,3 +1823,60 @@ pub struct NewLibrarianCandidateRecord {
     pub written_memory_id: Option<String>,
     pub created_at: i64,
 }
+
+// ── Gardener (EMERY-226.002) ─────────────────────────────────────────────────
+
+/// One row in `gardener_runs`. The gardener proposes retirements; it never
+/// performs them. Approval is a separate explicit action.
+#[derive(Debug, Clone)]
+pub struct NewGardenerRunRecord {
+    pub id: String,
+    pub namespace: String,
+    pub prompt_version: String,
+    /// proposed | approved | rejected | partially_approved | failed
+    pub status: String,
+    pub proposed_count: i64,
+    pub approved_count: Option<i64>,
+    pub started_at: i64,
+    pub finished_at: Option<i64>,
+    pub failure_reason: Option<String>,
+}
+
+/// Read-shape for a gardener run row, returned by listing/review queries.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GardenerRunSummary {
+    pub id: String,
+    pub namespace: String,
+    pub prompt_version: String,
+    pub status: String,
+    pub proposed_count: i64,
+    pub approved_count: Option<i64>,
+    pub started_at: i64,
+    pub finished_at: Option<i64>,
+    pub failure_reason: Option<String>,
+}
+
+/// One row in `gardener_proposals`. A proposal points at a specific memory
+/// and carries the gardener's reason; until `user_decision` is set the
+/// memory remains untouched.
+#[derive(Debug, Clone)]
+pub struct NewGardenerProposalRecord {
+    pub id: String,
+    pub run_id: String,
+    pub memory_id: String,
+    pub reason: String,
+    pub created_at: i64,
+}
+
+/// Read-shape for a gardener proposal row.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GardenerProposal {
+    pub id: String,
+    pub run_id: String,
+    pub memory_id: String,
+    pub reason: String,
+    /// approve | reject | None (still pending)
+    pub user_decision: Option<String>,
+    pub decided_at: Option<i64>,
+    pub created_at: i64,
+}

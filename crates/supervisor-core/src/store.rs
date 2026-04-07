@@ -28,6 +28,7 @@ use crate::models::{
     NewVaultAuditRecord, McpServerSummary, NewMcpServerRecord, McpServerUpdateRecord,
     DocumentEmbeddingRow,
     Memory, MemoryEmbeddingRow, MemoryListRequest, NewMemoryRecord,
+    GardenerProposal, GardenerRunSummary, NewGardenerProposalRecord, NewGardenerRunRecord,
     NewLibrarianCandidateRecord, NewLibrarianRunRecord,
 };
 use crate::schema::{migrate_app_db, migrate_knowledge_db};
@@ -3840,6 +3841,250 @@ impl DatabaseSet {
         )?;
         Ok(count)
     }
+
+    // ── Gardener (EMERY-226.002) ─────────────────────────────────────────────
+
+    pub fn insert_gardener_run(&self, record: &NewGardenerRunRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        connection.execute(
+            "INSERT INTO gardener_runs (
+                id, namespace, prompt_version, status,
+                proposed_count, approved_count,
+                started_at, finished_at, failure_reason
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                record.id,
+                record.namespace,
+                record.prompt_version,
+                record.status,
+                record.proposed_count,
+                record.approved_count,
+                record.started_at,
+                record.finished_at,
+                record.failure_reason,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn finalize_gardener_run(
+        &self,
+        run_id: &str,
+        status: &str,
+        approved_count: Option<i64>,
+        finished_at: i64,
+        failure_reason: Option<&str>,
+    ) -> Result<()> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        connection.execute(
+            "UPDATE gardener_runs
+                SET status = ?2,
+                    approved_count = ?3,
+                    finished_at = ?4,
+                    failure_reason = ?5
+              WHERE id = ?1",
+            params![run_id, status, approved_count, finished_at, failure_reason],
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_gardener_proposal(&self, record: &NewGardenerProposalRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        connection.execute(
+            "INSERT INTO gardener_proposals (
+                id, run_id, memory_id, reason, user_decision, decided_at, created_at
+            ) VALUES (?1, ?2, ?3, ?4, NULL, NULL, ?5)",
+            params![
+                record.id,
+                record.run_id,
+                record.memory_id,
+                record.reason,
+                record.created_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_gardener_proposal_decision(
+        &self,
+        proposal_id: &str,
+        decision: &str,
+        decided_at: i64,
+    ) -> Result<()> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        connection.execute(
+            "UPDATE gardener_proposals
+                SET user_decision = ?2, decided_at = ?3
+              WHERE id = ?1",
+            params![proposal_id, decision, decided_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_gardener_proposal(&self, proposal_id: &str) -> Result<Option<GardenerProposal>> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let row = connection
+            .query_row(
+                "SELECT id, run_id, memory_id, reason, user_decision, decided_at, created_at
+                   FROM gardener_proposals WHERE id = ?1",
+                params![proposal_id],
+                |row| {
+                    Ok(GardenerProposal {
+                        id: row.get(0)?,
+                        run_id: row.get(1)?,
+                        memory_id: row.get(2)?,
+                        reason: row.get(3)?,
+                        user_decision: row.get(4)?,
+                        decided_at: row.get(5)?,
+                        created_at: row.get(6)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    pub fn list_gardener_proposals_for_run(
+        &self,
+        run_id: &str,
+    ) -> Result<Vec<GardenerProposal>> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let mut stmt = connection.prepare(
+            "SELECT id, run_id, memory_id, reason, user_decision, decided_at, created_at
+               FROM gardener_proposals
+              WHERE run_id = ?1
+              ORDER BY created_at ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![run_id], |row| {
+                Ok(GardenerProposal {
+                    id: row.get(0)?,
+                    run_id: row.get(1)?,
+                    memory_id: row.get(2)?,
+                    reason: row.get(3)?,
+                    user_decision: row.get(4)?,
+                    decided_at: row.get(5)?,
+                    created_at: row.get(6)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    pub fn list_pending_gardener_proposals(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<GardenerProposal>> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let rows = match namespace {
+            Some(ns) => {
+                let mut stmt = connection.prepare(
+                    "SELECT p.id, p.run_id, p.memory_id, p.reason,
+                            p.user_decision, p.decided_at, p.created_at
+                       FROM gardener_proposals p
+                       JOIN gardener_runs r ON r.id = p.run_id
+                      WHERE p.user_decision IS NULL AND r.namespace = ?1
+                      ORDER BY p.created_at ASC",
+                )?;
+                stmt.query_map(params![ns], |row| {
+                    Ok(GardenerProposal {
+                        id: row.get(0)?,
+                        run_id: row.get(1)?,
+                        memory_id: row.get(2)?,
+                        reason: row.get(3)?,
+                        user_decision: row.get(4)?,
+                        decided_at: row.get(5)?,
+                        created_at: row.get(6)?,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+            }
+            None => {
+                let mut stmt = connection.prepare(
+                    "SELECT id, run_id, memory_id, reason,
+                            user_decision, decided_at, created_at
+                       FROM gardener_proposals
+                      WHERE user_decision IS NULL
+                      ORDER BY created_at ASC",
+                )?;
+                stmt.query_map([], |row| {
+                    Ok(GardenerProposal {
+                        id: row.get(0)?,
+                        run_id: row.get(1)?,
+                        memory_id: row.get(2)?,
+                        reason: row.get(3)?,
+                        user_decision: row.get(4)?,
+                        decided_at: row.get(5)?,
+                        created_at: row.get(6)?,
+                    })
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+            }
+        };
+        Ok(rows)
+    }
+
+    /// Most recent gardener run for a namespace, or None.
+    pub fn latest_gardener_run_for_namespace(
+        &self,
+        namespace: &str,
+    ) -> Result<Option<GardenerRunSummary>> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let row = connection
+            .query_row(
+                "SELECT id, namespace, prompt_version, status,
+                        proposed_count, approved_count,
+                        started_at, finished_at, failure_reason
+                   FROM gardener_runs
+                  WHERE namespace = ?1
+                  ORDER BY started_at DESC
+                  LIMIT 1",
+                params![namespace],
+                |row| {
+                    Ok(GardenerRunSummary {
+                        id: row.get(0)?,
+                        namespace: row.get(1)?,
+                        prompt_version: row.get(2)?,
+                        status: row.get(3)?,
+                        proposed_count: row.get(4)?,
+                        approved_count: row.get(5)?,
+                        started_at: row.get(6)?,
+                        finished_at: row.get(7)?,
+                        failure_reason: row.get(8)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    pub fn get_gardener_run(&self, run_id: &str) -> Result<Option<GardenerRunSummary>> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let row = connection
+            .query_row(
+                "SELECT id, namespace, prompt_version, status,
+                        proposed_count, approved_count,
+                        started_at, finished_at, failure_reason
+                   FROM gardener_runs
+                  WHERE id = ?1",
+                params![run_id],
+                |row| {
+                    Ok(GardenerRunSummary {
+                        id: row.get(0)?,
+                        namespace: row.get(1)?,
+                        prompt_version: row.get(2)?,
+                        status: row.get(3)?,
+                        proposed_count: row.get(4)?,
+                        approved_count: row.get(5)?,
+                        started_at: row.get(6)?,
+                        finished_at: row.get(7)?,
+                        failure_reason: row.get(8)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
 }
 
 /// One-shot idempotent repair for orphaned work items created while the Emery project
@@ -3883,7 +4128,7 @@ fn heal_orphaned_project_ids(paths: &AppPaths) -> Result<()> {
     Ok(())
 }
 
-fn open_connection(path: &Path) -> Result<Connection> {
+pub(crate) fn open_connection(path: &Path) -> Result<Connection> {
     let connection = Connection::open(path)?;
     connection.pragma_update(None, "foreign_keys", "ON")?;
     Ok(connection)

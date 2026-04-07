@@ -21,7 +21,9 @@
 pub mod audit;
 pub mod client;
 pub mod critic;
+pub mod digest;
 pub mod extract;
+pub mod gardener;
 pub mod orchestrator;
 pub mod prompts;
 pub mod triage;

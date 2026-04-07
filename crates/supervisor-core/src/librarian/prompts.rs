@@ -18,6 +18,7 @@
 pub const TRIAGE_VERSION: &str = "v1";
 pub const EXTRACT_VERSION: &str = "v1";
 pub const CRITIC_VERSION: &str = "v1";
+pub const GARDENER_VERSION: &str = "v1";
 
 // ---------------------------------------------------------------------------
 // Triage prompt (Haiku)
@@ -133,6 +134,49 @@ Transcript (for verifying evidence quotes):
 "#;
 
 // ---------------------------------------------------------------------------
+// Gardener prompt (Sonnet) — propose-only retirement curator
+// ---------------------------------------------------------------------------
+
+pub const GARDENER_PROMPT_V1: &str = r#"You are the gardener for a session librarian's memory store. Your job is to look at a slice of currently-valid memories and propose which ones should be retired.
+
+A memory should be retired if ANY of the following are true:
+- It refers to code, files, or systems that no longer exist.
+- It records a decision that has since been explicitly reversed by a newer memory.
+- It records an "open_question" that has since been answered (the answer should be in another memory or in the codebase).
+- It is a duplicate or near-duplicate of a more recent, more specific memory.
+- It is so generic that it provides no signal in retrieval ("we should write good tests").
+- It was a contradiction marker that has since been resolved.
+
+A memory should NOT be retired just because:
+- It is old. Age alone is not a reason. A two-year-old foundational decision is more valuable than a two-day-old preference.
+- It has not been retrieved recently. Some memories exist for the rare moment they're needed.
+- It is uncomfortable or surfaces a past mistake. The audit value is the point.
+
+Hard cap: you may propose at most {MAX_RETIREMENTS} retirements from this batch of {BATCH_SIZE} memories. If more than {MAX_RETIREMENTS} look retire-able, propose only the {MAX_RETIREMENTS} most clearly retire-able and explain in the reason why each was chosen over the rest.
+
+You are PROPOSING, not deciding. A human will review every proposal before anything is retired. This means you should err toward proposing — but each proposal must come with a specific reason a human can evaluate.
+
+Output format — JSON array, possibly empty:
+
+[
+  {
+    "memory_id": "<id from input>",
+    "reason": "<one to two sentences. Be specific. 'Generic' is not a reason; quote the generic phrase. 'Superseded' is not a reason; name the superseding memory if you can.>"
+  }
+]
+
+Memories under review:
+---
+{MEMORIES_JSON}
+---
+
+Recent codebase / project context (for judging "no longer exists" claims):
+---
+{CONTEXT}
+---
+"#;
+
+// ---------------------------------------------------------------------------
 // Substitution helpers
 // ---------------------------------------------------------------------------
 
@@ -154,6 +198,21 @@ pub fn current_versions_json() -> String {
         r#"{{"triage":"{}","extract":"{}","critic":"{}"}}"#,
         TRIAGE_VERSION, EXTRACT_VERSION, CRITIC_VERSION
     )
+}
+
+/// Substitute the gardener prompt's three placeholders.
+pub fn render_gardener(
+    prompt: &str,
+    memories_json: &str,
+    context: &str,
+    max_retirements: usize,
+    batch_size: usize,
+) -> String {
+    prompt
+        .replace("{MEMORIES_JSON}", memories_json)
+        .replace("{CONTEXT}", context)
+        .replace("{MAX_RETIREMENTS}", &max_retirements.to_string())
+        .replace("{BATCH_SIZE}", &batch_size.to_string())
 }
 
 // ---------------------------------------------------------------------------
