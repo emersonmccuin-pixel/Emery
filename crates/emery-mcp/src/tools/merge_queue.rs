@@ -99,11 +99,12 @@ pub fn handle_merge_queue_list(input: Value) -> Result<String> {
     };
 
     let mut table = String::from(
-        "| # | Branch | Status | Work Item | Session | Files | +Lines | -Lines | Queued At |\n\
-         |---|--------|--------|-----------|---------|-------|--------|--------|-----------|\n",
+        "| Entry ID | # | Branch | Status | Work Item | Session | Files | +Lines | -Lines | Queued At |\n\
+         |----------|---|--------|--------|-----------|---------|-------|--------|--------|-----------|\n",
     );
 
     for entry in items {
+        let entry_id = entry["id"].as_str().unwrap_or("-");
         let position = entry["position"]
             .as_i64()
             .map(|n| n.to_string())
@@ -125,8 +126,8 @@ pub fn handle_merge_queue_list(input: Value) -> Result<String> {
         };
 
         table.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
-            position, branch, status, callsign, session_title, files, insertions, deletions, queued_at
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+            entry_id, position, branch, status, callsign, session_title, files, insertions, deletions, queued_at
         ));
     }
 
