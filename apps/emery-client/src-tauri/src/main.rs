@@ -1838,6 +1838,19 @@ fn vault_list(
 }
 
 #[tauri::command]
+fn vault_get(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    scope: String,
+    key: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(&app, "vault.get", json!({ "scope": scope, "key": key }), correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
 fn vault_set(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
@@ -2042,6 +2055,7 @@ fn main() {
             update_agent_template,
             archive_agent_template,
             vault_list,
+            vault_get,
             vault_set,
             vault_delete,
             vault_unlock,

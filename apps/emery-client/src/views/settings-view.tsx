@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { appStore, useAppStore } from "../store";
 import { navStore } from "../nav-store";
-import type { AccountSummary, McpServerSummary } from "../types";
+import type { AccountSummary, McpServerSummary, VaultEntry, VaultLockStatus } from "../types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { pickFolder, listMcpServers, createMcpServer, updateMcpServer, deleteMcpServer } from "../lib";
+import { pickFolder, listMcpServers, createMcpServer, updateMcpServer, deleteMcpServer, vaultStatus, vaultList, vaultGet, vaultSet, vaultDelete, vaultUnlock } from "../lib";
 import {
   type AppearanceOverrides,
   loadOverrides,
@@ -23,7 +23,7 @@ import {
 } from "../appearance";
 import { setStoredValue } from "../utils/local-storage";
 
-type SettingsTab = "accounts" | "appearance" | "agent-defaults" | "mcp-servers" | "github" | "knowledge" | "resolution";
+type SettingsTab = "accounts" | "appearance" | "agent-defaults" | "mcp-servers" | "github" | "knowledge" | "resolution" | "api-keys";
 
 export function SettingsView() {
   const [activeTab, setActiveTab] = useState<SettingsTab>("accounts");
@@ -36,6 +36,7 @@ export function SettingsView() {
     { id: "github", label: "GitHub" },
     { id: "knowledge", label: "Knowledge Store" },
     { id: "resolution", label: "Config Resolution" },
+    { id: "api-keys", label: "API Keys" },
   ];
 
   return (
@@ -72,6 +73,7 @@ export function SettingsView() {
             {activeTab === "github" && <GitHubSection />}
             {activeTab === "knowledge" && <KnowledgeStoreSection />}
             {activeTab === "resolution" && <ConfigResolutionSection />}
+            {activeTab === "api-keys" && <ApiKeysSection />}
           </div>
         </div>
       </div>
@@ -1467,5 +1469,259 @@ function ConfigResolutionSection() {
 
       </CardContent>
     </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// API Keys Section
+// ---------------------------------------------------------------------------
+
+// Canonical key name for downstream consumers (EMERY-217.002 reads this).
+const API_KEY_SLOTS: Array<{ key: string; label: string; description: string }> = [
+  { key: "VOYAGE_API_KEY", label: "Voyage AI", description: "Used for generating embeddings (semantic search)" },
+];
+
+const VAULT_SCOPE = "global";
+
+function maskValue(value: string): string {
+  if (value.length <= 4) return "••••••••";
+  return `••••••••${value.slice(-4)}`;
+}
+
+function ApiKeysSection() {
+  const [lockStatus, setLockStatus] = useState<VaultLockStatus | null>(null);
+  const [entries, setEntries] = useState<VaultEntry[]>([]);
+  const [maskedValues, setMaskedValues] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [unlocking, setUnlocking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function refresh() {
+    setError(null);
+    try {
+      const status = await vaultStatus();
+      setLockStatus(status);
+      if (status.unlocked) {
+        const all = await vaultList(VAULT_SCOPE);
+        setEntries(all);
+        // Fetch masked values for known slots that are stored.
+        const masked: Record<string, string> = {};
+        for (const slot of API_KEY_SLOTS) {
+          const entry = all.find((e) => e.scope === VAULT_SCOPE && e.key === slot.key);
+          if (entry) {
+            try {
+              const result = await vaultGet(VAULT_SCOPE, slot.key);
+              if (result.value) {
+                masked[slot.key] = maskValue(result.value);
+              }
+            } catch {
+              // If we can't fetch the value, show a generic mask.
+              masked[slot.key] = "••••••••";
+            }
+          }
+        }
+        setMaskedValues(masked);
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  async function handleUnlock() {
+    setUnlocking(true);
+    setError(null);
+    try {
+      await vaultUnlock();
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setUnlocking(false);
+    }
+  }
+
+  function findEntry(key: string): VaultEntry | undefined {
+    return entries.find((e) => e.scope === VAULT_SCOPE && e.key === key);
+  }
+
+  return (
+    <Card className="settings-panel">
+      <CardHeader>
+        <CardTitle className="settings-section-title">API Keys</CardTitle>
+        <CardDescription className="settings-section-desc">
+          Third-party API keys stored securely in the encrypted vault.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {loading && <div className="settings-empty-note">Loading…</div>}
+
+        {!loading && error && (
+          <div className="settings-empty-note" style={{ color: "var(--destructive, #e55)" }}>
+            {error}
+          </div>
+        )}
+
+        {!loading && !error && lockStatus && !lockStatus.unlocked && (
+          <div className="settings-vault-locked">
+            <p className="settings-vault-locked-msg">
+              The vault is locked. Unlock it to view or edit API keys.
+            </p>
+            <Button
+              variant="terminal"
+              size="sm"
+              onClick={() => void handleUnlock()}
+              disabled={unlocking}
+            >
+              {unlocking ? "Unlocking…" : "Unlock Vault"}
+            </Button>
+          </div>
+        )}
+
+        {!loading && !error && lockStatus?.unlocked && (
+          <div className="settings-api-key-list">
+            {API_KEY_SLOTS.map((slot) => (
+              <ApiKeyRow
+                key={slot.key}
+                slotKey={slot.key}
+                label={slot.label}
+                description={slot.description}
+                entry={findEntry(slot.key)}
+                maskedValue={maskedValues[slot.key] ?? null}
+                onSaved={() => void refresh()}
+              />
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ApiKeyRow({
+  slotKey,
+  label,
+  description,
+  entry,
+  maskedValue,
+  onSaved,
+}: {
+  slotKey: string;
+  label: string;
+  description: string;
+  entry: VaultEntry | undefined;
+  maskedValue: string | null;
+  onSaved: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [inputValue, setInputValue] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  async function handleSave() {
+    if (!inputValue.trim()) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await vaultSet(VAULT_SCOPE, slotKey, inputValue.trim(), description);
+      setInputValue("");
+      setEditing(false);
+      onSaved();
+    } catch (e) {
+      setSaveError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!entry) return;
+    setDeleting(true);
+    try {
+      await vaultDelete(entry.id);
+      onSaved();
+    } catch {
+      // ignore; onSaved refresh will reconcile
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  function handleCancel() {
+    setInputValue("");
+    setSaveError(null);
+    setEditing(false);
+  }
+
+  return (
+    <div className="settings-api-key-row">
+      <div className="settings-api-key-info">
+        <span className="settings-api-key-label">{label}</span>
+        <span className="settings-api-key-desc">{description}</span>
+      </div>
+      {editing ? (
+        <div className="settings-api-key-edit">
+          <Input
+            className="settings-input"
+            type="password"
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void handleSave();
+              if (e.key === "Escape") handleCancel();
+            }}
+            placeholder="Paste your API key here"
+            autoFocus
+          />
+          {saveError && (
+            <span className="settings-api-key-error">{saveError}</span>
+          )}
+          <div className="settings-form-actions">
+            <Button
+              variant="terminal"
+              size="sm"
+              onClick={() => void handleSave()}
+              disabled={saving || !inputValue.trim()}
+            >
+              {saving ? "Saving…" : "Save"}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={handleCancel} disabled={saving}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="settings-api-key-value-row">
+          <span className="settings-api-key-masked">
+            {maskedValue ?? <span style={{ opacity: 0.5 }}>not set</span>}
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setEditing(true)}
+            title={entry ? "Update key" : "Set key"}
+          >
+            {entry ? "Edit" : "Set"}
+          </Button>
+          {entry && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void handleDelete()}
+              disabled={deleting}
+              title="Remove key"
+            >
+              {deleting ? "Removing…" : "Delete"}
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

@@ -32,7 +32,8 @@ use crate::protocol::{
     ResponseEnvelope, SessionAttachParams, SessionControlParams, SessionDetachParams,
     SessionGetParams, SessionInputParams, SessionResizeParams, SessionSpecGetParams,
     SessionWatchParams, SubscriptionCloseParams, SubscriptionOpenParams, VaultAuditLogParams,
-    VaultDeleteParams, VaultListParams, VaultSetParams, VaultUnlockParams, WorkItemGetParams,
+    VaultDeleteParams, VaultGetParams, VaultListParams, VaultSetParams, VaultUnlockParams,
+    WorkItemGetParams,
     WorkflowReconciliationProposalGetParams, WorkspaceStateGetParams, WorktreeGetParams,
 };
 
@@ -738,6 +739,13 @@ impl SupervisorRpc {
                     self.supervisor.vault_list_entries(params.scope.as_deref())?,
                 )?)
             }
+            Method::VaultGet => {
+                let params: VaultGetParams = serde_json::from_value(params)?;
+                let value = self
+                    .supervisor
+                    .vault_get_entry_value(&params.scope, &params.key, "user")?;
+                Ok(json!({ "value": value }))
+            }
             Method::VaultSet => {
                 let params: VaultSetParams = serde_json::from_value(params)?;
                 let request = CreateVaultEntryRequest {
@@ -1021,6 +1029,7 @@ impl SupervisorRpc {
                 Method::AgentTemplateUpdate.as_str(),
                 Method::AgentTemplateArchive.as_str(),
                 Method::VaultList.as_str(),
+                Method::VaultGet.as_str(),
                 Method::VaultSet.as_str(),
                 Method::VaultDelete.as_str(),
                 Method::VaultUnlock.as_str(),

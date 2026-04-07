@@ -747,6 +747,14 @@ export async function vaultList(scope?: string, correlationId?: string): Promise
   return invoke("vault_list", { scope, correlationId });
 }
 
+export async function vaultGet(
+  scope: string,
+  key: string,
+  correlationId?: string,
+): Promise<{ value: string | null }> {
+  return invoke("vault_get", { scope, key, correlationId });
+}
+
 export async function vaultSet(
   scope: string,
   key: string,
