@@ -46,6 +46,8 @@ pub fn all_tools() -> Value {
         knowledge::tool_document_get(),
         knowledge::tool_document_create(),
         knowledge::tool_document_update(),
+        knowledge::tool_work_item_search(),
+        knowledge::tool_document_search(),
     ])
 }
 
@@ -85,6 +87,8 @@ pub fn call_tool(name: &str, input: Value) -> Result<String> {
         "emery_document_get" => knowledge::handle_document_get(input),
         "emery_document_create" => knowledge::handle_document_create(input),
         "emery_document_update" => knowledge::handle_document_update(input),
+        "emery_work_item_search" => knowledge::handle_work_item_search(input),
+        "emery_document_search" => knowledge::handle_document_search(input),
         _ => Err(anyhow::anyhow!("unknown tool: {}", name)),
     }
 }

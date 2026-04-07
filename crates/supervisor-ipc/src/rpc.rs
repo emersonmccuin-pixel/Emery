@@ -22,6 +22,7 @@ use supervisor_core::{
     WorkItemListFilter, WorkflowReconciliationProposalListFilter, WorktreeListFilter,
     CreateMcpServerRequest, UpdateMcpServerRequest, DeleteMcpServerRequest,
     ProvisionWorktreeRequest, CloseWorktreeRequest,
+    WorkItemSearchRequest, DocumentSearchRequest,
 };
 
 
@@ -797,6 +798,18 @@ impl SupervisorRpc {
                 let request: DeleteMcpServerRequest = serde_json::from_value(params)?;
                 self.supervisor.delete_mcp_server(request)?;
                 Ok(json!({ "ok": true }))
+            }
+            Method::WorkItemSearch => {
+                let request: WorkItemSearchRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.search_work_items(request)?,
+                )?)
+            }
+            Method::DocumentSearch => {
+                let request: DocumentSearchRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.search_documents(request)?,
+                )?)
             }
             Method::SubscriptionOpen => {
                 let params: SubscriptionOpenParams = serde_json::from_value(params)?;

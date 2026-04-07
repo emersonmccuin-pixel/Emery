@@ -7,6 +7,14 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::agent_profile::{AgentProfile, GuardKind, InstructionDisposition};
+use crate::embeddings::pipeline::{
+    canonical_document_input, canonical_work_item_input, compute_input_hash,
+};
+use crate::embeddings::ranker::{
+    blob_to_vec, cosine_similarity, final_score as ranker_final_score,
+    recency_decay as ranker_recency_decay, status_weight as ranker_status_weight, vec_to_blob,
+};
+use crate::embeddings::voyage::{VoyageClient, DEFAULT_MODEL};
 use crate::git;
 use crate::diagnostics::{
     DiagnosticContext, DiagnosticsBundleRequest, DiagnosticsBundleResult, DiagnosticsHub,
@@ -43,6 +51,7 @@ use crate::models::{
     McpServerSummary, CreateMcpServerRequest, UpdateMcpServerRequest, DeleteMcpServerRequest,
     NewMcpServerRecord, McpServerUpdateRecord, ProvisionWorktreeRequest,
     CloseWorktreeRequest, CloseWorktreeResult,
+    WorkItemSearchRequest, WorkItemSearchResult, DocumentSearchRequest, DocumentSearchResult,
 };
 use crate::runtime::{SessionLaunchRequest, SessionRegistry, SessionRuntimeRegistration};
 use crate::store::DatabaseSet;
@@ -1263,6 +1272,13 @@ impl SupervisorService {
         };
 
         self.databases.insert_work_item(&record)?;
+        // Embed asynchronously in the write path; failures are suppressed.
+        self.try_embed_work_item(
+            &record.id,
+            &record.title,
+            &record.description,
+            record.acceptance_criteria.as_deref(),
+        );
         self.get_work_item(&record.id)?
             .ok_or_else(|| anyhow!("work item {} was not found", record.id))
     }
@@ -1314,6 +1330,13 @@ impl SupervisorService {
         };
 
         self.databases.update_work_item(&record)?;
+        // Re-embed if text fields changed.
+        self.try_embed_work_item(
+            &record.id,
+            &record.title,
+            &record.description,
+            record.acceptance_criteria.as_deref(),
+        );
         self.get_work_item(&existing.summary.id)?
             .ok_or_else(|| anyhow!("work item {} was not found", existing.summary.id))
     }
@@ -1389,6 +1412,8 @@ impl SupervisorService {
         };
 
         self.databases.insert_document(&record)?;
+        // Embed after successful insert; failures are suppressed.
+        self.try_embed_document(&document_id, &record.title, &record.content_markdown);
         self.get_document(&document_id)?
             .ok_or_else(|| anyhow!("document {} was not found", document_id))
     }
@@ -1455,8 +1480,379 @@ impl SupervisorService {
         };
 
         self.databases.update_document(&record)?;
+        // Re-embed if content changed.
+        self.try_embed_document(&record.id, &record.title, &record.content_markdown);
         self.get_document(&existing.summary.id)?
             .ok_or_else(|| anyhow!("document {} was not found", existing.summary.id))
+    }
+
+    // ── Embedding pipeline ────────────────────────────────────────────────────
+
+    /// Retrieve the VOYAGE_API_KEY from the vault, if available.
+    /// Returns None (with a log) if vault is locked or key is absent.
+    fn voyage_api_key(&self) -> Option<String> {
+        match self.vault.get_entry_value("global", "VOYAGE_API_KEY", "embedding") {
+            Ok(Some(key)) => Some(key),
+            Ok(None) => {
+                eprintln!("[embedding debug] {}", format!("embedding: VOYAGE_API_KEY not set in vault — skipping"));
+                None
+            }
+            Err(e) => {
+                eprintln!("[embedding debug] {}", format!("embedding: cannot read VOYAGE_API_KEY ({}) — skipping", e));
+                None
+            }
+        }
+    }
+
+    /// Embed a work item (by id) if its canonical text has changed.
+    /// Failures are logged and suppressed — the write path must not fail due to embedding errors.
+    fn try_embed_work_item(
+        &self,
+        id: &str,
+        title: &str,
+        description: &str,
+        acceptance_criteria: Option<&str>,
+    ) {
+        let input = canonical_work_item_input(title, description, acceptance_criteria);
+        let new_hash = compute_input_hash(&input);
+
+        // Skip if hash matches what's stored.
+        match self.databases.get_work_item_input_hash(id) {
+            Ok(Some(existing)) if existing == new_hash => {
+                eprintln!("[embedding debug] {}", format!("embedding: work_item {} unchanged — skipping", id));
+                return;
+            }
+            Err(e) => {
+                eprintln!("[embedding warn] {}", format!("embedding: could not read input_hash for work_item {}: {}", id, e));
+                return;
+            }
+            _ => {}
+        }
+
+        let Some(api_key) = self.voyage_api_key() else {
+            return;
+        };
+
+        let client = VoyageClient::new(api_key);
+        match client.embed_batch(&[input], DEFAULT_MODEL) {
+            Ok(vectors) if !vectors.is_empty() => {
+                let blob = vec_to_blob(&vectors[0]);
+                let now = unix_time_seconds();
+                if let Err(e) = self
+                    .databases
+                    .update_work_item_embedding(id, &blob, DEFAULT_MODEL, &new_hash, now)
+                {
+                    eprintln!("[embedding warn] {}", format!("embedding: failed to store embedding for work_item {}: {}", id, e));
+                }
+            }
+            Ok(_) => {
+                eprintln!("[embedding warn] {}", format!("embedding: Voyage returned empty response for work_item {}", id));
+            }
+            Err(e) => {
+                eprintln!("[embedding warn] {}", format!("embedding: Voyage error for work_item {}: {}", id, e));
+            }
+        }
+    }
+
+    /// Embed a document (by id) if its canonical text has changed.
+    /// Failures are logged and suppressed.
+    fn try_embed_document(&self, id: &str, title: &str, content_markdown: &str) {
+        let input = canonical_document_input(title, content_markdown);
+        let new_hash = compute_input_hash(&input);
+
+        match self.databases.get_document_input_hash(id) {
+            Ok(Some(existing)) if existing == new_hash => {
+                eprintln!("[embedding debug] {}", format!("embedding: document {} unchanged — skipping", id));
+                return;
+            }
+            Err(e) => {
+                eprintln!("[embedding warn] {}", format!("embedding: could not read input_hash for document {}: {}", id, e));
+                return;
+            }
+            _ => {}
+        }
+
+        let Some(api_key) = self.voyage_api_key() else {
+            return;
+        };
+
+        let client = VoyageClient::new(api_key);
+        match client.embed_batch(&[input], DEFAULT_MODEL) {
+            Ok(vectors) if !vectors.is_empty() => {
+                let blob = vec_to_blob(&vectors[0]);
+                let now = unix_time_seconds();
+                if let Err(e) = self
+                    .databases
+                    .update_document_embedding(id, &blob, DEFAULT_MODEL, &new_hash, now)
+                {
+                    eprintln!("[embedding warn] {}", format!("embedding: failed to store embedding for document {}: {}", id, e));
+                }
+            }
+            Ok(_) => {
+                eprintln!("[embedding warn] {}", format!("embedding: Voyage returned empty response for document {}", id));
+            }
+            Err(e) => {
+                eprintln!("[embedding warn] {}", format!("embedding: Voyage error for document {}: {}", id, e));
+            }
+        }
+    }
+
+    /// Scan for rows with NULL embeddings and embed them in batches.
+    /// Idempotent — safe to run on every startup. Tolerates Voyage being unreachable.
+    pub fn backfill_embeddings(&self) {
+        let Some(api_key) = self.voyage_api_key() else {
+            eprintln!("[embedding info] {}", format!("embedding backfill: vault locked or VOYAGE_API_KEY missing — skipping"));
+            return;
+        };
+
+        let client = VoyageClient::new(api_key);
+
+        // --- Work items ---
+        match self.databases.list_work_items_for_embedding(None) {
+            Err(e) => {
+                eprintln!("[embedding warn] {}", format!("embedding backfill: could not load work_items: {}", e));
+            }
+            Ok(rows) => {
+                let pending: Vec<_> = rows.iter().filter(|r| r.embedding.is_none()).collect();
+                if pending.is_empty() {
+                    eprintln!("[embedding info] {}", format!("embedding backfill: all work_items already embedded"));
+                } else {
+                    eprintln!(
+                        "[embedding info] embedding backfill: embedding {} work_item(s) with NULL embedding",
+                        pending.len()
+                    );
+                    for chunk in pending.chunks(50) {
+                        let inputs: Vec<String> = chunk
+                            .iter()
+                            .map(|r| {
+                                canonical_work_item_input(
+                                    &r.title,
+                                    &r.description,
+                                    r.acceptance_criteria.as_deref(),
+                                )
+                            })
+                            .collect();
+                        let hashes: Vec<String> =
+                            inputs.iter().map(|i| compute_input_hash(i)).collect();
+
+                        match client.embed_batch(&inputs, DEFAULT_MODEL) {
+                            Err(e) => {
+                                eprintln!(
+                                    "[embedding warn] embedding backfill: Voyage error for work_item batch: {}",
+                                    e
+                                );
+                                break;
+                            }
+                            Ok(vectors) => {
+                                let now = unix_time_seconds();
+                                for (i, row) in chunk.iter().enumerate() {
+                                    if let Some(vec) = vectors.get(i) {
+                                        let blob = vec_to_blob(vec);
+                                        if let Err(e) = self.databases.update_work_item_embedding(
+                                            &row.id,
+                                            &blob,
+                                            DEFAULT_MODEL,
+                                            &hashes[i],
+                                            now,
+                                        ) {
+                                            eprintln!(
+                                                "[embedding warn] embedding backfill: store error for work_item {}: {}",
+                                                row.id,
+                                                e
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Documents ---
+        match self.databases.list_documents_for_embedding(None) {
+            Err(e) => {
+                eprintln!("[embedding warn] {}", format!("embedding backfill: could not load documents: {}", e));
+            }
+            Ok(rows) => {
+                let pending: Vec<_> = rows.iter().filter(|r| r.embedding.is_none()).collect();
+                if pending.is_empty() {
+                    eprintln!("[embedding info] {}", format!("embedding backfill: all documents already embedded"));
+                } else {
+                    eprintln!(
+                        "[embedding info] embedding backfill: embedding {} document(s) with NULL embedding",
+                        pending.len()
+                    );
+                    for chunk in pending.chunks(50) {
+                        let inputs: Vec<String> = chunk
+                            .iter()
+                            .map(|r| canonical_document_input(&r.title, &r.content_markdown))
+                            .collect();
+                        let hashes: Vec<String> =
+                            inputs.iter().map(|i| compute_input_hash(i)).collect();
+
+                        match client.embed_batch(&inputs, DEFAULT_MODEL) {
+                            Err(e) => {
+                                eprintln!(
+                                    "[embedding warn] embedding backfill: Voyage error for document batch: {}",
+                                    e
+                                );
+                                break;
+                            }
+                            Ok(vectors) => {
+                                let now = unix_time_seconds();
+                                for (i, row) in chunk.iter().enumerate() {
+                                    if let Some(vec) = vectors.get(i) {
+                                        let blob = vec_to_blob(vec);
+                                        if let Err(e) = self.databases.update_document_embedding(
+                                            &row.id,
+                                            &blob,
+                                            DEFAULT_MODEL,
+                                            &hashes[i],
+                                            now,
+                                        ) {
+                                            eprintln!(
+                                                "[embedding warn] embedding backfill: store error for document {}: {}",
+                                                row.id,
+                                                e
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Semantic search over work items: embed query, score candidates, return ranked results.
+    pub fn search_work_items(
+        &self,
+        request: WorkItemSearchRequest,
+    ) -> Result<Vec<WorkItemSearchResult>> {
+        let limit = request.limit.unwrap_or(10).min(100);
+        let threshold = request.threshold.unwrap_or(0.0);
+
+        let Some(api_key) = self.voyage_api_key() else {
+            return Err(anyhow!("vault locked or VOYAGE_API_KEY missing — unlock the vault to use semantic search"));
+        };
+
+        let client = VoyageClient::new(api_key);
+        let query_vecs = client
+            .embed_batch(&[request.query_text.clone()], DEFAULT_MODEL)
+            .map_err(|e| anyhow!("{}", e))?;
+        let query_vec = query_vecs
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("Voyage returned no embedding for query"))?;
+
+        let rows = self
+            .databases
+            .list_work_items_for_embedding(request.namespace.as_deref())?;
+
+        let mut scored: Vec<WorkItemSearchResult> = rows
+            .into_iter()
+            .filter_map(|row| {
+                let embedding_blob = row.embedding.as_deref()?;
+                let candidate_vec = blob_to_vec(embedding_blob);
+                if candidate_vec.is_empty() {
+                    return None;
+                }
+                let cosine = cosine_similarity(&query_vec, &candidate_vec);
+                let recency = ranker_recency_decay(row.updated_at);
+                let sw = ranker_status_weight(&row.status);
+                let score = ranker_final_score(cosine, row.updated_at, &row.status);
+
+                if score < threshold {
+                    return None;
+                }
+
+                let snippet = make_snippet(&row.description, 200);
+                Some(WorkItemSearchResult {
+                    id: row.id,
+                    callsign: row.callsign,
+                    title: row.title,
+                    status: row.status,
+                    namespace: row.namespace,
+                    cosine,
+                    recency_decay: recency,
+                    status_weight: sw,
+                    final_score: score,
+                    snippet,
+                })
+            })
+            .collect();
+
+        scored.sort_by(|a, b| b.final_score.partial_cmp(&a.final_score).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(limit);
+        Ok(scored)
+    }
+
+    /// Semantic search over documents: embed query, score candidates, return ranked results.
+    pub fn search_documents(
+        &self,
+        request: DocumentSearchRequest,
+    ) -> Result<Vec<DocumentSearchResult>> {
+        let limit = request.limit.unwrap_or(10).min(100);
+        let threshold = request.threshold.unwrap_or(0.0);
+
+        let Some(api_key) = self.voyage_api_key() else {
+            return Err(anyhow!("vault locked or VOYAGE_API_KEY missing — unlock the vault to use semantic search"));
+        };
+
+        let client = VoyageClient::new(api_key);
+        let query_vecs = client
+            .embed_batch(&[request.query_text.clone()], DEFAULT_MODEL)
+            .map_err(|e| anyhow!("{}", e))?;
+        let query_vec = query_vecs
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("Voyage returned no embedding for query"))?;
+
+        let rows = self
+            .databases
+            .list_documents_for_embedding(request.namespace.as_deref())?;
+
+        let mut scored: Vec<DocumentSearchResult> = rows
+            .into_iter()
+            .filter_map(|row| {
+                let embedding_blob = row.embedding.as_deref()?;
+                let candidate_vec = blob_to_vec(embedding_blob);
+                if candidate_vec.is_empty() {
+                    return None;
+                }
+                let cosine = cosine_similarity(&query_vec, &candidate_vec);
+                // Documents don't have a status; use backlog weight as neutral baseline.
+                let recency = ranker_recency_decay(row.updated_at);
+                let sw = ranker_status_weight("backlog");
+                let score = cosine * recency * sw;
+
+                if score < threshold {
+                    return None;
+                }
+
+                let snippet = make_snippet(&row.content_markdown, 200);
+                Some(DocumentSearchResult {
+                    id: row.id,
+                    slug: row.slug,
+                    title: row.title,
+                    doc_type: row.doc_type,
+                    namespace: row.namespace,
+                    cosine,
+                    recency_decay: recency,
+                    status_weight: sw,
+                    final_score: score,
+                    snippet,
+                })
+            })
+            .collect();
+
+        scored.sort_by(|a, b| b.final_score.partial_cmp(&a.final_score).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(limit);
+        Ok(scored)
     }
 
     // ── MCP Servers ───────────────────────────────────────────────────────────
@@ -4309,6 +4705,26 @@ fn unix_time_seconds() -> i64 {
         .duration_since(UNIX_EPOCH)
         .expect("system time must be after unix epoch")
         .as_secs() as i64
+}
+
+/// Return the first `max_chars` characters of `text`, trimming at a character boundary.
+/// Used to produce search result snippets.
+fn make_snippet(text: &str, max_chars: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= max_chars {
+        trimmed.to_string()
+    } else {
+        let mut end = 0;
+        for (i, _) in trimmed.char_indices().take(max_chars) {
+            end = i;
+        }
+        // Advance past the last full char
+        let mut chars = trimmed[end..].chars();
+        if let Some(c) = chars.next() {
+            end += c.len_utf8();
+        }
+        format!("{}…", &trimmed[..end])
+    }
 }
 
 /// Format a Unix timestamp (seconds since epoch) as an ISO 8601 UTC string.

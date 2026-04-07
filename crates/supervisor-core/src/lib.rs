@@ -1,6 +1,7 @@
 pub mod agent_profile;
 mod bootstrap;
 mod diagnostics;
+pub mod embeddings;
 pub mod git;
 mod models;
 mod output_filter;
@@ -43,6 +44,7 @@ pub use models::{
     CreateVaultEntryRequest, UpdateVaultEntryRequest, VaultAuditEntry, VaultEntry, VaultLockState,
     McpServerSummary, CreateMcpServerRequest, UpdateMcpServerRequest, DeleteMcpServerRequest,
     ProvisionWorktreeRequest, CloseWorktreeRequest, CloseWorktreeResult,
+    WorkItemSearchRequest, WorkItemSearchResult, DocumentSearchRequest, DocumentSearchResult,
 };
 pub use runtime::SessionRegistry;
 pub use service::SupervisorService;

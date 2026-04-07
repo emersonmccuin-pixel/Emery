@@ -1,6 +1,6 @@
 #!/bin/sh
 # Pre-commit hook: enforce that commits only land on the assigned worktree branch.
-expected="emery/emery-212"
+expected="emery/emery-217.002"
 current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
 if [ "$current" != "$expected" ]; then
   echo "ERROR: Expected branch '$expected' but current branch is '$current'."

@@ -29,6 +29,7 @@ use crate::models::{
     CreateVaultEntryRequest, VaultAuditEntry, VaultEntry, VaultLockState,
     McpServerSummary, CreateMcpServerRequest, UpdateMcpServerRequest, DeleteMcpServerRequest,
     ProvisionWorktreeRequest, CloseWorktreeRequest, CloseWorktreeResult,
+    WorkItemSearchRequest, WorkItemSearchResult, DocumentSearchRequest, DocumentSearchResult,
 };
 use crate::runtime::SessionRegistry;
 use crate::service::SupervisorService;
@@ -73,6 +74,8 @@ impl Supervisor {
                 "diagnostics_enabled": supervisor.diagnostics.enabled(),
             }),
         )?;
+        // Kick off embedding backfill — tolerates vault being locked.
+        supervisor.service.backfill_embeddings();
         Ok(supervisor)
     }
 
@@ -287,6 +290,20 @@ impl Supervisor {
 
     pub fn update_document(&self, request: UpdateDocumentRequest) -> Result<DocumentDetail> {
         self.service.update_document(request)
+    }
+
+    pub fn search_work_items(
+        &self,
+        request: WorkItemSearchRequest,
+    ) -> Result<Vec<WorkItemSearchResult>> {
+        self.service.search_work_items(request)
+    }
+
+    pub fn search_documents(
+        &self,
+        request: DocumentSearchRequest,
+    ) -> Result<Vec<DocumentSearchResult>> {
+        self.service.search_documents(request)
     }
 
     pub fn list_planning_assignments(
