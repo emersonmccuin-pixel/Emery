@@ -2529,8 +2529,57 @@ impl SupervisorService {
 
         for mut req in requests {
             req.dispatch_group = Some(dispatch_group.clone());
-            let detail = self.create_session(req)?;
-            results.push(detail);
+            match self.create_session(req) {
+                Ok(detail) => results.push(detail),
+                Err(error) => {
+                    let created_session_ids: Vec<String> =
+                        results.iter().map(|detail| detail.summary.id.clone()).collect();
+
+                    let mut rollback_failures = Vec::new();
+                    for detail in &results {
+                        if let Err(rollback_error) = self.terminate_session(&detail.summary.id) {
+                            rollback_failures.push(format!(
+                                "terminate {}: {}",
+                                detail.summary.id, rollback_error
+                            ));
+                        }
+                    }
+
+                    self.record_diagnostic(
+                        "service",
+                        "session.batch_create_failed",
+                        DiagnosticContext {
+                            project_id: results
+                                .first()
+                                .map(|detail| detail.summary.project_id.clone()),
+                            ..DiagnosticContext::default()
+                        },
+                        json!({
+                            "dispatch_group": dispatch_group,
+                            "created_session_ids": created_session_ids,
+                            "rollback_failures": rollback_failures,
+                            "error": error.to_string(),
+                        }),
+                    )?;
+
+                    let rollback_suffix = if rollback_failures.is_empty() {
+                        "Created sessions were terminated.".to_string()
+                    } else {
+                        format!(
+                            "Rollback encountered errors: {}",
+                            rollback_failures.join("; ")
+                        )
+                    };
+
+                    return Err(anyhow!(
+                        "batch session creation failed after creating {} session(s): {}. Created session IDs: [{}]. {}",
+                        created_session_ids.len(),
+                        error,
+                        created_session_ids.join(", "),
+                        rollback_suffix
+                    ));
+                }
+            }
         }
 
         Ok(results)
