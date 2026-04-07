@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { SessionDetail, SessionStateChangedEvent } from "./types";
+import type { SessionDetail, SessionStateChangedEvent, ShellBootstrap } from "./types";
 
 const libMocks = vi.hoisted(() => ({
   archiveProject: vi.fn(),
@@ -131,6 +131,41 @@ function makeStateChangedEvent(
   };
 }
 
+function makeBootstrap(overrides: Partial<ShellBootstrap> = {}): ShellBootstrap {
+  return {
+    hello: {
+      protocol_version: "1",
+      supervisor_version: "0.1.0",
+      min_supported_client_version: "0.1.0",
+      capabilities: [],
+      app_data_root: "C:\\repo",
+      ipc_endpoint: "ipc://test",
+      diagnostics_enabled: false,
+    },
+    health: {
+      supervisor_started_at: 1,
+      uptime_ms: 1,
+      app_data_root: "C:\\repo",
+      artifact_root_available: true,
+      live_session_count: 0,
+      app_db: { available: true, schema_version: "1" },
+      knowledge_db: { available: true, schema_version: "1" },
+    },
+    bootstrap: {
+      project_count: 1,
+      account_count: 1,
+      live_session_count: 0,
+      restorable_workspace_count: 0,
+      interrupted_session_count: 0,
+    },
+    projects: [],
+    accounts: [],
+    sessions: [],
+    workspace: null,
+    ...overrides,
+  };
+}
+
 async function loadFreshStoreModule() {
   const storeModule = await import("./store");
   const sessionStoreModule = await import("./session-store");
@@ -144,10 +179,12 @@ beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
   localStorage.clear();
+  vi.useFakeTimers();
 });
 
 afterEach(() => {
   localStorage.clear();
+  vi.useRealTimers();
 });
 
 describe("AppStore session integration", () => {
@@ -219,5 +256,102 @@ describe("AppStore session integration", () => {
         message: "Test Session completed",
       }),
     );
+  });
+
+  it("rebootstrap reseeds sessions, rewatches live sessions, and refreshes selected project reads", async () => {
+    const payload = makeBootstrap({
+      sessions: [
+        makeDetail({
+          id: "ses_live",
+          title: "Live Session",
+          live: true,
+          runtime_state: "running",
+          status: "active",
+          activity_state: "working",
+          runtime: null,
+        }),
+        makeDetail({
+          id: "ses_done",
+          title: "Done Session",
+          live: false,
+          runtime_state: "exited",
+          status: "completed",
+          activity_state: "idle",
+          runtime: null,
+        }),
+      ],
+    });
+    libMocks.bootstrapShell.mockResolvedValue(payload);
+    libMocks.watchLiveSessions.mockResolvedValue(undefined);
+    libMocks.getProject.mockResolvedValue({
+      id: "proj_test",
+      name: "Project",
+      slug: "project",
+      sort_order: 0,
+      default_account_id: null,
+      project_type: "scratch",
+      model_defaults_json: null,
+      agent_safety_overrides_json: null,
+      wcp_namespace: null,
+      dispatch_item_callsign: null,
+      settings_json: null,
+      instructions_md: null,
+      created_at: 1,
+      updated_at: 1,
+      archived_at: null,
+      roots: [],
+    });
+    libMocks.listWorkItems.mockResolvedValue([]);
+    libMocks.listDocuments.mockResolvedValue([]);
+
+    const { appStore, sessionStore } = await loadFreshStoreModule();
+    appStore.setSelectedProjectId("proj_test");
+
+    await appStore.rebootstrap();
+
+    expect(libMocks.bootstrapShell).toHaveBeenCalledWith("rebootstrap-corr");
+    expect(libMocks.watchLiveSessions).toHaveBeenCalledWith(["ses_live"], "rebootstrap-corr");
+    expect(appStore.getState().connectionState).toBe("connected");
+    expect(appStore.getState().sessions).toHaveLength(2);
+    expect(sessionStore.getSnapshot("ses_live")).toMatchObject({
+      runtime_state: "running",
+      title: "Live Session",
+      live: true,
+    });
+    expect(libMocks.getProject).toHaveBeenCalledWith("proj_test", "project-load-corr");
+  });
+
+  it("unknown session refresh is debounced and triggers rebootstrap once", async () => {
+    const payload = makeBootstrap({
+      sessions: [makeDetail({ id: "ses_unknown", title: "Unknown Session", runtime: null })],
+    });
+    libMocks.bootstrapShell.mockResolvedValue(payload);
+    libMocks.watchLiveSessions.mockResolvedValue(undefined);
+    libMocks.listWorktrees.mockResolvedValue([]);
+
+    const { appStore } = await loadFreshStoreModule();
+    appStore.setSelectedProjectId("proj_test");
+    appStore.applySessionStateChange(
+      makeStateChangedEvent({
+        session_id: "ses_unknown",
+      }),
+    );
+    appStore.applySessionStateChange(
+      makeStateChangedEvent({
+        session_id: "ses_unknown",
+      }),
+    );
+
+    expect(libMocks.bootstrapShell).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(500);
+    await Promise.resolve();
+
+    expect(libMocks.bootstrapShell).toHaveBeenCalledTimes(1);
+    expect(libMocks.listWorktrees).toHaveBeenCalledTimes(1);
+    expect(appStore.getState().sessions[0]).toMatchObject({
+      id: "ses_unknown",
+      title: "Unknown Session",
+    });
   });
 });
