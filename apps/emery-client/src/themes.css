@@ -91,6 +91,11 @@ html[data-theme="ice"] {
   --glow-success: 0 0 4px 1px rgba(0, 229, 176, 0.4);
   --glow-error: 0 0 4px 1px rgba(255, 68, 102, 0.4);
   --shadow-panel-inset: inset 1px 0 0 rgba(0, 212, 255, 0.04);
+
+  --bg-sidebar: linear-gradient(180deg, #0a1420 0%, #060c14 100%);
+  --bg-main: linear-gradient(160deg, rgba(0, 212, 255, 0.03) 0%, #0a1420 40%, #060c14 100%);
+  --bg-right-panel: linear-gradient(180deg, rgba(0, 212, 255, 0.04) 0%, #060c14 60%, #030810 100%);
+  --bg-topbar: linear-gradient(180deg, rgba(0, 212, 255, 0.06) 0%, #0a1420 100%);
 }
 
 /* ── Ember — hot red/orange industrial console ── */
@@ -180,6 +185,11 @@ html[data-theme="ember"] {
   --glow-success: 0 0 4px 1px rgba(204, 136, 0, 0.4);
   --glow-error: 0 0 4px 1px rgba(255, 34, 34, 0.4);
   --shadow-panel-inset: inset 1px 0 0 rgba(255, 160, 100, 0.04);
+
+  --bg-sidebar: linear-gradient(180deg, #1a0e0e 0%, #100808 100%);
+  --bg-main: linear-gradient(160deg, rgba(255, 68, 68, 0.03) 0%, #1a0e0e 40%, #100808 100%);
+  --bg-right-panel: linear-gradient(180deg, rgba(255, 68, 68, 0.04) 0%, #100808 60%, #080404 100%);
+  --bg-topbar: linear-gradient(180deg, rgba(255, 68, 68, 0.06) 0%, #1a0e0e 100%);
 }
 
 /* ── Verdant — deep green forest terminal ── */
@@ -269,6 +279,11 @@ html[data-theme="verdant"] {
   --glow-success: 0 0 4px 1px rgba(0, 255, 136, 0.4);
   --glow-error: 0 0 4px 1px rgba(204, 51, 51, 0.4);
   --shadow-panel-inset: inset 1px 0 0 rgba(0, 255, 136, 0.04);
+
+  --bg-sidebar: linear-gradient(180deg, #0a160c 0%, #060e08 100%);
+  --bg-main: linear-gradient(160deg, rgba(0, 255, 136, 0.03) 0%, #0a160c 40%, #060e08 100%);
+  --bg-right-panel: linear-gradient(180deg, rgba(0, 255, 136, 0.04) 0%, #060e08 60%, #030a04 100%);
+  --bg-topbar: linear-gradient(180deg, rgba(0, 255, 136, 0.06) 0%, #0a160c 100%);
 }
 
 /* ── Ultraviolet — purple/magenta neon console ── */
@@ -358,4 +373,9 @@ html[data-theme="ultraviolet"] {
   --glow-success: 0 0 4px 1px rgba(170, 68, 204, 0.4);
   --glow-error: 0 0 4px 1px rgba(255, 51, 153, 0.4);
   --shadow-panel-inset: inset 1px 0 0 rgba(179, 102, 255, 0.04);
+
+  --bg-sidebar: linear-gradient(180deg, #110a1c 0%, #0a0612 100%);
+  --bg-main: linear-gradient(160deg, rgba(179, 102, 255, 0.03) 0%, #110a1c 40%, #0a0612 100%);
+  --bg-right-panel: linear-gradient(180deg, rgba(179, 102, 255, 0.04) 0%, #0a0612 60%, #060310 100%);
+  --bg-topbar: linear-gradient(180deg, rgba(179, 102, 255, 0.06) 0%, #110a1c 100%);
 }
