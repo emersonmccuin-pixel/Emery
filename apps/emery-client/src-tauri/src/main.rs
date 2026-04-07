@@ -143,7 +143,120 @@ fn version_is_newer(min_supported: &str, current: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_version_components, version_is_newer};
+    use super::{
+        connect_to_endpoint, endpoint_name, parse_incoming_message, parse_version_components,
+        version_is_newer,
+    };
+    use interprocess::TryClone;
+    use serde_json::{Value, json};
+    use std::env;
+    use std::fs;
+    use std::io::{BufRead, BufReader, Write};
+    use std::path::PathBuf;
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use supervisor_core::{AppPaths, Supervisor};
+    use supervisor_ipc::{LocalIpcServer, RequestEnvelope, SupervisorRpc};
+
+    fn unique_temp_root() -> PathBuf {
+        let root = env::temp_dir().join(format!(
+            "emery-client-bridge-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn send_request(
+        writer: &mut interprocess::local_socket::Stream,
+        request_id: &str,
+        method: &str,
+        params: Value,
+    ) {
+        let envelope = RequestEnvelope {
+            message_type: "request".to_string(),
+            request_id: request_id.to_string(),
+            correlation_id: Some("bridge-smoke".to_string()),
+            method: method.to_string(),
+            params,
+        };
+        let line = serde_json::to_string(&envelope).unwrap();
+        writer.write_all(line.as_bytes()).unwrap();
+        writer.write_all(b"\n").unwrap();
+        writer.flush().unwrap();
+    }
+
+    fn read_until_response(
+        reader: &mut BufReader<interprocess::local_socket::Stream>,
+        request_id: &str,
+    ) -> Value {
+        let deadline = SystemTime::now() + Duration::from_secs(10);
+        loop {
+            if SystemTime::now() >= deadline {
+                panic!("timed out waiting for response {request_id}");
+            }
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            if line.trim().is_empty() {
+                continue;
+            }
+            match parse_incoming_message(line.trim()).unwrap() {
+                super::IncomingMessage::Response(response) if response.request_id == request_id => {
+                    assert!(response.ok, "request {request_id} failed: {:?}", response.error);
+                    return response.result.unwrap_or(Value::Null);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn read_until_event(
+        reader: &mut BufReader<interprocess::local_socket::Stream>,
+        event_name: &str,
+        session_id: &str,
+    ) -> Value {
+        let deadline = SystemTime::now() + Duration::from_secs(10);
+        loop {
+            if SystemTime::now() >= deadline {
+                panic!("timed out waiting for event {event_name} for {session_id}");
+            }
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            if line.trim().is_empty() {
+                continue;
+            }
+            match parse_incoming_message(line.trim()).unwrap() {
+                super::IncomingMessage::Event(event)
+                    if event.event == event_name
+                        && event
+                            .payload
+                            .get("session_id")
+                            .and_then(Value::as_str)
+                            == Some(session_id) =>
+                {
+                    return event.payload;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn connect_with_retry(endpoint: &str) -> interprocess::local_socket::Stream {
+        let deadline = SystemTime::now() + Duration::from_secs(10);
+        loop {
+            match connect_to_endpoint(endpoint) {
+                Ok(stream) => return stream,
+                Err(_) if SystemTime::now() < deadline => {
+                    thread::sleep(Duration::from_millis(50));
+                }
+                Err(error) => panic!("timed out connecting to isolated bridge endpoint: {error:#}"),
+            }
+        }
+    }
 
     #[test]
     fn parses_numeric_version_components() {
@@ -165,6 +278,127 @@ mod tests {
         assert!(!version_is_newer("0.2.0", "0.10.0"));
         assert!(!version_is_newer("0.1.0", "0.1.0"));
         assert!(version_is_newer("1.0", "0.9.9"));
+    }
+
+    #[cfg(windows)]
+    fn long_running_command() -> (String, Vec<String>) {
+        (
+            "cmd.exe".to_string(),
+            vec![
+                "/C".to_string(),
+                "ping 127.0.0.1 -n 6 > NUL".to_string(),
+            ],
+        )
+    }
+
+    #[cfg(not(windows))]
+    fn long_running_command() -> (String, Vec<String>) {
+        ("sh".to_string(), vec!["-c".to_string(), "sleep 5".to_string()])
+    }
+
+    #[test]
+    fn ipc_bridge_smoke_test_bootstrap_create_and_terminate_session() {
+        let root = unique_temp_root();
+        let paths = AppPaths::from_root(root.clone()).unwrap();
+        let supervisor = Supervisor::bootstrap(paths).unwrap();
+        let endpoint = endpoint_name(supervisor.paths().root.display().to_string().as_str());
+        let rpc = SupervisorRpc::new(supervisor, endpoint.clone());
+        let server = LocalIpcServer::new(endpoint.clone(), rpc);
+        thread::spawn(move || {
+            server.serve().unwrap();
+        });
+
+        let mut stream = connect_with_retry(&endpoint);
+        let reader_stream = stream.try_clone().unwrap();
+        let mut reader = BufReader::new(reader_stream);
+
+        send_request(&mut stream, "req_hello", "system.hello", json!({}));
+        let hello = read_until_response(&mut reader, "req_hello");
+        assert_eq!(hello["protocol_version"], "1");
+
+        send_request(
+            &mut stream,
+            "req_project",
+            "project.create",
+            json!({
+                "name": "Bridge Smoke Project",
+                "project_type": "scratch"
+            }),
+        );
+        let project = read_until_response(&mut reader, "req_project");
+        let project_id = project["id"].as_str().unwrap().to_string();
+
+        send_request(
+            &mut stream,
+            "req_account",
+            "account.create",
+            json!({
+                "agent_kind": "claude",
+                "label": "Bridge Smoke Account",
+                "is_default": true,
+                "status": "ready"
+            }),
+        );
+        let account = read_until_response(&mut reader, "req_account");
+        let account_id = account["id"].as_str().unwrap().to_string();
+
+        let (command, args) = long_running_command();
+        send_request(
+            &mut stream,
+            "req_session",
+            "session.create",
+            json!({
+                "project_id": project_id,
+                "project_root_id": null,
+                "worktree_id": null,
+                "work_item_id": null,
+                "account_id": account_id,
+                "agent_kind": "claude",
+                "cwd": root.display().to_string(),
+                "command": command,
+                "args": args,
+                "env_preset_ref": null,
+                "origin_mode": "execution",
+                "current_mode": "execution",
+                "title": "Bridge Smoke Session",
+                "title_policy": "manual",
+                "restore_policy": "reattach",
+                "initial_terminal_cols": 120,
+                "initial_terminal_rows": 40
+            }),
+        );
+        let session = read_until_response(&mut reader, "req_session");
+        let session_id = session["id"].as_str().unwrap().to_string();
+
+        send_request(
+            &mut stream,
+            "req_sub",
+            "subscription.open",
+            json!({
+                "topic": "session.state_changed",
+                "session_id": session_id
+            }),
+        );
+        let _subscription = read_until_response(&mut reader, "req_sub");
+        let seeded = read_until_event(&mut reader, "session.state_changed", &session_id);
+        assert_eq!(seeded["session_id"], session_id);
+
+        send_request(
+            &mut stream,
+            "req_term",
+            "session.terminate",
+            json!({
+                "session_id": session_id
+            }),
+        );
+        let _ = read_until_response(&mut reader, "req_term");
+        let state_change = read_until_event(&mut reader, "session.state_changed", &session_id);
+
+        assert_eq!(state_change["session_id"], session_id);
+        assert_eq!(state_change["runtime_state"], "stopping");
+        assert_eq!(state_change["status"], "active");
+
+        let _ = fs::remove_dir_all(root);
     }
 }
 
