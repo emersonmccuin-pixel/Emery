@@ -3109,24 +3109,28 @@ impl SupervisorService {
         let now = unix_time_seconds();
         let timestamp = format_iso8601(now);
         let description = format!(
-            "## State\n\
+            "## Status\n\
              last_updated: {timestamp}\n\
              active_round: -\n\
              \n\
-             ## Active Sessions\n\
+             ## In Flight\n\
              - (none)\n\
              \n\
-             ## Pending Review\n\
+             ## Awaiting Review\n\
              - (none)\n\
              \n\
-             ## Done This Round\n\
+             ## Recent (last 5)\n\
+             - (none)\n\
+             \n\
+             ## Open Threads\n\
              - (none)\n\
              \n\
              ---\n\
              \n\
-             This is the dispatcher's persistent state document. Dispatchers should overwrite \
-             the sections above (not append) at every phase transition. Format must remain \
-             consistent so future dispatcher sessions can parse it reliably."
+             This is the dispatcher's persistent state document. It MUST stay under ~40 lines. \
+             Overwrite the sections above at every phase transition — never append. The \"Recent\" \
+             section is capped at 5 entries; older entries are dropped, not kept. Git log is the \
+             activity log; this file is a snapshot, not a journal."
         );
 
         let record = NewWorkItemRecord {
@@ -4809,13 +4813,19 @@ fn build_dispatcher_instructions(
 
 ## {item_display} maintenance
 
-At every phase transition, update `{item_display}` via `emery_work_item_update` to reflect the new state:
-- After dispatching a builder/planner → add to Active Sessions
-- After a session completes → move to Pending Review
-- After a merge → move to Done This Round
-- After cleanup → remove the entry
+**Hard cap: {item_display} MUST stay under ~40 lines.** This is non-negotiable — it's injected into every dispatcher system prompt.
 
-Overwrite the structured sections (## State, ## Active Sessions, ## Pending Review, ## Done This Round) — DO NOT append. Format must remain consistent so future dispatcher sessions can parse it reliably.
+At every phase transition, update `{item_display}` via `emery_work_item_update` to reflect the new state:
+- After dispatching a builder/planner → add to In Flight
+- After a session completes → move to Awaiting Review
+- After a merge → move to Recent, add to Open Threads if follow-up needed
+- After cleanup → remove from In Flight / Awaiting Review
+
+**Overwrite, never append.** {item_display} is a snapshot of current state, not a running log.
+
+**Recent is capped at 5 entries.** When you finish work, drop the oldest from Recent and add the newest. Do not let it grow.
+
+**Git log is the activity log.** If you want to know what happened historically, use `git log` — do not stuff history into {item_display}.
 
 ---
 
