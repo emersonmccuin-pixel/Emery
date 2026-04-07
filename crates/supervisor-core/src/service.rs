@@ -4763,6 +4763,125 @@ impl SupervisorService {
         })
     }
 
+    // ── Librarian capture (EMERY-226.001) ────────────────────────────────────
+
+    /// Run the post-completion librarian pipeline for a single session.
+    ///
+    /// Returns `Ok(None)` if the librarian was a no-op for an expected reason
+    /// (vault locked, raw terminal log missing/empty, no Anthropic key).
+    /// Errors are reserved for unexpected failures — every LLM/parse failure
+    /// is recorded in the audit log and reported as
+    /// `Ok(Some(outcome))` with `outcome.status == "failed_*"`.
+    pub fn run_librarian_capture_for_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<crate::librarian::orchestrator::CaptureOutcome>> {
+        // 1. Resolve transcript path: paths/sessions/<id>/raw-terminal.log
+        let log_path = self
+            .databases
+            .paths()
+            .sessions_dir
+            .join(session_id)
+            .join("raw-terminal.log");
+        if !log_path.exists() {
+            return Ok(None);
+        }
+        let raw = match fs::read(&log_path) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                eprintln!("[librarian] failed to read {}: {e}", log_path.display());
+                return Ok(None);
+            }
+        };
+        if raw.is_empty() {
+            return Ok(None);
+        }
+        // Lossy UTF-8 conversion is fine here — the librarian is reading
+        // text for an LLM, not reconstructing terminal state.
+        let transcript = String::from_utf8_lossy(&raw).into_owned();
+
+        // 2. Get Anthropic key (no key = librarian disabled).
+        let Some(api_key) = self.anthropic_api_key() else {
+            return Ok(None);
+        };
+
+        // 3. Resolve namespace from the session's project, falling back to
+        //    the default memory namespace.
+        let namespace = self
+            .resolve_session_namespace(session_id)
+            .unwrap_or_else(|| Self::default_memory_namespace().to_string());
+
+        // 4. Build a chat client and an inline reconciler bound to self.
+        let chat = crate::librarian::client::AnthropicChatClient::new(api_key);
+
+        struct ServiceReconciler<'a> {
+            service: &'a SupervisorService,
+        }
+
+        impl<'a> crate::librarian::orchestrator::Reconciler for ServiceReconciler<'a> {
+            fn add(
+                &self,
+                namespace: &str,
+                content: &str,
+                source_ref: Option<&str>,
+            ) -> std::result::Result<(String, String), String> {
+                let request = MemoryAddRequest {
+                    content: content.to_string(),
+                    source_ref: source_ref.map(|s| s.to_string()),
+                    namespace: Some(namespace.to_string()),
+                };
+                match self.service.memory_add(request) {
+                    Ok(result) => Ok((result.memory.id, result.action)),
+                    Err(e) => Err(e.to_string()),
+                }
+            }
+        }
+
+        let reconciler = ServiceReconciler { service: self };
+
+        // 5. Run the pipeline.
+        let outcome = crate::librarian::orchestrator::run_capture(
+            &self.databases,
+            &chat,
+            &reconciler,
+            session_id,
+            &namespace,
+            &transcript,
+        )?;
+
+        let _ = self.diagnostics.record(
+            "librarian",
+            "capture.completed",
+            DiagnosticContext {
+                session_id: Some(session_id.to_string()),
+                ..DiagnosticContext::default()
+            },
+            serde_json::json!({
+                "run_id": outcome.run_id,
+                "status": outcome.status,
+                "triage_score": outcome.triage_score,
+                "extracted": outcome.extracted,
+                "kept": outcome.kept,
+                "written": outcome.written,
+            }),
+        );
+
+        Ok(Some(outcome))
+    }
+
+    /// Look up the wcp_namespace of the project that owns this session.
+    /// Returns None if the session has no project, the project has no
+    /// namespace, or any lookup step fails.
+    fn resolve_session_namespace(&self, session_id: &str) -> Option<String> {
+        let session = self.databases.get_session(session_id).ok().flatten()?;
+        let project = self
+            .databases
+            .get_project(&session.project_id)
+            .ok()
+            .flatten()?;
+        project.wcp_namespace
+    }
+
     /// Semantic search over memories.
     pub fn memory_search(&self, request: MemorySearchRequest) -> Result<Vec<MemorySearchResult>> {
         let limit = request.limit.unwrap_or(10).min(100);

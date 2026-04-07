@@ -24,10 +24,26 @@ const DEFAULT_REPLAY_LIMIT_BYTES: usize = 128 * 1024;
 const OUTPUT_CHUNK_SIZE: usize = 8192;
 const QUIET_INPUT_THRESHOLD_SECS: i64 = 3;
 
-#[derive(Debug, Clone)]
+/// Hook fired after a session reaches a terminal state. Used by the
+/// librarian (EMERY-226.001) to launch the post-completion capture pipeline
+/// without coupling the runtime to `SupervisorService`. Always invoked from
+/// a dedicated thread so the registered closure may safely block.
+pub type PostCompletionHook = Arc<dyn Fn(String) + Send + Sync>;
+
+#[derive(Clone)]
 pub struct SessionRegistry {
     inner: Arc<Mutex<HashMap<String, RuntimeSessionState>>>,
     diagnostics: DiagnosticsHub,
+    post_completion_hook: Arc<Mutex<Option<PostCompletionHook>>>,
+}
+
+impl std::fmt::Debug for SessionRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionRegistry")
+            .field("inner", &"<sessions>")
+            .field("diagnostics", &self.diagnostics)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -111,7 +127,23 @@ impl SessionRegistry {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
             diagnostics,
+            post_completion_hook: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Register the post-completion hook. Called once during supervisor
+    /// bootstrap to wire the librarian capture pipeline.
+    pub fn set_post_completion_hook(&self, hook: PostCompletionHook) {
+        if let Ok(mut guard) = self.post_completion_hook.lock() {
+            *guard = Some(hook);
+        }
+    }
+
+    fn snapshot_post_completion_hook(&self) -> Option<PostCompletionHook> {
+        self.post_completion_hook
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
     }
 
     pub fn register_starting_session(
@@ -1092,6 +1124,16 @@ fn wait_for_exit(
                         eprintln!(
                             "failed to create inbox entry for session {session_id}: {error:#}"
                         );
+                    }
+
+                    // Fire the librarian post-completion hook (EMERY-226.001).
+                    // Spawned in its own thread so the LLM pipeline never
+                    // blocks session-completion bookkeeping.
+                    if let Some(hook) = registry.snapshot_post_completion_hook() {
+                        let hook_session_id = session_id.to_string();
+                        thread::spawn(move || {
+                            hook(hook_session_id);
+                        });
                     }
                 }
                 Err(error) => {

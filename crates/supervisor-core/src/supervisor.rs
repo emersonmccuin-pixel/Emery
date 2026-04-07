@@ -58,6 +58,22 @@ impl Supervisor {
         let vault = VaultService::new(databases.clone());
         let service =
             SupervisorService::new(databases.clone(), registry.clone(), diagnostics.clone(), vault.clone());
+
+        // Wire the librarian post-completion hook (EMERY-226.001).
+        // The closure clones the service and runs the capture pipeline on
+        // session exit. Errors are swallowed with a log line — the librarian
+        // must never break session lifecycle.
+        {
+            let hook_service = service.clone();
+            registry.set_post_completion_hook(std::sync::Arc::new(move |session_id: String| {
+                if let Err(error) = hook_service.run_librarian_capture_for_session(&session_id) {
+                    eprintln!(
+                        "[librarian] capture pipeline failed for session {session_id}: {error:#}"
+                    );
+                }
+            }));
+        }
+
         let supervisor = Self {
             databases,
             registry,
