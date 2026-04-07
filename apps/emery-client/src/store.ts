@@ -38,11 +38,13 @@ import {
   updateWorkflowReconciliationProposal,
   updateWorkItem,
   watchLiveSessions,
+  unwatchLiveSessions,
   ensureCommandCenterProject,
 } from "./lib";
 import { sessionStore } from "./session-store";
 import { navStore } from "./nav-store";
 import { toastStore } from "./toast-store";
+import { getStoredValue, removeStoredValue, setStoredValue } from "./utils/local-storage";
 import {
   makeClientEvent,
   newCorrelationId,
@@ -188,6 +190,23 @@ function sessionSummaryFromDetail(detail: SessionDetail): SessionSummary {
   return summary;
 }
 
+function seedSessionSnapshot(detail: SessionDetail) {
+  sessionStore.seedSession(detail.id, {
+    runtime_state: detail.runtime_state,
+    status: detail.status,
+    activity_state: detail.activity_state,
+    needs_input_reason: detail.needs_input_reason,
+    tab_status: null,
+    live: detail.live,
+    title: detail.title,
+    current_mode: detail.current_mode,
+    agent_kind: detail.agent_kind,
+    cwd: detail.cwd,
+    attached_clients: detail.runtime?.attached_clients ?? 0,
+  });
+  sessionStore.seedComplete();
+}
+
 export function sessionTone(session: Pick<SessionSummary, "runtime_state" | "activity_state" | "needs_input_reason">) {
   if (session.runtime_state === "failed" || session.runtime_state === "interrupted") {
     return "danger";
@@ -207,9 +226,15 @@ export function sessionTone(session: Pick<SessionSummary, "runtime_state" | "act
   return "muted";
 }
 
+export function sessionNeedsInput(
+  session: Pick<SessionSummary, "activity_state" | "needs_input_reason">,
+): boolean {
+  return session.activity_state === "waiting_for_input";
+}
+
 /** Returns true if any session for the given project needs input. */
 export function projectNeedsAttention(projectId: string, sessions: SessionSummary[]): boolean {
-  return sessions.some(s => s.project_id === projectId && s.activity_state === "needs_input");
+  return sessions.some((s) => s.project_id === projectId && sessionNeedsInput(s));
 }
 
 // --- State shape ---
@@ -521,6 +546,7 @@ class AppStore {
   }
 
   applySessionDetail(detail: SessionDetail) {
+    seedSessionSnapshot(detail);
     this.update({
       sessions: upsertById(this.state.sessions, sessionSummaryFromDetail(detail), compareSessions),
     });
@@ -581,6 +607,7 @@ class AppStore {
     // Session ended: release per-session memory in session-store
     if (entry.live && !payload.live) {
       sessionStore.onSessionEnded(payload.session_id);
+      void unwatchLiveSessions([payload.session_id], newCorrelationId("session-unwatch")).catch(() => {});
 
       // DING when an agent finishes its work
       if (payload.runtime_state === "exited") {
@@ -846,6 +873,11 @@ class AppStore {
     } catch {
       // ignore
     }
+  }
+
+  async ensureSessionSnapshot(sessionId: string) {
+    if (sessionStore.getSnapshot(sessionId)) return;
+    await this.reconcileSessionState(sessionId);
   }
 
   private async handleSessionAction<T>(sessionId: string, action: () => Promise<T>) {
@@ -1853,16 +1885,13 @@ class AppStore {
    */
   async getOrCreateScratchProject(): Promise<string | null> {
     // Fast path: cached in localStorage
-    const cached =
-      localStorage.getItem("emery:scratch-project-id") ??
-      localStorage.getItem("euri:scratch-project-id");
+    const cached = getStoredValue("emery:scratch-project-id", "euri:scratch-project-id");
     if (cached) {
       // Verify it still exists in bootstrap
       const exists = this.state.bootstrap?.projects.find((p) => p.id === cached && p.archived_at === null);
       if (exists) return cached;
       // Stale — clear and re-check
-      localStorage.removeItem("emery:scratch-project-id");
-      localStorage.removeItem("euri:scratch-project-id");
+      removeStoredValue("emery:scratch-project-id", "euri:scratch-project-id");
     }
 
     // Check if project already exists by name
@@ -1870,7 +1899,7 @@ class AppStore {
       (p) => p.name === "Quick Chats" && p.archived_at === null,
     );
     if (existing) {
-      localStorage.setItem("emery:scratch-project-id", existing.id);
+      setStoredValue("emery:scratch-project-id", existing.id, "euri:scratch-project-id");
       return existing.id;
     }
 
@@ -1893,7 +1922,7 @@ class AppStore {
         correlationId,
       );
       await this.rebootstrap();
-      localStorage.setItem("emery:scratch-project-id", project.id);
+      setStoredValue("emery:scratch-project-id", project.id, "euri:scratch-project-id");
       return project.id;
     } catch (err) {
       toastStore.addToast({ type: "error", message: `Failed to create scratch project: ${err}` });
@@ -1932,8 +1961,8 @@ class AppStore {
           command: account.binary_path ?? account.agent_kind,
           args: [],
           env_preset_ref: account.env_preset_ref,
-          origin_mode: "chat",
-          current_mode: "chat",
+          origin_mode: "ad_hoc",
+          current_mode: "ad_hoc",
           title: `Quick Chat ${new Date().toLocaleTimeString()}`,
           title_policy: "manual",
           restore_policy: "reattach",
@@ -1963,16 +1992,12 @@ class AppStore {
   // --- GitHub token ---
 
   loadGithubToken() {
-    const token =
-      localStorage.getItem("emery.github_token") ??
-      localStorage.getItem("euri.github_token") ??
-      "";
+    const token = getStoredValue("emery.github_token", "euri.github_token") ?? "";
     this.update({ githubToken: token });
   }
 
   saveGithubToken(token: string) {
-    localStorage.setItem("emery.github_token", token);
-    localStorage.removeItem("euri.github_token");
+    setStoredValue("emery.github_token", token, "euri.github_token");
     this.update({ githubToken: token });
   }
 

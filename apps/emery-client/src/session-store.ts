@@ -184,7 +184,7 @@ export function deriveDisplayState(snap: SessionSnapshot): DisplayState {
     // Fallback to activity_state hemerystic
     switch (snap.activity_state) {
       case "working": return "actively_working";
-      case "needs_input": return "waiting_for_input";
+      case "waiting_for_input": return "waiting_for_input";
       case "idle":
       default: return "idle_live";
     }

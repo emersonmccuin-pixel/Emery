@@ -102,6 +102,13 @@ export async function watchLiveSessions(
   await invoke("watch_live_sessions", { sessionIds, correlationId });
 }
 
+export async function unwatchLiveSessions(
+  sessionIds: string[],
+  correlationId?: string,
+): Promise<void> {
+  await invoke("unwatch_live_sessions", { sessionIds, correlationId });
+}
+
 export async function listWorkItems(
   projectId?: string | null,
   namespace?: string | null,

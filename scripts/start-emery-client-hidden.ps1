@@ -9,18 +9,50 @@ $clientRoot = Join-Path $repoRoot "apps\emery-client"
 $viteOut = Join-Path $repoRoot "vite-hidden.out.log"
 $viteErr = Join-Path $repoRoot "vite-hidden.err.log"
 $clientExe = Join-Path $repoRoot "target\debug\emery-client.exe"
+$pidFile = Join-Path $repoRoot ".emery-hidden-dev-pids.json"
 
 if ($EnableDiagnostics) {
     $env:EMERY_DEV_DIAGNOSTICS = "1"
 }
 
-Get-NetTCPConnection -LocalPort 1420 -State Listen -ErrorAction SilentlyContinue |
-    ForEach-Object {
-        Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
+function Stop-RecordedProcess {
+    param(
+        [string]$Name,
+        [int]$Id
+    )
+
+    if ($Id -le 0) {
+        return
     }
 
-Get-Process -Name emery-client -ErrorAction SilentlyContinue |
-    Stop-Process -Force -ErrorAction SilentlyContinue
+    try {
+        $proc = Get-Process -Id $Id -ErrorAction Stop
+        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    } catch {
+        Write-Verbose "No recorded $Name process found for PID $Id"
+    }
+}
+
+if (Test-Path $pidFile) {
+    try {
+        $recorded = Get-Content $pidFile -Raw | ConvertFrom-Json
+        if ($recorded.vitePid) {
+            Stop-RecordedProcess -Name "vite" -Id ([int]$recorded.vitePid)
+        }
+        if ($recorded.clientPid) {
+            Stop-RecordedProcess -Name "client" -Id ([int]$recorded.clientPid)
+        }
+    } catch {
+        Write-Warning "Failed to parse $pidFile. Continuing without recorded PID cleanup."
+    }
+    Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
+}
+
+$portOwner = Get-NetTCPConnection -LocalPort 1420 -State Listen -ErrorAction SilentlyContinue |
+    Select-Object -First 1
+if ($portOwner) {
+    throw "Port 1420 is already in use by PID $($portOwner.OwningProcess). Refusing to kill an arbitrary process."
+}
 
 foreach ($path in @($viteOut, $viteErr)) {
     if (Test-Path $path) {
@@ -66,6 +98,11 @@ if (-not (Test-Path $clientExe)) {
 }
 
 $clientProc = Start-Process -FilePath $clientExe -WorkingDirectory $repoRoot -PassThru
+
+@{
+    vitePid = $viteProc.Id
+    clientPid = $clientProc.Id
+} | ConvertTo-Json | Set-Content -Path $pidFile
 
 [pscustomobject]@{
     VitePid = $viteProc.Id

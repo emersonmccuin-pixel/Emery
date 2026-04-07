@@ -307,7 +307,7 @@ Suggested columns:
 | `next_title_refresh_at_prompt_count` | INTEGER NULL | auto-title schedule |
 | `runtime_state` | TEXT NOT NULL | `starting`, `running`, `stopping`, `exited`, `failed`, `interrupted` |
 | `status` | TEXT NOT NULL | `active`, `archived`, `deleted` |
-| `activity_state` | TEXT NOT NULL | `working`, `idle`, `needs_input` |
+| `activity_state` | TEXT NOT NULL | `working`, `idle`, `waiting_for_input` |
 | `needs_input_reason` | TEXT NULL | optional structured cause |
 | `pty_owner_key` | TEXT NULL | live supervisor runtime/session key |
 | `cwd` | TEXT NOT NULL | current cwd snapshot |

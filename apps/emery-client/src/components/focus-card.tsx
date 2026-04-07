@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { ContextMenu, type ContextMenuItem } from "./context-menu";
 import { navStore } from "../nav-store";
-import { appStore } from "../store";
+import { appStore, sessionNeedsInput } from "../store";
 import type { ProjectSummary, SessionSummary } from "../types";
 
 type FocusCardProps = {
@@ -33,7 +33,7 @@ export function FocusCard({ project, sessions }: FocusCardProps) {
 
   const projectSessions = sessions.filter((s) => s.project_id === project.id);
   const activeSessions = projectSessions.filter((s) => s.runtime_state === "running");
-  const needsAttention = projectSessions.filter((s) => s.activity_state === "needs_input");
+  const needsAttention = projectSessions.filter((s) => sessionNeedsInput(s));
   const liveSessions = projectSessions.filter((s) => s.live);
 
   const mostRecent = projectSessions.reduce<number | null>((latest, s) => {

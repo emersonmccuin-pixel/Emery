@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   attachSession,
   bootstrapShell,
+  detachSession,
   pollEvents,
   saveWorkspace,
   watchLiveSessions,
@@ -32,6 +33,8 @@ import { LayerRouter } from "./layer-router";
 import { ModalRouter } from "./modals";
 import { Sidebar } from "./sidebar";
 import { RightPanel } from "./components/right-panel";
+import { decodeBase64Utf8 } from "./utils/base64";
+import { getStoredValue, setStoredValue } from "./utils/local-storage";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -68,12 +71,6 @@ function ToastStack() {
       ))}
     </div>
   );
-}
-
-function decodeBase64Utf8(base64: string): string {
-  const binary = atob(base64);
-  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
 }
 
 function buildWorkspacePayloadV3(mainNav: NavigationLayer, sidebarCollapsed: boolean): WorkspacePayloadV3 {
@@ -125,9 +122,7 @@ export default function App() {
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     try {
-      const persisted =
-        localStorage.getItem(SIDEBAR_COLLAPSED_KEY) ??
-        localStorage.getItem(LEGACY_SIDEBAR_COLLAPSED_KEY);
+      const persisted = getStoredValue(SIDEBAR_COLLAPSED_KEY, LEGACY_SIDEBAR_COLLAPSED_KEY);
       return persisted === "true";
     } catch {
       return false;
@@ -146,7 +141,7 @@ export default function App() {
     setSidebarCollapsed((prev) => {
       const next = !prev;
       try {
-        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(next));
+        setStoredValue(SIDEBAR_COLLAPSED_KEY, String(next), LEGACY_SIDEBAR_COLLAPSED_KEY);
       } catch {
         // ignore storage errors
       }
@@ -390,8 +385,10 @@ export default function App() {
     }
 
     async function resyncSession(sessionId: string) {
+      let attachmentId: string | null = null;
       try {
         const response = await attachSession(sessionId, newCorrelationId("resync"));
+        attachmentId = response.attachment_id;
         directResetTerminal(sessionId);
         for (const chunk of response.replay.chunks) {
           directWriteToTerminal(sessionId, decodeBase64Utf8(chunk.data));
@@ -399,6 +396,10 @@ export default function App() {
         sessionStore.setLastSeenSeq(sessionId, response.output_cursor);
       } catch {
         // session not live — ignore
+      } finally {
+        if (attachmentId) {
+          void detachSession(sessionId, attachmentId, newCorrelationId("resync-detach")).catch(() => {});
+        }
       }
     }
 

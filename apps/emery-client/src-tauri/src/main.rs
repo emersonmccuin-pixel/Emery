@@ -32,7 +32,7 @@ const LEGACY_DIAGNOSTICS_ENV: &str = "EURI_DEV_DIAGNOSTICS";
 
 #[derive(Debug)]
 struct SupervisorManager {
-    worker: Mutex<Option<WorkerHandle>>,
+    worker: Arc<Mutex<Option<WorkerHandle>>>,
     diagnostics: DiagnosticsState,
     event_buffer: Arc<Mutex<VecDeque<FrontendEvent>>>,
 }
@@ -114,10 +114,291 @@ struct IncomingErrorBody {
 impl SupervisorManager {
     fn new() -> Self {
         Self {
-            worker: Mutex::new(None),
+            worker: Arc::new(Mutex::new(None)),
             diagnostics: DiagnosticsState::from_env(),
             event_buffer: Arc::new(Mutex::new(VecDeque::new())),
         }
+    }
+}
+
+fn parse_version_components(version: &str) -> Option<Vec<u64>> {
+    version
+        .split('.')
+        .map(|part| part.parse::<u64>().ok())
+        .collect()
+}
+
+fn version_is_newer(min_supported: &str, current: &str) -> bool {
+    let Some(mut min_parts) = parse_version_components(min_supported) else {
+        return false;
+    };
+    let Some(mut current_parts) = parse_version_components(current) else {
+        return false;
+    };
+    let width = min_parts.len().max(current_parts.len());
+    min_parts.resize(width, 0);
+    current_parts.resize(width, 0);
+    min_parts > current_parts
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        connect_to_endpoint, endpoint_name, parse_incoming_message, parse_version_components,
+        version_is_newer,
+    };
+    use interprocess::TryClone;
+    use serde_json::{Value, json};
+    use std::env;
+    use std::fs;
+    use std::io::{BufRead, BufReader, Write};
+    use std::path::PathBuf;
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use supervisor_core::{AppPaths, Supervisor};
+    use supervisor_ipc::{LocalIpcServer, RequestEnvelope, SupervisorRpc};
+
+    fn unique_temp_root() -> PathBuf {
+        let root = env::temp_dir().join(format!(
+            "emery-client-bridge-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn send_request(
+        writer: &mut interprocess::local_socket::Stream,
+        request_id: &str,
+        method: &str,
+        params: Value,
+    ) {
+        let envelope = RequestEnvelope {
+            message_type: "request".to_string(),
+            request_id: request_id.to_string(),
+            correlation_id: Some("bridge-smoke".to_string()),
+            method: method.to_string(),
+            params,
+        };
+        let line = serde_json::to_string(&envelope).unwrap();
+        writer.write_all(line.as_bytes()).unwrap();
+        writer.write_all(b"\n").unwrap();
+        writer.flush().unwrap();
+    }
+
+    fn read_until_response(
+        reader: &mut BufReader<interprocess::local_socket::Stream>,
+        request_id: &str,
+    ) -> Value {
+        let deadline = SystemTime::now() + Duration::from_secs(10);
+        loop {
+            if SystemTime::now() >= deadline {
+                panic!("timed out waiting for response {request_id}");
+            }
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            if line.trim().is_empty() {
+                continue;
+            }
+            match parse_incoming_message(line.trim()).unwrap() {
+                super::IncomingMessage::Response(response) if response.request_id == request_id => {
+                    assert!(response.ok, "request {request_id} failed: {:?}", response.error);
+                    return response.result.unwrap_or(Value::Null);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn read_until_event(
+        reader: &mut BufReader<interprocess::local_socket::Stream>,
+        event_name: &str,
+        session_id: &str,
+    ) -> Value {
+        let deadline = SystemTime::now() + Duration::from_secs(10);
+        loop {
+            if SystemTime::now() >= deadline {
+                panic!("timed out waiting for event {event_name} for {session_id}");
+            }
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            if line.trim().is_empty() {
+                continue;
+            }
+            match parse_incoming_message(line.trim()).unwrap() {
+                super::IncomingMessage::Event(event)
+                    if event.event == event_name
+                        && event
+                            .payload
+                            .get("session_id")
+                            .and_then(Value::as_str)
+                            == Some(session_id) =>
+                {
+                    return event.payload;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn connect_with_retry(endpoint: &str) -> interprocess::local_socket::Stream {
+        let deadline = SystemTime::now() + Duration::from_secs(10);
+        loop {
+            match connect_to_endpoint(endpoint) {
+                Ok(stream) => return stream,
+                Err(_) if SystemTime::now() < deadline => {
+                    thread::sleep(Duration::from_millis(50));
+                }
+                Err(error) => panic!("timed out connecting to isolated bridge endpoint: {error:#}"),
+            }
+        }
+    }
+
+    #[test]
+    fn parses_numeric_version_components() {
+        assert_eq!(parse_version_components("0.10.2"), Some(vec![0, 10, 2]));
+        assert_eq!(parse_version_components("1.2.3"), Some(vec![1, 2, 3]));
+        assert_eq!(parse_version_components("7"), Some(vec![7]));
+    }
+
+    #[test]
+    fn rejects_non_numeric_version_components() {
+        assert_eq!(parse_version_components(""), None);
+        assert_eq!(parse_version_components("1.2.beta"), None);
+        assert_eq!(parse_version_components("v1.2.3"), None);
+    }
+
+    #[test]
+    fn compares_versions_semantically() {
+        assert!(version_is_newer("0.10.0", "0.2.0"));
+        assert!(!version_is_newer("0.2.0", "0.10.0"));
+        assert!(!version_is_newer("0.1.0", "0.1.0"));
+        assert!(version_is_newer("1.0", "0.9.9"));
+    }
+
+    #[cfg(windows)]
+    fn long_running_command() -> (String, Vec<String>) {
+        (
+            "cmd.exe".to_string(),
+            vec![
+                "/C".to_string(),
+                "ping 127.0.0.1 -n 6 > NUL".to_string(),
+            ],
+        )
+    }
+
+    #[cfg(not(windows))]
+    fn long_running_command() -> (String, Vec<String>) {
+        ("sh".to_string(), vec!["-c".to_string(), "sleep 5".to_string()])
+    }
+
+    #[test]
+    fn ipc_bridge_smoke_test_bootstrap_create_and_terminate_session() {
+        let root = unique_temp_root();
+        let paths = AppPaths::from_root(root.clone()).unwrap();
+        let supervisor = Supervisor::bootstrap(paths).unwrap();
+        let endpoint = endpoint_name(supervisor.paths().root.display().to_string().as_str());
+        let rpc = SupervisorRpc::new(supervisor, endpoint.clone());
+        let server = LocalIpcServer::new(endpoint.clone(), rpc);
+        thread::spawn(move || {
+            server.serve().unwrap();
+        });
+
+        let mut stream = connect_with_retry(&endpoint);
+        let reader_stream = stream.try_clone().unwrap();
+        let mut reader = BufReader::new(reader_stream);
+
+        send_request(&mut stream, "req_hello", "system.hello", json!({}));
+        let hello = read_until_response(&mut reader, "req_hello");
+        assert_eq!(hello["protocol_version"], "1");
+
+        send_request(
+            &mut stream,
+            "req_project",
+            "project.create",
+            json!({
+                "name": "Bridge Smoke Project",
+                "project_type": "scratch"
+            }),
+        );
+        let project = read_until_response(&mut reader, "req_project");
+        let project_id = project["id"].as_str().unwrap().to_string();
+
+        send_request(
+            &mut stream,
+            "req_account",
+            "account.create",
+            json!({
+                "agent_kind": "claude",
+                "label": "Bridge Smoke Account",
+                "is_default": true,
+                "status": "ready"
+            }),
+        );
+        let account = read_until_response(&mut reader, "req_account");
+        let account_id = account["id"].as_str().unwrap().to_string();
+
+        let (command, args) = long_running_command();
+        send_request(
+            &mut stream,
+            "req_session",
+            "session.create",
+            json!({
+                "project_id": project_id,
+                "project_root_id": null,
+                "worktree_id": null,
+                "work_item_id": null,
+                "account_id": account_id,
+                "agent_kind": "claude",
+                "cwd": root.display().to_string(),
+                "command": command,
+                "args": args,
+                "env_preset_ref": null,
+                "origin_mode": "execution",
+                "current_mode": "execution",
+                "title": "Bridge Smoke Session",
+                "title_policy": "manual",
+                "restore_policy": "reattach",
+                "initial_terminal_cols": 120,
+                "initial_terminal_rows": 40
+            }),
+        );
+        let session = read_until_response(&mut reader, "req_session");
+        let session_id = session["id"].as_str().unwrap().to_string();
+
+        send_request(
+            &mut stream,
+            "req_sub",
+            "subscription.open",
+            json!({
+                "topic": "session.state_changed",
+                "session_id": session_id
+            }),
+        );
+        let _subscription = read_until_response(&mut reader, "req_sub");
+        let seeded = read_until_event(&mut reader, "session.state_changed", &session_id);
+        assert_eq!(seeded["session_id"], session_id);
+
+        send_request(
+            &mut stream,
+            "req_term",
+            "session.terminate",
+            json!({
+                "session_id": session_id
+            }),
+        );
+        let _ = read_until_response(&mut reader, "req_term");
+        let state_change = read_until_event(&mut reader, "session.state_changed", &session_id);
+
+        assert_eq!(state_change["session_id"], session_id);
+        assert_eq!(state_change["runtime_state"], "stopping");
+        assert_eq!(state_change["status"], "active");
+
+        let _ = fs::remove_dir_all(root);
     }
 }
 
@@ -215,9 +496,16 @@ impl SupervisorManager {
                 app,
                 self.diagnostics.clone(),
                 Arc::clone(&self.event_buffer),
+                Arc::clone(&self.worker),
             )?);
         }
         Ok(guard)
+    }
+
+    fn invalidate_worker(&self) {
+        if let Ok(mut guard) = self.worker.lock() {
+            *guard = None;
+        }
     }
 
     fn request_value(
@@ -227,14 +515,15 @@ impl SupervisorManager {
         params: Value,
         correlation_id: Option<String>,
     ) -> Result<Value> {
-        let mut guard = self.ensure_worker(app)?;
+        let guard = self.ensure_worker(app)?;
         let handle = guard
-            .as_mut()
+            .as_ref()
             .ok_or_else(|| anyhow!("supervisor worker was not initialized"))?;
         let request_id = format!(
             "req_{}",
             handle.next_request_id.fetch_add(1, Ordering::Relaxed)
         );
+        let control_tx = handle.control_tx.clone();
         let envelope = RequestEnvelope {
             message_type: "request".to_string(),
             request_id,
@@ -254,13 +543,15 @@ impl SupervisorManager {
             }),
         );
         let (response_tx, response_rx) = mpsc::channel();
-        handle
-            .control_tx
+        control_tx
             .send(WorkerCommand::Request {
                 envelope,
                 response_tx,
             })
-            .map_err(|_| anyhow!("supervisor worker is offline"))?;
+            .map_err(|_| {
+                self.invalidate_worker();
+                anyhow!("supervisor worker is offline")
+            })?;
         drop(guard);
 
         match response_rx.recv_timeout(Duration::from_secs(10)) {
@@ -289,6 +580,7 @@ impl SupervisorManager {
                 Err(anyhow!(error))
             }
             Err(_) => {
+                self.invalidate_worker();
                 self.diagnostics.record(
                     "rpc.response_timeout",
                     request_correlation.as_deref(),
@@ -348,6 +640,50 @@ impl SupervisorManager {
                 .lock()
                 .map_err(|_| anyhow!("session state subscription lock poisoned"))?
                 .insert(session_id, subscription_id.to_string());
+        }
+
+        Ok(())
+    }
+
+    fn unwatch_live_sessions(
+        &self,
+        app: &AppHandle,
+        session_ids: &[String],
+        correlation_id: Option<String>,
+    ) -> Result<()> {
+        if session_ids.is_empty() {
+            return Ok(());
+        }
+
+        let subscription_ids = {
+            let guard = self.ensure_worker(app)?;
+            let handle = guard
+                .as_ref()
+                .ok_or_else(|| anyhow!("supervisor worker was not initialized"))?;
+            let mut subscriptions = handle
+                .session_state_subscriptions
+                .lock()
+                .map_err(|_| anyhow!("session state subscription lock poisoned"))?;
+
+            session_ids
+                .iter()
+                .filter_map(|session_id| {
+                    subscriptions
+                        .remove(session_id)
+                        .map(|subscription_id| (session_id.clone(), subscription_id))
+                })
+                .collect::<Vec<_>>()
+        };
+
+        for (_session_id, subscription_id) in subscription_ids {
+            let _ = self.request_value(
+                app,
+                "subscription.close",
+                json!({
+                    "subscription_id": subscription_id
+                }),
+                correlation_id.clone(),
+            );
         }
 
         Ok(())
@@ -453,6 +789,7 @@ impl SupervisorManager {
                 correlation_id.clone(),
             );
         }
+        let _ = self.unwatch_live_sessions(app, &[session_id.to_string()], correlation_id);
         Ok(())
     }
 }
@@ -470,7 +807,7 @@ fn bootstrap_shell(
         .get("min_supported_client_version")
         .and_then(Value::as_str)
         .unwrap_or("0.0.0");
-    if min_supported > CLIENT_VERSION {
+    if version_is_newer(min_supported, CLIENT_VERSION) {
         return Err(format!(
             "client {} is older than supervisor minimum {}",
             CLIENT_VERSION, min_supported
@@ -540,6 +877,18 @@ fn watch_live_sessions(
 ) -> Result<(), String> {
     manager
         .watch_live_sessions(&app, &session_ids, correlation_id)
+        .map_err(error_string)
+}
+
+#[tauri::command]
+fn unwatch_live_sessions(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    session_ids: Vec<String>,
+    correlation_id: Option<String>,
+) -> Result<(), String> {
+    manager
+        .unwatch_live_sessions(&app, &session_ids, correlation_id)
         .map_err(error_string)
 }
 
@@ -1860,6 +2209,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             bootstrap_shell,
             watch_live_sessions,
+            unwatch_live_sessions,
             attach_session,
             detach_session,
             send_session_input,
@@ -1944,6 +2294,7 @@ fn connect_worker(
     app: &AppHandle,
     diagnostics: DiagnosticsState,
     event_buffer: Arc<Mutex<VecDeque<FrontendEvent>>>,
+    worker_slot: Arc<Mutex<Option<WorkerHandle>>>,
 ) -> Result<WorkerHandle> {
     let paths = AppPaths::discover()?;
     let endpoint = endpoint_name(paths.root.display().to_string().as_str());
@@ -1969,6 +2320,7 @@ fn connect_worker(
     let pending_for_reader = Arc::clone(&pending);
     let diagnostics_for_reader = diagnostics.clone();
     let event_buffer_for_reader = Arc::clone(&event_buffer);
+    let worker_slot_for_reader = Arc::clone(&worker_slot);
 
     thread::spawn(move || {
         let mut reader = BufReader::new(reader_stream);
@@ -1989,6 +2341,9 @@ fn connect_worker(
                         json!({ "detail": "supervisor pipe closed" }),
                     );
                     fail_pending_requests(&pending_for_reader, "supervisor connection closed");
+                    if let Ok(mut guard) = worker_slot_for_reader.lock() {
+                        *guard = None;
+                    }
                     break;
                 }
                 Ok(_) => match parse_incoming_message(line.trim_end()) {
@@ -2045,6 +2400,9 @@ fn connect_worker(
                             Some(error.to_string().as_str()),
                         );
                         fail_pending_requests(&pending_for_reader, &error.to_string());
+                        if let Ok(mut guard) = worker_slot_for_reader.lock() {
+                            *guard = None;
+                        }
                         break;
                     }
                 },
@@ -2061,12 +2419,16 @@ fn connect_worker(
                         Some(error.to_string().as_str()),
                     );
                     fail_pending_requests(&pending_for_reader, &error.to_string());
+                    if let Ok(mut guard) = worker_slot_for_reader.lock() {
+                        *guard = None;
+                    }
                     break;
                 }
             }
         }
     });
 
+    let worker_slot_for_writer = Arc::clone(&worker_slot);
     thread::spawn(move || {
         let mut writer = writer_stream;
         while let Ok(command) = control_rx.recv() {
@@ -2089,6 +2451,9 @@ fn connect_worker(
                         .map(|mut map| map.insert(envelope.request_id.clone(), response_tx))
                         .is_err()
                     {
+                        if let Ok(mut guard) = worker_slot_for_writer.lock() {
+                            *guard = None;
+                        }
                         break;
                     }
 
@@ -2097,6 +2462,9 @@ fn connect_worker(
                         || writer.flush().is_err()
                     {
                         fail_pending_requests(&pending, "failed to write request to supervisor");
+                        if let Ok(mut guard) = worker_slot_for_writer.lock() {
+                            *guard = None;
+                        }
                         break;
                     }
                 }

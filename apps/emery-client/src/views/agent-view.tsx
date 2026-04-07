@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { appStore, useAppStore } from "../store";
 import { navStore } from "../nav-store";
 import { useSessionSnapshot } from "../session-store";
@@ -28,7 +28,7 @@ export function AgentView({
 
   const branch = sessionSummary?.worktree_branch ?? null;
 
-  useMemo(() => {
+  useEffect(() => {
     if (
       sessionSummary?.work_item_id &&
       !workItemDetails[sessionSummary.work_item_id]
@@ -37,8 +37,14 @@ export function AgentView({
     }
   }, [sessionSummary?.work_item_id, workItemDetails]);
 
+  useEffect(() => {
+    if (!sessionSnapshot) {
+      void appStore.ensureSessionSnapshot(sessionId);
+    }
+  }, [sessionId, sessionSnapshot]);
+
   if (!sessionSnapshot) {
-    return <div className="empty-pane">Session not found.</div>;
+    return <div className="empty-pane">Loading session…</div>;
   }
 
   const live = sessionSnapshot.live;

@@ -2056,7 +2056,7 @@ impl SupervisorService {
         // 1. Start with origin_mode defaults
         let default = match origin_mode {
             "planning" | "research" | "dispatch" | "command_center" => Some("opus".to_string()),
-            "execution" | "follow_up" => Some("sonnet".to_string()),
+            "ad_hoc" | "execution" | "follow_up" => Some("sonnet".to_string()),
             _ => None,
         };
 
@@ -2476,8 +2476,26 @@ impl SupervisorService {
                     .map(|_| detail)
             });
 
-        if detail.is_err() {
+        if let Err(error) = &detail {
+            let failed_at = unix_time_seconds();
             let _ = self.registry.remove_session(&session_id);
+            let _ = self.registry.mark_launch_failed(&session_id, failed_at);
+            let _ = self
+                .databases
+                .mark_session_failed_to_start(&session_id, failed_at);
+            let _ = self.record_diagnostic(
+                "service",
+                "session.meta_snapshot_failed",
+                DiagnosticContext {
+                    session_id: Some(session_id.clone()),
+                    project_id: Some(spec_record.project_id.clone()),
+                    work_item_id: spec_record.work_item_id.clone(),
+                    ..DiagnosticContext::default()
+                },
+                json!({
+                    "error": error.to_string(),
+                }),
+            );
         }
 
         let detail = detail?;
@@ -2511,8 +2529,57 @@ impl SupervisorService {
 
         for mut req in requests {
             req.dispatch_group = Some(dispatch_group.clone());
-            let detail = self.create_session(req)?;
-            results.push(detail);
+            match self.create_session(req) {
+                Ok(detail) => results.push(detail),
+                Err(error) => {
+                    let created_session_ids: Vec<String> =
+                        results.iter().map(|detail| detail.summary.id.clone()).collect();
+
+                    let mut rollback_failures = Vec::new();
+                    for detail in &results {
+                        if let Err(rollback_error) = self.terminate_session(&detail.summary.id) {
+                            rollback_failures.push(format!(
+                                "terminate {}: {}",
+                                detail.summary.id, rollback_error
+                            ));
+                        }
+                    }
+
+                    self.record_diagnostic(
+                        "service",
+                        "session.batch_create_failed",
+                        DiagnosticContext {
+                            project_id: results
+                                .first()
+                                .map(|detail| detail.summary.project_id.clone()),
+                            ..DiagnosticContext::default()
+                        },
+                        json!({
+                            "dispatch_group": dispatch_group,
+                            "created_session_ids": created_session_ids,
+                            "rollback_failures": rollback_failures,
+                            "error": error.to_string(),
+                        }),
+                    )?;
+
+                    let rollback_suffix = if rollback_failures.is_empty() {
+                        "Created sessions were terminated.".to_string()
+                    } else {
+                        format!(
+                            "Rollback encountered errors: {}",
+                            rollback_failures.join("; ")
+                        )
+                    };
+
+                    return Err(anyhow!(
+                        "batch session creation failed after creating {} session(s): {}. Created session IDs: [{}]. {}",
+                        created_session_ids.len(),
+                        error,
+                        created_session_ids.join(", "),
+                        rollback_suffix
+                    ));
+                }
+            }
         }
 
         Ok(results)
@@ -2772,6 +2839,34 @@ impl SupervisorService {
             return Err(anyhow!(
                 "no watchable sessions — all sessions may have already ended"
             ));
+        }
+
+        // Each subscription is seeded with the current state snapshot on open.
+        // Discard that initial event so this method waits for the next actual change.
+        for (sid, sub_id, rx) in &subscriptions {
+            match rx.try_recv() {
+                Ok(_) | Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => {
+                    for (s, existing_sub_id, _) in &subscriptions {
+                        let _ = self.unsubscribe_session_state_changed(s, existing_sub_id);
+                    }
+                    if let Some(detail) = self.get_session(sid)? {
+                        return Ok(SessionWatchResponse {
+                            session_id: sid.clone(),
+                            runtime_state: detail.summary.runtime_state,
+                            status: detail.summary.status,
+                            activity_state: detail.summary.activity_state,
+                            needs_input_reason: detail.summary.needs_input_reason,
+                            timed_out: false,
+                        });
+                    }
+                    return Err(anyhow!(
+                        "state subscription {} disconnected for session {}",
+                        sub_id,
+                        sid
+                    ));
+                }
+            }
         }
 
         let poll_interval = std::time::Duration::from_millis(100);
@@ -3160,14 +3255,6 @@ impl SupervisorService {
 
         self.databases.insert_work_item(&record)?;
         Ok(())
-    }
-
-    fn allocate_work_item_callsign(
-        &self,
-        project_id: &str,
-        parent: Option<&ResolvedWorkItemParent>,
-    ) -> Result<String> {
-        self.allocate_work_item_callsign_ns(None, Some(project_id), parent)
     }
 
     fn allocate_work_item_callsign_ns(
@@ -3987,8 +4074,7 @@ impl SupervisorService {
 
         let template_key = required_trimmed("template_key", &request.template_key)?;
         let label = required_trimmed("label", &request.label)?;
-        let origin_mode = optional_trimmed(request.origin_mode)
-            .unwrap_or_else(|| "code".to_string());
+        let origin_mode = normalize_agent_template_origin_mode(request.origin_mode)?;
 
         let sort_order = match request.sort_order {
             Some(s) => s,
@@ -4038,8 +4124,8 @@ impl SupervisorService {
             None => existing.summary.label.clone(),
         };
         let origin_mode = match request.origin_mode {
-            Some(om) => optional_trimmed(Some(om)).unwrap_or_else(|| "code".to_string()),
-            None => existing.summary.origin_mode.clone(),
+            Some(om) => normalize_agent_template_origin_mode(Some(om))?,
+            None => validate_session_mode(&existing.summary.origin_mode)?,
         };
         let default_model = match request.default_model {
             Some(v) => optional_trimmed(Some(v)),
@@ -4120,28 +4206,28 @@ fn default_templates_for_type(project_type: &str) -> Vec<TemplateSpec> {
             TemplateSpec {
                 template_key: "planner".to_string(),
                 label: "Planner".to_string(),
-                origin_mode: "code".to_string(),
+                origin_mode: "planning".to_string(),
                 default_model: Some("claude-opus-4-5".to_string()),
                 instructions_md: Some("You are a planning agent. Break down tasks into clear, actionable steps. Identify dependencies, risks, and acceptance criteria before any implementation begins.".to_string()),
             },
             TemplateSpec {
                 template_key: "architect".to_string(),
                 label: "Architect".to_string(),
-                origin_mode: "code".to_string(),
+                origin_mode: "planning".to_string(),
                 default_model: Some("claude-opus-4-5".to_string()),
                 instructions_md: Some("You are an architecture agent. Design system structure, define interfaces, and make high-level technical decisions. Document your reasoning.".to_string()),
             },
             TemplateSpec {
                 template_key: "implementer".to_string(),
                 label: "Implementer".to_string(),
-                origin_mode: "code".to_string(),
+                origin_mode: "execution".to_string(),
                 default_model: Some("claude-sonnet-4-5".to_string()),
                 instructions_md: Some("You are an implementation agent. Write clean, well-structured code following project conventions. Run build verification after each change.".to_string()),
             },
             TemplateSpec {
                 template_key: "reviewer".to_string(),
                 label: "Reviewer".to_string(),
-                origin_mode: "code".to_string(),
+                origin_mode: "follow_up".to_string(),
                 default_model: Some("claude-opus-4-5".to_string()),
                 instructions_md: Some("You are a code review agent. Check correctness, style, test coverage, and adherence to acceptance criteria. Provide specific, actionable feedback.".to_string()),
             },
@@ -4150,21 +4236,21 @@ fn default_templates_for_type(project_type: &str) -> Vec<TemplateSpec> {
             TemplateSpec {
                 template_key: "researcher".to_string(),
                 label: "Researcher".to_string(),
-                origin_mode: "chat".to_string(),
+                origin_mode: "research".to_string(),
                 default_model: Some("claude-opus-4-5".to_string()),
                 instructions_md: Some("You are a research agent. Gather, synthesize, and summarize information from available sources. Cite your reasoning and flag uncertainty.".to_string()),
             },
             TemplateSpec {
                 template_key: "analyst".to_string(),
                 label: "Analyst".to_string(),
-                origin_mode: "chat".to_string(),
+                origin_mode: "research".to_string(),
                 default_model: Some("claude-opus-4-5".to_string()),
                 instructions_md: Some("You are an analysis agent. Evaluate data, identify patterns, and draw well-reasoned conclusions. Present findings clearly with supporting evidence.".to_string()),
             },
             TemplateSpec {
                 template_key: "writer".to_string(),
                 label: "Writer".to_string(),
-                origin_mode: "chat".to_string(),
+                origin_mode: "follow_up".to_string(),
                 default_model: Some("claude-sonnet-4-5".to_string()),
                 instructions_md: Some("You are a writing agent. Produce clear, well-structured prose. Adapt tone and format to the audience and purpose of the document.".to_string()),
             },
@@ -4511,10 +4597,19 @@ fn required_document_content(value: &str) -> Result<String> {
 fn validate_session_mode(value: &str) -> Result<String> {
     let normalized = required_trimmed("session mode", value)?.to_lowercase();
     match normalized.as_str() {
+        "code" => Ok("execution".to_string()),
+        "chat" => Ok("research".to_string()),
         "ad_hoc" | "planning" | "research" | "execution" | "follow_up" | "dispatch" | "command_center" => Ok(normalized),
         _ => Err(anyhow!(
             "session mode must be one of: ad_hoc, planning, research, execution, follow_up, dispatch, command_center"
         )),
+    }
+}
+
+fn normalize_agent_template_origin_mode(value: Option<String>) -> Result<String> {
+    match value {
+        Some(mode) => validate_session_mode(&mode),
+        None => Ok("execution".to_string()),
     }
 }
 
@@ -4533,6 +4628,441 @@ fn validate_restore_policy(value: &str) -> Result<String> {
         _ => Err(anyhow!(
             "restore policy must be one of: reattach, manual, never"
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SupervisorService, normalize_agent_template_origin_mode, validate_session_mode};
+    use crate::bootstrap::AppPaths;
+    use crate::diagnostics::DiagnosticsHub;
+    use crate::models::{
+        CreateAccountRequest, CreateProjectRequest, CreateSessionRequest, NewAccountRecord,
+        NewProjectRecord, NewSessionRecord, NewSessionSpecRecord, SessionListFilter,
+    };
+    use crate::runtime::{SessionRegistry, SessionRuntimeRegistration};
+    use crate::store::DatabaseSet;
+    use crate::vault::VaultService;
+    use std::env;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::thread;
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_root() -> PathBuf {
+        let root = env::temp_dir().join(format!(
+            "emery-supervisor-core-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn build_test_service() -> (SupervisorService, PathBuf) {
+        let root = unique_temp_root();
+        let paths = AppPaths::from_root(root.clone()).unwrap();
+        let databases = DatabaseSet::initialize(&paths).unwrap();
+        let diagnostics = DiagnosticsHub::from_env(&paths).unwrap();
+        let registry = SessionRegistry::new(diagnostics.clone());
+        let vault = VaultService::new(databases.clone());
+        let service = SupervisorService::new(databases, registry, diagnostics, vault);
+        (service, root)
+    }
+
+    fn create_project_and_account(service: &SupervisorService) -> (String, String) {
+        let project = service
+            .create_project(CreateProjectRequest {
+                name: "Lifecycle Test Project".to_string(),
+                slug: None,
+                sort_order: None,
+                default_account_id: None,
+                project_type: Some("scratch".to_string()),
+                model_defaults_json: None,
+                wcp_namespace: None,
+                settings_json: None,
+                instructions_md: None,
+            })
+            .unwrap();
+        let account = service
+            .create_account(CreateAccountRequest {
+                agent_kind: "claude".to_string(),
+                label: "Lifecycle Test Account".to_string(),
+                binary_path: None,
+                config_root: None,
+                env_preset_ref: None,
+                is_default: Some(true),
+                status: Some("ready".to_string()),
+                default_safety_mode: None,
+                default_launch_args: None,
+                default_model: None,
+            })
+            .unwrap();
+        (project.id, account.summary.id)
+    }
+
+    fn make_session_request(
+        service: &SupervisorService,
+        project_id: &str,
+        account_id: &str,
+        title: &str,
+        command: &str,
+        args: Vec<String>,
+    ) -> CreateSessionRequest {
+        CreateSessionRequest {
+            project_id: project_id.to_string(),
+            project_root_id: None,
+            worktree_id: None,
+            work_item_id: None,
+            account_id: account_id.to_string(),
+            agent_kind: "claude".to_string(),
+            cwd: service.databases.paths().root.display().to_string(),
+            command: command.to_string(),
+            args,
+            env_preset_ref: None,
+            origin_mode: "execution".to_string(),
+            current_mode: Some("execution".to_string()),
+            title: Some(title.to_string()),
+            title_policy: Some("manual".to_string()),
+            restore_policy: Some("reattach".to_string()),
+            initial_terminal_cols: Some(120),
+            initial_terminal_rows: Some(40),
+            dispatch_group: None,
+            auto_worktree: false,
+            safety_mode: None,
+            extra_args: None,
+            model: None,
+        }
+    }
+
+    #[cfg(windows)]
+    fn long_running_command() -> (String, Vec<String>) {
+        (
+            "cmd.exe".to_string(),
+            vec![
+                "/C".to_string(),
+                "ping 127.0.0.1 -n 6 > NUL".to_string(),
+            ],
+        )
+    }
+
+    #[cfg(not(windows))]
+    fn long_running_command() -> (String, Vec<String>) {
+        ("sh".to_string(), vec!["-c".to_string(), "sleep 5".to_string()])
+    }
+
+    fn seed_watchable_session(service: &SupervisorService, session_id: &str) {
+        let now = 1_700_000_000_i64;
+        let project_id = "proj_test".to_string();
+        let account_id = "acct_test".to_string();
+        let session_spec_id = format!("sspec_{session_id}");
+
+        service
+            .databases
+            .insert_project(&NewProjectRecord {
+                id: project_id.clone(),
+                name: "Test Project".to_string(),
+                slug: "test-project".to_string(),
+                sort_order: 0,
+                default_account_id: Some(account_id.clone()),
+                project_type: Some("scratch".to_string()),
+                model_defaults_json: None,
+                wcp_namespace: None,
+                settings_json: None,
+                instructions_md: None,
+                created_at: now,
+                updated_at: now,
+            })
+            .unwrap();
+        service
+            .databases
+            .insert_account(&NewAccountRecord {
+                id: account_id.clone(),
+                agent_kind: "claude".to_string(),
+                label: "Test Account".to_string(),
+                binary_path: Some("claude".to_string()),
+                config_root: None,
+                env_preset_ref: None,
+                is_default: true,
+                status: "ready".to_string(),
+                default_safety_mode: None,
+                default_launch_args_json: None,
+                default_model: None,
+                created_at: now,
+                updated_at: now,
+            })
+            .unwrap();
+        service
+            .databases
+            .insert_session(
+                &NewSessionSpecRecord {
+                    id: session_spec_id.clone(),
+                    project_id: project_id.clone(),
+                    project_root_id: None,
+                    worktree_id: None,
+                    work_item_id: None,
+                    account_id: account_id.clone(),
+                    agent_kind: "claude".to_string(),
+                    cwd: service.databases.paths().root.display().to_string(),
+                    command: "claude".to_string(),
+                    args_json: "[]".to_string(),
+                    env_preset_ref: None,
+                    origin_mode: "execution".to_string(),
+                    current_mode: "execution".to_string(),
+                    title: Some("Watch Test".to_string()),
+                    title_policy: "manual".to_string(),
+                    restore_policy: "reattach".to_string(),
+                    initial_terminal_cols: 120,
+                    initial_terminal_rows: 40,
+                    context_bundle_ref: None,
+                    created_at: now,
+                    updated_at: now,
+                },
+                &NewSessionRecord {
+                    id: session_id.to_string(),
+                    session_spec_id,
+                    project_id,
+                    project_root_id: None,
+                    worktree_id: None,
+                    work_item_id: None,
+                    account_id,
+                    agent_kind: "claude".to_string(),
+                    origin_mode: "execution".to_string(),
+                    current_mode: "execution".to_string(),
+                    title: Some("Watch Test".to_string()),
+                    title_source: "manual".to_string(),
+                    runtime_state: "starting".to_string(),
+                    status: "active".to_string(),
+                    activity_state: "starting".to_string(),
+                    pty_owner_key: session_id.to_string(),
+                    cwd: service.databases.paths().root.display().to_string(),
+                    transcript_primary_artifact_id: None,
+                    raw_log_artifact_id: None,
+                    started_at: None,
+                    created_at: now,
+                    updated_at: now,
+                    dispatch_group: None,
+                },
+                &[],
+            )
+            .unwrap();
+
+        let artifact_root = service.databases.paths().sessions_dir.join(session_id);
+        fs::create_dir_all(&artifact_root).unwrap();
+        service
+            .registry
+            .register_starting_session(SessionRuntimeRegistration {
+                session_id: session_id.to_string(),
+                created_at: now,
+                artifact_root: artifact_root.clone(),
+                raw_log_path: artifact_root.join("raw.log"),
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn validate_session_mode_accepts_current_modes() {
+        for mode in [
+            "ad_hoc",
+            "planning",
+            "research",
+            "execution",
+            "follow_up",
+            "dispatch",
+            "command_center",
+        ] {
+            assert_eq!(validate_session_mode(mode).unwrap(), mode);
+        }
+    }
+
+    #[test]
+    fn validate_session_mode_normalizes_legacy_aliases() {
+        assert_eq!(validate_session_mode("code").unwrap(), "execution");
+        assert_eq!(validate_session_mode("chat").unwrap(), "research");
+        assert_eq!(validate_session_mode(" Code ").unwrap(), "execution");
+        assert_eq!(validate_session_mode("CHAT").unwrap(), "research");
+    }
+
+    #[test]
+    fn validate_session_mode_rejects_unknown_values() {
+        let error = validate_session_mode("builder").unwrap_err().to_string();
+        assert!(error.contains("session mode must be one of:"));
+    }
+
+    #[test]
+    fn agent_template_origin_mode_defaults_and_normalizes() {
+        assert_eq!(
+            normalize_agent_template_origin_mode(None).unwrap(),
+            "execution"
+        );
+        assert_eq!(
+            normalize_agent_template_origin_mode(Some("chat".to_string())).unwrap(),
+            "research"
+        );
+        assert_eq!(
+            normalize_agent_template_origin_mode(Some("planning".to_string())).unwrap(),
+            "planning"
+        );
+    }
+
+    #[test]
+    fn watch_sessions_times_out_instead_of_returning_seeded_snapshot() {
+        let (service, root) = build_test_service();
+        let session_id = "sess_watch_timeout";
+        seed_watchable_session(&service, session_id);
+
+        let started = Instant::now();
+        let response = service
+            .watch_sessions(vec![session_id.to_string()], 1)
+            .unwrap();
+
+        assert!(response.timed_out);
+        assert!(started.elapsed() >= Duration::from_millis(900));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn watch_sessions_returns_first_real_change_after_subscription() {
+        let (service, root) = build_test_service();
+        let session_id = "sess_watch_change";
+        seed_watchable_session(&service, session_id);
+
+        let registry = service.registry.clone();
+        let session_id_owned = session_id.to_string();
+        let notifier = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(150));
+            registry.note_input(&session_id_owned, 1_700_000_001).unwrap();
+        });
+
+        let response = service
+            .watch_sessions(vec![session_id.to_string()], 1)
+            .unwrap();
+        notifier.join().unwrap();
+
+        assert!(!response.timed_out);
+        assert_eq!(response.session_id, session_id);
+        assert_eq!(response.runtime_state, "starting");
+        assert_eq!(response.status, "active");
+        assert_eq!(response.activity_state, "working");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn create_session_marks_failed_launches_in_persistent_state() {
+        let (service, root) = build_test_service();
+        let (project_id, account_id) = create_project_and_account(&service);
+
+        let error = service
+            .create_session(make_session_request(
+                &service,
+                &project_id,
+                &account_id,
+                "Intentional launch failure",
+                "emery-command-that-does-not-exist",
+                vec![],
+            ))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("failed to spawn child"));
+
+        let sessions = service
+            .list_sessions(SessionListFilter {
+                project_id: Some(project_id),
+                status: None,
+                runtime_state: None,
+                work_item_id: None,
+                limit: None,
+            })
+            .unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].title.as_deref(), Some("Intentional launch failure"));
+        assert_eq!(sessions[0].runtime_state, "failed");
+        assert_eq!(sessions[0].status, "failed");
+        assert_eq!(sessions[0].activity_state, "idle");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn create_session_batch_rolls_back_created_sessions_on_later_failure() {
+        let (service, root) = build_test_service();
+        let (project_id, account_id) = create_project_and_account(&service);
+        let (command, args) = long_running_command();
+
+        let error = service
+            .create_session_batch(vec![
+                make_session_request(
+                    &service,
+                    &project_id,
+                    &account_id,
+                    "Batch ok",
+                    &command,
+                    args,
+                ),
+                make_session_request(
+                    &service,
+                    &project_id,
+                    &account_id,
+                    "Batch fail",
+                    "emery-command-that-does-not-exist",
+                    vec![],
+                ),
+            ])
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("batch session creation failed after creating 1 session(s)"));
+        assert!(error.contains("Created session IDs: ["));
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let sessions = loop {
+            let sessions = service
+                .list_sessions(SessionListFilter {
+                    project_id: Some(project_id.clone()),
+                    status: None,
+                    runtime_state: None,
+                    work_item_id: None,
+                    limit: None,
+                })
+                .unwrap();
+
+            let maybe_first = sessions
+                .iter()
+                .find(|session| session.title.as_deref() == Some("Batch ok"));
+            if let Some(first) = maybe_first {
+                if first.runtime_state != "running" && first.runtime_state != "starting" {
+                    break sessions;
+                }
+            }
+
+            if Instant::now() >= deadline {
+                break sessions;
+            }
+            thread::sleep(Duration::from_millis(50));
+        };
+
+        assert_eq!(sessions.len(), 2);
+        let first = sessions
+            .iter()
+            .find(|session| session.title.as_deref() == Some("Batch ok"))
+            .unwrap();
+        let second = sessions
+            .iter()
+            .find(|session| session.title.as_deref() == Some("Batch fail"))
+            .unwrap();
+
+        assert_ne!(first.runtime_state, "running");
+        assert_ne!(first.runtime_state, "starting");
+        assert_eq!(second.runtime_state, "failed");
+        assert_eq!(second.status, "failed");
+
+        let _ = fs::remove_dir_all(root);
     }
 }
 
