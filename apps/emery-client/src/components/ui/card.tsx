@@ -7,8 +7,8 @@ const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElemen
     <div
       ref={ref}
       className={cn(
-        "relative overflow-hidden border border-[var(--border-default)] bg-[var(--surface-raised)]/90 text-[var(--text-primary)]",
-        "shadow-[0_0_0_1px_rgba(42,42,58,0.6),0_0_30px_rgba(0,212,255,0.06)]",
+        "relative overflow-hidden border border-[var(--card-border)] bg-[var(--surface-raised)]/90 text-[var(--text-primary)]",
+        "shadow-[var(--card-shadow)]",
         "backdrop-blur-md",
         "[clip-path:polygon(0_10px,10px_0,calc(100%-10px)_0,100%_10px,100%_calc(100%-10px),calc(100%-10px)_100%,10px_100%,0_calc(100%-10px))]",
         className,

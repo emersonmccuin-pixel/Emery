@@ -18,22 +18,22 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default: [
-          "border border-[var(--accent)] bg-transparent text-[var(--accent)]",
-          "shadow-[0_0_0_1px_rgba(0,255,136,0.25),0_0_16px_rgba(0,255,136,0.18)]",
-          "hover:bg-[var(--accent)] hover:text-[var(--surface-base)] hover:shadow-[0_0_0_1px_rgba(0,255,136,0.45),0_0_24px_rgba(0,255,136,0.3)]",
+          "border border-[var(--accent)] bg-[var(--button-bg)] text-[var(--accent)]",
+          "shadow-[0_0_0_1px_var(--accent-muted),0_0_16px_var(--accent-subtle)]",
+          "hover:bg-[var(--accent)] hover:text-[var(--surface-base)] hover:shadow-[0_0_0_1px_var(--accent-muted),0_0_24px_var(--accent-muted)]",
         ].join(" "),
         secondary: [
-          "border border-[var(--accent-secondary)] bg-transparent text-[var(--accent-secondary)]",
-          "shadow-[0_0_0_1px_rgba(255,0,255,0.2),0_0_16px_rgba(255,0,255,0.12)]",
-          "hover:bg-[var(--accent-secondary)] hover:text-[var(--surface-base)] hover:shadow-[0_0_0_1px_rgba(255,0,255,0.4),0_0_24px_rgba(255,0,255,0.28)]",
+          "border border-[var(--accent-secondary,var(--text-secondary))] bg-[var(--button-bg)] text-[var(--accent-secondary,var(--text-secondary))]",
+          "shadow-[0_0_0_1px_var(--accent-subtle)]",
+          "hover:bg-[var(--accent-secondary,var(--text-secondary))] hover:text-[var(--surface-base)] hover:shadow-[0_0_0_1px_var(--accent-muted)]",
         ].join(" "),
         ghost: [
-          "border border-transparent bg-transparent text-[var(--text-secondary)]",
-          "hover:border-[var(--border-default)] hover:bg-[var(--accent-subtle)] hover:text-[var(--accent)]",
+          "border border-[var(--button-border)] bg-[var(--surface-raised)] text-[var(--text-secondary)]",
+          "hover:border-[var(--accent-muted)] hover:bg-[var(--button-hover-bg)] hover:text-[var(--accent)]",
         ].join(" "),
         terminal: [
           "border border-[var(--accent)] bg-[var(--accent)] text-[var(--surface-base)]",
-          "shadow-[0_0_0_1px_rgba(0,255,136,0.25),0_0_20px_rgba(0,255,136,0.3)]",
+          "shadow-[0_0_0_1px_var(--accent-muted),0_0_20px_var(--accent-muted)]",
           "hover:brightness-110",
         ].join(" "),
       },

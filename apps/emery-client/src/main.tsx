@@ -5,12 +5,13 @@ import "./styles.css";
 import { loadOverrides, applyOverrides } from "./appearance";
 
 // Apply persisted theme before first render to avoid flash.
-// Upgrade legacy "vaporwave" installs to the new cyberpunk default.
+// Upgrade legacy theme installs to the new "default" (mission-control) theme.
+const LEGACY_THEMES = new Set(["vaporwave", "cyberpunk", "dark", "neutral-dark", "fallout", "vapor", "synthwave", "deep-ocean", "amber", "aurora", "noir", "mars", "mission-control"]);
 const savedTheme =
   localStorage.getItem("emery.theme") ??
   localStorage.getItem("euri.theme") ??
-  "cyberpunk";
-const resolvedTheme = savedTheme === "vaporwave" ? "cyberpunk" : savedTheme;
+  "default";
+const resolvedTheme = LEGACY_THEMES.has(savedTheme) ? "default" : savedTheme;
 document.documentElement.dataset.theme = resolvedTheme;
 
 if (savedTheme !== resolvedTheme || localStorage.getItem("emery.theme") !== resolvedTheme) {

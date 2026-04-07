@@ -459,17 +459,11 @@ function AccountRow({
 // --- Appearance Section ---
 
 const THEMES = [
-  { id: "cyberpunk", label: "Cyberpunk", description: "Glitched neon HUD with scanlines and acid green" },
-  { id: "fallout", label: "Fallout", description: "Pip-Boy green phosphor CRT with flicker and Vault-Tec ASCII" },
-  { id: "vapor", label: "Vaporwave", description: "Sunset gradient with city skyline silhouette" },
-  { id: "synthwave", label: "Synthwave", description: "80s neon grid with hot pink horizon and glowing sun" },
-  { id: "deep-ocean", label: "Deep Ocean", description: "Bioluminescent abyss with drifting particles and caustics" },
-  { id: "aurora", label: "Aurora", description: "Northern lights with twinkling stars and shifting color bands" },
-  { id: "noir", label: "Noir", description: "Film noir warmth with venetian blind light and gold accents" },
-  { id: "amber", label: "Amber Terminal", description: "Classic amber phosphor CRT with dot grid and vignette" },
-  { id: "mars", label: "Mars Colony", description: "Dusty red industrial with hab-module readout" },
-  { id: "mission-control", label: "Mission Control", description: "1960s NASA console with industrial bezels and CRT terminal" },
-  { id: "neutral-dark", label: "Neutral Dark", description: "Clean blue-grey on dark" },
+  { id: "default", label: "Mission Control", description: "Warm amber NASA console with industrial bezels and CRT glow" },
+  { id: "ice", label: "Ice Station", description: "Cold blue-cyan tactical display" },
+  { id: "ember", label: "Ember", description: "Hot red-orange industrial console" },
+  { id: "verdant", label: "Verdant", description: "Deep green forest terminal" },
+  { id: "ultraviolet", label: "Ultraviolet", description: "Purple-magenta neon console" },
 ] as const;
 
 const FONT_OPTIONS = [
@@ -572,7 +566,7 @@ function getThemeTokenValue(varName: string): string {
 
 function AppearanceSection() {
   const [currentTheme, setCurrentTheme] = useState(
-    () => document.documentElement.dataset.theme ?? "cyberpunk",
+    () => document.documentElement.dataset.theme ?? "default",
   );
   const { overrides, update, setToken, reset } = useAppearance();
   const [showAdvanced, setShowAdvanced] = useState(false);
