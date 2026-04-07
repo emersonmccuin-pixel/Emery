@@ -78,6 +78,10 @@ const KNOWLEDGE_MIGRATIONS: &[(&str, &str)] = &[
         "0002_namespace_scoping",
         include_str!("migrations/knowledge/0002_namespace_scoping.sql"),
     ),
+    (
+        "0003_embeddings",
+        include_str!("migrations/knowledge/0003_embeddings.sql"),
+    ),
 ];
 
 pub fn migrate_app_db(path: &Path) -> Result<()> {

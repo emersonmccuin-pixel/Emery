@@ -20,12 +20,13 @@ use crate::models::{
     ProjectDetail, ProjectRootSummary, ProjectRootUpdateRecord, ProjectSummary, ProjectUpdateRecord,
     SessionArtifactRecord, SessionListFilter, SessionSpecDetail, SessionSpecListFilter,
     SessionSpecSummary, SessionSpecUpdateRecord, SessionSummary, UpdateWorkspaceStateRequest,
-    WorkItemDetail, WorkItemListFilter, WorkItemSummary, WorkItemUpdateRecord,
+    WorkItemDetail, WorkItemEmbeddingRow, WorkItemListFilter, WorkItemSummary, WorkItemUpdateRecord,
     WorkflowReconciliationProposalDetail, WorkflowReconciliationProposalListFilter,
     WorkflowReconciliationProposalSummary, WorkflowReconciliationProposalUpdateRecord,
     WorkspaceStateRecord, WorktreeDetail, WorktreeListFilter, WorktreeSummary, WorktreeUpdateRecord,
     VaultEntry, VaultEntryRow, VaultAuditEntry, NewVaultEntryRecord, VaultEntryUpdateRecord,
     NewVaultAuditRecord, McpServerSummary, NewMcpServerRecord, McpServerUpdateRecord,
+    DocumentEmbeddingRow,
 };
 use crate::schema::{migrate_app_db, migrate_knowledge_db};
 use uuid::Uuid;
@@ -1765,6 +1766,152 @@ impl DatabaseSet {
         }
 
         Ok(())
+    }
+
+    // ── Embedding I/O ─────────────────────────────────────────────────────────
+
+    /// Load all work items (with embedding data) from the given namespace (or all if None).
+    /// Used by the embedding pipeline for backfill and by the search ranker.
+    pub fn list_work_items_for_embedding(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<WorkItemEmbeddingRow>> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let mut sql = String::from(
+            "SELECT id, callsign, namespace, title, description, acceptance_criteria,
+                    status, updated_at, embedding, input_hash
+             FROM work_items
+             WHERE 1 = 1",
+        );
+        let mut values: Vec<String> = Vec::new();
+
+        if let Some(ns) = namespace {
+            sql.push_str(" AND namespace = ?");
+            values.push(ns.to_string());
+        }
+
+        sql.push_str(" ORDER BY updated_at DESC");
+
+        let mut stmt = connection.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(values.iter()), |row| {
+            Ok(WorkItemEmbeddingRow {
+                id: row.get(0)?,
+                callsign: row.get(1)?,
+                namespace: row.get(2)?,
+                title: row.get(3)?,
+                description: row.get(4)?,
+                acceptance_criteria: row.get(5)?,
+                status: row.get(6)?,
+                updated_at: row.get(7)?,
+                embedding: row.get(8)?,
+                input_hash: row.get(9)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+
+    /// Write embedding data back to a work_item row.
+    pub fn update_work_item_embedding(
+        &self,
+        id: &str,
+        embedding: &[u8],
+        model: &str,
+        input_hash: &str,
+        embedded_at: i64,
+    ) -> Result<()> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        connection.execute(
+            "UPDATE work_items
+             SET embedding = ?2, embedding_model = ?3, input_hash = ?4, embedded_at = ?5
+             WHERE id = ?1",
+            params![id, embedding, model, input_hash, embedded_at],
+        )?;
+        Ok(())
+    }
+
+    /// Load all documents (with embedding data) from the given namespace (or all if None).
+    pub fn list_documents_for_embedding(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<DocumentEmbeddingRow>> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let mut sql = String::from(
+            "SELECT id, slug, namespace, title, content_markdown, doc_type,
+                    updated_at, embedding, input_hash
+             FROM documents
+             WHERE 1 = 1",
+        );
+        let mut values: Vec<String> = Vec::new();
+
+        if let Some(ns) = namespace {
+            sql.push_str(" AND namespace = ?");
+            values.push(ns.to_string());
+        }
+
+        sql.push_str(" ORDER BY updated_at DESC");
+
+        let mut stmt = connection.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(values.iter()), |row| {
+            Ok(DocumentEmbeddingRow {
+                id: row.get(0)?,
+                slug: row.get(1)?,
+                namespace: row.get(2)?,
+                title: row.get(3)?,
+                content_markdown: row.get(4)?,
+                doc_type: row.get(5)?,
+                updated_at: row.get(6)?,
+                embedding: row.get(7)?,
+                input_hash: row.get(8)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    }
+
+    /// Write embedding data back to a document row.
+    pub fn update_document_embedding(
+        &self,
+        id: &str,
+        embedding: &[u8],
+        model: &str,
+        input_hash: &str,
+        embedded_at: i64,
+    ) -> Result<()> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        connection.execute(
+            "UPDATE documents
+             SET embedding = ?2, embedding_model = ?3, input_hash = ?4, embedded_at = ?5
+             WHERE id = ?1",
+            params![id, embedding, model, input_hash, embedded_at],
+        )?;
+        Ok(())
+    }
+
+    /// Return the current `input_hash` stored on a work_item row, or None if absent / not set.
+    pub fn get_work_item_input_hash(&self, id: &str) -> Result<Option<String>> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        connection
+            .query_row(
+                "SELECT input_hash FROM work_items WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map(|opt| opt.flatten())
+            .map_err(Into::into)
+    }
+
+    /// Return the current `input_hash` stored on a document row, or None if absent / not set.
+    pub fn get_document_input_hash(&self, id: &str) -> Result<Option<String>> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        connection
+            .query_row(
+                "SELECT input_hash FROM documents WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map(|opt| opt.flatten())
+            .map_err(Into::into)
     }
 
     // ── MCP Servers ───────────────────────────────────────────────────────────

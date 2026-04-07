@@ -549,6 +549,91 @@ pub struct UpdateDocumentRequest {
     pub content_markdown: Option<String>,
 }
 
+// ── Embedding search ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkItemSearchRequest {
+    pub query_text: String,
+    pub limit: Option<usize>,
+    pub threshold: Option<f32>,
+    pub namespace: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DocumentSearchRequest {
+    pub query_text: String,
+    pub limit: Option<usize>,
+    pub threshold: Option<f32>,
+    pub namespace: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkItemSearchResult {
+    pub id: String,
+    pub callsign: String,
+    pub title: String,
+    pub status: String,
+    pub namespace: Option<String>,
+    /// Raw cosine similarity (0–1).
+    pub cosine: f32,
+    /// Recency decay factor applied (0.1–1.0).
+    pub recency_decay: f32,
+    /// Status weight applied.
+    pub status_weight: f32,
+    /// Final combined score.
+    pub final_score: f32,
+    /// First ~200 chars of the description.
+    pub snippet: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DocumentSearchResult {
+    pub id: String,
+    pub slug: String,
+    pub title: String,
+    pub doc_type: String,
+    pub namespace: Option<String>,
+    /// Raw cosine similarity (0–1).
+    pub cosine: f32,
+    /// Recency decay factor applied (0.1–1.0).
+    pub recency_decay: f32,
+    /// Status weight applied (documents use backlog weight since they have no status).
+    pub status_weight: f32,
+    /// Final combined score.
+    pub final_score: f32,
+    /// First ~200 chars of the content_markdown.
+    pub snippet: String,
+}
+
+/// Internal row used by the store for embedding reads/writes on work_items.
+#[derive(Debug, Clone)]
+pub struct WorkItemEmbeddingRow {
+    pub id: String,
+    pub callsign: String,
+    pub namespace: Option<String>,
+    pub title: String,
+    pub description: String,
+    pub acceptance_criteria: Option<String>,
+    pub status: String,
+    pub updated_at: i64,
+    pub embedding: Option<Vec<u8>>,
+    pub input_hash: Option<String>,
+}
+
+/// Internal row used by the store for embedding reads/writes on documents.
+#[derive(Debug, Clone)]
+pub struct DocumentEmbeddingRow {
+    pub id: String,
+    pub slug: String,
+    pub namespace: Option<String>,
+    pub title: String,
+    pub content_markdown: String,
+    pub doc_type: String,
+    pub updated_at: i64,
+    pub embedding: Option<Vec<u8>>,
+    pub input_hash: Option<String>,
+}
+
 // ── MCP Servers ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
