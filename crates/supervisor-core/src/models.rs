@@ -1276,7 +1276,7 @@ pub struct MergeQueueListFilter {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MergeQueueGetParams {
-    pub merge_queue_id: String,
+    pub entry_id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1291,17 +1291,17 @@ pub struct CloseWorktreeResult {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MergeQueueGetDiffParams {
-    pub merge_queue_id: String,
+    pub entry_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MergeQueueMergeParams {
-    pub merge_queue_id: String,
+    pub entry_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MergeQueueParkParams {
-    pub merge_queue_id: String,
+    pub entry_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1312,7 +1312,7 @@ pub struct MergeQueueReorderParams {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MergeQueueCheckConflictsParams {
-    pub merge_queue_id: String,
+    pub entry_id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

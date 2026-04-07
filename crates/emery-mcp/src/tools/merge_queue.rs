@@ -138,7 +138,7 @@ pub fn handle_merge_queue_get_diff(input: Value) -> Result<String> {
     let entry_id = required_str(&input, "entry_id")?;
 
     let mut rpc = RpcClient::connect()?;
-    let result = rpc.call("merge_queue.get_diff", json!({ "merge_queue_id": entry_id }))?;
+    let result = rpc.call("merge_queue.get_diff", json!({ "entry_id": entry_id }))?;
 
     let diff = result.as_str().unwrap_or_else(|| result["diff"].as_str().unwrap_or(""));
     Ok(diff.to_string())
@@ -148,7 +148,7 @@ pub fn handle_merge_queue_check(input: Value) -> Result<String> {
     let entry_id = required_str(&input, "entry_id")?;
 
     let mut rpc = RpcClient::connect()?;
-    let result = rpc.call("merge_queue.check_conflicts", json!({ "merge_queue_id": entry_id }))?;
+    let result = rpc.call("merge_queue.check_conflicts", json!({ "entry_id": entry_id }))?;
 
     let conflicts: Vec<String> = match result.as_array() {
         Some(arr) => arr
@@ -180,7 +180,7 @@ pub fn handle_merge_queue_merge(input: Value) -> Result<String> {
     let mut rpc = RpcClient::connect()?;
 
     // Check current status before merging
-    let entry = rpc.call("merge_queue.get", json!({ "id": entry_id }))?;
+    let entry = rpc.call("merge_queue.get", json!({ "entry_id": entry_id }))?;
     let status = entry["status"].as_str().unwrap_or("");
 
     if status != "ready" {
@@ -193,7 +193,7 @@ pub fn handle_merge_queue_merge(input: Value) -> Result<String> {
 
     let branch_name = entry["branch_name"].as_str().unwrap_or("unknown").to_string();
 
-    let _result = rpc.call("merge_queue.merge", json!({ "merge_queue_id": entry_id }))?;
+    let _result = rpc.call("merge_queue.merge", json!({ "entry_id": entry_id }))?;
 
     Ok(format!(
         "Merged branch `{}` (entry {}) into target branch.",
@@ -205,7 +205,7 @@ pub fn handle_merge_queue_park(input: Value) -> Result<String> {
     let entry_id = required_str(&input, "entry_id")?;
 
     let mut rpc = RpcClient::connect()?;
-    let _result = rpc.call("merge_queue.park", json!({ "merge_queue_id": entry_id }))?;
+    let _result = rpc.call("merge_queue.park", json!({ "entry_id": entry_id }))?;
 
     Ok(format!("Parked merge queue entry {}.", entry_id))
 }

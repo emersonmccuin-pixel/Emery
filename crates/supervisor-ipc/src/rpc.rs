@@ -620,11 +620,11 @@ impl SupervisorRpc {
                 let params: MergeQueueGetParams = serde_json::from_value(params)?;
                 let entry = self
                     .supervisor
-                    .get_merge_queue_entry(&params.merge_queue_id)?
+                    .get_merge_queue_entry(&params.entry_id)?
                     .ok_or_else(|| {
                         anyhow::anyhow!(
                             "merge queue entry {} was not found",
-                            params.merge_queue_id
+                            params.entry_id
                         )
                     })?;
                 Ok(serde_json::to_value(entry)?)
@@ -633,19 +633,19 @@ impl SupervisorRpc {
                 let params: MergeQueueGetDiffParams = serde_json::from_value(params)?;
                 let diff = self
                     .supervisor
-                    .get_merge_queue_diff(&params.merge_queue_id)?;
+                    .get_merge_queue_diff(&params.entry_id)?;
                 Ok(json!({ "diff": diff }))
             }
             Method::MergeQueueMerge => {
                 let params: MergeQueueMergeParams = serde_json::from_value(params)?;
                 self.supervisor
-                    .execute_merge(&params.merge_queue_id)?;
+                    .execute_merge(&params.entry_id)?;
                 Ok(json!({ "ok": true }))
             }
             Method::MergeQueuePark => {
                 let params: MergeQueueParkParams = serde_json::from_value(params)?;
                 self.supervisor
-                    .park_merge_entry(&params.merge_queue_id)?;
+                    .park_merge_entry(&params.entry_id)?;
                 Ok(json!({ "ok": true }))
             }
             Method::MergeQueueReorder => {
@@ -658,7 +658,7 @@ impl SupervisorRpc {
                 let params: MergeQueueCheckConflictsParams = serde_json::from_value(params)?;
                 let conflicts = self
                     .supervisor
-                    .check_merge_conflicts(&params.merge_queue_id)?;
+                    .check_merge_conflicts(&params.entry_id)?;
                 Ok(json!({ "conflicts": conflicts }))
             }
             Method::SessionCreateBatch => {
