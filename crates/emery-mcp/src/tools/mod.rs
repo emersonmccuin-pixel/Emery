@@ -1,5 +1,6 @@
 mod instructions;
 mod knowledge;
+mod librarian;
 mod memory;
 mod merge_queue;
 mod project;
@@ -53,6 +54,10 @@ pub fn all_tools() -> Value {
         memory::tool_memory_search(),
         memory::tool_memory_list(),
         memory::tool_memory_get(),
+        librarian::tool_librarian_digest(),
+        librarian::tool_gardener_run(),
+        librarian::tool_gardener_review(),
+        librarian::tool_gardener_decide(),
     ])
 }
 
@@ -98,6 +103,10 @@ pub fn call_tool(name: &str, input: Value) -> Result<String> {
         "emery_memory_search" => memory::handle_memory_search(input),
         "emery_memory_list" => memory::handle_memory_list(input),
         "emery_memory_get" => memory::handle_memory_get(input),
+        "emery_librarian_digest" => librarian::handle_librarian_digest(input),
+        "emery_gardener_run" => librarian::handle_gardener_run(input),
+        "emery_gardener_review" => librarian::handle_gardener_review(input),
+        "emery_gardener_decide" => librarian::handle_gardener_decide(input),
         _ => Err(anyhow::anyhow!("unknown tool: {}", name)),
     }
 }

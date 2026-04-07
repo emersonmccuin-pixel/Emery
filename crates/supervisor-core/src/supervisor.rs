@@ -682,6 +682,42 @@ impl Supervisor {
     pub fn memory_get(&self, request: MemoryGetRequest) -> Result<Memory> {
         self.service.memory_get(request)
     }
+
+    // ── Librarian / Gardener (EMERY-226.002) ─────────────────────────────────
+
+    pub fn librarian_digest(
+        &self,
+        namespace: Option<&str>,
+        since_days: Option<i64>,
+        include_dropped: bool,
+    ) -> Result<crate::librarian::digest::LibrarianDigest> {
+        self.service
+            .librarian_digest(namespace, since_days, include_dropped)
+    }
+
+    pub fn gardener_run(
+        &self,
+        namespace: &str,
+        batch_size: Option<usize>,
+        context: Option<&str>,
+    ) -> Result<(crate::models::GardenerRunSummary, Vec<crate::models::GardenerProposal>)> {
+        self.service.gardener_run(namespace, batch_size, context)
+    }
+
+    pub fn gardener_review(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<crate::models::GardenerProposal>> {
+        self.service.gardener_review(namespace)
+    }
+
+    pub fn gardener_decide(
+        &self,
+        proposal_id: &str,
+        decision: &str,
+    ) -> Result<crate::models::GardenerProposal> {
+        self.service.gardener_decide(proposal_id, decision)
+    }
 }
 
 fn unix_time_ms() -> u64 {

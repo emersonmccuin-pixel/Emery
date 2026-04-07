@@ -29,7 +29,8 @@ use supervisor_core::{
 
 use crate::protocol::{
     AccountGetParams, CheckDispatchConflictsParams, DiagnosticsExportBundleParams, DocumentGetParams,
-    ErrorBody, EventEnvelope, HelloResult, InboxCountUnreadParams, InboxGetParams, Method,
+    ErrorBody, EventEnvelope, GardenerDecideParams, GardenerReviewParams, GardenerRunParams,
+    HelloResult, InboxCountUnreadParams, InboxGetParams, LibrarianDigestParams, Method,
     ProjectGetParams, ProjectRootGitStatusParams, ProjectRootListParams, RequestEnvelope,
     ResponseEnvelope, SessionAttachParams, SessionControlParams, SessionDetachParams,
     SessionGetParams, SessionInputParams, SessionResizeParams, SessionSpecGetParams,
@@ -829,6 +830,35 @@ impl SupervisorRpc {
             Method::MemoryGet => {
                 let request: MemoryGetRequest = serde_json::from_value(params)?;
                 Ok(serde_json::to_value(self.supervisor.memory_get(request)?)?)
+            }
+            Method::LibrarianDigest => {
+                let p: LibrarianDigestParams = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(self.supervisor.librarian_digest(
+                    p.namespace.as_deref(),
+                    p.since_days,
+                    p.include_dropped,
+                )?)?)
+            }
+            Method::GardenerRun => {
+                let p: GardenerRunParams = serde_json::from_value(params)?;
+                let (run, proposals) = self.supervisor.gardener_run(
+                    &p.namespace,
+                    p.batch_size,
+                    p.context.as_deref(),
+                )?;
+                Ok(serde_json::json!({ "run": run, "proposals": proposals }))
+            }
+            Method::GardenerReview => {
+                let p: GardenerReviewParams = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.gardener_review(p.namespace.as_deref())?,
+                )?)
+            }
+            Method::GardenerDecide => {
+                let p: GardenerDecideParams = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.gardener_decide(&p.proposal_id, &p.decision)?,
+                )?)
             }
             Method::SubscriptionOpen => {
                 let params: SubscriptionOpenParams = serde_json::from_value(params)?;

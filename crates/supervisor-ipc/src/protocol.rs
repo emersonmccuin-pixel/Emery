@@ -102,6 +102,10 @@ pub enum Method {
     MemorySearch,
     MemoryList,
     MemoryGet,
+    LibrarianDigest,
+    GardenerRun,
+    GardenerReview,
+    GardenerDecide,
 }
 
 impl Method {
@@ -206,6 +210,10 @@ impl Method {
             Self::MemorySearch => "memory.search",
             Self::MemoryList => "memory.list",
             Self::MemoryGet => "memory.get",
+            Self::LibrarianDigest => "librarian.digest",
+            Self::GardenerRun => "gardener.run",
+            Self::GardenerReview => "gardener.review",
+            Self::GardenerDecide => "gardener.decide",
         }
     }
 }
@@ -318,6 +326,10 @@ impl TryFrom<&str> for Method {
             "memory.search" => Ok(Self::MemorySearch),
             "memory.list" => Ok(Self::MemoryList),
             "memory.get" => Ok(Self::MemoryGet),
+            "librarian.digest" => Ok(Self::LibrarianDigest),
+            "gardener.run" => Ok(Self::GardenerRun),
+            "gardener.review" => Ok(Self::GardenerReview),
+            "gardener.decide" => Ok(Self::GardenerDecide),
             _ => Err(()),
         }
     }
@@ -558,4 +570,37 @@ impl ResponseEnvelope {
             error: Some(error),
         }
     }
+}
+
+// ── Librarian / Gardener (EMERY-226.002) ─────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LibrarianDigestParams {
+    #[serde(default)]
+    pub namespace: Option<String>,
+    #[serde(default)]
+    pub since_days: Option<i64>,
+    #[serde(default)]
+    pub include_dropped: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct GardenerRunParams {
+    pub namespace: String,
+    #[serde(default)]
+    pub batch_size: Option<usize>,
+    #[serde(default)]
+    pub context: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct GardenerReviewParams {
+    #[serde(default)]
+    pub namespace: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct GardenerDecideParams {
+    pub proposal_id: String,
+    pub decision: String,
 }
