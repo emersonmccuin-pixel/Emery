@@ -28,6 +28,7 @@ use crate::models::{
     NewVaultAuditRecord, McpServerSummary, NewMcpServerRecord, McpServerUpdateRecord,
     DocumentEmbeddingRow,
     Memory, MemoryEmbeddingRow, MemoryListRequest, NewMemoryRecord,
+    NewLibrarianCandidateRecord, NewLibrarianRunRecord,
 };
 use crate::schema::{migrate_app_db, migrate_knowledge_db};
 use uuid::Uuid;
@@ -3705,6 +3706,139 @@ impl DatabaseSet {
             }
         };
         Ok(rows)
+    }
+
+    // ── Librarian audit (EMERY-226.001) ──────────────────────────────────────
+
+    pub fn insert_librarian_run(&self, record: &NewLibrarianRunRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        connection.execute(
+            "INSERT INTO librarian_runs (
+                id, session_id, namespace,
+                triage_score, triage_reason,
+                prompt_versions, status,
+                started_at, finished_at, failure_reason
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                record.id,
+                record.session_id,
+                record.namespace,
+                record.triage_score,
+                record.triage_reason,
+                record.prompt_versions,
+                record.status,
+                record.started_at,
+                record.finished_at,
+                record.failure_reason,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_librarian_run_triage(
+        &self,
+        run_id: &str,
+        score: i64,
+        reason: &str,
+    ) -> Result<()> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        connection.execute(
+            "UPDATE librarian_runs
+                SET triage_score = ?2, triage_reason = ?3
+              WHERE id = ?1",
+            params![run_id, score, reason],
+        )?;
+        Ok(())
+    }
+
+    pub fn finalize_librarian_run(
+        &self,
+        run_id: &str,
+        status: &str,
+        finished_at: i64,
+        failure_reason: Option<&str>,
+    ) -> Result<()> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        connection.execute(
+            "UPDATE librarian_runs
+                SET status = ?2, finished_at = ?3, failure_reason = ?4
+              WHERE id = ?1",
+            params![run_id, status, finished_at, failure_reason],
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_librarian_candidate(
+        &self,
+        record: &NewLibrarianCandidateRecord,
+    ) -> Result<()> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        connection.execute(
+            "INSERT INTO librarian_candidates (
+                id, run_id, grain_type, content,
+                evidence_quote, evidence_offset,
+                critic_verdict, critic_reason,
+                reconcile_action, written_memory_id,
+                created_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                record.id,
+                record.run_id,
+                record.grain_type,
+                record.content,
+                record.evidence_quote,
+                record.evidence_offset,
+                record.critic_verdict,
+                record.critic_reason,
+                record.reconcile_action,
+                record.written_memory_id,
+                record.created_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_librarian_candidate_critic(
+        &self,
+        candidate_id: &str,
+        verdict: &str,
+        reason: Option<&str>,
+    ) -> Result<()> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        connection.execute(
+            "UPDATE librarian_candidates
+                SET critic_verdict = ?2, critic_reason = ?3
+              WHERE id = ?1",
+            params![candidate_id, verdict, reason],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_librarian_candidate_reconcile(
+        &self,
+        candidate_id: &str,
+        action: &str,
+        written_memory_id: Option<&str>,
+    ) -> Result<()> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        connection.execute(
+            "UPDATE librarian_candidates
+                SET reconcile_action = ?2, written_memory_id = ?3
+              WHERE id = ?1",
+            params![candidate_id, action, written_memory_id],
+        )?;
+        Ok(())
+    }
+
+    /// Count rows in librarian_runs for a given session — test/observability helper.
+    pub fn count_librarian_runs_for_session(&self, session_id: &str) -> Result<i64> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let count: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM librarian_runs WHERE session_id = ?1",
+            params![session_id],
+            |row| row.get(0),
+        )?;
+        Ok(count)
     }
 }
 

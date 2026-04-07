@@ -3,6 +3,7 @@ mod bootstrap;
 mod diagnostics;
 pub mod embeddings;
 pub mod git;
+pub mod librarian;
 mod models;
 mod output_filter;
 mod runtime;

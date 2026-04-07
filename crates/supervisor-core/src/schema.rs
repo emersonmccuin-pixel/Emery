@@ -82,6 +82,14 @@ const KNOWLEDGE_MIGRATIONS: &[(&str, &str)] = &[
         "0003_embeddings",
         include_str!("migrations/knowledge/0003_embeddings.sql"),
     ),
+    (
+        "0004_memories",
+        include_str!("migrations/knowledge/0004_memories.sql"),
+    ),
+    (
+        "0005_librarian_audit",
+        include_str!("migrations/knowledge/0005_librarian_audit.sql"),
+    ),
 ];
 
 pub fn migrate_app_db(path: &Path) -> Result<()> {

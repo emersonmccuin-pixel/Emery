@@ -17,6 +17,12 @@ const API_VERSION: &str = "2023-06-01";
 /// Model used for reconciliation decisions.
 pub const RECONCILER_MODEL: &str = "claude-haiku-4-5-20251001";
 
+/// Cheap fast model used for triage and critic stages of the librarian.
+pub const HAIKU_MODEL: &str = "claude-haiku-4-5-20251001";
+
+/// Stronger model used for librarian extraction stage.
+pub const SONNET_MODEL: &str = "claude-sonnet-4-5";
+
 // ---------------------------------------------------------------------------
 // Error type
 // ---------------------------------------------------------------------------
@@ -92,10 +98,22 @@ impl AnthropicClient {
     }
 
     /// Send a single user turn and return the assistant's text response.
+    /// Uses the reconciler defaults (Haiku, max 64 tokens) for backwards compatibility.
     pub fn complete(&self, user_prompt: &str) -> Result<String, AnthropicError> {
+        self.complete_with(RECONCILER_MODEL, 64, user_prompt)
+    }
+
+    /// Send a single user turn with explicit model and max_tokens.
+    /// Used by the librarian for triage / extract / critic stages.
+    pub fn complete_with(
+        &self,
+        model: &str,
+        max_tokens: u32,
+        user_prompt: &str,
+    ) -> Result<String, AnthropicError> {
         let body = MessagesRequest {
-            model: RECONCILER_MODEL,
-            max_tokens: 64,
+            model,
+            max_tokens,
             messages: vec![Message {
                 role: "user",
                 content: user_prompt,

@@ -1790,3 +1790,36 @@ pub struct MemorySearchResult {
     /// Final combined score (cosine × recency).
     pub final_score: f32,
 }
+
+// ── Librarian audit (EMERY-226.001) ──────────────────────────────────────────
+
+/// One row in `librarian_runs` — a single capture pipeline invocation.
+#[derive(Debug, Clone)]
+pub struct NewLibrarianRunRecord {
+    pub id: String,
+    pub session_id: String,
+    pub namespace: String,
+    pub triage_score: Option<i64>,
+    pub triage_reason: Option<String>,
+    pub prompt_versions: String,
+    pub status: String,
+    pub started_at: i64,
+    pub finished_at: Option<i64>,
+    pub failure_reason: Option<String>,
+}
+
+/// One row in `librarian_candidates` — a candidate grain at any pipeline stage.
+#[derive(Debug, Clone)]
+pub struct NewLibrarianCandidateRecord {
+    pub id: String,
+    pub run_id: String,
+    pub grain_type: String,
+    pub content: String,
+    pub evidence_quote: String,
+    pub evidence_offset: Option<i64>,
+    pub critic_verdict: Option<String>,
+    pub critic_reason: Option<String>,
+    pub reconcile_action: Option<String>,
+    pub written_memory_id: Option<String>,
+    pub created_at: i64,
+}
