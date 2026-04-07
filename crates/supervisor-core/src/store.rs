@@ -66,6 +66,7 @@ impl DatabaseSet {
             paths: paths.clone(),
         };
         db.seed_builtin_mcp_servers()?;
+        heal_orphaned_project_ids(paths)?;
         Ok(db)
     }
 
@@ -3557,6 +3558,47 @@ impl DatabaseSet {
         };
         Ok(rows)
     }
+}
+
+/// One-shot idempotent repair for orphaned work items created while the Emery project
+/// was recreated multiple times.  Each recreation generated a new project_id, leaving
+/// work items pointing at dead project rows.  This function:
+///   1. Sets wcp_namespace = 'EMERY' on the surviving project record.
+///   2. Rewrites three dead project_id values on work_items to the live project id.
+/// The WHERE clauses make it safe to run on every startup — subsequent runs touch 0 rows.
+fn heal_orphaned_project_ids(paths: &AppPaths) -> Result<()> {
+    const LIVE_PROJECT_ID: &str = "proj_03cd38a993ec4c5aa890868bf49dccf7";
+    const DEAD_IDS: [&str; 2] = [
+        "proj_815928a94ede4dd495cc1780c58bb194",
+        "proj_9994a8f8f61b40129503c09ad015e1fa",
+    ];
+
+    // Step 1: ensure the live project has wcp_namespace = 'EMERY' (app.db)
+    let app_conn = open_connection(&paths.app_db)?;
+    let n1 = app_conn.execute(
+        "UPDATE projects SET wcp_namespace = 'EMERY' \
+         WHERE id = ?1 AND (wcp_namespace IS NULL OR wcp_namespace != 'EMERY')",
+        params![LIVE_PROJECT_ID],
+    )?;
+    eprintln!("[heal_orphaned_project_ids] projects.wcp_namespace set: {} row(s)", n1);
+
+    // Step 2: repoint work items with known dead project_ids (knowledge.db)
+    let knowledge_conn = open_connection(&paths.knowledge_db)?;
+    let n2 = knowledge_conn.execute(
+        "UPDATE work_items SET project_id = ?1 \
+         WHERE project_id IN (?2, ?3)",
+        params![LIVE_PROJECT_ID, DEAD_IDS[0], DEAD_IDS[1]],
+    )?;
+    eprintln!("[heal_orphaned_project_ids] work_items repointed (dead IDs): {} row(s)", n2);
+
+    // Step 3: repoint work items with empty project_id (knowledge.db)
+    let n3 = knowledge_conn.execute(
+        "UPDATE work_items SET project_id = ?1 WHERE project_id = ''",
+        params![LIVE_PROJECT_ID],
+    )?;
+    eprintln!("[heal_orphaned_project_ids] work_items repointed (empty ID): {} row(s)", n3);
+
+    Ok(())
 }
 
 fn open_connection(path: &Path) -> Result<Connection> {
