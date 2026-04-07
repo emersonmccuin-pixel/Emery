@@ -2208,19 +2208,17 @@ impl SupervisorService {
             self.ensure_coordination_work_item(&request.project_id)?;
 
             let project = self.databases.get_project(&request.project_id)?;
-            let (project_name, wcp_ns, dispatch_item, project_instr) = match &project {
+            let (project_name, wcp_ns, project_instr) = match &project {
                 Some(p) => (
                     p.name.as_str(),
                     p.wcp_namespace.as_deref(),
-                    p.dispatch_item_callsign.as_deref(),
                     p.instructions_md.as_deref(),
                 ),
-                None => ("Unknown", None, None, None),
+                None => ("Unknown", None, None),
             };
             let mut instructions = build_dispatcher_instructions(
                 project_name,
                 wcp_ns,
-                dispatch_item,
                 project_instr,
             );
 
@@ -2229,12 +2227,19 @@ impl SupervisorService {
                 instructions = format!("{}\n\n---\n\n{}", guard_text, instructions);
             }
 
-            match profile.write_instructions(&request.cwd, &instructions)? {
-                InstructionDisposition::WrittenToFile => {}
-                InstructionDisposition::InjectIntoPrompt(text) => {
-                    if let Some(flag) = profile.prompt_flag {
-                        request.args.push(flag.to_string());
-                        request.args.push(text);
+            // Use system_prompt_flag if available (claude profile), otherwise fall back
+            // to write_instructions (file or prompt injection for codex/gemini)
+            if let Some(flag) = profile.system_prompt_flag {
+                request.args.push(flag.to_string());
+                request.args.push(instructions);
+            } else {
+                match profile.write_instructions(&request.cwd, &instructions)? {
+                    InstructionDisposition::WrittenToFile => {}
+                    InstructionDisposition::InjectIntoPrompt(text) => {
+                        if let Some(flag) = profile.prompt_flag {
+                            request.args.push(flag.to_string());
+                            request.args.push(text);
+                        }
                     }
                 }
             }
@@ -4766,11 +4771,14 @@ fn extract_file_paths(text: &str) -> Vec<String> {
 fn build_dispatcher_instructions(
     project_name: &str,
     wcp_namespace: Option<&str>,
-    dispatch_item_callsign: Option<&str>,
     project_instructions: Option<&str>,
 ) -> String {
     let ns_display = wcp_namespace.unwrap_or("not yet linked — run wcp_namespaces to find/create");
-    let item_display = dispatch_item_callsign.unwrap_or("create after linking namespace");
+    // Derive {NS}-0 callsign deterministically from the namespace (convention: every namespace
+    // has exactly one coordination work item at {NS}-0, auto-created by ensure_coordination_work_item)
+    let item_display = wcp_namespace
+        .map(|ns| format!("{}-0", ns.to_ascii_uppercase()))
+        .unwrap_or_else(|| "NAMESPACE-0".to_string());
 
     let mut parts: Vec<String> = Vec::new();
 
