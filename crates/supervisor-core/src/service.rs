@@ -2476,8 +2476,26 @@ impl SupervisorService {
                     .map(|_| detail)
             });
 
-        if detail.is_err() {
+        if let Err(error) = &detail {
+            let failed_at = unix_time_seconds();
             let _ = self.registry.remove_session(&session_id);
+            let _ = self.registry.mark_launch_failed(&session_id, failed_at);
+            let _ = self
+                .databases
+                .mark_session_failed_to_start(&session_id, failed_at);
+            let _ = self.record_diagnostic(
+                "service",
+                "session.meta_snapshot_failed",
+                DiagnosticContext {
+                    session_id: Some(session_id.clone()),
+                    project_id: Some(spec_record.project_id.clone()),
+                    work_item_id: spec_record.work_item_id.clone(),
+                    ..DiagnosticContext::default()
+                },
+                json!({
+                    "error": error.to_string(),
+                }),
+            );
         }
 
         let detail = detail?;
