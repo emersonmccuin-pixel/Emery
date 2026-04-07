@@ -239,7 +239,7 @@ function DispatchLauncherModal({ projectId }: { projectId: string }) {
   const bootstrap = useAppStore((s) => s.bootstrap);
 
   const project = projectDetails[projectId];
-  const accounts = bootstrap?.accounts ?? [];
+  const accounts = (bootstrap?.accounts ?? []).filter((a) => a.status !== "disabled");
   const defaultAccount =
     accounts.find((a) => a.id === project?.default_account_id) ?? accounts[0] ?? null;
 
@@ -370,7 +370,7 @@ function DispatchSingleModal({
 
   const project = projectDetails[projectId];
   const workItem = workItemDetails[workItemId];
-  const accounts = bootstrap?.accounts ?? [];
+  const accounts = (bootstrap?.accounts ?? []).filter((a) => a.status !== "disabled");
   const defaultAccount =
     accounts.find((a) => a.id === project?.default_account_id) ?? accounts[0] ?? null;
 
@@ -533,7 +533,7 @@ function DispatchMultiModal({
   const dispatchConflicts = useAppStore((s) => s.dispatchConflicts);
 
   const project = projectDetails[projectId];
-  const accounts = bootstrap?.accounts ?? [];
+  const accounts = (bootstrap?.accounts ?? []).filter((a) => a.status !== "disabled");
   const defaultAccount =
     accounts.find((a) => a.id === project?.default_account_id) ?? accounts[0] ?? null;
   const workItems = workItemIds

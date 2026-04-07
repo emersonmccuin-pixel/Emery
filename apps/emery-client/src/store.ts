@@ -1218,10 +1218,11 @@ class AppStore {
         this.state.projectDetails[opts.projectId] ?? (await getProject(opts.projectId, correlationId));
       this.applyProjectDetail(project);
 
-      const account =
-        this.state.bootstrap?.accounts.find((a) => a.id === opts.accountId) ??
-        this.state.bootstrap?.accounts[0] ??
-        null;
+      const account = opts.accountId
+        ? this.state.bootstrap?.accounts.find((a) => a.id === opts.accountId) ?? null
+        : this.state.bootstrap?.accounts.find((a) => a.id === project.default_account_id) ??
+          this.state.bootstrap?.accounts[0] ??
+          null;
       if (!account) {
         throw new Error("No account configured. Add one in Settings first.");
       }
