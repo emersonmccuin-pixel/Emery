@@ -103,34 +103,9 @@ impl AgentProfile {
 
             let mut settings = serde_json::Map::new();
 
-            // Build hooks from guard if present
-            if let Some(ref guard) = guard {
-                let node_script = match guard {
-                    GuardKind::Dispatcher => {
-                        r#"const i=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));const t=i.tool_name||'';if(['Edit','Write','MultiEdit','NotebookEdit'].includes(t)){process.stdout.write(JSON.stringify({continue:false,stopReason:'Dispatchers do not write code. Create a work item and dispatch a builder session instead.'}));process.exit(0);}if(t==='Bash'){const cmd=(i.tool_input||{}).command||'';const wp=['echo>','cat>','>','mv ','cp ','rm ','mkdir ','touch ','chmod ','chown ','npm install','cargo install','git clone'];if(wp.some(p=>cmd.toLowerCase().includes(p))){process.stdout.write(JSON.stringify({continue:false,stopReason:'Dispatchers should not modify the filesystem. Dispatch a builder for implementation tasks.'}));process.exit(0);}}process.stdout.write(JSON.stringify({continue:true}));"#.to_string()
-                    }
-                    GuardKind::Worktree { normalized_path } => {
-                        format!(
-                            r#"const i=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));const t=i.tool_name||'';const inp=i.tool_input||{{}};const guard='{normalized_path}';function norm(p){{return(p||'').replace(/\\/g,'/').toLowerCase();}};function allowed(p){{const n=norm(p);return n===guard||n.startsWith(guard+'/');}}if(['Edit','Write','MultiEdit','NotebookEdit'].includes(t)){{const fp=inp.file_path||inp.notebook_path||'';const paths=inp.edits?inp.edits.map(e=>e.file_path||''):[];const all=[fp,...paths].filter(Boolean);const blocked=all.find(p=>!allowed(p));if(blocked){{process.stdout.write(JSON.stringify({{continue:false,stopReason:'Blocked: file path '+blocked+' is outside your assigned worktree '+guard}}));process.exit(0);}}}}else if(t==='Bash'){{const cmd=inp.command||'';const writePatterns=[/\becho\b.*>/,/\btee\b/,/\bcat\b.*>/,/\bmv\b/,/\bcp\b/,/\brm\b/,/\bmkdir\b/,/\btouch\b/,/\bchmod\b/,/\bchown\b/,/\bnpm\b.*install/,/\bcargo\b.*install/,/\bgit\b.*clone/];const hasWrite=writePatterns.some(r=>r.test(cmd));if(hasWrite){{const cdMatch=cmd.match(/cd\s+([^\s;&|]+)/);const cwd=cdMatch?cdMatch[1]:'';if(cwd&&!allowed(cwd)){{process.stdout.write(JSON.stringify({{continue:false,stopReason:'Blocked: bash command targets path outside your assigned worktree '+guard}}));process.exit(0);}}}}}};process.stdout.write(JSON.stringify({{continue:true}}));"#,
-                            normalized_path = normalized_path
-                        )
-                    }
-                };
-
-                settings.insert("hooks".to_string(), json!({
-                    "PreToolUse": [
-                        {
-                            "matcher": ".*",
-                            "hooks": [
-                                {
-                                    "type": "command",
-                                    "command": format!("node -e \"{}\"", node_script)
-                                }
-                            ]
-                        }
-                    ]
-                }));
-            }
+            // Guard hooks removed — they break on Windows (/dev/stdin) and cause
+            // persistent errors.  Guard rules are injected as natural-language
+            // instructions in the prompt instead (see the else branch below).
 
             // Add MCP server config if present
             if let Some(mcp) = mcp_servers {

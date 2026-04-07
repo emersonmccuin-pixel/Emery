@@ -102,7 +102,7 @@ impl DatabaseSet {
         let connection = open_connection(&self.paths.app_db)?;
         next_sort_order(
             &connection,
-            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM projects",
+            "SELECT CAST(COALESCE(MAX(sort_order), -1) + 1 AS INTEGER) FROM projects",
         )
     }
 
@@ -362,7 +362,7 @@ impl DatabaseSet {
     pub fn next_project_root_sort_order(&self, project_id: &str) -> Result<i64> {
         let connection = open_connection(&self.paths.app_db)?;
         Ok(connection.query_row(
-            "SELECT COALESCE(MAX(sort_order), -1) + 1
+            "SELECT CAST(COALESCE(MAX(sort_order), -1) + 1 AS INTEGER)
              FROM project_roots
              WHERE project_id = ?1",
             [project_id],
@@ -1006,7 +1006,7 @@ impl DatabaseSet {
     pub fn next_worktree_sort_order(&self, project_id: &str) -> Result<i64> {
         let connection = open_connection(&self.paths.app_db)?;
         Ok(connection.query_row(
-            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM worktrees WHERE project_id = ?1",
+            "SELECT CAST(COALESCE(MAX(sort_order), -1) + 1 AS INTEGER) FROM worktrees WHERE project_id = ?1",
             [project_id],
             |row| row.get(0),
         )?)
@@ -3363,7 +3363,7 @@ impl DatabaseSet {
     pub fn next_agent_template_sort_order(&self, project_id: &str) -> Result<i64> {
         let connection = open_connection(&self.paths.app_db)?;
         Ok(connection.query_row(
-            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM agent_templates WHERE project_id = ?1",
+            "SELECT CAST(COALESCE(MAX(sort_order), -1) + 1 AS INTEGER) FROM agent_templates WHERE project_id = ?1",
             [project_id],
             |row| row.get(0),
         )?)
@@ -3630,7 +3630,14 @@ where
 }
 
 fn next_sort_order(connection: &Connection, sql: &str) -> Result<i64> {
-    Ok(connection.query_row(sql, [], |row| row.get(0))?)
+    Ok(connection.query_row(sql, [], |row| {
+        // SQLite may return Real for COALESCE expressions on empty tables;
+        // coerce to i64 to avoid type mismatch errors.
+        match row.get::<_, i64>(0) {
+            Ok(v) => Ok(v),
+            Err(_) => row.get::<_, f64>(0).map(|v| v as i64),
+        }
+    })?)
 }
 
 fn map_project_root_summary(row: &Row<'_>) -> rusqlite::Result<ProjectRootSummary> {
