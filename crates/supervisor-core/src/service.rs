@@ -4633,7 +4633,151 @@ fn validate_restore_policy(value: &str) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_agent_template_origin_mode, validate_session_mode};
+    use super::{SupervisorService, normalize_agent_template_origin_mode, validate_session_mode};
+    use crate::bootstrap::AppPaths;
+    use crate::diagnostics::DiagnosticsHub;
+    use crate::models::{NewAccountRecord, NewProjectRecord, NewSessionRecord, NewSessionSpecRecord};
+    use crate::runtime::{SessionRegistry, SessionRuntimeRegistration};
+    use crate::store::DatabaseSet;
+    use crate::vault::VaultService;
+    use std::env;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::thread;
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_root() -> PathBuf {
+        let root = env::temp_dir().join(format!(
+            "emery-supervisor-core-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn build_test_service() -> (SupervisorService, PathBuf) {
+        let root = unique_temp_root();
+        let paths = AppPaths::from_root(root.clone()).unwrap();
+        let databases = DatabaseSet::initialize(&paths).unwrap();
+        let diagnostics = DiagnosticsHub::from_env(&paths).unwrap();
+        let registry = SessionRegistry::new(diagnostics.clone());
+        let vault = VaultService::new(databases.clone());
+        let service = SupervisorService::new(databases, registry, diagnostics, vault);
+        (service, root)
+    }
+
+    fn seed_watchable_session(service: &SupervisorService, session_id: &str) {
+        let now = 1_700_000_000_i64;
+        let project_id = "proj_test".to_string();
+        let account_id = "acct_test".to_string();
+        let session_spec_id = format!("sspec_{session_id}");
+
+        service
+            .databases
+            .insert_project(&NewProjectRecord {
+                id: project_id.clone(),
+                name: "Test Project".to_string(),
+                slug: "test-project".to_string(),
+                sort_order: 0,
+                default_account_id: Some(account_id.clone()),
+                project_type: Some("scratch".to_string()),
+                model_defaults_json: None,
+                wcp_namespace: None,
+                settings_json: None,
+                instructions_md: None,
+                created_at: now,
+                updated_at: now,
+            })
+            .unwrap();
+        service
+            .databases
+            .insert_account(&NewAccountRecord {
+                id: account_id.clone(),
+                agent_kind: "claude".to_string(),
+                label: "Test Account".to_string(),
+                binary_path: Some("claude".to_string()),
+                config_root: None,
+                env_preset_ref: None,
+                is_default: true,
+                status: "ready".to_string(),
+                default_safety_mode: None,
+                default_launch_args_json: None,
+                default_model: None,
+                created_at: now,
+                updated_at: now,
+            })
+            .unwrap();
+        service
+            .databases
+            .insert_session(
+                &NewSessionSpecRecord {
+                    id: session_spec_id.clone(),
+                    project_id: project_id.clone(),
+                    project_root_id: None,
+                    worktree_id: None,
+                    work_item_id: None,
+                    account_id: account_id.clone(),
+                    agent_kind: "claude".to_string(),
+                    cwd: service.databases.paths().root.display().to_string(),
+                    command: "claude".to_string(),
+                    args_json: "[]".to_string(),
+                    env_preset_ref: None,
+                    origin_mode: "execution".to_string(),
+                    current_mode: "execution".to_string(),
+                    title: Some("Watch Test".to_string()),
+                    title_policy: "manual".to_string(),
+                    restore_policy: "reattach".to_string(),
+                    initial_terminal_cols: 120,
+                    initial_terminal_rows: 40,
+                    context_bundle_ref: None,
+                    created_at: now,
+                    updated_at: now,
+                },
+                &NewSessionRecord {
+                    id: session_id.to_string(),
+                    session_spec_id,
+                    project_id,
+                    project_root_id: None,
+                    worktree_id: None,
+                    work_item_id: None,
+                    account_id,
+                    agent_kind: "claude".to_string(),
+                    origin_mode: "execution".to_string(),
+                    current_mode: "execution".to_string(),
+                    title: Some("Watch Test".to_string()),
+                    title_source: "manual".to_string(),
+                    runtime_state: "starting".to_string(),
+                    status: "active".to_string(),
+                    activity_state: "starting".to_string(),
+                    pty_owner_key: session_id.to_string(),
+                    cwd: service.databases.paths().root.display().to_string(),
+                    transcript_primary_artifact_id: None,
+                    raw_log_artifact_id: None,
+                    started_at: None,
+                    created_at: now,
+                    updated_at: now,
+                    dispatch_group: None,
+                },
+                &[],
+            )
+            .unwrap();
+
+        let artifact_root = service.databases.paths().sessions_dir.join(session_id);
+        fs::create_dir_all(&artifact_root).unwrap();
+        service
+            .registry
+            .register_starting_session(SessionRuntimeRegistration {
+                session_id: session_id.to_string(),
+                created_at: now,
+                artifact_root: artifact_root.clone(),
+                raw_log_path: artifact_root.join("raw.log"),
+            })
+            .unwrap();
+    }
 
     #[test]
     fn validate_session_mode_accepts_current_modes() {
@@ -4678,6 +4822,50 @@ mod tests {
             normalize_agent_template_origin_mode(Some("planning".to_string())).unwrap(),
             "planning"
         );
+    }
+
+    #[test]
+    fn watch_sessions_times_out_instead_of_returning_seeded_snapshot() {
+        let (service, root) = build_test_service();
+        let session_id = "sess_watch_timeout";
+        seed_watchable_session(&service, session_id);
+
+        let started = Instant::now();
+        let response = service
+            .watch_sessions(vec![session_id.to_string()], 1)
+            .unwrap();
+
+        assert!(response.timed_out);
+        assert!(started.elapsed() >= Duration::from_millis(900));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn watch_sessions_returns_first_real_change_after_subscription() {
+        let (service, root) = build_test_service();
+        let session_id = "sess_watch_change";
+        seed_watchable_session(&service, session_id);
+
+        let registry = service.registry.clone();
+        let session_id_owned = session_id.to_string();
+        let notifier = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(150));
+            registry.note_input(&session_id_owned, 1_700_000_001).unwrap();
+        });
+
+        let response = service
+            .watch_sessions(vec![session_id.to_string()], 1)
+            .unwrap();
+        notifier.join().unwrap();
+
+        assert!(!response.timed_out);
+        assert_eq!(response.session_id, session_id);
+        assert_eq!(response.runtime_state, "starting");
+        assert_eq!(response.status, "active");
+        assert_eq!(response.activity_state, "working");
+
+        let _ = fs::remove_dir_all(root);
     }
 }
 
