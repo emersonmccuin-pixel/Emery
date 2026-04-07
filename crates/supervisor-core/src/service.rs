@@ -4636,7 +4636,10 @@ mod tests {
     use super::{SupervisorService, normalize_agent_template_origin_mode, validate_session_mode};
     use crate::bootstrap::AppPaths;
     use crate::diagnostics::DiagnosticsHub;
-    use crate::models::{NewAccountRecord, NewProjectRecord, NewSessionRecord, NewSessionSpecRecord};
+    use crate::models::{
+        CreateAccountRequest, CreateProjectRequest, CreateSessionRequest, NewAccountRecord,
+        NewProjectRecord, NewSessionRecord, NewSessionSpecRecord, SessionListFilter,
+    };
     use crate::runtime::{SessionRegistry, SessionRuntimeRegistration};
     use crate::store::DatabaseSet;
     use crate::vault::VaultService;
@@ -4668,6 +4671,87 @@ mod tests {
         let vault = VaultService::new(databases.clone());
         let service = SupervisorService::new(databases, registry, diagnostics, vault);
         (service, root)
+    }
+
+    fn create_project_and_account(service: &SupervisorService) -> (String, String) {
+        let project = service
+            .create_project(CreateProjectRequest {
+                name: "Lifecycle Test Project".to_string(),
+                slug: None,
+                sort_order: None,
+                default_account_id: None,
+                project_type: Some("scratch".to_string()),
+                model_defaults_json: None,
+                wcp_namespace: None,
+                settings_json: None,
+                instructions_md: None,
+            })
+            .unwrap();
+        let account = service
+            .create_account(CreateAccountRequest {
+                agent_kind: "claude".to_string(),
+                label: "Lifecycle Test Account".to_string(),
+                binary_path: None,
+                config_root: None,
+                env_preset_ref: None,
+                is_default: Some(true),
+                status: Some("ready".to_string()),
+                default_safety_mode: None,
+                default_launch_args: None,
+                default_model: None,
+            })
+            .unwrap();
+        (project.id, account.summary.id)
+    }
+
+    fn make_session_request(
+        service: &SupervisorService,
+        project_id: &str,
+        account_id: &str,
+        title: &str,
+        command: &str,
+        args: Vec<String>,
+    ) -> CreateSessionRequest {
+        CreateSessionRequest {
+            project_id: project_id.to_string(),
+            project_root_id: None,
+            worktree_id: None,
+            work_item_id: None,
+            account_id: account_id.to_string(),
+            agent_kind: "claude".to_string(),
+            cwd: service.databases.paths().root.display().to_string(),
+            command: command.to_string(),
+            args,
+            env_preset_ref: None,
+            origin_mode: "execution".to_string(),
+            current_mode: Some("execution".to_string()),
+            title: Some(title.to_string()),
+            title_policy: Some("manual".to_string()),
+            restore_policy: Some("reattach".to_string()),
+            initial_terminal_cols: Some(120),
+            initial_terminal_rows: Some(40),
+            dispatch_group: None,
+            auto_worktree: false,
+            safety_mode: None,
+            extra_args: None,
+            model: None,
+        }
+    }
+
+    #[cfg(windows)]
+    fn long_running_command() -> (String, Vec<String>) {
+        (
+            "cmd.exe".to_string(),
+            vec![
+                "/C".to_string(),
+                "ping 127.0.0.1 -n 6 > NUL".to_string(),
+            ],
+        )
+    }
+
+    #[cfg(not(windows))]
+    fn long_running_command() -> (String, Vec<String>) {
+        ("sh".to_string(), vec!["-c".to_string(), "sleep 5".to_string()])
     }
 
     fn seed_watchable_session(service: &SupervisorService, session_id: &str) {
@@ -4864,6 +4948,119 @@ mod tests {
         assert_eq!(response.runtime_state, "starting");
         assert_eq!(response.status, "active");
         assert_eq!(response.activity_state, "working");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn create_session_marks_failed_launches_in_persistent_state() {
+        let (service, root) = build_test_service();
+        let (project_id, account_id) = create_project_and_account(&service);
+
+        let error = service
+            .create_session(make_session_request(
+                &service,
+                &project_id,
+                &account_id,
+                "Intentional launch failure",
+                "emery-command-that-does-not-exist",
+                vec![],
+            ))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("failed to spawn child"));
+
+        let sessions = service
+            .list_sessions(SessionListFilter {
+                project_id: Some(project_id),
+                status: None,
+                runtime_state: None,
+                work_item_id: None,
+                limit: None,
+            })
+            .unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].title.as_deref(), Some("Intentional launch failure"));
+        assert_eq!(sessions[0].runtime_state, "failed");
+        assert_eq!(sessions[0].status, "failed");
+        assert_eq!(sessions[0].activity_state, "idle");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn create_session_batch_rolls_back_created_sessions_on_later_failure() {
+        let (service, root) = build_test_service();
+        let (project_id, account_id) = create_project_and_account(&service);
+        let (command, args) = long_running_command();
+
+        let error = service
+            .create_session_batch(vec![
+                make_session_request(
+                    &service,
+                    &project_id,
+                    &account_id,
+                    "Batch ok",
+                    &command,
+                    args,
+                ),
+                make_session_request(
+                    &service,
+                    &project_id,
+                    &account_id,
+                    "Batch fail",
+                    "emery-command-that-does-not-exist",
+                    vec![],
+                ),
+            ])
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("batch session creation failed after creating 1 session(s)"));
+        assert!(error.contains("Created session IDs: ["));
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let sessions = loop {
+            let sessions = service
+                .list_sessions(SessionListFilter {
+                    project_id: Some(project_id.clone()),
+                    status: None,
+                    runtime_state: None,
+                    work_item_id: None,
+                    limit: None,
+                })
+                .unwrap();
+
+            let maybe_first = sessions
+                .iter()
+                .find(|session| session.title.as_deref() == Some("Batch ok"));
+            if let Some(first) = maybe_first {
+                if first.runtime_state != "running" && first.runtime_state != "starting" {
+                    break sessions;
+                }
+            }
+
+            if Instant::now() >= deadline {
+                break sessions;
+            }
+            thread::sleep(Duration::from_millis(50));
+        };
+
+        assert_eq!(sessions.len(), 2);
+        let first = sessions
+            .iter()
+            .find(|session| session.title.as_deref() == Some("Batch ok"))
+            .unwrap();
+        let second = sessions
+            .iter()
+            .find(|session| session.title.as_deref() == Some("Batch fail"))
+            .unwrap();
+
+        assert_ne!(first.runtime_state, "running");
+        assert_ne!(first.runtime_state, "starting");
+        assert_eq!(second.runtime_state, "failed");
+        assert_eq!(second.status, "failed");
 
         let _ = fs::remove_dir_all(root);
     }
