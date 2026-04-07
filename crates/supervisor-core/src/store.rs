@@ -1587,6 +1587,15 @@ impl DatabaseSet {
             .map_err(Into::into)
     }
 
+    pub fn work_item_callsign_exists(&self, callsign: &str) -> Result<bool> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        exists(
+            &connection,
+            "SELECT 1 FROM work_items WHERE callsign = ?1",
+            [callsign],
+        )
+    }
+
     pub fn list_documents(&self, filter: &DocumentListFilter) -> Result<Vec<DocumentSummary>> {
         let connection = open_connection(&self.paths.knowledge_db)?;
         let mut sql = String::from(

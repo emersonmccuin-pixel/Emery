@@ -2204,6 +2204,9 @@ impl SupervisorService {
         }
 
         if request.origin_mode == "dispatch" {
+            // Ensure the {NS}-0 dispatcher coordination work item exists for this project.
+            self.ensure_coordination_work_item(&request.project_id)?;
+
             let project = self.databases.get_project(&request.project_id)?;
             let (project_name, wcp_ns, dispatch_item, project_instr) = match &project {
                 Some(p) => (
@@ -3080,6 +3083,74 @@ impl SupervisorService {
             callsign: parent.summary.callsign,
             next_child_sequence,
         }))
+    }
+
+    /// Ensures that the {NS}-0 dispatcher coordination work item exists for the given project.
+    /// If a namespace is configured for the project and no {NS}-0 work item exists yet, creates
+    /// one with the default template. This is idempotent — calling it when {NS}-0 already exists
+    /// is a no-op.
+    fn ensure_coordination_work_item(&self, project_id: &str) -> Result<()> {
+        let project = match self.databases.get_project(project_id)? {
+            Some(p) => p,
+            None => return Ok(()),
+        };
+        let namespace = match project.wcp_namespace {
+            Some(ns) => ns,
+            None => return Ok(()),
+        };
+
+        let ns_upper = namespace.to_ascii_uppercase();
+        let callsign = format!("{ns_upper}-0");
+
+        if self.databases.work_item_callsign_exists(&callsign)? {
+            return Ok(());
+        }
+
+        let now = unix_time_seconds();
+        let timestamp = format_iso8601(now);
+        let description = format!(
+            "## State\n\
+             last_updated: {timestamp}\n\
+             active_round: -\n\
+             \n\
+             ## Active Sessions\n\
+             - (none)\n\
+             \n\
+             ## Pending Review\n\
+             - (none)\n\
+             \n\
+             ## Done This Round\n\
+             - (none)\n\
+             \n\
+             ---\n\
+             \n\
+             This is the dispatcher's persistent state document. Dispatchers should overwrite \
+             the sections above (not append) at every phase transition. Format must remain \
+             consistent so future dispatcher sessions can parse it reliably."
+        );
+
+        let record = NewWorkItemRecord {
+            id: format!("wi_{}", Uuid::new_v4().simple()),
+            project_id: project_id.to_string(),
+            namespace: Some(namespace),
+            parent_id: None,
+            root_work_item_id: None,
+            callsign,
+            child_sequence: None,
+            title: format!("Dispatcher Coordination \u{2014} {ns_upper}"),
+            description,
+            acceptance_criteria: None,
+            work_item_type: "feature".to_string(),
+            status: "in_progress".to_string(),
+            priority: Some("high".to_string()),
+            created_by: None,
+            created_at: now,
+            updated_at: now,
+            closed_at: None,
+        };
+
+        self.databases.insert_work_item(&record)?;
+        Ok(())
     }
 
     fn allocate_work_item_callsign(
@@ -4143,6 +4214,30 @@ fn unix_time_seconds() -> i64 {
         .duration_since(UNIX_EPOCH)
         .expect("system time must be after unix epoch")
         .as_secs() as i64
+}
+
+/// Format a Unix timestamp (seconds since epoch) as an ISO 8601 UTC string.
+/// Does not depend on chrono — uses the Howard Hinnant civil-from-days algorithm.
+fn format_iso8601(secs: i64) -> String {
+    let secs = secs as u64;
+    let sec = (secs % 60) as u32;
+    let min = ((secs / 60) % 60) as u32;
+    let hour = ((secs / 3600) % 24) as u32;
+    let days = secs / 86400;
+
+    // Civil-from-days (Howard Hinnant): days since Unix epoch → (year, month, day)
+    let z = days + 719468;
+    let era = z / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let year = if month <= 2 { y + 1 } else { y };
+
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:{sec:02}Z")
 }
 
 fn required_trimmed(field_name: &str, value: &str) -> Result<String> {
