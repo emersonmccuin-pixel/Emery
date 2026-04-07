@@ -554,7 +554,13 @@ function useAppearance() {
     setOverrides({ brightness: 1.0, fontScale: 1.0, fontSans: "", fontMono: "", accentColor: "", uiDensity: "default", tokens: {} });
   }
 
-  return { overrides, update, setToken, reset };
+  function reloadForTheme(themeId: string) {
+    const themeOverrides = loadOverrides(themeId);
+    setOverrides(themeOverrides);
+    applyOverrides(themeOverrides);
+  }
+
+  return { overrides, update, setToken, reset, reloadForTheme };
 }
 
 /** Read the computed value of a CSS variable from the current theme (ignoring inline overrides). */
@@ -568,7 +574,7 @@ function AppearanceSection() {
   const [currentTheme, setCurrentTheme] = useState(
     () => document.documentElement.dataset.theme ?? "default",
   );
-  const { overrides, update, setToken, reset } = useAppearance();
+  const { overrides, update, setToken, reset, reloadForTheme } = useAppearance();
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const hasOverrides =
@@ -585,8 +591,8 @@ function AppearanceSection() {
     localStorage.setItem("emery.theme", theme);
     localStorage.removeItem("euri.theme");
     setCurrentTheme(theme);
-    // Re-apply overrides on top of the new theme
-    applyOverrides(overrides);
+    // Load and apply per-theme overrides
+    reloadForTheme(theme);
   }
 
   return (

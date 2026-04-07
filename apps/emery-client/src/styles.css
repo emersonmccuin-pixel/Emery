@@ -1581,9 +1581,8 @@ button {
 .agent-view {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 120px);
-  min-height: 300px;
-  padding-bottom: var(--space-4);
+  flex: 1;
+  min-height: 0;
 }
 
 /* ── Agent Info Bar ── */

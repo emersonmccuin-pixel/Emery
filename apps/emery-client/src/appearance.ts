@@ -1,20 +1,24 @@
 /**
  * Appearance overrides engine.
  *
- * Stores user customizations in localStorage and applies them as inline
- * CSS custom properties on <html>, which override theme-level variables.
+ * Stores user customizations per-theme in localStorage. Each theme gets its
+ * own set of overrides so switching themes doesn't lose your tweaks.
  */
 
-const STORAGE_KEY = "emery.appearance";
+const STORAGE_KEY_PREFIX = "emery.appearance";
+
+function storageKey(themeId: string): string {
+  return themeId ? `${STORAGE_KEY_PREFIX}.${themeId}` : STORAGE_KEY_PREFIX;
+}
 
 // Base font-size values (rem) from the design system — used to scale
 const BASE_FONT_SIZES: Record<string, number> = {
-  "--text-xs": 0.69,
-  "--text-sm": 0.77,
-  "--text-base": 0.85,
-  "--text-md": 1.0,
-  "--text-lg": 1.15,
-  "--text-xl": 1.38,
+  "--text-xs": 0.84,
+  "--text-sm": 0.94,
+  "--text-base": 1.0,
+  "--text-md": 1.1,
+  "--text-lg": 1.3,
+  "--text-xl": 1.6,
 };
 
 export interface AppearanceOverrides {
@@ -40,12 +44,15 @@ const DEFAULTS: AppearanceOverrides = {
   tokens: {},
 };
 
-/** Load overrides from localStorage (returns defaults for missing keys). */
-export function loadOverrides(): AppearanceOverrides {
+/** Load overrides from localStorage for a specific theme. */
+export function loadOverrides(themeId?: string): AppearanceOverrides {
+  const key = storageKey(themeId ?? getCurrentTheme());
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...DEFAULTS, tokens: {} };
-    const parsed = JSON.parse(raw);
+    const raw = localStorage.getItem(key);
+    // Fall back to legacy global key if no per-theme key exists
+    const fallbackRaw = raw ?? localStorage.getItem(STORAGE_KEY_PREFIX);
+    if (!fallbackRaw) return { ...DEFAULTS, tokens: {} };
+    const parsed = JSON.parse(fallbackRaw);
     return {
       ...DEFAULTS,
       ...parsed,
@@ -56,9 +63,15 @@ export function loadOverrides(): AppearanceOverrides {
   }
 }
 
-/** Persist overrides to localStorage. */
-export function saveOverrides(overrides: AppearanceOverrides): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides));
+/** Persist overrides to localStorage for a specific theme. */
+export function saveOverrides(overrides: AppearanceOverrides, themeId?: string): void {
+  const key = storageKey(themeId ?? getCurrentTheme());
+  localStorage.setItem(key, JSON.stringify(overrides));
+}
+
+/** Get the current theme ID from the document. */
+export function getCurrentTheme(): string {
+  return document.documentElement.getAttribute("data-theme") ?? "default";
 }
 
 /** Apply all overrides to the document. Call after theme change too. */
@@ -147,7 +160,6 @@ function applyDensity(el: HTMLElement, density: string): void {
     },
   };
 
-  // Clear any previously set density vars
   const allVars = [
     "--space-1", "--space-2", "--space-3", "--space-4", "--space-5", "--space-6", "--space-8",
     "--radius-sm", "--radius-md", "--radius-lg", "--radius-xl",
@@ -162,9 +174,10 @@ function applyDensity(el: HTMLElement, density: string): void {
   }
 }
 
-/** Clear all overrides and reset to theme defaults. */
-export function resetOverrides(): void {
-  localStorage.removeItem(STORAGE_KEY);
+/** Clear all overrides for the current theme and reset to defaults. */
+export function resetOverrides(themeId?: string): void {
+  const key = storageKey(themeId ?? getCurrentTheme());
+  localStorage.removeItem(key);
   const el = document.documentElement;
   // Clear inline styles we may have set
   document.body.style.filter = "";
