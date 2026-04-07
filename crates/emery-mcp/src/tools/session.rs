@@ -300,22 +300,29 @@ fn create_session_with_rpc_inner(rpc: &mut RpcClient, input: &Value) -> Result<S
         write_pre_commit_hook(&worktree_path, &branch_name)?;
     }
 
-    // Write merged instructions via profile (file or prompt injection)
+    // Write merged instructions via profile (system prompt flag or file/prompt injection)
+    let mut system_prompt_args: Vec<String> = Vec::new();
     if !instruction_parts.is_empty() {
         let merged = instruction_parts.join("\n\n---\n\n");
-        match profile.write_instructions(&worktree_path, &merged)? {
-            InstructionDisposition::WrittenToFile => {}
-            InstructionDisposition::InjectIntoPrompt(text) => {
-                prompt = Some(match prompt.take() {
-                    Some(existing) => format!("{}\n\n{}", text, existing),
-                    None => text,
-                });
+        if let Some(flag) = profile.system_prompt_flag {
+            system_prompt_args.push(flag.to_string());
+            system_prompt_args.push(merged);
+        } else {
+            match profile.write_instructions(&worktree_path, &merged)? {
+                InstructionDisposition::WrittenToFile => {}
+                InstructionDisposition::InjectIntoPrompt(text) => {
+                    prompt = Some(match prompt.take() {
+                        Some(existing) => format!("{}\n\n{}", text, existing),
+                        None => text,
+                    });
+                }
             }
         }
     }
 
     // Build args list
     let mut args = profile.safety_args("yolo");
+    args.extend(system_prompt_args);
     if let Some(ref p) = prompt {
         args.push("-p".to_string());
         args.push(p.clone());
@@ -463,21 +470,28 @@ pub fn handle_session_create_batch(input: Value) -> Result<String> {
             write_pre_commit_hook(&worktree_path, &branch_name)?;
         }
 
-        // Write merged instructions via profile (file or prompt injection)
+        // Write merged instructions via profile (system prompt flag or file/prompt injection)
+        let mut system_prompt_args: Vec<String> = Vec::new();
         if !instruction_parts.is_empty() {
             let merged = instruction_parts.join("\n\n---\n\n");
-            match profile.write_instructions(&worktree_path, &merged)? {
-                InstructionDisposition::WrittenToFile => {}
-                InstructionDisposition::InjectIntoPrompt(text) => {
-                    prompt = Some(match prompt.take() {
-                        Some(existing) => format!("{}\n\n{}", text, existing),
-                        None => text,
-                    });
+            if let Some(flag) = profile.system_prompt_flag {
+                system_prompt_args.push(flag.to_string());
+                system_prompt_args.push(merged);
+            } else {
+                match profile.write_instructions(&worktree_path, &merged)? {
+                    InstructionDisposition::WrittenToFile => {}
+                    InstructionDisposition::InjectIntoPrompt(text) => {
+                        prompt = Some(match prompt.take() {
+                            Some(existing) => format!("{}\n\n{}", text, existing),
+                            None => text,
+                        });
+                    }
                 }
             }
         }
 
         let mut args = profile.safety_args("yolo");
+        args.extend(system_prompt_args);
         if let Some(ref p) = prompt {
             args.push("-p".to_string());
             args.push(p.clone());
