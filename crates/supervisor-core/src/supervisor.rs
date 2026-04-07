@@ -30,6 +30,8 @@ use crate::models::{
     McpServerSummary, CreateMcpServerRequest, UpdateMcpServerRequest, DeleteMcpServerRequest,
     ProvisionWorktreeRequest, CloseWorktreeRequest, CloseWorktreeResult,
     WorkItemSearchRequest, WorkItemSearchResult, DocumentSearchRequest, DocumentSearchResult,
+    Memory, MemoryAddRequest, MemoryAddResult, MemoryGetRequest, MemoryListRequest,
+    MemorySearchRequest, MemorySearchResult,
 };
 use crate::runtime::SessionRegistry;
 use crate::service::SupervisorService;
@@ -645,6 +647,24 @@ impl Supervisor {
 
     pub fn resolve_mcp_config_json(&self) -> Result<Option<String>> {
         self.service.resolve_mcp_config_json()
+    }
+
+    // ── Memories (EMERY-217.003) ──────────────────────────────────────────────
+
+    pub fn memory_add(&self, request: MemoryAddRequest) -> Result<MemoryAddResult> {
+        self.service.memory_add(request)
+    }
+
+    pub fn memory_search(&self, request: MemorySearchRequest) -> Result<Vec<MemorySearchResult>> {
+        self.service.memory_search(request)
+    }
+
+    pub fn memory_list(&self, request: MemoryListRequest) -> Result<Vec<Memory>> {
+        self.service.memory_list(request)
+    }
+
+    pub fn memory_get(&self, request: MemoryGetRequest) -> Result<Memory> {
+        self.service.memory_get(request)
     }
 }
 

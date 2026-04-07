@@ -1683,3 +1683,110 @@ pub struct AgentTemplateUpdateRecord {
     pub updated_at: i64,
     pub archived_at: Option<i64>,
 }
+
+// ── Memories (EMERY-217.003) ─────────────────────────────────────────────────
+
+/// A single episodic memory fact.
+#[derive(Debug, Clone, Serialize)]
+pub struct Memory {
+    pub id: String,
+    pub namespace: String,
+    pub content: String,
+    pub source_ref: Option<String>,
+    pub embedding_model: Option<String>,
+    pub input_hash: Option<String>,
+    pub valid_from: i64,
+    pub valid_to: Option<i64>,
+    pub supersedes_id: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Internal row that also carries the raw embedding BLOB for scoring.
+#[derive(Debug, Clone)]
+pub struct MemoryEmbeddingRow {
+    pub id: String,
+    pub namespace: String,
+    pub content: String,
+    pub embedding: Option<Vec<u8>>,
+    pub input_hash: Option<String>,
+    pub valid_from: i64,
+    pub valid_to: Option<i64>,
+    pub updated_at: i64,
+}
+
+/// Insert record for a new memory row.
+#[derive(Debug, Clone)]
+pub struct NewMemoryRecord {
+    pub id: String,
+    pub namespace: String,
+    pub content: String,
+    pub source_ref: Option<String>,
+    pub embedding: Option<Vec<u8>>,
+    pub embedding_model: Option<String>,
+    pub input_hash: Option<String>,
+    pub valid_from: i64,
+    pub valid_to: Option<i64>,
+    pub supersedes_id: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+// ── Memory requests / responses ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MemoryAddRequest {
+    pub content: String,
+    pub source_ref: Option<String>,
+    pub namespace: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MemorySearchRequest {
+    pub query_text: String,
+    pub limit: Option<usize>,
+    pub threshold: Option<f32>,
+    pub namespace: Option<String>,
+    /// Unix timestamp; if set, returns memories valid at that point in time.
+    pub at_time: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MemoryListRequest {
+    pub namespace: Option<String>,
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub include_superseded: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MemoryGetRequest {
+    pub memory_id: String,
+}
+
+/// Returned by `memory_add`: the resulting memory plus the action taken.
+#[derive(Debug, Clone, Serialize)]
+pub struct MemoryAddResult {
+    pub memory: Memory,
+    /// One of "ADD", "UPDATE", "SUPERSEDE", "NOOP".
+    pub action: String,
+}
+
+/// Returned by `memory_search`: the memory plus scoring metadata.
+#[derive(Debug, Clone, Serialize)]
+pub struct MemorySearchResult {
+    pub id: String,
+    pub namespace: String,
+    pub content: String,
+    pub source_ref: Option<String>,
+    pub valid_from: i64,
+    pub valid_to: Option<i64>,
+    pub supersedes_id: Option<String>,
+    pub updated_at: i64,
+    /// Raw cosine similarity (0–1).
+    pub cosine: f32,
+    /// Recency decay factor applied (0.1–1.0).
+    pub recency_decay: f32,
+    /// Final combined score (cosine × recency).
+    pub final_score: f32,
+}

@@ -7,6 +7,10 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::agent_profile::{AgentProfile, GuardKind, InstructionDisposition};
+use crate::embeddings::anthropic::AnthropicClient;
+use crate::embeddings::memory_reconciler::{
+    self, MemoryCandidate, ReconcileAction, TOP_K,
+};
 use crate::embeddings::pipeline::{
     canonical_document_input, canonical_work_item_input, compute_input_hash,
 };
@@ -52,6 +56,8 @@ use crate::models::{
     NewMcpServerRecord, McpServerUpdateRecord, ProvisionWorktreeRequest,
     CloseWorktreeRequest, CloseWorktreeResult,
     WorkItemSearchRequest, WorkItemSearchResult, DocumentSearchRequest, DocumentSearchResult,
+    Memory, MemoryAddRequest, MemoryAddResult, MemoryEmbeddingRow, MemoryGetRequest,
+    MemoryListRequest, MemorySearchRequest, MemorySearchResult, NewMemoryRecord,
 };
 use crate::runtime::{SessionLaunchRequest, SessionRegistry, SessionRuntimeRegistration};
 use crate::store::DatabaseSet;
@@ -4585,6 +4591,253 @@ impl SupervisorService {
         self.databases
             .get_agent_template(&existing.summary.id)?
             .ok_or_else(|| anyhow!("agent_template {} was not found", existing.summary.id))
+    }
+
+    // ── Memories (EMERY-217.003) ──────────────────────────────────────────────
+
+    /// Retrieve the ANTHROPIC_API_KEY from the vault, if available.
+    fn anthropic_api_key(&self) -> Option<String> {
+        match self.vault.get_entry_value("global", "ANTHROPIC_API_KEY", "memory_reconciler") {
+            Ok(Some(key)) => Some(key),
+            Ok(None) => {
+                eprintln!("[memory reconciler] ANTHROPIC_API_KEY not set in vault — Haiku call skipped");
+                None
+            }
+            Err(e) => {
+                eprintln!("[memory reconciler] vault error fetching ANTHROPIC_API_KEY: {e}");
+                None
+            }
+        }
+    }
+
+    /// Default namespace used when none is provided to a memory call.
+    fn default_memory_namespace() -> &'static str {
+        "global"
+    }
+
+    /// Add (or reconcile) a memory.
+    pub fn memory_add(&self, request: MemoryAddRequest) -> Result<MemoryAddResult> {
+        let namespace = request
+            .namespace
+            .as_deref()
+            .unwrap_or(Self::default_memory_namespace())
+            .to_string();
+
+        // 1. Get VOYAGE_API_KEY — required for embedding.
+        let Some(voyage_key) = self.voyage_api_key() else {
+            return Err(anyhow!(
+                "vault locked or VOYAGE_API_KEY missing — unlock the vault to use memories"
+            ));
+        };
+
+        // 2. Embed the incoming content.
+        let voyage = VoyageClient::new(voyage_key);
+        let vecs = voyage
+            .embed_batch(&[request.content.clone()], DEFAULT_MODEL)
+            .map_err(|e| anyhow!("{e}"))?;
+        let incoming_vec = vecs
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("Voyage returned no embedding for memory content"))?;
+
+        let input_hash = compute_input_hash(&request.content);
+        let embedding_blob = vec_to_blob(&incoming_vec);
+
+        // 3. Load top-K candidates by similarity.
+        let candidate_rows = self
+            .databases
+            .list_memories_for_embedding(Some(&namespace), None)?;
+
+        let mut scored: Vec<(f32, MemoryEmbeddingRow)> = candidate_rows
+            .into_iter()
+            .filter_map(|row| {
+                let blob = row.embedding.as_deref()?;
+                let candidate_vec = blob_to_vec(blob);
+                if candidate_vec.is_empty() {
+                    return None;
+                }
+                let sim = cosine_similarity(&incoming_vec, &candidate_vec);
+                Some((sim, row))
+            })
+            .collect();
+
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(TOP_K);
+
+        let max_sim = scored.first().map(|(s, _)| *s).unwrap_or(0.0);
+
+        // 4. Fast path: no similar memories → ADD immediately.
+        let action = if let Some(fast) = memory_reconciler::fast_path(max_sim) {
+            fast
+        } else {
+            // 5. LLM path: ask Haiku.
+            let candidates: Vec<MemoryCandidate> = scored
+                .iter()
+                .map(|(sim, row)| MemoryCandidate {
+                    id: row.id.clone(),
+                    content: row.content.clone(),
+                    cosine: *sim,
+                })
+                .collect();
+
+            match self.anthropic_api_key() {
+                Some(api_key) => {
+                    let client = AnthropicClient::new(api_key);
+                    memory_reconciler::llm_reconcile(&client, &request.content, &candidates)
+                }
+                None => {
+                    // No Anthropic key — fall back to ADD (safe default).
+                    eprintln!("[memory reconciler] no ANTHROPIC_API_KEY; falling back to ADD");
+                    ReconcileAction::Add
+                }
+            }
+        };
+
+        let now = unix_time_seconds();
+        let top_candidate = scored.into_iter().next().map(|(_, row)| row);
+
+        let memory = match &action {
+            ReconcileAction::Add => {
+                let record = NewMemoryRecord {
+                    id: format!("mem_{}", Uuid::new_v4().simple()),
+                    namespace: namespace.clone(),
+                    content: request.content.clone(),
+                    source_ref: request.source_ref.clone(),
+                    embedding: Some(embedding_blob),
+                    embedding_model: Some(DEFAULT_MODEL.to_string()),
+                    input_hash: Some(input_hash),
+                    valid_from: now,
+                    valid_to: None,
+                    supersedes_id: None,
+                    created_at: now,
+                    updated_at: now,
+                };
+                self.databases.insert_memory(&record)?
+            }
+            ReconcileAction::Update => {
+                let candidate = top_candidate
+                    .ok_or_else(|| anyhow!("UPDATE action but no candidate found"))?;
+                self.databases.update_memory_content(
+                    &candidate.id,
+                    &request.content,
+                    Some(&embedding_blob),
+                    Some(DEFAULT_MODEL),
+                    Some(&input_hash),
+                    now,
+                )?
+            }
+            ReconcileAction::Supersede => {
+                let candidate = top_candidate
+                    .ok_or_else(|| anyhow!("SUPERSEDE action but no candidate found"))?;
+                // Retire the old memory.
+                self.databases.expire_memory(&candidate.id, now)?;
+                // Insert new memory pointing back at the old one.
+                let record = NewMemoryRecord {
+                    id: format!("mem_{}", Uuid::new_v4().simple()),
+                    namespace: namespace.clone(),
+                    content: request.content.clone(),
+                    source_ref: request.source_ref.clone(),
+                    embedding: Some(embedding_blob),
+                    embedding_model: Some(DEFAULT_MODEL.to_string()),
+                    input_hash: Some(input_hash),
+                    valid_from: now,
+                    valid_to: None,
+                    supersedes_id: Some(candidate.id.clone()),
+                    created_at: now,
+                    updated_at: now,
+                };
+                self.databases.insert_memory(&record)?
+            }
+            ReconcileAction::Noop => {
+                let candidate = top_candidate
+                    .ok_or_else(|| anyhow!("NOOP action but no candidate found"))?;
+                self.databases
+                    .get_memory(&candidate.id)?
+                    .ok_or_else(|| anyhow!("memory {} not found", candidate.id))?
+            }
+        };
+
+        Ok(MemoryAddResult {
+            memory,
+            action: action.to_string(),
+        })
+    }
+
+    /// Semantic search over memories.
+    pub fn memory_search(&self, request: MemorySearchRequest) -> Result<Vec<MemorySearchResult>> {
+        let limit = request.limit.unwrap_or(10).min(100);
+        let threshold = request.threshold.unwrap_or(0.0);
+
+        let Some(voyage_key) = self.voyage_api_key() else {
+            return Err(anyhow!(
+                "vault locked or VOYAGE_API_KEY missing — unlock the vault to use memory search"
+            ));
+        };
+
+        let voyage = VoyageClient::new(voyage_key);
+        let vecs = voyage
+            .embed_batch(&[request.query_text.clone()], DEFAULT_MODEL)
+            .map_err(|e| anyhow!("{e}"))?;
+        let query_vec = vecs
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("Voyage returned no embedding for query"))?;
+
+        let rows = self
+            .databases
+            .list_memories_for_embedding(request.namespace.as_deref(), request.at_time)?;
+
+        let mut scored: Vec<MemorySearchResult> = rows
+            .into_iter()
+            .filter_map(|row| {
+                let blob = row.embedding.as_deref()?;
+                let candidate_vec = blob_to_vec(blob);
+                if candidate_vec.is_empty() {
+                    return None;
+                }
+                let cosine = cosine_similarity(&query_vec, &candidate_vec);
+                let recency = ranker_recency_decay(row.updated_at);
+                let score = cosine * recency;
+
+                if score < threshold {
+                    return None;
+                }
+
+                Some(MemorySearchResult {
+                    id: row.id,
+                    namespace: row.namespace,
+                    content: row.content,
+                    source_ref: None,
+                    valid_from: row.valid_from,
+                    valid_to: row.valid_to,
+                    supersedes_id: None,
+                    updated_at: row.updated_at,
+                    cosine,
+                    recency_decay: recency,
+                    final_score: score,
+                })
+            })
+            .collect();
+
+        scored.sort_by(|a, b| {
+            b.final_score
+                .partial_cmp(&a.final_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        scored.truncate(limit);
+        Ok(scored)
+    }
+
+    /// List memories without embedding scoring.
+    pub fn memory_list(&self, request: MemoryListRequest) -> Result<Vec<Memory>> {
+        self.databases.list_memories(&request)
+    }
+
+    /// Fetch a single memory by ID.
+    pub fn memory_get(&self, request: MemoryGetRequest) -> Result<Memory> {
+        self.databases
+            .get_memory(&request.memory_id)?
+            .ok_or_else(|| anyhow!("memory {} not found", request.memory_id))
     }
 }
 

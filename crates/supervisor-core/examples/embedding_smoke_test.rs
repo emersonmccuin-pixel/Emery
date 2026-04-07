@@ -4,12 +4,10 @@
 //!
 //! Requires: vault unlocked and VOYAGE_API_KEY set in global scope.
 
-use supervisor_core::{AppPaths, DocumentSearchRequest, WorkItemSearchRequest};
-use supervisor_core::SupervisorService;
-use supervisor_core::store::DatabaseSet;
-use supervisor_core::diagnostics::DiagnosticsHub;
-use supervisor_core::SessionRegistry;
-use supervisor_core::VaultService;
+use supervisor_core::{
+    AppPaths, DatabaseSet, DiagnosticsHub, DocumentSearchRequest, SessionRegistry,
+    SupervisorService, VaultService, WorkItemSearchRequest,
+};
 
 fn main() -> anyhow::Result<()> {
     let paths = AppPaths::discover()?;

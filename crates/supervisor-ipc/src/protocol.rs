@@ -98,6 +98,10 @@ pub enum Method {
     McpServerDelete,
     WorkItemSearch,
     DocumentSearch,
+    MemoryAdd,
+    MemorySearch,
+    MemoryList,
+    MemoryGet,
 }
 
 impl Method {
@@ -198,6 +202,10 @@ impl Method {
             Self::McpServerDelete => "mcp_server.delete",
             Self::WorkItemSearch => "work_item.search",
             Self::DocumentSearch => "document.search",
+            Self::MemoryAdd => "memory.add",
+            Self::MemorySearch => "memory.search",
+            Self::MemoryList => "memory.list",
+            Self::MemoryGet => "memory.get",
         }
     }
 }
@@ -306,6 +314,10 @@ impl TryFrom<&str> for Method {
             "mcp_server.delete" => Ok(Self::McpServerDelete),
             "work_item.search" => Ok(Self::WorkItemSearch),
             "document.search" => Ok(Self::DocumentSearch),
+            "memory.add" => Ok(Self::MemoryAdd),
+            "memory.search" => Ok(Self::MemorySearch),
+            "memory.list" => Ok(Self::MemoryList),
+            "memory.get" => Ok(Self::MemoryGet),
             _ => Err(()),
         }
     }
