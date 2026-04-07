@@ -95,6 +95,8 @@ pub enum Method {
     McpServerCreate,
     McpServerUpdate,
     McpServerDelete,
+    WorkItemSearch,
+    DocumentSearch,
 }
 
 impl Method {
@@ -192,6 +194,8 @@ impl Method {
             Self::McpServerCreate => "mcp_server.create",
             Self::McpServerUpdate => "mcp_server.update",
             Self::McpServerDelete => "mcp_server.delete",
+            Self::WorkItemSearch => "work_item.search",
+            Self::DocumentSearch => "document.search",
         }
     }
 }
@@ -297,6 +301,8 @@ impl TryFrom<&str> for Method {
             "mcp_server.create" => Ok(Self::McpServerCreate),
             "mcp_server.update" => Ok(Self::McpServerUpdate),
             "mcp_server.delete" => Ok(Self::McpServerDelete),
+            "work_item.search" => Ok(Self::WorkItemSearch),
+            "document.search" => Ok(Self::DocumentSearch),
             _ => Err(()),
         }
     }

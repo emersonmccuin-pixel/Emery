@@ -327,6 +327,72 @@ pub fn handle_document_update(input: Value) -> Result<String> {
     Ok(format!("Updated document `{}`", slug))
 }
 
+// ── Search Tool Descriptors ──────────────────────────────────────────────────
+
+pub fn tool_work_item_search() -> Value {
+    json!({
+        "name": "emery_work_item_search",
+        "description": "Semantic search over work items using Voyage AI embeddings. Returns items ranked by cosine similarity × recency decay × status weight. Requires VOYAGE_API_KEY in vault.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query_text": { "type": "string", "description": "Natural-language search query" },
+                "limit":      { "type": "integer", "description": "Max results to return (default 10, max 100)" },
+                "threshold":  { "type": "number", "description": "Minimum final_score threshold (default 0.0)" },
+                "namespace":  { "type": "string", "description": "Restrict search to this namespace (e.g. EMERY)" }
+            },
+            "required": ["query_text"]
+        }
+    })
+}
+
+pub fn tool_document_search() -> Value {
+    json!({
+        "name": "emery_document_search",
+        "description": "Semantic search over documents using Voyage AI embeddings. Returns documents ranked by cosine similarity × recency decay. Requires VOYAGE_API_KEY in vault.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query_text": { "type": "string", "description": "Natural-language search query" },
+                "limit":      { "type": "integer", "description": "Max results to return (default 10, max 100)" },
+                "threshold":  { "type": "number", "description": "Minimum final_score threshold (default 0.0)" },
+                "namespace":  { "type": "string", "description": "Restrict search to this namespace (e.g. EMERY)" }
+            },
+            "required": ["query_text"]
+        }
+    })
+}
+
+// ── Search Handlers ──────────────────────────────────────────────────────────
+
+pub fn handle_work_item_search(input: Value) -> Result<String> {
+    let query_text = required_str(&input, "query_text")?;
+    let mut params = json!({ "query_text": query_text });
+    if let Some(v) = input["limit"].as_u64()     { params["limit"]     = json!(v); }
+    if let Some(v) = input["threshold"].as_f64() { params["threshold"] = json!(v); }
+    if let Some(v) = input["namespace"].as_str() { params["namespace"] = json!(v); }
+
+    let mut rpc = RpcClient::connect()?;
+    let result = rpc.call("work_item.search", params)?;
+
+    let items = result.as_array().map(|a| a.len()).unwrap_or(0);
+    Ok(format!("{} result(s):\n{}", items, serde_json::to_string_pretty(&result)?))
+}
+
+pub fn handle_document_search(input: Value) -> Result<String> {
+    let query_text = required_str(&input, "query_text")?;
+    let mut params = json!({ "query_text": query_text });
+    if let Some(v) = input["limit"].as_u64()     { params["limit"]     = json!(v); }
+    if let Some(v) = input["threshold"].as_f64() { params["threshold"] = json!(v); }
+    if let Some(v) = input["namespace"].as_str() { params["namespace"] = json!(v); }
+
+    let mut rpc = RpcClient::connect()?;
+    let result = rpc.call("document.search", params)?;
+
+    let items = result.as_array().map(|a| a.len()).unwrap_or(0);
+    Ok(format!("{} result(s):\n{}", items, serde_json::to_string_pretty(&result)?))
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 fn required_str(input: &Value, key: &str) -> Result<String> {
