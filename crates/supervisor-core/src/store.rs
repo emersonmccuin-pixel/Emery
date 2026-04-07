@@ -27,6 +27,7 @@ use crate::models::{
     VaultEntry, VaultEntryRow, VaultAuditEntry, NewVaultEntryRecord, VaultEntryUpdateRecord,
     NewVaultAuditRecord, McpServerSummary, NewMcpServerRecord, McpServerUpdateRecord,
     DocumentEmbeddingRow,
+    Memory, MemoryEmbeddingRow, MemoryListRequest, NewMemoryRecord,
 };
 use crate::schema::{migrate_app_db, migrate_knowledge_db};
 use uuid::Uuid;
@@ -4168,6 +4169,174 @@ fn unix_time_seconds() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
+}
+
+// ── Memories (EMERY-217.003) ─────────────────────────────────────────────────
+
+impl DatabaseSet {
+    /// Insert a new memory row.
+    pub fn insert_memory(&self, record: &NewMemoryRecord) -> Result<Memory> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        connection.execute(
+            "INSERT INTO memories
+               (id, namespace, content, source_ref, embedding, embedding_model,
+                input_hash, valid_from, valid_to, supersedes_id, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                record.id,
+                record.namespace,
+                record.content,
+                record.source_ref,
+                record.embedding,
+                record.embedding_model,
+                record.input_hash,
+                record.valid_from,
+                record.valid_to,
+                record.supersedes_id,
+                record.created_at,
+                record.updated_at,
+            ],
+        )?;
+        self.get_memory(&record.id)?
+            .ok_or_else(|| anyhow!("memory {} not found after insert", record.id))
+    }
+
+    /// Fetch a single memory by ID.
+    pub fn get_memory(&self, id: &str) -> Result<Option<Memory>> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let mut stmt = connection.prepare(
+            "SELECT id, namespace, content, source_ref, embedding_model, input_hash,
+                    valid_from, valid_to, supersedes_id, created_at, updated_at
+             FROM memories WHERE id = ?1",
+        )?;
+        let result = stmt
+            .query_row(params![id], row_to_memory)
+            .optional()?;
+        Ok(result)
+    }
+
+    /// Update in-place: content, embedding, input_hash, updated_at.
+    pub fn update_memory_content(
+        &self,
+        id: &str,
+        content: &str,
+        embedding: Option<&[u8]>,
+        embedding_model: Option<&str>,
+        input_hash: Option<&str>,
+        updated_at: i64,
+    ) -> Result<Memory> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let rows = connection.execute(
+            "UPDATE memories
+             SET content = ?2, embedding = ?3, embedding_model = ?4,
+                 input_hash = ?5, updated_at = ?6
+             WHERE id = ?1",
+            params![id, content, embedding, embedding_model, input_hash, updated_at],
+        )?;
+        if rows == 0 {
+            return Err(anyhow!("memory {} not found for update", id));
+        }
+        self.get_memory(id)?.ok_or_else(|| anyhow!("memory {} not found after update", id))
+    }
+
+    /// Set valid_to on an existing memory (supersession).
+    pub fn expire_memory(&self, id: &str, valid_to: i64) -> Result<()> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let rows = connection.execute(
+            "UPDATE memories SET valid_to = ?2 WHERE id = ?1",
+            params![id, valid_to],
+        )?;
+        if rows == 0 {
+            return Err(anyhow!("memory {} not found for expire", id));
+        }
+        Ok(())
+    }
+
+    /// List currently-valid memories (or all, including superseded).
+    pub fn list_memories(&self, request: &MemoryListRequest) -> Result<Vec<Memory>> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let mut sql = String::from(
+            "SELECT id, namespace, content, source_ref, embedding_model, input_hash,
+                    valid_from, valid_to, supersedes_id, created_at, updated_at
+             FROM memories WHERE 1 = 1",
+        );
+        if let Some(ns) = &request.namespace {
+            sql.push_str(&format!(" AND namespace = '{}'", ns.replace('\'', "''")));
+        }
+        if !request.include_superseded {
+            sql.push_str(" AND valid_to IS NULL");
+        }
+        sql.push_str(" ORDER BY updated_at DESC");
+        if let Some(limit) = request.limit {
+            sql.push_str(&format!(" LIMIT {}", limit));
+        }
+        let mut stmt = connection.prepare(&sql)?;
+        let rows = stmt.query_map([], row_to_memory)?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Load memories with their embeddings for similarity scoring.
+    /// Optionally filtered by namespace and by time-travel (at_time).
+    pub fn list_memories_for_embedding(
+        &self,
+        namespace: Option<&str>,
+        at_time: Option<i64>,
+    ) -> Result<Vec<MemoryEmbeddingRow>> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let mut sql = String::from(
+            "SELECT id, namespace, content, embedding, input_hash,
+                    valid_from, valid_to, updated_at
+             FROM memories WHERE 1 = 1",
+        );
+        if let Some(ns) = namespace {
+            sql.push_str(&format!(" AND namespace = '{}'", ns.replace('\'', "''")));
+        }
+        match at_time {
+            Some(t) => {
+                // Time-travel: include memories that were valid at t
+                // (valid_from <= t AND (valid_to IS NULL OR valid_to > t))
+                sql.push_str(&format!(
+                    " AND valid_from <= {t} AND (valid_to IS NULL OR valid_to > {t})"
+                ));
+            }
+            None => {
+                // Default: only currently valid
+                sql.push_str(" AND valid_to IS NULL");
+            }
+        }
+        let mut stmt = connection.prepare(&sql)?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(MemoryEmbeddingRow {
+                    id: row.get(0)?,
+                    namespace: row.get(1)?,
+                    content: row.get(2)?,
+                    embedding: row.get(3)?,
+                    input_hash: row.get(4)?,
+                    valid_from: row.get(5)?,
+                    valid_to: row.get(6)?,
+                    updated_at: row.get(7)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+}
+
+fn row_to_memory(row: &Row<'_>) -> rusqlite::Result<Memory> {
+    Ok(Memory {
+        id: row.get(0)?,
+        namespace: row.get(1)?,
+        content: row.get(2)?,
+        source_ref: row.get(3)?,
+        embedding_model: row.get(4)?,
+        input_hash: row.get(5)?,
+        valid_from: row.get(6)?,
+        valid_to: row.get(7)?,
+        supersedes_id: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+    })
 }
 
 /// Find the emery-mcp binary path as a sibling of the current executable.

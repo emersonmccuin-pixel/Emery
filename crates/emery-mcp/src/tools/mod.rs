@@ -1,5 +1,6 @@
 mod instructions;
 mod knowledge;
+mod memory;
 mod merge_queue;
 mod project;
 mod resolve;
@@ -48,6 +49,10 @@ pub fn all_tools() -> Value {
         knowledge::tool_document_update(),
         knowledge::tool_work_item_search(),
         knowledge::tool_document_search(),
+        memory::tool_memory_add(),
+        memory::tool_memory_search(),
+        memory::tool_memory_list(),
+        memory::tool_memory_get(),
     ])
 }
 
@@ -89,6 +94,10 @@ pub fn call_tool(name: &str, input: Value) -> Result<String> {
         "emery_document_update" => knowledge::handle_document_update(input),
         "emery_work_item_search" => knowledge::handle_work_item_search(input),
         "emery_document_search" => knowledge::handle_document_search(input),
+        "emery_memory_add" => memory::handle_memory_add(input),
+        "emery_memory_search" => memory::handle_memory_search(input),
+        "emery_memory_list" => memory::handle_memory_list(input),
+        "emery_memory_get" => memory::handle_memory_get(input),
         _ => Err(anyhow::anyhow!("unknown tool: {}", name)),
     }
 }

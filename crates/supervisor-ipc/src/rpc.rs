@@ -23,6 +23,7 @@ use supervisor_core::{
     CreateMcpServerRequest, UpdateMcpServerRequest, DeleteMcpServerRequest,
     ProvisionWorktreeRequest, CloseWorktreeRequest,
     WorkItemSearchRequest, DocumentSearchRequest,
+    MemoryAddRequest, MemoryGetRequest, MemoryListRequest, MemorySearchRequest,
 };
 
 
@@ -802,6 +803,24 @@ impl SupervisorRpc {
                 Ok(serde_json::to_value(
                     self.supervisor.search_documents(request)?,
                 )?)
+            }
+            Method::MemoryAdd => {
+                let request: MemoryAddRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(self.supervisor.memory_add(request)?)?)
+            }
+            Method::MemorySearch => {
+                let request: MemorySearchRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.memory_search(request)?,
+                )?)
+            }
+            Method::MemoryList => {
+                let request: MemoryListRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(self.supervisor.memory_list(request)?)?)
+            }
+            Method::MemoryGet => {
+                let request: MemoryGetRequest = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(self.supervisor.memory_get(request)?)?)
             }
             Method::SubscriptionOpen => {
                 let params: SubscriptionOpenParams = serde_json::from_value(params)?;

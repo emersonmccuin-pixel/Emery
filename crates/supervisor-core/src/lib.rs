@@ -45,6 +45,8 @@ pub use models::{
     McpServerSummary, CreateMcpServerRequest, UpdateMcpServerRequest, DeleteMcpServerRequest,
     ProvisionWorktreeRequest, CloseWorktreeRequest, CloseWorktreeResult,
     WorkItemSearchRequest, WorkItemSearchResult, DocumentSearchRequest, DocumentSearchResult,
+    Memory, MemoryAddRequest, MemoryAddResult, MemoryGetRequest, MemoryListRequest,
+    MemorySearchRequest, MemorySearchResult,
 };
 pub use runtime::SessionRegistry;
 pub use service::SupervisorService;
