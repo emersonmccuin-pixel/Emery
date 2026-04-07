@@ -6876,7 +6876,7 @@ body {
 body::before {
   background:
     linear-gradient(to bottom, rgba(0, 0, 0, 0.2), transparent 8%, transparent 92%, rgba(0, 0, 0, 0.3)),
-    repeating-linear-gradient(0deg, rgba(180, 150, 80, 0.02) 0, rgba(180, 150, 80, 0.02) 1px, transparent 1px, transparent 4px);
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--accent) 2%, transparent) 0, color-mix(in srgb, var(--accent) 2%, transparent) 1px, transparent 1px, transparent 4px);
   opacity: 0.7;
 }
 #root {
@@ -7104,7 +7104,7 @@ textarea:focus {
 
 /* Merge queue badges */
 .mq-badge {
-  border: 1px solid rgba(140, 115, 60, 0.35);
+  border: 1px solid var(--border-default);
   border-radius: 3px;
   text-transform: uppercase;
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
@@ -7112,11 +7112,11 @@ textarea:focus {
 
 /* Toast — alert panel */
 .toast {
-  border: 2px solid rgba(140, 115, 60, 0.35);
-  background: rgba(28, 22, 12, 0.98);
+  border: 2px solid var(--border-default);
+  background: color-mix(in srgb, var(--surface-raised) 98%, transparent);
   box-shadow:
     0 4px 20px rgba(0, 0, 0, 0.6),
-    inset 0 1px 0 rgba(255, 220, 140, 0.04);
+    inset 0 1px 0 color-mix(in srgb, var(--accent) 4%, transparent);
 }
 
 /* Buttons — mechanical push-buttons with tactile press */
@@ -7130,12 +7130,12 @@ button,
 button:not(.settings-theme-card):not(.sidebar-project-btn):not(.sidebar-nav-btn):not([class*="ghost"]) {
   background:
     linear-gradient(180deg,
-      rgba(60, 48, 28, 0.95) 0%,
-      rgba(40, 32, 18, 0.98) 40%,
-      rgba(30, 24, 14, 0.99) 100%) !important;
-  border: 2px solid rgba(140, 115, 60, 0.4) !important;
+      color-mix(in srgb, var(--surface-overlay) 95%, var(--accent)) 0%,
+      color-mix(in srgb, var(--surface-raised) 98%, transparent) 40%,
+      color-mix(in srgb, var(--surface-base) 99%, transparent) 100%) !important;
+  border: 2px solid var(--border-default) !important;
   box-shadow:
-    inset 0 1px 0 rgba(255, 220, 140, 0.1),
+    inset 0 1px 0 color-mix(in srgb, var(--accent) 10%, transparent),
     inset 0 -2px 0 rgba(0, 0, 0, 0.3),
     0 3px 4px rgba(0, 0, 0, 0.5),
     0 1px 2px rgba(0, 0, 0, 0.4) !important;
@@ -7152,37 +7152,37 @@ button:not(.settings-theme-card):not(.sidebar-project-btn):not(.sidebar-nav-btn)
     0 0 1px rgba(0, 0, 0, 0.4) !important;
   background:
     linear-gradient(180deg,
-      rgba(38, 30, 16, 0.98) 0%,
-      rgba(44, 36, 20, 0.98) 60%,
-      rgba(38, 30, 16, 0.99) 100%) !important;
+      color-mix(in srgb, var(--surface-raised) 98%, transparent) 0%,
+      color-mix(in srgb, var(--surface-overlay) 98%, transparent) 60%,
+      color-mix(in srgb, var(--surface-raised) 99%, transparent) 100%) !important;
 }
 
-/* Active/primary buttons get amber indicator glow */
+/* Active/primary buttons get accent indicator glow */
 button[class*="default"]:not(:active),
 button[class*="terminal"]:not(:active) {
-  border-color: rgba(232, 168, 32, 0.45) !important;
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent) !important;
   box-shadow:
-    inset 0 1px 0 rgba(255, 220, 140, 0.1),
+    inset 0 1px 0 color-mix(in srgb, var(--accent) 10%, transparent),
     inset 0 -2px 0 rgba(0, 0, 0, 0.3),
     0 3px 4px rgba(0, 0, 0, 0.5),
-    0 0 12px rgba(232, 168, 32, 0.12) !important;
+    0 0 12px color-mix(in srgb, var(--accent) 12%, transparent) !important;
 }
 
 /* Hover — subtle warm highlight shift */
 button:not(.settings-theme-card):not(.sidebar-project-btn):not(.sidebar-nav-btn):hover:not(:active) {
   background:
     linear-gradient(180deg,
-      rgba(75, 60, 34, 0.95) 0%,
-      rgba(52, 42, 24, 0.98) 40%,
-      rgba(38, 30, 16, 0.99) 100%) !important;
-  border-color: rgba(200, 165, 90, 0.45) !important;
+      color-mix(in srgb, var(--surface-overlay) 95%, var(--accent)) 0%,
+      color-mix(in srgb, var(--surface-overlay) 98%, var(--accent)) 40%,
+      color-mix(in srgb, var(--surface-raised) 99%, transparent) 100%) !important;
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent) !important;
 }
 
 /* CRT terminal bezel — the centerpiece */
 .terminal-surface {
-  border: 4px solid rgba(120, 95, 50, 0.6);
+  border: 4px solid var(--border-default);
   border-radius: 12px;
-  background: #06080a;
+  background: var(--surface-sunken);
   margin: 8px;
   box-shadow:
     0 0 0 3px rgba(90, 72, 38, 0.8),
@@ -7256,7 +7256,7 @@ button:not(.settings-theme-card):not(.sidebar-project-btn):not(.sidebar-nav-btn)
   inset: 0;
   pointer-events: none;
   background:
-    radial-gradient(ellipse at 50% 12%, rgba(232, 168, 32, 0.07), transparent 45%),
+    radial-gradient(ellipse at 50% 12%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 45%),
     radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.35) 100%);
   z-index: 0;
 }
@@ -7282,7 +7282,7 @@ button:not(.settings-theme-card):not(.sidebar-project-btn):not(.sidebar-nav-btn)
   font-family: "Courier New", monospace;
   font-size: 11px;
   line-height: 1.3;
-  color: rgba(232, 168, 32, 0.12);
+  color: color-mix(in srgb, var(--accent) 12%, transparent);
   pointer-events: none;
   z-index: 0;
 }
@@ -7297,22 +7297,22 @@ button:not(.settings-theme-card):not(.sidebar-project-btn):not(.sidebar-nav-btn)
   border-radius: 50%;
 }
 
-/* Scrollbar — bronze industrial */
+/* Scrollbar — themed industrial */
 ::-webkit-scrollbar {
   width: 10px;
-  background: rgba(18, 14, 8, 0.9);
+  background: color-mix(in srgb, var(--surface-sunken) 90%, transparent);
 }
 ::-webkit-scrollbar-thumb {
   background:
-    linear-gradient(180deg, rgba(120, 95, 50, 0.5), rgba(80, 65, 35, 0.4));
-  border: 1px solid rgba(140, 115, 60, 0.3);
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 50%, var(--surface-overlay)), color-mix(in srgb, var(--accent) 35%, var(--surface-raised)));
+  border: 1px solid var(--border-default);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
   background:
-    linear-gradient(180deg, rgba(150, 120, 65, 0.6), rgba(120, 95, 50, 0.5));
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 60%, var(--surface-overlay)), color-mix(in srgb, var(--accent) 50%, var(--surface-raised)));
 }
 ::-webkit-scrollbar-track {
-  background: rgba(18, 14, 8, 0.6);
-  border-left: 1px solid rgba(140, 115, 60, 0.12);
+  background: color-mix(in srgb, var(--surface-sunken) 60%, transparent);
+  border-left: 1px solid var(--border-subtle);
 }
