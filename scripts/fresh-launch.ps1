@@ -1,6 +1,11 @@
 # Emery Fresh Launch Script
 # Kills all Emery processes, rebuilds everything, launches fresh.
 # Usage: powershell -File scripts/fresh-launch.ps1
+#        powershell -File scripts/fresh-launch.ps1 -SkipTests
+
+param(
+    [switch]$SkipTests
+)
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -23,6 +28,12 @@ if (Test-Path $pidFile) {
     Write-Host "=== No dev PID file found, killing all Emery processes ===" -ForegroundColor Yellow
     Get-Process -Name "emery-supervisor","emery-client" -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Seconds 1
+}
+
+if (-not $SkipTests) {
+    Write-Host "=== Running regression suite ===" -ForegroundColor Cyan
+    powershell -ExecutionPolicy Bypass -File "$root\scripts\test-all.ps1"
+    if ($LASTEXITCODE -ne 0) { Write-Host "Regression suite failed!" -ForegroundColor Red; exit 1 }
 }
 
 Write-Host "=== Building supervisor + emery-mcp (release) ===" -ForegroundColor Cyan

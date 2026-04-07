@@ -4,10 +4,12 @@
 # Usage: powershell -File scripts/launch-dev.ps1
 #        powershell -File scripts/launch-dev.ps1 -SkipBuild       # relaunch without rebuilding
 #        powershell -File scripts/launch-dev.ps1 -SupervisorOnly   # rebuild + launch supervisor only
+#        powershell -File scripts/launch-dev.ps1 -SkipTests        # skip regression suite before build
 
 param(
     [switch]$SkipBuild,
-    [switch]$SupervisorOnly
+    [switch]$SupervisorOnly,
+    [switch]$SkipTests
 )
 
 $ErrorActionPreference = "Stop"
@@ -50,6 +52,12 @@ if (Test-Path $pidFile) {
 
 # --- Build ---
 if (-not $SkipBuild) {
+    if (-not $SkipTests) {
+        Write-Host "=== Running regression suite ===" -ForegroundColor Cyan
+        powershell -ExecutionPolicy Bypass -File "$root\scripts\test-all.ps1"
+        if ($LASTEXITCODE -ne 0) { Write-Host "Regression suite failed!" -ForegroundColor Red; exit 1 }
+    }
+
     Write-Host "=== Building supervisor + emery-mcp (release) ===" -ForegroundColor Cyan
     cargo build --release -p emery-supervisor -p emery-mcp
     if ($LASTEXITCODE -ne 0) { Write-Host "Supervisor build failed!" -ForegroundColor Red; exit 1 }
