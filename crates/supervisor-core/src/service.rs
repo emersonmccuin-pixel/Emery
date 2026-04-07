@@ -2185,10 +2185,22 @@ impl SupervisorService {
             }
         }
 
-        // Write dispatcher guard hooks
+        // Resolve MCP server config for writing to settings.local.json
+        let mcp_servers_value: Option<serde_json::Value> = self
+            .resolve_mcp_config_json()
+            .ok()
+            .flatten()
+            .and_then(|json_str| serde_json::from_str::<serde_json::Value>(&json_str).ok())
+            .and_then(|v| v.get("mcpServers").cloned());
+
+        // Write dispatcher guard hooks + MCP config to settings.local.json
         let mut guard_instructions: Option<String> = None;
         if request.origin_mode == "dispatch" {
-            guard_instructions = profile.write_guard(&request.cwd, GuardKind::Dispatcher)?;
+            guard_instructions = profile.write_settings_local(
+                &request.cwd,
+                Some(GuardKind::Dispatcher),
+                mcp_servers_value.clone(),
+            )?;
         }
 
         if request.origin_mode == "dispatch" {
@@ -2309,11 +2321,12 @@ impl SupervisorService {
             request.worktree_id = Some(worktree_id);
             request.cwd = worktree_path.clone();
 
-            // Write worktree guard for execution/follow_up sessions
+            // Write worktree guard + MCP config to settings.local.json
             let normalized = worktree_path.replace('\\', "/").to_lowercase();
-            profile.write_guard(
+            profile.write_settings_local(
                 &worktree_path,
-                GuardKind::Worktree { normalized_path: normalized },
+                Some(GuardKind::Worktree { normalized_path: normalized }),
+                mcp_servers_value.clone(),
             )?;
         }
 
