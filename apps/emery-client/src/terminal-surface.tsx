@@ -13,12 +13,7 @@ import {
 } from "./lib";
 import { newCorrelationId } from "./diagnostics";
 import type { ConnectionStatusEvent } from "./types";
-
-function decodeBase64Utf8(base64: string): string {
-  const binary = atob(base64);
-  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
-}
+import { decodeBase64Utf8 } from "./utils/base64";
 
 // Client-side defense-in-depth: strip OSC sequences that should have been
 // removed server-side but may slip through on replay or during reconnection.

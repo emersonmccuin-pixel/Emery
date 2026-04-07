@@ -33,6 +33,7 @@ import { LayerRouter } from "./layer-router";
 import { ModalRouter } from "./modals";
 import { Sidebar } from "./sidebar";
 import { RightPanel } from "./components/right-panel";
+import { decodeBase64Utf8 } from "./utils/base64";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -69,12 +70,6 @@ function ToastStack() {
       ))}
     </div>
   );
-}
-
-function decodeBase64Utf8(base64: string): string {
-  const binary = atob(base64);
-  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
 }
 
 function buildWorkspacePayloadV3(mainNav: NavigationLayer, sidebarCollapsed: boolean): WorkspacePayloadV3 {
