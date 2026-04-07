@@ -72,7 +72,9 @@ impl SupervisorService {
     }
 
     pub fn list_projects(&self) -> Result<Vec<ProjectSummary>> {
-        self.databases.list_projects()
+        let mut projects = self.databases.list_projects()?;
+        projects.retain(|p| p.project_type.as_deref() != Some("system"));
+        Ok(projects)
     }
 
     pub fn list_namespace_suggestions(&self) -> Result<Vec<String>> {
@@ -224,6 +226,42 @@ impl SupervisorService {
         self.databases.update_project(&record)?;
         self.get_project(&existing.id)?
             .ok_or_else(|| anyhow!("project {} was not found", existing.id))
+    }
+
+    /// Ensure the hidden __command_center system project exists. Idempotent.
+    pub fn ensure_command_center_project(&self, cwd: &str) -> Result<ProjectDetail> {
+        // Check if it already exists
+        if let Some(existing) = self.databases.get_project_by_slug("__command_center")? {
+            return Ok(existing);
+        }
+
+        // Create the system project
+        let project = self.create_project(CreateProjectRequest {
+            name: "Command Center".to_string(),
+            slug: Some("__command_center".to_string()),
+            default_account_id: None,
+            project_type: Some("system".to_string()),
+            sort_order: Some(i64::MAX),
+            model_defaults_json: None,
+            settings_json: None,
+            instructions_md: None,
+            wcp_namespace: None,
+        })?;
+
+        // Create a root pointing to the provided working directory
+        self.create_project_root(CreateProjectRootRequest {
+            project_id: project.id.clone(),
+            label: "workspace".to_string(),
+            path: cwd.to_string(),
+            root_kind: "primary".to_string(),
+            git_root_path: None,
+            remote_url: None,
+            sort_order: None,
+        })?;
+
+        // Re-fetch to include the root
+        self.get_project(&project.id)?
+            .ok_or_else(|| anyhow!("command center project was not found after creation"))
     }
 
     pub fn list_project_roots(&self, project_id: &str) -> Result<Vec<ProjectRootSummary>> {
@@ -2017,7 +2055,7 @@ impl SupervisorService {
     ) -> Result<Option<String>> {
         // 1. Start with origin_mode defaults
         let default = match origin_mode {
-            "planning" | "research" | "dispatch" => Some("opus".to_string()),
+            "planning" | "research" | "dispatch" | "command_center" => Some("opus".to_string()),
             "execution" | "follow_up" => Some("sonnet".to_string()),
             _ => None,
         };
@@ -2083,7 +2121,7 @@ impl SupervisorService {
 
         // Enforce origin_mode → location rules
         match request.origin_mode.as_str() {
-            "planning" | "research" | "dispatch" => {
+            "planning" | "research" | "dispatch" | "command_center" => {
                 if request.auto_worktree {
                     return Err(anyhow!(
                         "origin_mode '{}' must run on project root — auto_worktree is not allowed",
@@ -2126,6 +2164,27 @@ impl SupervisorService {
             }
         }
 
+        // One-command-center-session guard
+        if request.origin_mode == "command_center" {
+            let filter = SessionListFilter {
+                project_id: Some(request.project_id.clone()),
+                status: Some("active".to_string()),
+                runtime_state: None,
+                work_item_id: None,
+                limit: None,
+            };
+            let existing_sessions = self.databases.list_sessions(&filter)?;
+            let has_active_cc = existing_sessions.iter().any(|s| {
+                s.origin_mode == "command_center"
+                    && (s.runtime_state == "starting" || s.runtime_state == "running")
+            });
+            if has_active_cc {
+                return Err(anyhow!(
+                    "A command center session is already running"
+                ));
+            }
+        }
+
         // Write dispatcher guard hooks
         let mut guard_instructions: Option<String> = None;
         if request.origin_mode == "dispatch" {
@@ -2155,6 +2214,20 @@ impl SupervisorService {
                 instructions = format!("{}\n\n---\n\n{}", guard_text, instructions);
             }
 
+            match profile.write_instructions(&request.cwd, &instructions)? {
+                InstructionDisposition::WrittenToFile => {}
+                InstructionDisposition::InjectIntoPrompt(text) => {
+                    if let Some(flag) = profile.prompt_flag {
+                        request.args.push(flag.to_string());
+                        request.args.push(text);
+                    }
+                }
+            }
+        }
+
+        // Inject command center identity instructions
+        if request.origin_mode == "command_center" {
+            let instructions = build_command_center_instructions();
             match profile.write_instructions(&request.cwd, &instructions)? {
                 InstructionDisposition::WrittenToFile => {}
                 InstructionDisposition::InjectIntoPrompt(text) => {
@@ -4321,9 +4394,9 @@ fn required_document_content(value: &str) -> Result<String> {
 fn validate_session_mode(value: &str) -> Result<String> {
     let normalized = required_trimmed("session mode", value)?.to_lowercase();
     match normalized.as_str() {
-        "ad_hoc" | "planning" | "research" | "execution" | "follow_up" | "dispatch" => Ok(normalized),
+        "ad_hoc" | "planning" | "research" | "execution" | "follow_up" | "dispatch" | "command_center" => Ok(normalized),
         _ => Err(anyhow!(
-            "session mode must be one of: ad_hoc, planning, research, execution, follow_up, dispatch"
+            "session mode must be one of: ad_hoc, planning, research, execution, follow_up, dispatch, command_center"
         )),
     }
 }
@@ -4772,6 +4845,71 @@ Gather more information first.
 When in doubt, report to the user and ask. Do not guess."#));
 
     parts.join("\n\n---\n\n")
+}
+
+fn build_command_center_instructions() -> String {
+    r#"# You Are Emery
+
+You are the user's technical companion — a conversational partner embedded in their
+development environment. You are direct, curious, and peer-like. You do not perform
+enthusiasm, apologize for nothing, or hedge. You think alongside the user.
+
+## Your Capabilities
+
+You have access to all emery_* MCP tools. You can:
+- Browse and manage projects, work items, documents, worktrees, and sessions
+- Help the user think through problems, plan work, and organize their projects
+- Launch builder sessions and dispatch work on their behalf
+- Query and update the knowledge base
+
+You operate at the workspace level — you are not inside any specific project.
+
+## User Profile
+
+You maintain a structured profile document (doc_type: "user_profile") that helps you
+remember the user across sessions. Rules:
+
+- On first interaction, create it via emery_document_create if it doesn't exist
+- Check for it at session start via emery_document_list (filter doc_type: "user_profile")
+- When you learn something durable about the user, UPDATE the relevant section — never append
+- Keep total length under 500 words
+- Structure:
+
+  ## Identity & Role
+  ## Technical Preferences
+  ## Working Patterns
+  ## Current Focus Areas
+  ## Notes
+
+## Personality
+
+- Be direct. Say what you think.
+- Be curious. Ask questions that sharpen the user's thinking.
+- Be concise. Don't pad responses.
+- Push back when you disagree — but you're not contrarian for sport.
+- You are a peer who happens to not have final say.
+
+## Available Tools
+
+### Work Items & Documents
+`emery_work_item_list`, `emery_work_item_get`, `emery_work_item_create`, `emery_work_item_update`
+`emery_document_list`, `emery_document_get`, `emery_document_create`, `emery_document_update`
+
+### Worktree Management
+`emery_worktree_create`, `emery_worktree_list`, `emery_worktree_cleanup`, `emery_worktree_close`
+
+### Session Dispatch
+`emery_session_create`, `emery_session_create_batch`, `emery_session_list`, `emery_session_get`
+`emery_session_watch`, `emery_session_terminate`
+
+### Merge Queue
+`emery_merge_queue_list`, `emery_merge_queue_get_diff`, `emery_merge_queue_check`
+`emery_merge_queue_merge`, `emery_merge_queue_park`
+
+### Project & Instructions
+`emery_project_list`, `emery_project_get`
+`emery_get_project_instructions`, `emery_set_project_instructions`"#
+        .to_string()
 }
 
 impl From<CreateSessionSpecRequest> for SessionSpecDraft {

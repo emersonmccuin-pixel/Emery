@@ -758,6 +758,23 @@ fn create_project(
 }
 
 #[tauri::command]
+fn ensure_command_center_project(
+    app: AppHandle,
+    manager: State<'_, Arc<SupervisorManager>>,
+    cwd: String,
+    correlation_id: Option<String>,
+) -> Result<Value, String> {
+    manager
+        .request_value(
+            &app,
+            "project.ensure_command_center",
+            json!({ "cwd": cwd }),
+            correlation_id,
+        )
+        .map_err(error_string)
+}
+
+#[tauri::command]
 fn update_project(
     app: AppHandle,
     manager: State<'_, Arc<SupervisorManager>>,
@@ -1853,6 +1870,7 @@ fn main() {
             get_project,
             get_session,
             create_project,
+            ensure_command_center_project,
             list_namespace_suggestions,
             update_project,
             archive_project,

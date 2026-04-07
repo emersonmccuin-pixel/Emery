@@ -38,6 +38,7 @@ import {
   updateWorkflowReconciliationProposal,
   updateWorkItem,
   watchLiveSessions,
+  ensureCommandCenterProject,
 } from "./lib";
 import { sessionStore } from "./session-store";
 import { navStore } from "./nav-store";
@@ -258,6 +259,8 @@ export type AppState = {
   editingWorkItemId: string | null;
   githubToken: string;
   knowledgeStoreBackend: "embedded" | "wcp_cloud";
+  commandCenter: { projectId: string; sessionId: string } | null;
+  homeTab: "dashboard" | "terminal";
 };
 
 function initialState(): AppState {
@@ -306,6 +309,8 @@ function initialState(): AppState {
     editingWorkItemId: null,
     githubToken: "",
     knowledgeStoreBackend: "embedded",
+    commandCenter: null,
+    homeTab: "dashboard",
   };
 }
 
@@ -414,6 +419,10 @@ class AppStore {
 
   setFocusProjectIds(ids: string[]) {
     this.update({ focusProjectIds: ids });
+  }
+
+  setCommandCenter(cc: { projectId: string; sessionId: string } | null) {
+    this.update({ commandCenter: cc });
   }
 
   setMaxFocusSlots(max: number) {
@@ -1259,6 +1268,79 @@ class AppStore {
 
       // Navigate to agent view to show the dispatcher terminal
       navStore.goToAgent(opts.projectId, detail.id);
+    } catch (err) {
+      this.update({ error: String(err) });
+    } finally {
+      this.setLoading(loadKey, false);
+    }
+  }
+
+  setHomeTab(tab: "dashboard" | "terminal") {
+    this.update({ homeTab: tab });
+  }
+
+  async handleLaunchCommandCenter() {
+    const loadKey = "command-center-launch";
+    this.setLoading(loadKey, true);
+    const correlationId = newCorrelationId("cc-launch");
+    try {
+      // Determine CWD — use first project root or fallback to hello data root
+      const hello = this.state.bootstrap?.hello;
+      const cwd = hello?.app_data_root ?? "";
+      if (!cwd) throw new Error("Cannot determine workspace directory.");
+
+      const project = await ensureCommandCenterProject(cwd, correlationId);
+
+      const account =
+        this.state.bootstrap?.accounts.find((a) => a.is_default) ??
+        this.state.bootstrap?.accounts[0] ??
+        null;
+      if (!account) {
+        throw new Error("No account configured. Add one in Settings first.");
+      }
+
+      const root = project.roots[0] ?? null;
+      if (!root) {
+        throw new Error("Command center project has no root.");
+      }
+
+      const detail = await createSession(
+        {
+          project_id: project.id,
+          project_root_id: root.id,
+          worktree_id: null,
+          work_item_id: null,
+          account_id: account.id,
+          agent_kind: account.agent_kind,
+          cwd: root.path,
+          command: account.binary_path ?? account.agent_kind,
+          args: [],
+          env_preset_ref: account.env_preset_ref,
+          origin_mode: "command_center",
+          current_mode: "command_center",
+          title: "Emery — Command Center",
+          title_policy: "manual",
+          restore_policy: "reattach",
+          initial_terminal_cols: 120,
+          initial_terminal_rows: 40,
+          auto_worktree: false,
+          safety_mode: "yolo",
+          model: "opus",
+        },
+        correlationId,
+      );
+
+      this.applySessionDetail(detail);
+      await watchLiveSessions([detail.id], correlationId);
+      this.update({
+        commandCenter: { projectId: project.id, sessionId: detail.id },
+      });
+      this.clearError();
+
+      toastStore.addToast({
+        type: "success",
+        message: "Command Center launched",
+      });
     } catch (err) {
       this.update({ error: String(err) });
     } finally {

@@ -231,6 +231,15 @@ impl SupervisorRpc {
                     self.supervisor.create_project(request)?,
                 )?)
             }
+            Method::ProjectEnsureCommandCenter => {
+                let cwd = params
+                    .get("cwd")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("cwd is required"))?;
+                Ok(serde_json::to_value(
+                    self.supervisor.ensure_command_center_project(cwd)?,
+                )?)
+            }
             Method::ProjectUpdate => {
                 let request: UpdateProjectRequest = serde_json::from_value(params)?;
                 Ok(serde_json::to_value(
@@ -937,6 +946,7 @@ impl SupervisorRpc {
                 Method::ProjectList.as_str(),
                 Method::ProjectGet.as_str(),
                 Method::ProjectCreate.as_str(),
+                Method::ProjectEnsureCommandCenter.as_str(),
                 Method::ProjectUpdate.as_str(),
                 Method::ProjectArchive.as_str(),
                 Method::ProjectDelete.as_str(),

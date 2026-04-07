@@ -216,6 +216,22 @@ impl DatabaseSet {
         Ok(Some(project))
     }
 
+    pub fn get_project_by_slug(&self, slug: &str) -> Result<Option<ProjectDetail>> {
+        let connection = open_connection(&self.paths.app_db)?;
+        let project_id: Option<String> = connection
+            .query_row(
+                "SELECT id FROM projects WHERE slug = ?1",
+                [slug],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        match project_id {
+            Some(id) => self.get_project(&id),
+            None => Ok(None),
+        }
+    }
+
     pub fn insert_project(&self, record: &NewProjectRecord) -> Result<()> {
         let connection = open_connection(&self.paths.app_db)?;
         connection.execute(

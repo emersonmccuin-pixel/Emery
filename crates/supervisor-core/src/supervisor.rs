@@ -138,6 +138,10 @@ impl Supervisor {
         self.service.delete_project(request)
     }
 
+    pub fn ensure_command_center_project(&self, cwd: &str) -> Result<ProjectDetail> {
+        self.service.ensure_command_center_project(cwd)
+    }
+
     pub fn list_project_roots(&self, project_id: &str) -> Result<Vec<ProjectRootSummary>> {
         self.service.list_project_roots(project_id)
     }

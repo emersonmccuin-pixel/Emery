@@ -411,6 +411,8 @@ export type WorkspacePayloadV3 = {
   main_navigation: { layer: string; projectId?: string; sessionId?: string; documentId?: string; workItemId?: string };
   focus_project_ids: string[];
   sidebar_collapsed: boolean;
+  command_center?: { session_id: string; project_id: string };
+  home_tab?: "dashboard" | "terminal";
 };
 
 export type WorkspacePayload = WorkspacePayloadV1 | WorkspacePayloadV2 | WorkspacePayloadV3;

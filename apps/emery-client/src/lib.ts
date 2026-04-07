@@ -136,6 +136,13 @@ export async function createProject(
   return invoke("create_project", { input, correlationId });
 }
 
+export async function ensureCommandCenterProject(
+  cwd: string,
+  correlationId?: string,
+): Promise<ProjectDetail> {
+  return invoke("ensure_command_center_project", { cwd, correlationId });
+}
+
 export async function updateProject(
   projectId: string,
   input: {

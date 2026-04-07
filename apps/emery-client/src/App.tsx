@@ -77,12 +77,23 @@ function decodeBase64Utf8(base64: string): string {
 }
 
 function buildWorkspacePayloadV3(mainNav: NavigationLayer, sidebarCollapsed: boolean): WorkspacePayloadV3 {
-  return {
+  const state = appStore.getState();
+  const payload: WorkspacePayloadV3 = {
     version: 3,
     main_navigation: mainNav,
-    focus_project_ids: appStore.getState().focusProjectIds,
+    focus_project_ids: state.focusProjectIds,
     sidebar_collapsed: sidebarCollapsed,
   };
+  if (state.commandCenter) {
+    payload.command_center = {
+      session_id: state.commandCenter.sessionId,
+      project_id: state.commandCenter.projectId,
+    };
+  }
+  if (state.homeTab !== "dashboard") {
+    payload.home_tab = state.homeTab;
+  }
+  return payload;
 }
 
 
@@ -107,6 +118,8 @@ export default function App() {
   const bootstrap = useAppStore((s) => s.bootstrap);
   const error = useAppStore((s) => s.error);
   const focusProjectIds = useAppStore((s) => s.focusProjectIds);
+  const commandCenter = useAppStore((s) => s.commandCenter);
+  const homeTab = useAppStore((s) => s.homeTab);
   const connectionState = useAppStore((s) => s.connectionState);
   const navLayer = useNavLayer();
 
@@ -266,6 +279,24 @@ export default function App() {
               appStore.setFocusProjectIds(restored.focus_project_ids ?? []);
               if (restored.sidebar_collapsed !== undefined) {
                 setSidebarCollapsed(restored.sidebar_collapsed);
+              }
+              if (restored.command_center) {
+                // Check if the persisted session is still alive
+                const ccSessionId = restored.command_center.session_id;
+                const isAlive = payload.sessions.some(
+                  (s) =>
+                    s.id === ccSessionId &&
+                    (s.runtime_state === "running" || s.runtime_state === "starting"),
+                );
+                if (isAlive) {
+                  appStore.setCommandCenter({
+                    projectId: restored.command_center.project_id,
+                    sessionId: ccSessionId,
+                  });
+                }
+              }
+              if (restored.home_tab) {
+                appStore.setHomeTab(restored.home_tab);
               }
             } else if (restored.version === 2) {
               // V2 migration: navigation -> main_navigation
@@ -468,7 +499,7 @@ export default function App() {
         newCorrelationId("workspace-save"),
       ).catch((invokeError: unknown) => appStore.setError(String(invokeError)));
     }, 250);
-  }, [bootstrap, navLayer.layer, navProjectId, navSessionId, focusProjectIds, sidebarCollapsed]);
+  }, [bootstrap, navLayer.layer, navProjectId, navSessionId, focusProjectIds, sidebarCollapsed, commandCenter, homeTab]);
 
   // --- Keyboard shortcuts ---
   const lastEscapeRef = useRef<number>(0);
