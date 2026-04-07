@@ -230,7 +230,7 @@ ProjectSettingsView does NOT expose a "default account" field. The default accou
 
 #### Agent templates
 
-ProjectSettingsView → "Agent Templates" section → "+" → form with: template key, label, mode (code/chat), model → "Add Template".
+ProjectSettingsView → "Agent Templates" section → "+" → form with: template key, label, mode (planning/research/execution/follow_up/dispatch/command_center/ad_hoc), model → "Add Template".
 
 ---
 

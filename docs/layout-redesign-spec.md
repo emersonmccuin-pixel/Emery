@@ -452,7 +452,7 @@ A Claude agent session not tied to any project. For general questions, brainstor
    - `project_id`: a special "scratch" or "general" project auto-created on first Quick Chat use.
    - `worktree_id`: the scratch project's default worktree.
    - `account_id`: the user's default account.
-   - `origin_mode`: `"chat"`.
+   - `origin_mode`: `"ad_hoc"`.
    - `title`: `"Quick Chat"` with a timestamp or incrementing number.
    - No work item association.
 3. The app navigates to the agent view for the new session: `navStore.goToAgent(scratchProjectId, sessionId)`.
@@ -482,7 +482,7 @@ A Claude agent session not tied to any project. For general questions, brainstor
 
 ### Relationship to projects
 
-Quick Chat is intentionally unscoped. If the user wants a project-scoped chat, they should dispatch from within the project (using a "chat" mode dispatch). Quick Chat is for "I have a question that isn't about any specific project."
+Quick Chat is intentionally unscoped. If the user wants a project-scoped chat, they should dispatch from within the project using an appropriate scoped mode such as `research` or `execution`. Quick Chat is for "I have a question that isn't about any specific project."
 
 ---
 
@@ -851,7 +851,7 @@ Scope:
 Scope:
 1. Auto-create scratch project on first Quick Chat.
 2. Account selection popover with "set as default" persistence.
-3. Session creation with `origin_mode: "chat"`.
+3. Session creation with `origin_mode: "ad_hoc"`.
 4. Navigation to agent view after creation.
 5. Chat bubble icon distinction in sidebar fleet.
 
