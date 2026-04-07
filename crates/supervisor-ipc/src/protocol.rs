@@ -85,6 +85,7 @@ pub enum Method {
     AgentTemplateUpdate,
     AgentTemplateArchive,
     VaultList,
+    VaultGet,
     VaultSet,
     VaultDelete,
     VaultUnlock,
@@ -182,6 +183,7 @@ impl Method {
             Self::AgentTemplateUpdate => "agent_template.update",
             Self::AgentTemplateArchive => "agent_template.archive",
             Self::VaultList => "vault.list",
+            Self::VaultGet => "vault.get",
             Self::VaultSet => "vault.set",
             Self::VaultDelete => "vault.delete",
             Self::VaultUnlock => "vault.unlock",
@@ -287,6 +289,7 @@ impl TryFrom<&str> for Method {
             "agent_template.update" => Ok(Self::AgentTemplateUpdate),
             "agent_template.archive" => Ok(Self::AgentTemplateArchive),
             "vault.list" => Ok(Self::VaultList),
+            "vault.get" => Ok(Self::VaultGet),
             "vault.set" => Ok(Self::VaultSet),
             "vault.delete" => Ok(Self::VaultDelete),
             "vault.unlock" => Ok(Self::VaultUnlock),
@@ -335,6 +338,12 @@ pub struct VaultSetParams {
     pub key: String,
     pub value: String,
     pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct VaultGetParams {
+    pub scope: String,
+    pub key: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
