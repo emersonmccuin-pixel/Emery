@@ -21,6 +21,7 @@ import {
   applyOverrides,
   resetOverrides,
 } from "../appearance";
+import { setStoredValue } from "../utils/local-storage";
 
 type SettingsTab = "accounts" | "appearance" | "agent-defaults" | "mcp-servers" | "github" | "knowledge" | "resolution";
 
@@ -588,8 +589,7 @@ function AppearanceSection() {
 
   function applyTheme(theme: string) {
     document.documentElement.dataset.theme = theme;
-    localStorage.setItem("emery.theme", theme);
-    localStorage.removeItem("euri.theme");
+    setStoredValue("emery.theme", theme, "euri.theme");
     setCurrentTheme(theme);
     // Load and apply per-theme overrides
     reloadForTheme(theme);

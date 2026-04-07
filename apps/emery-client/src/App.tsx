@@ -34,6 +34,7 @@ import { ModalRouter } from "./modals";
 import { Sidebar } from "./sidebar";
 import { RightPanel } from "./components/right-panel";
 import { decodeBase64Utf8 } from "./utils/base64";
+import { getStoredValue, setStoredValue } from "./utils/local-storage";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -121,9 +122,7 @@ export default function App() {
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
     try {
-      const persisted =
-        localStorage.getItem(SIDEBAR_COLLAPSED_KEY) ??
-        localStorage.getItem(LEGACY_SIDEBAR_COLLAPSED_KEY);
+      const persisted = getStoredValue(SIDEBAR_COLLAPSED_KEY, LEGACY_SIDEBAR_COLLAPSED_KEY);
       return persisted === "true";
     } catch {
       return false;
@@ -142,7 +141,7 @@ export default function App() {
     setSidebarCollapsed((prev) => {
       const next = !prev;
       try {
-        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(next));
+        setStoredValue(SIDEBAR_COLLAPSED_KEY, String(next), LEGACY_SIDEBAR_COLLAPSED_KEY);
       } catch {
         // ignore storage errors
       }

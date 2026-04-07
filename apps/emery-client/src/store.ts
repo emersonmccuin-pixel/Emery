@@ -44,6 +44,7 @@ import {
 import { sessionStore } from "./session-store";
 import { navStore } from "./nav-store";
 import { toastStore } from "./toast-store";
+import { getStoredValue, removeStoredValue, setStoredValue } from "./utils/local-storage";
 import {
   makeClientEvent,
   newCorrelationId,
@@ -1884,16 +1885,13 @@ class AppStore {
    */
   async getOrCreateScratchProject(): Promise<string | null> {
     // Fast path: cached in localStorage
-    const cached =
-      localStorage.getItem("emery:scratch-project-id") ??
-      localStorage.getItem("euri:scratch-project-id");
+    const cached = getStoredValue("emery:scratch-project-id", "euri:scratch-project-id");
     if (cached) {
       // Verify it still exists in bootstrap
       const exists = this.state.bootstrap?.projects.find((p) => p.id === cached && p.archived_at === null);
       if (exists) return cached;
       // Stale — clear and re-check
-      localStorage.removeItem("emery:scratch-project-id");
-      localStorage.removeItem("euri:scratch-project-id");
+      removeStoredValue("emery:scratch-project-id", "euri:scratch-project-id");
     }
 
     // Check if project already exists by name
@@ -1901,7 +1899,7 @@ class AppStore {
       (p) => p.name === "Quick Chats" && p.archived_at === null,
     );
     if (existing) {
-      localStorage.setItem("emery:scratch-project-id", existing.id);
+      setStoredValue("emery:scratch-project-id", existing.id, "euri:scratch-project-id");
       return existing.id;
     }
 
@@ -1924,7 +1922,7 @@ class AppStore {
         correlationId,
       );
       await this.rebootstrap();
-      localStorage.setItem("emery:scratch-project-id", project.id);
+      setStoredValue("emery:scratch-project-id", project.id, "euri:scratch-project-id");
       return project.id;
     } catch (err) {
       toastStore.addToast({ type: "error", message: `Failed to create scratch project: ${err}` });
@@ -1994,16 +1992,12 @@ class AppStore {
   // --- GitHub token ---
 
   loadGithubToken() {
-    const token =
-      localStorage.getItem("emery.github_token") ??
-      localStorage.getItem("euri.github_token") ??
-      "";
+    const token = getStoredValue("emery.github_token", "euri.github_token") ?? "";
     this.update({ githubToken: token });
   }
 
   saveGithubToken(token: string) {
-    localStorage.setItem("emery.github_token", token);
-    localStorage.removeItem("euri.github_token");
+    setStoredValue("emery.github_token", token, "euri.github_token");
     this.update({ githubToken: token });
   }
 
