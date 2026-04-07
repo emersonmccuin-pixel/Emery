@@ -18,6 +18,10 @@
 //! complete; extract/critic/audit/orchestrator/session-completion wiring are
 //! the next subtasks.
 
+pub mod audit;
 pub mod client;
+pub mod critic;
+pub mod extract;
+pub mod orchestrator;
 pub mod prompts;
 pub mod triage;

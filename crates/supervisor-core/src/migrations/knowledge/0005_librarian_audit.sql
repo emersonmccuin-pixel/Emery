@@ -27,7 +27,7 @@ CREATE TABLE librarian_candidates (
   critic_verdict    TEXT,              -- keep|drop|NULL (not yet judged)
   critic_reason     TEXT,
   reconcile_action  TEXT,              -- ADD|UPDATE|SUPERSEDE|NOOP|NULL
-  written_memory_id TEXT REFERENCES memories(id),
+  written_memory_id TEXT,  -- forensic only; no FK so retired memories don't break audit reads
   created_at        INTEGER NOT NULL
 );
 
