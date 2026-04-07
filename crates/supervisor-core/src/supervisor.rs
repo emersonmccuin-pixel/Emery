@@ -718,6 +718,39 @@ impl Supervisor {
     ) -> Result<crate::models::GardenerProposal> {
         self.service.gardener_decide(proposal_id, decision)
     }
+
+    // ── Librarian feedback / config (EMERY-226.003) ──────────────────────────
+
+    pub fn memory_flag(
+        &self,
+        memory_id: &str,
+        signal: &str,
+        note: Option<&str>,
+    ) -> Result<crate::models::MemoryFeedbackRow> {
+        self.service.memory_flag(memory_id, signal, note)
+    }
+
+    pub fn librarian_metrics(
+        &self,
+        namespace: Option<&str>,
+        since_days: Option<i64>,
+    ) -> Result<crate::librarian::feedback::LibrarianMetrics> {
+        self.service.librarian_metrics(namespace, since_days)
+    }
+
+    pub fn librarian_config_get(
+        &self,
+        namespace: &str,
+    ) -> Result<crate::librarian::config::LibrarianConfig> {
+        self.service.librarian_config_get(namespace)
+    }
+
+    pub fn librarian_config_set(
+        &self,
+        config: crate::librarian::config::LibrarianConfig,
+    ) -> Result<crate::librarian::config::LibrarianConfig> {
+        self.service.librarian_config_set(config)
+    }
 }
 
 fn unix_time_ms() -> u64 {

@@ -20,9 +20,11 @@
 
 pub mod audit;
 pub mod client;
+pub mod config;
 pub mod critic;
 pub mod digest;
 pub mod extract;
+pub mod feedback;
 pub mod gardener;
 pub mod orchestrator;
 pub mod prompts;

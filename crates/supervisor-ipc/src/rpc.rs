@@ -30,7 +30,9 @@ use supervisor_core::{
 use crate::protocol::{
     AccountGetParams, CheckDispatchConflictsParams, DiagnosticsExportBundleParams, DocumentGetParams,
     ErrorBody, EventEnvelope, GardenerDecideParams, GardenerReviewParams, GardenerRunParams,
-    HelloResult, InboxCountUnreadParams, InboxGetParams, LibrarianDigestParams, Method,
+    HelloResult, InboxCountUnreadParams, InboxGetParams, LibrarianConfigGetParams,
+    LibrarianConfigSetParams, LibrarianDigestParams, LibrarianMetricsParams, MemoryFlagParams,
+    Method,
     ProjectGetParams, ProjectRootGitStatusParams, ProjectRootListParams, RequestEnvelope,
     ResponseEnvelope, SessionAttachParams, SessionControlParams, SessionDetachParams,
     SessionGetParams, SessionInputParams, SessionResizeParams, SessionSpecGetParams,
@@ -859,6 +861,39 @@ impl SupervisorRpc {
                 Ok(serde_json::to_value(
                     self.supervisor.gardener_decide(&p.proposal_id, &p.decision)?,
                 )?)
+            }
+            Method::MemoryFlag => {
+                let p: MemoryFlagParams = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(self.supervisor.memory_flag(
+                    &p.memory_id,
+                    &p.signal,
+                    p.note.as_deref(),
+                )?)?)
+            }
+            Method::LibrarianMetrics => {
+                let p: LibrarianMetricsParams = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor
+                        .librarian_metrics(p.namespace.as_deref(), p.since_days)?,
+                )?)
+            }
+            Method::LibrarianConfigGet => {
+                let p: LibrarianConfigGetParams = serde_json::from_value(params)?;
+                Ok(serde_json::to_value(
+                    self.supervisor.librarian_config_get(&p.namespace)?,
+                )?)
+            }
+            Method::LibrarianConfigSet => {
+                let p: LibrarianConfigSetParams = serde_json::from_value(params)?;
+                // Read current (or defaults), apply only the supplied fields,
+                // then write back. This means clients can set one knob at a
+                // time without having to read-modify-write themselves.
+                let mut current = self.supervisor.librarian_config_get(&p.namespace)?;
+                if let Some(v) = p.triage_min_score    { current.triage_min_score    = v; }
+                if let Some(v) = p.max_grains_per_run  { current.max_grains_per_run  = v; }
+                if let Some(v) = p.gardener_cap_percent { current.gardener_cap_percent = v; }
+                if let Some(v) = p.gardener_cooldown_h { current.gardener_cooldown_h = v; }
+                Ok(serde_json::to_value(self.supervisor.librarian_config_set(current)?)?)
             }
             Method::SubscriptionOpen => {
                 let params: SubscriptionOpenParams = serde_json::from_value(params)?;

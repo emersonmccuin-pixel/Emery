@@ -21,6 +21,7 @@ use anyhow::Result;
 
 use crate::librarian::audit;
 use crate::librarian::client::ChatClient;
+use crate::librarian::config::LibrarianConfig;
 use crate::librarian::critic::run_critic;
 use crate::librarian::extract::run_extract;
 use crate::librarian::triage::run_triage;
@@ -67,6 +68,10 @@ pub fn run_capture(
     namespace: &str,
     transcript: &str,
 ) -> Result<CaptureOutcome> {
+    // Pull the per-namespace config; use code defaults if no row exists.
+    let config = LibrarianConfig::for_namespace(databases, namespace)
+        .unwrap_or_else(|_| LibrarianConfig::defaults_for(namespace));
+
     let run_id = audit::start_run(databases, session_id, namespace)?;
 
     // ── Stage 1: triage ──────────────────────────────────────────────────
@@ -86,11 +91,13 @@ pub fn run_capture(
     };
     audit::record_triage(databases, &run_id, triage.score, &triage.reason)?;
 
-    if triage.score == 0 {
+    // Honor per-namespace triage threshold (defaults to 1, so score 0 still
+    // skips even when no config row exists).
+    if triage.score < config.triage_min_score {
         audit::finish_run(databases, &run_id, "skipped_triage", None)?;
         return Ok(CaptureOutcome {
             run_id,
-            triage_score: 0,
+            triage_score: triage.score,
             status: "skipped_triage".to_string(),
             extracted: 0,
             kept: 0,
@@ -99,7 +106,7 @@ pub fn run_capture(
     }
 
     // ── Stage 2: extract (+ deterministic evidence-anchor validator) ─────
-    let validated = match run_extract(client, transcript) {
+    let mut validated = match run_extract(client, transcript) {
         Ok(v) => v,
         Err(e) => {
             audit::finish_run(databases, &run_id, "failed_extract", Some(&e))?;
@@ -113,6 +120,14 @@ pub fn run_capture(
             });
         }
     };
+
+    // Hard cap on grains per run. The extractor may return more — we drop
+    // the surplus *before* the audit so dropped candidates are never
+    // recorded as having been considered.
+    let cap = config.max_grains_per_run.max(0) as usize;
+    if validated.len() > cap {
+        validated.truncate(cap);
+    }
 
     // Persist one row per validated candidate so the audit log captures the
     // pre-critic state. The orchestrator preserves order through critic and
@@ -440,5 +455,85 @@ mod tests {
         assert_eq!(outcome.status, "failed_critic");
         assert_eq!(outcome.extracted, 1);
         assert_eq!(outcome.written, 0);
+    }
+
+    #[test]
+    fn capture_loop_respects_triage_min_score() {
+        // Set the namespace's threshold to 2; a triage score of 1 should
+        // be skipped before extract is ever called.
+        let (_tmp, dbs) = make_db();
+        let cfg = LibrarianConfig {
+            namespace: "EMERY".to_string(),
+            triage_min_score: 2,
+            max_grains_per_run: 5,
+            gardener_cap_percent: 20,
+            gardener_cooldown_h: 24,
+        };
+        crate::librarian::config::save_config(&dbs, &cfg, 1_700_000_000).unwrap();
+
+        let triage = r#"{"score":1,"reason":"meh"}"#.to_string();
+        // If extract were called this would explode — but it shouldn't be.
+        let fake_chat = FakeChatClient::new(vec![Ok(triage)]);
+        let recon = FakeReconciler::new();
+
+        let outcome = run_capture(
+            &dbs,
+            &fake_chat,
+            &recon,
+            "sess_min_score",
+            "EMERY",
+            "did some work",
+        )
+        .unwrap();
+
+        assert_eq!(outcome.status, "skipped_triage");
+        assert_eq!(outcome.triage_score, 1);
+        assert_eq!(outcome.extracted, 0);
+        assert!(recon.calls.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn capture_loop_respects_max_grains_per_run() {
+        // Cap to 1; extractor returns 3 valid candidates; only the first
+        // should reach the critic + reconciler.
+        let (_tmp, dbs) = make_db();
+        let cfg = LibrarianConfig {
+            namespace: "EMERY".to_string(),
+            triage_min_score: 1,
+            max_grains_per_run: 1,
+            gardener_cap_percent: 20,
+            gardener_cooldown_h: 24,
+        };
+        crate::librarian::config::save_config(&dbs, &cfg, 1_700_000_000).unwrap();
+
+        let triage = r#"{"score":2,"reason":"good"}"#.to_string();
+        let extract = r#"[
+            {"grain_type":"decision","content":"first","evidence_quote":"alpha"},
+            {"grain_type":"decision","content":"second","evidence_quote":"beta"},
+            {"grain_type":"decision","content":"third","evidence_quote":"gamma"}
+        ]"#
+        .to_string();
+        // Critic only sees one (because the cap is 1).
+        let critic =
+            r#"{"verdicts":[{"grain_index":0,"verdict":"keep","reason":"ok"}]}"#.to_string();
+        let fake_chat = FakeChatClient::new(vec![Ok(triage), Ok(extract), Ok(critic)]);
+        let recon = FakeReconciler::new();
+
+        let outcome = run_capture(
+            &dbs,
+            &fake_chat,
+            &recon,
+            "sess_cap",
+            "EMERY",
+            "alpha beta gamma",
+        )
+        .unwrap();
+
+        assert_eq!(outcome.extracted, 1, "cap should drop everything past the first");
+        assert_eq!(outcome.kept, 1);
+        assert_eq!(outcome.written, 1);
+        let calls = recon.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1, "first");
     }
 }

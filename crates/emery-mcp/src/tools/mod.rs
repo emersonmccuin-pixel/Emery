@@ -58,6 +58,10 @@ pub fn all_tools() -> Value {
         librarian::tool_gardener_run(),
         librarian::tool_gardener_review(),
         librarian::tool_gardener_decide(),
+        librarian::tool_memory_flag(),
+        librarian::tool_librarian_metrics(),
+        librarian::tool_librarian_config_get(),
+        librarian::tool_librarian_config_set(),
     ])
 }
 
@@ -107,6 +111,10 @@ pub fn call_tool(name: &str, input: Value) -> Result<String> {
         "emery_gardener_run" => librarian::handle_gardener_run(input),
         "emery_gardener_review" => librarian::handle_gardener_review(input),
         "emery_gardener_decide" => librarian::handle_gardener_decide(input),
+        "emery_memory_flag" => librarian::handle_memory_flag(input),
+        "emery_librarian_metrics" => librarian::handle_librarian_metrics(input),
+        "emery_librarian_config_get" => librarian::handle_librarian_config_get(input),
+        "emery_librarian_config_set" => librarian::handle_librarian_config_set(input),
         _ => Err(anyhow::anyhow!("unknown tool: {}", name)),
     }
 }

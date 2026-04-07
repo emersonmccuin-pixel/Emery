@@ -106,6 +106,10 @@ pub enum Method {
     GardenerRun,
     GardenerReview,
     GardenerDecide,
+    MemoryFlag,
+    LibrarianMetrics,
+    LibrarianConfigGet,
+    LibrarianConfigSet,
 }
 
 impl Method {
@@ -214,6 +218,10 @@ impl Method {
             Self::GardenerRun => "gardener.run",
             Self::GardenerReview => "gardener.review",
             Self::GardenerDecide => "gardener.decide",
+            Self::MemoryFlag => "memory.flag",
+            Self::LibrarianMetrics => "librarian.metrics",
+            Self::LibrarianConfigGet => "librarian.config_get",
+            Self::LibrarianConfigSet => "librarian.config_set",
         }
     }
 }
@@ -330,6 +338,10 @@ impl TryFrom<&str> for Method {
             "gardener.run" => Ok(Self::GardenerRun),
             "gardener.review" => Ok(Self::GardenerReview),
             "gardener.decide" => Ok(Self::GardenerDecide),
+            "memory.flag" => Ok(Self::MemoryFlag),
+            "librarian.metrics" => Ok(Self::LibrarianMetrics),
+            "librarian.config_get" => Ok(Self::LibrarianConfigGet),
+            "librarian.config_set" => Ok(Self::LibrarianConfigSet),
             _ => Err(()),
         }
     }
@@ -603,4 +615,38 @@ pub struct GardenerReviewParams {
 pub struct GardenerDecideParams {
     pub proposal_id: String,
     pub decision: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MemoryFlagParams {
+    pub memory_id: String,
+    pub signal: String,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LibrarianMetricsParams {
+    #[serde(default)]
+    pub namespace: Option<String>,
+    #[serde(default)]
+    pub since_days: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LibrarianConfigGetParams {
+    pub namespace: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LibrarianConfigSetParams {
+    pub namespace: String,
+    #[serde(default)]
+    pub triage_min_score: Option<i64>,
+    #[serde(default)]
+    pub max_grains_per_run: Option<i64>,
+    #[serde(default)]
+    pub gardener_cap_percent: Option<i64>,
+    #[serde(default)]
+    pub gardener_cooldown_h: Option<i64>,
 }

@@ -94,6 +94,10 @@ const KNOWLEDGE_MIGRATIONS: &[(&str, &str)] = &[
         "0006_gardener",
         include_str!("migrations/knowledge/0006_gardener.sql"),
     ),
+    (
+        "0007_librarian_feedback",
+        include_str!("migrations/knowledge/0007_librarian_feedback.sql"),
+    ),
 ];
 
 pub fn migrate_app_db(path: &Path) -> Result<()> {

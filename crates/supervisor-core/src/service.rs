@@ -5096,6 +5096,71 @@ impl SupervisorService {
         Ok(updated)
     }
 
+    // ── Librarian feedback + config (EMERY-226.003) ──────────────────────────
+
+    /// Record a feedback signal against a memory. `signal=noise` retires the
+    /// memory immediately and records a feedback row; other signals just
+    /// record the row. The memory row is never deleted.
+    pub fn memory_flag(
+        &self,
+        memory_id: &str,
+        signal: &str,
+        note: Option<&str>,
+    ) -> Result<crate::models::MemoryFeedbackRow> {
+        let now = unix_time_seconds();
+        let row = crate::librarian::feedback::record_feedback(
+            &self.databases,
+            memory_id,
+            signal,
+            note,
+            now,
+        )?;
+        let _ = self.diagnostics.record(
+            "librarian",
+            "memory.flagged",
+            DiagnosticContext::default(),
+            serde_json::json!({
+                "memory_id": memory_id,
+                "signal": signal,
+            }),
+        );
+        Ok(row)
+    }
+
+    /// Compute the librarian metrics over the given window.
+    pub fn librarian_metrics(
+        &self,
+        namespace: Option<&str>,
+        since_days: Option<i64>,
+    ) -> Result<crate::librarian::feedback::LibrarianMetrics> {
+        let since_secs = since_days.unwrap_or(7).max(1) * 24 * 60 * 60;
+        crate::librarian::feedback::compute_metrics(
+            &self.databases,
+            namespace,
+            unix_time_seconds(),
+            since_secs,
+        )
+    }
+
+    /// Read the resolved per-namespace librarian config (defaults if no row).
+    pub fn librarian_config_get(
+        &self,
+        namespace: &str,
+    ) -> Result<crate::librarian::config::LibrarianConfig> {
+        crate::librarian::config::LibrarianConfig::for_namespace(&self.databases, namespace)
+    }
+
+    /// Write the per-namespace librarian config. Validates ranges before
+    /// hitting the database.
+    pub fn librarian_config_set(
+        &self,
+        config: crate::librarian::config::LibrarianConfig,
+    ) -> Result<crate::librarian::config::LibrarianConfig> {
+        crate::librarian::config::validate_config(&config).map_err(|e| anyhow!(e))?;
+        crate::librarian::config::save_config(&self.databases, &config, unix_time_seconds())?;
+        crate::librarian::config::LibrarianConfig::for_namespace(&self.databases, &config.namespace)
+    }
+
     /// Build the librarian digest. See `librarian::digest::build_digest`.
     pub fn librarian_digest(
         &self,

@@ -29,7 +29,8 @@ use crate::models::{
     DocumentEmbeddingRow,
     Memory, MemoryEmbeddingRow, MemoryListRequest, NewMemoryRecord,
     GardenerProposal, GardenerRunSummary, NewGardenerProposalRecord, NewGardenerRunRecord,
-    NewLibrarianCandidateRecord, NewLibrarianRunRecord,
+    LibrarianConfigRow, MemoryFeedbackRow, NewLibrarianCandidateRecord, NewLibrarianRunRecord,
+    NewMemoryFeedbackRecord, UpsertLibrarianConfigRecord,
 };
 use crate::schema::{migrate_app_db, migrate_knowledge_db};
 use uuid::Uuid;
@@ -4084,6 +4085,106 @@ impl DatabaseSet {
             )
             .optional()?;
         Ok(row)
+    }
+
+    // ── Librarian config (EMERY-226.003) ─────────────────────────────────────
+
+    /// Read the per-namespace `librarian_config` row, if any. Callers should
+    /// fall back to `LibrarianConfig::default()` when this returns `None`.
+    pub fn get_librarian_config(&self, namespace: &str) -> Result<Option<LibrarianConfigRow>> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let row = connection
+            .query_row(
+                "SELECT namespace, triage_min_score, max_grains_per_run,
+                        gardener_cap_percent, gardener_cooldown_h, updated_at
+                   FROM librarian_config
+                  WHERE namespace = ?1",
+                params![namespace],
+                |row| {
+                    Ok(LibrarianConfigRow {
+                        namespace: row.get(0)?,
+                        triage_min_score: row.get(1)?,
+                        max_grains_per_run: row.get(2)?,
+                        gardener_cap_percent: row.get(3)?,
+                        gardener_cooldown_h: row.get(4)?,
+                        updated_at: row.get(5)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    /// Insert or replace the `librarian_config` row for one namespace.
+    pub fn upsert_librarian_config(&self, record: &UpsertLibrarianConfigRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        connection.execute(
+            "INSERT INTO librarian_config (
+                namespace, triage_min_score, max_grains_per_run,
+                gardener_cap_percent, gardener_cooldown_h, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(namespace) DO UPDATE SET
+               triage_min_score     = excluded.triage_min_score,
+               max_grains_per_run   = excluded.max_grains_per_run,
+               gardener_cap_percent = excluded.gardener_cap_percent,
+               gardener_cooldown_h  = excluded.gardener_cooldown_h,
+               updated_at           = excluded.updated_at",
+            params![
+                record.namespace,
+                record.triage_min_score,
+                record.max_grains_per_run,
+                record.gardener_cap_percent,
+                record.gardener_cooldown_h,
+                record.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    // ── Memory feedback (EMERY-226.003) ──────────────────────────────────────
+
+    pub fn insert_memory_feedback(&self, record: &NewMemoryFeedbackRecord) -> Result<()> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        connection.execute(
+            "INSERT INTO memory_feedback (id, memory_id, run_id, signal, note, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                record.id,
+                record.memory_id,
+                record.run_id,
+                record.signal,
+                record.note,
+                record.created_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// List feedback rows for a single memory, newest first.
+    pub fn list_memory_feedback_for_memory(
+        &self,
+        memory_id: &str,
+    ) -> Result<Vec<MemoryFeedbackRow>> {
+        let connection = open_connection(&self.paths.knowledge_db)?;
+        let mut stmt = connection.prepare(
+            "SELECT id, memory_id, run_id, signal, note, created_at
+               FROM memory_feedback
+              WHERE memory_id = ?1
+              ORDER BY created_at DESC",
+        )?;
+        let rows = stmt
+            .query_map(params![memory_id], |row| {
+                Ok(MemoryFeedbackRow {
+                    id: row.get(0)?,
+                    memory_id: row.get(1)?,
+                    run_id: row.get(2)?,
+                    signal: row.get(3)?,
+                    note: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 }
 

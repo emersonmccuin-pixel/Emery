@@ -1880,3 +1880,53 @@ pub struct GardenerProposal {
     pub decided_at: Option<i64>,
     pub created_at: i64,
 }
+
+// ── Librarian feedback + config (EMERY-226.003) ──────────────────────────────
+
+/// Per-namespace tuning knobs for the librarian capture loop and the
+/// gardener. A missing row implies code defaults
+/// (`crate::librarian::config::LibrarianConfig::default`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct LibrarianConfigRow {
+    pub namespace: String,
+    pub triage_min_score: i64,
+    pub max_grains_per_run: i64,
+    pub gardener_cap_percent: i64,
+    pub gardener_cooldown_h: i64,
+    pub updated_at: i64,
+}
+
+/// Insert/update shape for `librarian_config`. Used by the config setter
+/// path; the read shape is `LibrarianConfigRow`.
+#[derive(Debug, Clone)]
+pub struct UpsertLibrarianConfigRecord {
+    pub namespace: String,
+    pub triage_min_score: i64,
+    pub max_grains_per_run: i64,
+    pub gardener_cap_percent: i64,
+    pub gardener_cooldown_h: i64,
+    pub updated_at: i64,
+}
+
+/// Insert shape for `memory_feedback`.
+#[derive(Debug, Clone)]
+pub struct NewMemoryFeedbackRecord {
+    pub id: String,
+    pub memory_id: String,
+    pub run_id: Option<String>,
+    /// noise | valuable | wrong_type | wrong_content
+    pub signal: String,
+    pub note: Option<String>,
+    pub created_at: i64,
+}
+
+/// Read shape for `memory_feedback`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct MemoryFeedbackRow {
+    pub id: String,
+    pub memory_id: String,
+    pub run_id: Option<String>,
+    pub signal: String,
+    pub note: Option<String>,
+    pub created_at: i64,
+}
