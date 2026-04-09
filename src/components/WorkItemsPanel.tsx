@@ -23,6 +23,8 @@ type WorkItemsPanelProps = {
     status: WorkItemStatus
   }) => Promise<void>
   onDelete: (id: number) => Promise<void>
+  onStartInTerminal: (id: number) => Promise<void>
+  startingWorkItemId: number | null
 }
 
 function WorkItemsPanel({
@@ -33,6 +35,8 @@ function WorkItemsPanel({
   onCreate,
   onUpdate,
   onDelete,
+  onStartInTerminal,
+  startingWorkItemId,
 }: WorkItemsPanelProps) {
   const [selectedWorkItemId, setSelectedWorkItemId] = useState<number | null>(null)
   const [isCreateOpen, setIsCreateOpen] = useState(false)
@@ -334,6 +338,16 @@ function WorkItemsPanel({
                   </label>
 
                   <div className="action-row">
+                    <button
+                      className="button button--secondary"
+                      disabled={startingWorkItemId === selectedWorkItem.id}
+                      type="button"
+                      onClick={() => void onStartInTerminal(selectedWorkItem.id)}
+                    >
+                      {startingWorkItemId === selectedWorkItem.id
+                        ? 'Sending to terminal...'
+                        : 'Start in terminal'}
+                    </button>
                     <button className="button button--primary" disabled={isSaving} type="submit">
                       {isSaving ? 'Saving...' : 'Save changes'}
                     </button>

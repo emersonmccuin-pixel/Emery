@@ -19,6 +19,10 @@ import type {
 
 const LiveTerminal = lazy(() => import('./components/LiveTerminal'))
 type WorkspaceView = 'terminal' | 'workItems' | 'documents' | 'profiles'
+type TerminalPromptDraft = {
+  label: string
+  prompt: string
+}
 
 const WORK_ITEM_STATUS_ORDER: Record<WorkItemStatus, number> = {
   in_progress: 0,
@@ -92,6 +96,42 @@ function buildAgentStartupPrompt(
   ].join('\n')
 }
 
+function buildFocusedWorkItemPrompt(
+  project: ProjectRecord,
+  workItem: WorkItemRecord,
+  linkedDocuments: DocumentRecord[],
+) {
+  const workItemBody = workItem.body.trim() || 'No extra body provided.'
+  const documentLines =
+    linkedDocuments.length === 0
+      ? ['- No linked documents yet. Use project-commander-cli document list --json if you need more project context.']
+      : linkedDocuments.map((document) => {
+          const body = document.body.trim() || 'No body provided.'
+          return `- #${document.id} ${document.title}\n  ${body}`
+        })
+
+  return [
+    `You are working inside Project Commander for the project "${project.name}".`,
+    `Focus on work item #${workItem.id}: "${workItem.title}".`,
+    `Project root: ${project.rootPath}`,
+    'Use project-commander-cli as the source of truth for all DB changes.',
+    'First run: project-commander-cli session brief --json',
+    'When you change the work item state, persist it with project-commander-cli instead of only describing it in chat.',
+    '',
+    'Target work item:',
+    `- ID: ${workItem.id}`,
+    `- Type: ${workItem.itemType}`,
+    `- Status: ${workItem.status}`,
+    `- Title: ${workItem.title}`,
+    `- Body: ${workItemBody}`,
+    '',
+    'Linked documents:',
+    ...documentLines,
+    '',
+    'Execute the work item directly. If you get blocked, mark it blocked with project-commander-cli and say why. If you finish, close it with project-commander-cli.',
+  ].join('\n')
+}
+
 function flattenPromptForTerminal(prompt: string) {
   return `${prompt.replace(/\s+/g, ' ').trim()}\r`
 }
@@ -111,6 +151,7 @@ function App() {
   const [documents, setDocuments] = useState<DocumentRecord[]>([])
   const [documentError, setDocumentError] = useState<string | null>(null)
   const [agentPromptMessage, setAgentPromptMessage] = useState<string | null>(null)
+  const [terminalPromptDraft, setTerminalPromptDraft] = useState<TerminalPromptDraft | null>(null)
   const [projectName, setProjectName] = useState('')
   const [projectRootPath, setProjectRootPath] = useState('')
   const [projectError, setProjectError] = useState<string | null>(null)
@@ -134,6 +175,7 @@ function App() {
   const [isStoppingSession, setIsStoppingSession] = useState(false)
   const [isLoadingWorkItems, setIsLoadingWorkItems] = useState(false)
   const [isLoadingDocuments, setIsLoadingDocuments] = useState(false)
+  const [startingWorkItemId, setStartingWorkItemId] = useState<number | null>(null)
   const [contextRefreshKey, setContextRefreshKey] = useState(0)
 
   useEffect(() => {
@@ -185,6 +227,8 @@ function App() {
     null
   const bridgeReady = Boolean(selectedProject && sessionSnapshot?.isRunning)
   const agentStartupPrompt = buildAgentStartupPrompt(selectedProject, workItems, documents)
+  const currentTerminalPrompt = terminalPromptDraft?.prompt ?? agentStartupPrompt
+  const currentTerminalPromptLabel = terminalPromptDraft?.label ?? 'Workspace guide'
   const openWorkItemCount = workItems.filter((item) => item.status !== 'done').length
   const blockedWorkItemCount = workItems.filter((item) => item.status === 'blocked').length
 
@@ -203,6 +247,10 @@ function App() {
     setEditProjectRootPath(selectedProject?.rootPath ?? '')
     setProjectUpdateError(null)
     setIsProjectEditorOpen(Boolean(selectedProject && !selectedProject.rootAvailable))
+  }, [selectedProject?.id])
+
+  useEffect(() => {
+    setTerminalPromptDraft(null)
   }, [selectedProject?.id])
 
   useEffect(() => {
@@ -511,12 +559,12 @@ function App() {
 
   const launchSession = async () => {
     if (!selectedProject || !selectedLaunchProfile) {
-      return
+      return null
     }
 
     if (!selectedProject.rootAvailable) {
       setSessionError('selected project root folder no longer exists. Rebind the project before launching.')
-      return
+      return null
     }
 
     setSessionError(null)
@@ -534,8 +582,10 @@ function App() {
       })
 
       setSessionSnapshot(snapshot)
+      return snapshot
     } catch (error) {
       setSessionError(error instanceof Error ? error.message : 'Failed to launch Claude Code.')
+      return null
     } finally {
       setIsLaunchingSession(false)
     }
@@ -639,6 +689,20 @@ function App() {
     }
   }
 
+  const sendPromptToSession = async (
+    projectId: number,
+    prompt: string,
+    successMessage: string,
+  ) => {
+    await invoke('write_session_input', {
+      input: {
+        projectId,
+        data: flattenPromptForTerminal(prompt),
+      },
+    })
+    setAgentPromptMessage(successMessage)
+  }
+
   const deleteWorkItem = async (id: number) => {
     if (!selectedProject) {
       return
@@ -737,37 +801,132 @@ function App() {
   }
 
   const copyAgentStartupPrompt = async () => {
-    if (!agentStartupPrompt) {
+    if (!currentTerminalPrompt) {
       return
     }
 
     try {
-      await navigator.clipboard.writeText(agentStartupPrompt)
-      setAgentPromptMessage('Startup prompt copied.')
+      await navigator.clipboard.writeText(currentTerminalPrompt)
+      setAgentPromptMessage(`${currentTerminalPromptLabel} copied.`)
     } catch (error) {
       setAgentPromptMessage(
-        error instanceof Error ? error.message : 'Failed to copy startup prompt.',
+        error instanceof Error ? error.message : `Failed to copy ${currentTerminalPromptLabel.toLowerCase()}.`,
       )
     }
   }
 
   const sendAgentStartupPrompt = async () => {
-    if (!selectedProject || !sessionSnapshot?.isRunning || !agentStartupPrompt) {
+    if (!selectedProject || !sessionSnapshot?.isRunning || !currentTerminalPrompt) {
       return
     }
 
     try {
-      await invoke('write_session_input', {
-        input: {
-          projectId: selectedProject.id,
-          data: flattenPromptForTerminal(agentStartupPrompt),
-        },
-      })
-      setAgentPromptMessage('Startup prompt sent to the live terminal.')
+      await sendPromptToSession(
+        selectedProject.id,
+        currentTerminalPrompt,
+        `${currentTerminalPromptLabel} sent to the live terminal.`,
+      )
     } catch (error) {
       setAgentPromptMessage(
-        error instanceof Error ? error.message : 'Failed to send startup prompt.',
+        error instanceof Error ? error.message : `Failed to send ${currentTerminalPromptLabel.toLowerCase()}.`,
       )
+    }
+  }
+
+  const startWorkItemInTerminal = async (workItemId: number) => {
+    if (!selectedProject) {
+      return
+    }
+
+    const workItem = workItems.find((item) => item.id === workItemId)
+
+    if (!workItem) {
+      return
+    }
+
+    if (!sessionSnapshot?.isRunning && !selectedLaunchProfile) {
+      setSessionError('Select a launch profile before starting work in the terminal.')
+      setActiveView('terminal')
+      return
+    }
+
+    setStartingWorkItemId(workItem.id)
+    setWorkItemError(null)
+    setSessionError(null)
+    setActiveView('terminal')
+
+    try {
+      let targetWorkItem = workItem
+      const hasLiveSession = Boolean(
+        sessionSnapshot?.isRunning && sessionSnapshot.projectId === selectedProject.id,
+      )
+
+      if (workItem.status !== 'in_progress' && workItem.status !== 'done') {
+        try {
+          const updatedWorkItem = await invoke<WorkItemRecord>('update_work_item', {
+            input: {
+              id: workItem.id,
+              title: workItem.title,
+              body: workItem.body,
+              itemType: workItem.itemType,
+              status: 'in_progress' as WorkItemStatus,
+            },
+          })
+
+          targetWorkItem = updatedWorkItem
+          setWorkItems((current) =>
+            sortWorkItems(
+              current.map((existing) =>
+                existing.id === updatedWorkItem.id ? updatedWorkItem : existing,
+              ),
+            ),
+          )
+        } catch (error) {
+          setWorkItemError(
+            error instanceof Error ? error.message : 'Failed to update work item status.',
+          )
+          return
+        }
+      }
+
+      const prompt = buildFocusedWorkItemPrompt(
+        selectedProject,
+        targetWorkItem,
+        documents.filter((document) => document.workItemId === targetWorkItem.id),
+      )
+
+      setTerminalPromptDraft({
+        label: `Focused handoff for #${targetWorkItem.id}`,
+        prompt,
+      })
+
+      const activeSession = hasLiveSession ? sessionSnapshot : await launchSession()
+
+      if (!activeSession) {
+        return
+      }
+
+      if (!hasLiveSession) {
+        await new Promise((resolve) => window.setTimeout(resolve, 900))
+      }
+
+      try {
+        await sendPromptToSession(
+          selectedProject.id,
+          prompt,
+          `Focused handoff sent for work item #${targetWorkItem.id}.`,
+        )
+      } catch (error) {
+        setSessionError(
+          error instanceof Error ? error.message : 'Failed to send focused handoff to the terminal.',
+        )
+      }
+    } catch (error) {
+      setSessionError(
+        error instanceof Error ? error.message : 'Failed to hand work item off to the terminal.',
+      )
+    } finally {
+      setStartingWorkItemId(null)
     }
   }
 
@@ -1118,8 +1277,14 @@ function App() {
                     <div className="bridge-card__header">
                       <div>
                         <p className="summary-card__label">Agent workflow</p>
-                        <strong>CLI and startup prompt inside the session</strong>
-                        <p>Keep the guide hidden until you need to prime Claude.</p>
+                        <strong>
+                          {terminalPromptDraft?.label ?? 'CLI and startup prompt inside the session'}
+                        </strong>
+                        <p>
+                          {terminalPromptDraft
+                            ? 'The current prompt is focused on the selected work item. You can resend it if Claude needs a nudge.'
+                            : 'Keep the guide hidden until you need to prime Claude.'}
+                        </p>
                       </div>
                       <div className="guide-card__actions">
                         <span className={`status-badge ${bridgeReady ? 'status-badge--ready' : 'status-badge--stopped'}`}>
@@ -1136,7 +1301,7 @@ function App() {
                     </div>
                     <div className="action-row">
                       <button className="button button--secondary" type="button" onClick={copyAgentStartupPrompt}>
-                        Copy prompt
+                        {terminalPromptDraft ? 'Copy focus prompt' : 'Copy prompt'}
                       </button>
                       <button
                         className="button button--primary"
@@ -1144,8 +1309,17 @@ function App() {
                         type="button"
                         onClick={sendAgentStartupPrompt}
                       >
-                        Send to terminal
+                        {terminalPromptDraft ? 'Send focus prompt' : 'Send to terminal'}
                       </button>
+                      {terminalPromptDraft ? (
+                        <button
+                          className="button button--secondary"
+                          type="button"
+                          onClick={() => setTerminalPromptDraft(null)}
+                        >
+                          Use startup guide
+                        </button>
+                      ) : null}
                     </div>
                     {agentPromptMessage ? <p className="stack-form__note">{agentPromptMessage}</p> : null}
                     {isAgentGuideOpen ? (
@@ -1154,7 +1328,7 @@ function App() {
                           className="bridge-card__prompt"
                           readOnly
                           rows={10}
-                          value={agentStartupPrompt}
+                          value={currentTerminalPrompt}
                         />
                         <div className="bridge-card__commands">
                           {AGENT_BRIDGE_COMMANDS.map((command) => (
@@ -1307,8 +1481,10 @@ function App() {
                     isLoading={isLoadingWorkItems}
                     onCreate={createWorkItem}
                     onDelete={deleteWorkItem}
+                    onStartInTerminal={startWorkItemInTerminal}
                     onUpdate={updateWorkItem}
                     project={selectedProject}
+                    startingWorkItemId={startingWorkItemId}
                     workItems={workItems}
                   />
                 ) : null}
