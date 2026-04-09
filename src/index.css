@@ -166,6 +166,21 @@ h1 {
   color: #f8f3ea;
 }
 
+.storage-block {
+  display: grid;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.storage-block__label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 0.76rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
 .status-badge {
   width: fit-content;
   padding: 8px 12px;
@@ -223,6 +238,8 @@ h1 {
 
 .card code {
   display: inline-block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
   padding: 10px 12px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.06);

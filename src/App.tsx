@@ -3,16 +3,25 @@ import { invoke } from '@tauri-apps/api/core'
 
 type RuntimeStatus = 'loading' | 'ready' | 'error'
 
+type StorageInfo = {
+  appDataDir: string
+  dbDir: string
+}
+
 function App() {
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>('loading')
   const [runtimeMessage, setRuntimeMessage] = useState('Connecting to the Rust runtime...')
+  const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null)
 
   useEffect(() => {
     let cancelled = false
 
     const load = async () => {
       try {
-        const message = await invoke<string>('health_check')
+        const [message, storage] = await Promise.all([
+          invoke<string>('health_check'),
+          invoke<StorageInfo>('get_storage_info'),
+        ])
 
         if (cancelled) {
           return
@@ -20,6 +29,7 @@ function App() {
 
         setRuntimeStatus('ready')
         setRuntimeMessage(message)
+        setStorageInfo(storage)
       } catch (error) {
         if (cancelled) {
           return
@@ -70,6 +80,18 @@ function App() {
             {runtimeStatus}
           </div>
           <p className="status-panel__message">{runtimeMessage}</p>
+          {storageInfo ? (
+            <div className="storage-block">
+              <div>
+                <span className="storage-block__label">Shared app data</span>
+                <code>{storageInfo.appDataDir}</code>
+              </div>
+              <div>
+                <span className="storage-block__label">Database folder</span>
+                <code>{storageInfo.dbDir}</code>
+              </div>
+            </div>
+          ) : null}
         </div>
       </section>
 
@@ -96,12 +118,12 @@ function App() {
 
         <article className="card">
           <span className="card__index">03</span>
-          <h2>Packaging path</h2>
+          <h2>Shared local data</h2>
           <p>
-            The Tauri config is already wired to build the Vite bundle before
-            desktop packaging.
+            Dev and production should both keep SQLite files, configs, and other
+            durable state under the same app-data root.
           </p>
-          <code>npm run tauri:build</code>
+          <code>app-data/db/...</code>
         </article>
       </section>
     </main>

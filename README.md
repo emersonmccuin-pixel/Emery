@@ -31,6 +31,21 @@ npm run prod:run
 
 Windows installers are produced under `src-tauri/target/release/bundle/`.
 
+## Shared Data
+
+Development and production are configured to use the same Tauri app-data root,
+based on the app identifier in `src-tauri/tauri.conf.json`.
+
+The scaffold already creates a dedicated database folder inside that root:
+
+```text
+<app-data-dir>\db\
+```
+
+The app UI displays the exact resolved storage path at runtime. If you store
+SQLite files or other durable state there, both `npm run tauri:dev` and the
+packaged `project-commander.exe` will use the same data.
+
 ## Structure
 
 - `src/`: React frontend
