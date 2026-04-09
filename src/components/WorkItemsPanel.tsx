@@ -75,7 +75,14 @@ function WorkItemsPanel({
     setEditBody(selectedWorkItem.body)
     setEditType(selectedWorkItem.itemType)
     setEditStatus(selectedWorkItem.status)
-  }, [selectedWorkItem?.id])
+  }, [
+    selectedWorkItem?.id,
+    selectedWorkItem?.title,
+    selectedWorkItem?.body,
+    selectedWorkItem?.itemType,
+    selectedWorkItem?.status,
+    selectedWorkItem?.updatedAt,
+  ])
 
   const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()

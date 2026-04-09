@@ -73,7 +73,13 @@ function DocumentsPanel({
     setEditTitle(selectedDocument.title)
     setEditBody(selectedDocument.body)
     setEditWorkItemId(selectedDocument.workItemId)
-  }, [selectedDocument?.id])
+  }, [
+    selectedDocument?.id,
+    selectedDocument?.title,
+    selectedDocument?.body,
+    selectedDocument?.workItemId,
+    selectedDocument?.updatedAt,
+  ])
 
   const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
