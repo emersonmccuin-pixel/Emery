@@ -31,11 +31,13 @@
 html,
 body,
 #app {
+  height: 100%;
   min-height: 100%;
 }
 
 body {
   margin: 0;
+  overflow: hidden;
 }
 
 button,
@@ -78,8 +80,11 @@ select:focus {
 
 .app-shell {
   width: min(1440px, calc(100% - 28px));
+  height: 100%;
   margin: 0 auto;
   padding: 18px 0 28px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .topbar {
@@ -178,9 +183,11 @@ select:focus {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr) 360px;
   gap: 18px;
+  min-height: 0;
 }
 
 .panel {
+  min-height: 0;
   border-radius: 28px;
   padding: 22px;
 }
@@ -189,6 +196,7 @@ select:focus {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  overflow-y: auto;
 }
 
 .panel__header {
@@ -332,6 +340,10 @@ select:focus {
   cursor: default;
 }
 
+.button--compact {
+  min-height: 40px;
+}
+
 .button--primary {
   background: linear-gradient(135deg, var(--accent) 0%, #ef5d48 100%);
   color: #151515;
@@ -359,12 +371,26 @@ select:focus {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  overflow-y: auto;
+}
+
+.console-header {
+  align-items: center;
+}
+
+.console-header__actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: end;
+  min-width: 0;
 }
 
 .console-body {
   display: grid;
   gap: 18px;
   min-height: 100%;
+  align-content: start;
 }
 
 .console-actions {
@@ -437,6 +463,10 @@ select:focus {
   overflow-wrap: anywhere;
 }
 
+.project-editor-card {
+  border-color: var(--border-strong);
+}
+
 .launch-state {
   display: grid;
   gap: 18px;
@@ -492,6 +522,12 @@ select:focus {
 
 .terminal-host .xterm {
   height: 100%;
+}
+
+.terminal-host .xterm-helper-textarea {
+  position: fixed;
+  top: 0 !important;
+  left: -9999px !important;
 }
 
 .terminal-host .xterm-viewport {
@@ -676,6 +712,15 @@ select:focus {
     flex-direction: column;
   }
 
+  body {
+    overflow: auto;
+  }
+
+  .app-shell {
+    height: auto;
+    display: block;
+  }
+
   .console-actions {
     flex-direction: column;
     align-items: stretch;
@@ -685,6 +730,16 @@ select:focus {
     flex-direction: column;
   }
 
+  .console-header {
+    align-items: start;
+  }
+
+  .console-header__actions {
+    width: 100%;
+    flex-direction: column;
+    align-items: start;
+  }
+
   .console-actions__group--right {
     justify-items: start;
   }
@@ -692,6 +747,11 @@ select:focus {
   .panel,
   .runtime-panel {
     border-radius: 22px;
+  }
+
+  .rail,
+  .console-panel {
+    overflow: visible;
   }
 
   .input-row {

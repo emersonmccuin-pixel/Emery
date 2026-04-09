@@ -61,6 +61,7 @@ function App() {
   const [editProjectName, setEditProjectName] = useState('')
   const [editProjectRootPath, setEditProjectRootPath] = useState('')
   const [projectUpdateError, setProjectUpdateError] = useState<string | null>(null)
+  const [isProjectEditorOpen, setIsProjectEditorOpen] = useState(false)
   const [profileLabel, setProfileLabel] = useState('Claude Code / YOLO')
   const [profileExecutable, setProfileExecutable] = useState('claude')
   const [profileArgs, setProfileArgs] = useState('--dangerously-skip-permissions')
@@ -132,6 +133,7 @@ function App() {
     setEditProjectName(selectedProject?.name ?? '')
     setEditProjectRootPath(selectedProject?.rootPath ?? '')
     setProjectUpdateError(null)
+    setIsProjectEditorOpen(Boolean(selectedProject && !selectedProject.rootAvailable))
   }, [selectedProject?.id])
 
   useEffect(() => {
@@ -300,6 +302,7 @@ function App() {
       setSelectedProjectId(project.id)
       setEditProjectName(project.name)
       setEditProjectRootPath(project.rootPath)
+      setIsProjectEditorOpen(false)
       setSessionError((current) =>
         current === 'selected project root folder no longer exists. Rebind the project before launching.'
           ? null
@@ -585,77 +588,27 @@ function App() {
             </button>
           </form>
 
-          {selectedProject ? (
-            <form className="stack-form" onSubmit={submitProjectUpdate}>
-              <div className="stack-form__header">
-                <h3>Edit selected project</h3>
-                <p>Rename it or rebind the registered root if the folder moved or was renamed.</p>
-              </div>
-
-              {!selectedProject.rootAvailable ? (
-                <p className="form-error">
-                  The current registered root is missing. Pick the new folder and save to repair
-                  launch.
-                </p>
-              ) : null}
-
-              {isLiveSessionVisible && sessionSnapshot?.isRunning ? (
-                <p className="stack-form__note">
-                  Changes affect the next launch. The current live terminal stays attached to the
-                  root it started with.
-                </p>
-              ) : null}
-
-              <label className="field">
-                <span>Name</span>
-                <input
-                  value={editProjectName}
-                  onChange={(event) => setEditProjectName(event.target.value)}
-                  placeholder="Emery"
-                />
-              </label>
-
-              <label className="field">
-                <span>Root folder</span>
-                <div className="input-row">
-                  <input
-                    value={editProjectRootPath}
-                    onChange={(event) => setEditProjectRootPath(event.target.value)}
-                    placeholder="E:\\Projects\\Emery"
-                  />
-                  <button
-                    className="button button--secondary"
-                    type="button"
-                    onClick={() => browseForProjectFolder(setEditProjectRootPath, setProjectUpdateError)}
-                  >
-                    Browse
-                  </button>
-                </div>
-              </label>
-
-              {projectUpdateError ? <p className="form-error">{projectUpdateError}</p> : null}
-
-              <button className="button button--primary" disabled={isUpdatingProject} type="submit">
-                {isUpdatingProject
-                  ? 'Saving...'
-                  : selectedProject.rootAvailable
-                    ? 'Save changes'
-                    : 'Rebind project'}
-              </button>
-            </form>
-          ) : null}
         </aside>
 
         <section className="panel console-panel">
-          <div className="panel__header">
+          <div className="panel__header console-header">
             <div>
               <p className="panel__eyebrow">Console</p>
               <h2>{selectedProject ? selectedProject.name : 'Select a project'}</h2>
             </div>
             {selectedProject ? (
-              <span className={`pill ${selectedProject.rootAvailable ? '' : 'pill--danger'}`}>
-                {selectedProject.rootAvailable ? selectedProject.rootPath : 'root missing'}
-              </span>
+              <div className="console-header__actions">
+                <span className={`pill ${selectedProject.rootAvailable ? '' : 'pill--danger'}`}>
+                  {selectedProject.rootAvailable ? selectedProject.rootPath : 'root missing'}
+                </span>
+                <button
+                  className="button button--secondary button--compact"
+                  type="button"
+                  onClick={() => setIsProjectEditorOpen((current) => !current)}
+                >
+                  {isProjectEditorOpen ? 'Hide editor' : selectedProject.rootAvailable ? 'Edit project' : 'Rebind root'}
+                </button>
+              </div>
             ) : null}
           </div>
 
@@ -713,6 +666,86 @@ function App() {
                   )}
                 </div>
               </div>
+
+              {isProjectEditorOpen ? (
+                <form className="stack-form project-editor-card" onSubmit={submitProjectUpdate}>
+                  <div className="stack-form__header">
+                    <h3>{selectedProject.rootAvailable ? 'Edit selected project' : 'Rebind project root'}</h3>
+                    <p>Rename it or rebind the registered root if the folder moved or was renamed.</p>
+                  </div>
+
+                  {!selectedProject.rootAvailable ? (
+                    <p className="form-error">
+                      The current registered root is missing. Pick the new folder and save to repair
+                      launch.
+                    </p>
+                  ) : null}
+
+                  {isLiveSessionVisible && sessionSnapshot?.isRunning ? (
+                    <p className="stack-form__note">
+                      Changes affect the next launch. The current live terminal stays attached to
+                      the root it started with.
+                    </p>
+                  ) : null}
+
+                  <div className="field-grid">
+                    <label className="field">
+                      <span>Name</span>
+                      <input
+                        value={editProjectName}
+                        onChange={(event) => setEditProjectName(event.target.value)}
+                        placeholder="Emery"
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>Root folder</span>
+                      <div className="input-row">
+                        <input
+                          value={editProjectRootPath}
+                          onChange={(event) => setEditProjectRootPath(event.target.value)}
+                          placeholder="E:\\Projects\\Emery"
+                        />
+                        <button
+                          className="button button--secondary"
+                          type="button"
+                          onClick={() =>
+                            browseForProjectFolder(
+                              setEditProjectRootPath,
+                              setProjectUpdateError,
+                            )
+                          }
+                        >
+                          Browse
+                        </button>
+                      </div>
+                    </label>
+                  </div>
+
+                  {projectUpdateError ? <p className="form-error">{projectUpdateError}</p> : null}
+
+                  <div className="action-row">
+                    <button
+                      className="button button--primary"
+                      disabled={isUpdatingProject}
+                      type="submit"
+                    >
+                      {isUpdatingProject
+                        ? 'Saving...'
+                        : selectedProject.rootAvailable
+                          ? 'Save changes'
+                          : 'Rebind project'}
+                    </button>
+                    <button
+                      className="button button--secondary"
+                      type="button"
+                      onClick={() => setIsProjectEditorOpen(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              ) : null}
 
               {sessionError ? <p className="form-error">{sessionError}</p> : null}
               {launchBlockedByMissingRoot ? (
