@@ -86,6 +86,12 @@ project-commander-cli work-item close --id 12 --json
 
 `npm run tauri:dev` and `npm run tauri:build` now build the companion CLI before starting the app shell so the bridge is available in both dev and local packaged runs.
 
+## Known Gap
+
+Launched sessions are now bound to the registered project they were opened for, even if the shell later changes directories.
+
+That does not solve stale project roots on disk. If a registered project folder is moved or renamed outside the app, the stored `root_path` will be wrong until we add a project edit/rebind flow.
+
 ## Structure
 
 - `src/`: React frontend
