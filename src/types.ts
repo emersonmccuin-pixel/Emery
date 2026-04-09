@@ -10,6 +10,7 @@ export type ProjectRecord = {
   id: number
   name: string
   rootPath: string
+  rootAvailable: boolean
   createdAt: string
   updatedAt: string
   workItemCount: number

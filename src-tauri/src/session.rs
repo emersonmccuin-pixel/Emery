@@ -3,6 +3,7 @@ use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, Pt
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, State};
@@ -110,6 +111,14 @@ impl SessionManager {
 
         let project = app_state.get_project(input.project_id)?;
         let profile = app_state.get_launch_profile(input.launch_profile_id)?;
+
+        if !Path::new(&project.root_path).is_dir() {
+            return Err(
+                "selected project root folder no longer exists. Rebind the project before launching."
+                    .to_string(),
+            );
+        }
+
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {

@@ -58,6 +58,7 @@ The current MVP slice includes:
 
 - a shared SQLite database owned by the app
 - registered projects with root folders
+- project edit/rebind flow when a registered root moves or is renamed
 - Claude Code launch profiles stored in the DB
 - a PTY-backed terminal slice that can launch Claude Code in the selected project root
 - a selectable launch-profile workflow that acts as the MVP account model
@@ -86,11 +87,11 @@ project-commander-cli work-item close --id 12 --json
 
 `npm run tauri:dev` and `npm run tauri:build` now build the companion CLI before starting the app shell so the bridge is available in both dev and local packaged runs.
 
-## Known Gap
+## Project Roots
 
-Launched sessions are now bound to the registered project they were opened for, even if the shell later changes directories.
+Launches are blocked when a registered project root no longer exists.
 
-That does not solve stale project roots on disk. If a registered project folder is moved or renamed outside the app, the stored `root_path` will be wrong until we add a project edit/rebind flow.
+Use the selected-project edit form to rebind the project to its new folder. Launched sessions stay bound to the registered project they were opened for, even if the shell later changes directories, and any root change applies on the next launch.
 
 ## Structure
 

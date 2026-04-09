@@ -216,6 +216,11 @@ select:focus {
   color: var(--muted);
 }
 
+.pill--danger {
+  background: rgba(255, 133, 113, 0.14);
+  color: var(--danger);
+}
+
 .project-list,
 .profile-list {
   display: grid;
@@ -245,6 +250,11 @@ select:focus {
 .project-card__path,
 .project-card__meta {
   display: block;
+}
+
+.project-card__status {
+  display: block;
+  margin-top: 10px;
 }
 
 .project-card__name {
@@ -279,6 +289,11 @@ select:focus {
 .stack-form__header {
   display: grid;
   gap: 6px;
+}
+
+.stack-form__note {
+  margin: 0;
+  color: var(--muted);
 }
 
 .field {

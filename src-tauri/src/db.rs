@@ -17,6 +17,7 @@ pub struct ProjectRecord {
     pub id: i64,
     pub name: String,
     pub root_path: String,
+    pub root_available: bool,
     pub created_at: String,
     pub updated_at: String,
     pub work_item_count: i64,
@@ -61,6 +62,14 @@ pub struct BootstrapData {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateProjectInput {
+    pub name: String,
+    pub root_path: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateProjectInput {
+    pub id: i64,
     pub name: String,
     pub root_path: String,
 }
@@ -183,6 +192,52 @@ impl AppState {
             .map_err(|error| format!("failed to create project: {error}"))?;
 
         load_project_by_id(&connection, connection.last_insert_rowid())
+    }
+
+    pub fn update_project(&self, input: UpdateProjectInput) -> Result<ProjectRecord, String> {
+        let name = input.name.trim();
+        let root_path = input.root_path.trim();
+
+        if name.is_empty() {
+            return Err("project name is required".to_string());
+        }
+
+        if root_path.is_empty() {
+            return Err("project root folder is required".to_string());
+        }
+
+        if !Path::new(root_path).is_dir() {
+            return Err("project root folder must exist".to_string());
+        }
+
+        let connection = self.connect()?;
+        load_project_by_id(&connection, input.id)?;
+
+        let existing = connection
+            .query_row(
+                "SELECT id FROM projects WHERE root_path = ?1 AND id <> ?2",
+                params![root_path, input.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(|error| format!("failed to check existing project: {error}"))?;
+
+        if existing.is_some() {
+            return Err("a project with that root folder already exists".to_string());
+        }
+
+        connection
+            .execute(
+                "UPDATE projects
+                 SET name = ?1,
+                     root_path = ?2,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?3",
+                params![name, root_path, input.id],
+            )
+            .map_err(|error| format!("failed to update project: {error}"))?;
+
+        load_project_by_id(&connection, input.id)
     }
 
     pub fn create_launch_profile(
@@ -456,10 +511,12 @@ fn load_projects(connection: &Connection) -> Result<Vec<ProjectRecord>, String> 
 
     let rows = statement
         .query_map([], |row| {
+            let root_path: String = row.get(2)?;
             Ok(ProjectRecord {
                 id: row.get(0)?,
                 name: row.get(1)?,
-                root_path: row.get(2)?,
+                root_available: project_root_available(&root_path),
+                root_path,
                 created_at: row.get(3)?,
                 updated_at: row.get(4)?,
                 work_item_count: row.get(5)?,
@@ -491,10 +548,12 @@ fn load_project_by_id(connection: &Connection, id: i64) -> Result<ProjectRecord,
             ",
             [id],
             |row| {
+                let root_path: String = row.get(2)?;
                 Ok(ProjectRecord {
                     id: row.get(0)?,
                     name: row.get(1)?,
-                    root_path: row.get(2)?,
+                    root_available: project_root_available(&root_path),
+                    root_path,
                     created_at: row.get(3)?,
                     updated_at: row.get(4)?,
                     work_item_count: row.get(5)?,
@@ -737,6 +796,10 @@ fn normalize_env_json(raw: &str) -> Result<String, String> {
 
     serde_json::to_string_pretty(&parsed)
         .map_err(|error| format!("failed to normalize environment JSON: {error}"))
+}
+
+fn project_root_available(root_path: &str) -> bool {
+    Path::new(root_path).is_dir()
 }
 
 fn normalize_path_for_matching(path: &Path) -> Result<PathBuf, String> {

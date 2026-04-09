@@ -3,7 +3,8 @@ mod session;
 
 use db::{
     AppState, BootstrapData, CreateLaunchProfileInput, CreateProjectInput, CreateWorkItemInput,
-    LaunchProfileRecord, ProjectRecord, StorageInfo, UpdateWorkItemInput, WorkItemRecord,
+    LaunchProfileRecord, ProjectRecord, StorageInfo, UpdateProjectInput, UpdateWorkItemInput,
+    WorkItemRecord,
 };
 use session::{
     LaunchSessionInput, ResizeSessionInput, SessionInput, SessionManager, SessionSnapshot,
@@ -51,6 +52,14 @@ fn create_project(
     state: State<AppState>,
 ) -> Result<ProjectRecord, String> {
     state.create_project(input)
+}
+
+#[tauri::command]
+fn update_project(
+    input: UpdateProjectInput,
+    state: State<AppState>,
+) -> Result<ProjectRecord, String> {
+    state.update_project(input)
 }
 
 #[tauri::command]
@@ -129,6 +138,7 @@ pub fn run() {
             get_storage_info,
             bootstrap_app_state,
             create_project,
+            update_project,
             create_launch_profile,
             get_session_snapshot,
             launch_project_session,

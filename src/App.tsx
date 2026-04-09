@@ -58,12 +58,16 @@ function App() {
   const [projectName, setProjectName] = useState('')
   const [projectRootPath, setProjectRootPath] = useState('')
   const [projectError, setProjectError] = useState<string | null>(null)
+  const [editProjectName, setEditProjectName] = useState('')
+  const [editProjectRootPath, setEditProjectRootPath] = useState('')
+  const [projectUpdateError, setProjectUpdateError] = useState<string | null>(null)
   const [profileLabel, setProfileLabel] = useState('Claude Code / YOLO')
   const [profileExecutable, setProfileExecutable] = useState('claude')
   const [profileArgs, setProfileArgs] = useState('--dangerously-skip-permissions')
   const [profileEnvJson, setProfileEnvJson] = useState('{}')
   const [profileError, setProfileError] = useState<string | null>(null)
   const [isCreatingProject, setIsCreatingProject] = useState(false)
+  const [isUpdatingProject, setIsUpdatingProject] = useState(false)
   const [isCreatingProfile, setIsCreatingProfile] = useState(false)
   const [isLaunchingSession, setIsLaunchingSession] = useState(false)
   const [isStoppingSession, setIsStoppingSession] = useState(false)
@@ -123,6 +127,12 @@ function App() {
       setSelectedProjectId(projects[0].id)
     }
   }, [projects, selectedProject])
+
+  useEffect(() => {
+    setEditProjectName(selectedProject?.name ?? '')
+    setEditProjectRootPath(selectedProject?.rootPath ?? '')
+    setProjectUpdateError(null)
+  }, [selectedProject?.id])
 
   useEffect(() => {
     if (!selectedLaunchProfile && launchProfiles.length > 0) {
@@ -222,8 +232,11 @@ function App() {
     )
   }
 
-  const browseForProjectFolder = async () => {
-    setProjectError(null)
+  const browseForProjectFolder = async (
+    applyPath: (path: string) => void,
+    setError: (message: string | null) => void,
+  ) => {
+    setError(null)
 
     try {
       const selected = await open({
@@ -233,10 +246,10 @@ function App() {
       })
 
       if (typeof selected === 'string') {
-        setProjectRootPath(selected)
+        applyPath(selected)
       }
     } catch (error) {
-      setProjectError(error instanceof Error ? error.message : 'Failed to open folder picker.')
+      setError(error instanceof Error ? error.message : 'Failed to open folder picker.')
     }
   }
 
@@ -261,6 +274,41 @@ function App() {
       setProjectError(error instanceof Error ? error.message : 'Failed to create project.')
     } finally {
       setIsCreatingProject(false)
+    }
+  }
+
+  const submitProjectUpdate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+
+    if (!selectedProject) {
+      return
+    }
+
+    setProjectUpdateError(null)
+    setIsUpdatingProject(true)
+
+    try {
+      const project = await invoke<ProjectRecord>('update_project', {
+        input: {
+          id: selectedProject.id,
+          name: editProjectName,
+          rootPath: editProjectRootPath,
+        },
+      })
+
+      setProjects((current) => [project, ...current.filter((existing) => existing.id !== project.id)])
+      setSelectedProjectId(project.id)
+      setEditProjectName(project.name)
+      setEditProjectRootPath(project.rootPath)
+      setSessionError((current) =>
+        current === 'selected project root folder no longer exists. Rebind the project before launching.'
+          ? null
+          : current,
+      )
+    } catch (error) {
+      setProjectUpdateError(error instanceof Error ? error.message : 'Failed to update project.')
+    } finally {
+      setIsUpdatingProject(false)
     }
   }
 
@@ -296,6 +344,11 @@ function App() {
 
   const launchSession = async () => {
     if (!selectedProject || !selectedLaunchProfile) {
+      return
+    }
+
+    if (!selectedProject.rootAvailable) {
+      setSessionError('selected project root folder no longer exists. Rebind the project before launching.')
       return
     }
 
@@ -356,6 +409,7 @@ function App() {
 
   const isLiveSessionVisible =
     sessionSnapshot && selectedProject && sessionSnapshot.projectId === selectedProject.id
+  const launchBlockedByMissingRoot = Boolean(selectedProject && !selectedProject.rootAvailable)
 
   const createWorkItem = async (input: {
     title: string
@@ -476,6 +530,11 @@ function App() {
                   onClick={() => setSelectedProjectId(project.id)}
                 >
                   <span className="project-card__name">{project.name}</span>
+                  <span className="project-card__status">
+                    <span className={`pill ${project.rootAvailable ? '' : 'pill--danger'}`}>
+                      {project.rootAvailable ? 'root ready' : 'root missing'}
+                    </span>
+                  </span>
                   <span className="project-card__path">{project.rootPath}</span>
                   <span className="project-card__meta">
                     {project.workItemCount} work items · {project.documentCount} docs ·{' '}
@@ -512,7 +571,7 @@ function App() {
                 <button
                   className="button button--secondary"
                   type="button"
-                  onClick={browseForProjectFolder}
+                  onClick={() => browseForProjectFolder(setProjectRootPath, setProjectError)}
                 >
                   Browse
                 </button>
@@ -525,6 +584,66 @@ function App() {
               {isCreatingProject ? 'Saving...' : 'Create project'}
             </button>
           </form>
+
+          {selectedProject ? (
+            <form className="stack-form" onSubmit={submitProjectUpdate}>
+              <div className="stack-form__header">
+                <h3>Edit selected project</h3>
+                <p>Rename it or rebind the registered root if the folder moved or was renamed.</p>
+              </div>
+
+              {!selectedProject.rootAvailable ? (
+                <p className="form-error">
+                  The current registered root is missing. Pick the new folder and save to repair
+                  launch.
+                </p>
+              ) : null}
+
+              {isLiveSessionVisible && sessionSnapshot?.isRunning ? (
+                <p className="stack-form__note">
+                  Changes affect the next launch. The current live terminal stays attached to the
+                  root it started with.
+                </p>
+              ) : null}
+
+              <label className="field">
+                <span>Name</span>
+                <input
+                  value={editProjectName}
+                  onChange={(event) => setEditProjectName(event.target.value)}
+                  placeholder="Emery"
+                />
+              </label>
+
+              <label className="field">
+                <span>Root folder</span>
+                <div className="input-row">
+                  <input
+                    value={editProjectRootPath}
+                    onChange={(event) => setEditProjectRootPath(event.target.value)}
+                    placeholder="E:\\Projects\\Emery"
+                  />
+                  <button
+                    className="button button--secondary"
+                    type="button"
+                    onClick={() => browseForProjectFolder(setEditProjectRootPath, setProjectUpdateError)}
+                  >
+                    Browse
+                  </button>
+                </div>
+              </label>
+
+              {projectUpdateError ? <p className="form-error">{projectUpdateError}</p> : null}
+
+              <button className="button button--primary" disabled={isUpdatingProject} type="submit">
+                {isUpdatingProject
+                  ? 'Saving...'
+                  : selectedProject.rootAvailable
+                    ? 'Save changes'
+                    : 'Rebind project'}
+              </button>
+            </form>
+          ) : null}
         </aside>
 
         <section className="panel console-panel">
@@ -533,7 +652,11 @@ function App() {
               <p className="panel__eyebrow">Console</p>
               <h2>{selectedProject ? selectedProject.name : 'Select a project'}</h2>
             </div>
-            {selectedProject ? <span className="pill">{selectedProject.rootPath}</span> : null}
+            {selectedProject ? (
+              <span className={`pill ${selectedProject.rootAvailable ? '' : 'pill--danger'}`}>
+                {selectedProject.rootAvailable ? selectedProject.rootPath : 'root missing'}
+              </span>
+            ) : null}
           </div>
 
           {selectedProject ? (
@@ -577,17 +700,27 @@ function App() {
                   ) : (
                     <button
                       className="button button--primary"
-                      disabled={!selectedLaunchProfile || isLaunchingSession}
+                      disabled={!selectedLaunchProfile || isLaunchingSession || launchBlockedByMissingRoot}
                       type="button"
                       onClick={launchSession}
                     >
-                      {isLaunchingSession ? 'Launching...' : 'Launch terminal'}
+                      {isLaunchingSession
+                        ? 'Launching...'
+                        : launchBlockedByMissingRoot
+                          ? 'Rebind root to launch'
+                          : 'Launch terminal'}
                     </button>
                   )}
                 </div>
               </div>
 
               {sessionError ? <p className="form-error">{sessionError}</p> : null}
+              {launchBlockedByMissingRoot ? (
+                <p className="form-error">
+                  This project&apos;s registered root folder no longer exists. Rebind it in the left
+                  rail before launching a new session.
+                </p>
+              ) : null}
 
               <article className="summary-card bridge-card">
                 <div className="bridge-card__header">
@@ -617,11 +750,24 @@ function App() {
               ) : (
                 <div className="launch-state">
                   <div className="launch-state__copy">
-                    <p className="summary-card__label">Ready to launch</p>
+                    <p className="summary-card__label">
+                      {selectedProject.rootAvailable ? 'Ready to launch' : 'Root needs rebind'}
+                    </p>
                     <h3>{selectedProject.name}</h3>
                     <p>
-                      Start Claude Code in <code>{selectedProject.rootPath}</code> using the
-                      selected launch profile.
+                      {selectedProject.rootAvailable
+                        ? (
+                            <>
+                              Start Claude Code in <code>{selectedProject.rootPath}</code> using
+                              the selected launch profile.
+                            </>
+                          )
+                        : (
+                            <>
+                              The registered root path no longer exists. Update it from the left
+                              rail before launching another session.
+                            </>
+                          )}
                     </p>
                   </div>
 
@@ -629,7 +775,11 @@ function App() {
                     <article className="summary-card">
                       <span className="summary-card__label">Project root</span>
                       <strong>{selectedProject.rootPath}</strong>
-                      <p>The PTY session will start in this folder.</p>
+                      <p>
+                        {selectedProject.rootAvailable
+                          ? 'The PTY session will start in this folder.'
+                          : 'This path is stale. Rebind it to an existing folder first.'}
+                      </p>
                     </article>
 
                     <article className="summary-card">
