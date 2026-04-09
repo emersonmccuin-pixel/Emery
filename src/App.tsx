@@ -24,10 +24,6 @@ type TerminalPromptDraft = {
   prompt: string
 }
 
-type LaunchSessionOptions = {
-  startupPrompt?: string
-}
-
 const WORK_ITEM_STATUS_ORDER: Record<WorkItemStatus, number> = {
   in_progress: 0,
   blocked: 1,
@@ -561,7 +557,7 @@ function App() {
     }
   }
 
-  const launchSession = async (options?: LaunchSessionOptions) => {
+  const launchSession = async () => {
     if (!selectedProject || !selectedLaunchProfile) {
       return null
     }
@@ -582,7 +578,6 @@ function App() {
           launchProfileId: selectedLaunchProfile.id,
           cols: 120,
           rows: 32,
-          startupPrompt: options?.startupPrompt,
         },
       })
 
@@ -706,6 +701,34 @@ function App() {
       },
     })
     setAgentPromptMessage(successMessage)
+  }
+
+  const waitForSessionBootstrap = async (projectId: number, timeoutMs = 12000) => {
+    const deadline = Date.now() + timeoutMs
+
+    while (Date.now() < deadline) {
+      const snapshot = await invoke<SessionSnapshot | null>('get_session_snapshot', {
+        projectId,
+      }).catch(() => null)
+
+      if (snapshot?.isRunning && snapshot.output.trim().length > 0) {
+        await new Promise((resolve) => window.setTimeout(resolve, 350))
+        return true
+      }
+
+      await new Promise((resolve) => window.setTimeout(resolve, 250))
+    }
+
+    return false
+  }
+
+  const sendPromptAfterFreshLaunch = async (
+    projectId: number,
+    prompt: string,
+    successMessage: string,
+  ) => {
+    await waitForSessionBootstrap(projectId)
+    await sendPromptToSession(projectId, prompt, successMessage)
   }
 
   const deleteWorkItem = async (id: number) => {
@@ -905,8 +928,7 @@ function App() {
         prompt,
       })
 
-      const activeSession =
-        hasLiveSession ? sessionSnapshot : await launchSession({ startupPrompt: prompt })
+      const activeSession = hasLiveSession ? sessionSnapshot : await launchSession()
 
       if (!activeSession) {
         return
@@ -925,7 +947,17 @@ function App() {
           )
         }
       } else {
-        setAgentPromptMessage(`Focused handoff started a fresh terminal for work item #${targetWorkItem.id}.`)
+        try {
+          await sendPromptAfterFreshLaunch(
+            selectedProject.id,
+            prompt,
+            `Focused handoff sent for work item #${targetWorkItem.id}.`,
+          )
+        } catch (error) {
+          setSessionError(
+            error instanceof Error ? error.message : 'Failed to send focused handoff to the fresh terminal.',
+          )
+        }
       }
     } catch (error) {
       setSessionError(
@@ -1143,13 +1175,29 @@ function App() {
                       className="button button--primary"
                       disabled={!selectedLaunchProfile || isLaunchingSession || launchBlockedByMissingRoot}
                       type="button"
-                      onClick={() => {
+                      onClick={() => void (async () => {
                         setTerminalPromptDraft({
                           label: 'Workspace guide',
                           prompt: agentStartupPrompt,
                         })
-                        void launchSession({ startupPrompt: agentStartupPrompt })
-                      }}
+                        const snapshot = await launchSession()
+
+                        if (!snapshot || !agentStartupPrompt) {
+                          return
+                        }
+
+                        try {
+                          await sendPromptAfterFreshLaunch(
+                            selectedProject.id,
+                            agentStartupPrompt,
+                            'Workspace guide sent to the live terminal.',
+                          )
+                        } catch (error) {
+                          setSessionError(
+                            error instanceof Error ? error.message : 'Failed to send workspace guide to the fresh terminal.',
+                          )
+                        }
+                      })()}
                     >
                       {isLaunchingSession
                         ? 'Launching...'

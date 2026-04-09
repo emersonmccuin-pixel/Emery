@@ -45,7 +45,6 @@ pub struct LaunchSessionInput {
     pub launch_profile_id: i64,
     pub cols: u16,
     pub rows: u16,
-    pub startup_prompt: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -130,16 +129,7 @@ impl SessionManager {
             })
             .map_err(|error| format!("failed to open pty: {error}"))?;
 
-        let command = build_launch_command(
-            &project,
-            &profile,
-            &app_state.storage(),
-            input
-                .startup_prompt
-                .as_deref()
-                .map(str::trim)
-                .filter(|prompt| !prompt.is_empty()),
-        )?;
+        let command = build_launch_command(&project, &profile, &app_state.storage())?;
         let child = pair
             .slave
             .spawn_command(command)
@@ -273,7 +263,6 @@ fn build_launch_command(
     project: &crate::db::ProjectRecord,
     profile: &crate::db::LaunchProfileRecord,
     storage: &crate::db::StorageInfo,
-    startup_prompt: Option<&str>,
 ) -> Result<CommandBuilder, String> {
     let mut command = CommandBuilder::new("powershell.exe");
     let env_pairs = parse_env_json(&profile.env_json)?;
@@ -337,11 +326,6 @@ fn build_launch_command(
         ));
     }
 
-    if let Some(prompt) = startup_prompt {
-        script.push(' ');
-        script.push_str(&format!("'{}'", escape_ps(prompt)));
-    }
-
     command.arg("-NoLogo");
     command.arg("-NoProfile");
     command.arg("-Command");
@@ -379,6 +363,7 @@ fn build_claude_bridge_system_prompt(project: &crate::db::ProjectRecord) -> Stri
             "A local companion CLI named project-commander-cli is on PATH. ",
             "Use it as the source of truth for project context, work items, and documents. ",
             "At the start of each session, run `project-commander-cli session brief --json`. ",
+            "Do not use WCP or any unrelated MCP work-item tracker for Project Commander state unless I explicitly ask you to. ",
             "When you create, update, block, or close work, persist the change with project-commander-cli instead of only describing it in chat."
         ),
         project.name, project.root_path
