@@ -129,6 +129,7 @@ function App() {
   const [isStoppingSession, setIsStoppingSession] = useState(false)
   const [isLoadingWorkItems, setIsLoadingWorkItems] = useState(false)
   const [isLoadingDocuments, setIsLoadingDocuments] = useState(false)
+  const [contextRefreshKey, setContextRefreshKey] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -237,6 +238,24 @@ function App() {
   }, [selectedProjectId])
 
   useEffect(() => {
+    if (
+      !selectedProject ||
+      !sessionSnapshot?.isRunning ||
+      sessionSnapshot.projectId !== selectedProject.id
+    ) {
+      return
+    }
+
+    const intervalId = window.setInterval(() => {
+      setContextRefreshKey((current) => current + 1)
+    }, 2500)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [selectedProject?.id, sessionSnapshot?.isRunning, sessionSnapshot?.projectId])
+
+  useEffect(() => {
     let cancelled = false
 
     const loadDocuments = async () => {
@@ -258,6 +277,16 @@ function App() {
         }
 
         setDocuments(sortDocuments(items))
+        setProjects((current) =>
+          current.map((project) =>
+            project.id === selectedProject.id
+              ? {
+                  ...project,
+                  documentCount: items.length,
+                }
+              : project,
+          ),
+        )
       } catch (error) {
         if (cancelled) {
           return
@@ -276,7 +305,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [selectedProjectId])
+  }, [contextRefreshKey, selectedProjectId])
 
   useEffect(() => {
     let cancelled = false
@@ -300,6 +329,16 @@ function App() {
         }
 
         setWorkItems(sortWorkItems(items))
+        setProjects((current) =>
+          current.map((project) =>
+            project.id === selectedProject.id
+              ? {
+                  ...project,
+                  workItemCount: items.length,
+                }
+              : project,
+          ),
+        )
       } catch (error) {
         if (cancelled) {
           return
@@ -318,7 +357,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [selectedProjectId])
+  }, [contextRefreshKey, selectedProjectId])
 
   const adjustProjectWorkItemCount = (projectId: number, delta: number) => {
     setProjects((current) =>
