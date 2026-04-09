@@ -129,9 +129,14 @@ Use the selected-project edit form to rebind the project to its new folder. Laun
 - `src/`: React frontend
 - `src-tauri/`: Rust backend and Tauri configuration
 - `scripts/`: local helper scripts for development and release workflows
+- `Project Files/Docs/`: design notes and architecture docs
 
 ## Next Step
 
 Run a live end-to-end validation: launch Claude from the app, confirm the
 supervisor-attached Project Commander MCP tools appear in the session, and
 verify Claude can read and update work items through those tools.
+
+Architecture checkpoint:
+
+- `docs/architecture/supervisor-planning-architecture.md`
