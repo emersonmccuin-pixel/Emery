@@ -24,6 +24,10 @@ type TerminalPromptDraft = {
   prompt: string
 }
 
+type LaunchSessionOptions = {
+  startupPrompt?: string
+}
+
 const WORK_ITEM_STATUS_ORDER: Record<WorkItemStatus, number> = {
   in_progress: 0,
   blocked: 1,
@@ -557,7 +561,7 @@ function App() {
     }
   }
 
-  const launchSession = async () => {
+  const launchSession = async (options?: LaunchSessionOptions) => {
     if (!selectedProject || !selectedLaunchProfile) {
       return null
     }
@@ -578,6 +582,7 @@ function App() {
           launchProfileId: selectedLaunchProfile.id,
           cols: 120,
           rows: 32,
+          startupPrompt: options?.startupPrompt,
         },
       })
 
@@ -900,26 +905,27 @@ function App() {
         prompt,
       })
 
-      const activeSession = hasLiveSession ? sessionSnapshot : await launchSession()
+      const activeSession =
+        hasLiveSession ? sessionSnapshot : await launchSession({ startupPrompt: prompt })
 
       if (!activeSession) {
         return
       }
 
-      if (!hasLiveSession) {
-        await new Promise((resolve) => window.setTimeout(resolve, 900))
-      }
-
-      try {
-        await sendPromptToSession(
-          selectedProject.id,
-          prompt,
-          `Focused handoff sent for work item #${targetWorkItem.id}.`,
-        )
-      } catch (error) {
-        setSessionError(
-          error instanceof Error ? error.message : 'Failed to send focused handoff to the terminal.',
-        )
+      if (hasLiveSession) {
+        try {
+          await sendPromptToSession(
+            selectedProject.id,
+            prompt,
+            `Focused handoff sent for work item #${targetWorkItem.id}.`,
+          )
+        } catch (error) {
+          setSessionError(
+            error instanceof Error ? error.message : 'Failed to send focused handoff to the terminal.',
+          )
+        }
+      } else {
+        setAgentPromptMessage(`Focused handoff started a fresh terminal for work item #${targetWorkItem.id}.`)
       }
     } catch (error) {
       setSessionError(
@@ -1137,7 +1143,13 @@ function App() {
                       className="button button--primary"
                       disabled={!selectedLaunchProfile || isLaunchingSession || launchBlockedByMissingRoot}
                       type="button"
-                      onClick={launchSession}
+                      onClick={() => {
+                        setTerminalPromptDraft({
+                          label: 'Workspace guide',
+                          prompt: agentStartupPrompt,
+                        })
+                        void launchSession({ startupPrompt: agentStartupPrompt })
+                      }}
                     >
                       {isLaunchingSession
                         ? 'Launching...'

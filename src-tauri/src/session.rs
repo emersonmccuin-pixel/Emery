@@ -45,6 +45,7 @@ pub struct LaunchSessionInput {
     pub launch_profile_id: i64,
     pub cols: u16,
     pub rows: u16,
+    pub startup_prompt: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -129,7 +130,16 @@ impl SessionManager {
             })
             .map_err(|error| format!("failed to open pty: {error}"))?;
 
-        let command = build_launch_command(&project, &profile, &app_state.storage())?;
+        let command = build_launch_command(
+            &project,
+            &profile,
+            &app_state.storage(),
+            input
+                .startup_prompt
+                .as_deref()
+                .map(str::trim)
+                .filter(|prompt| !prompt.is_empty()),
+        )?;
         let child = pair
             .slave
             .spawn_command(command)
@@ -263,6 +273,7 @@ fn build_launch_command(
     project: &crate::db::ProjectRecord,
     profile: &crate::db::LaunchProfileRecord,
     storage: &crate::db::StorageInfo,
+    startup_prompt: Option<&str>,
 ) -> Result<CommandBuilder, String> {
     let mut command = CommandBuilder::new("powershell.exe");
     let env_pairs = parse_env_json(&profile.env_json)?;
@@ -318,6 +329,19 @@ fn build_launch_command(
         script.push_str(profile.args.trim());
     }
 
+    if profile.provider == "claude_code" {
+        script.push_str(" --append-system-prompt ");
+        script.push_str(&format!(
+            "'{}'",
+            escape_ps(&build_claude_bridge_system_prompt(project))
+        ));
+    }
+
+    if let Some(prompt) = startup_prompt {
+        script.push(' ');
+        script.push_str(&format!("'{}'", escape_ps(prompt)));
+    }
+
     command.arg("-NoLogo");
     command.arg("-NoProfile");
     command.arg("-Command");
@@ -346,6 +370,19 @@ fn parse_env_json(raw: &str) -> Result<Vec<(String, String)>, String> {
             )
         })
         .collect())
+}
+
+fn build_claude_bridge_system_prompt(project: &crate::db::ProjectRecord) -> String {
+    format!(
+        concat!(
+            "You are running inside Project Commander for the project \"{}\" rooted at \"{}\". ",
+            "A local companion CLI named project-commander-cli is on PATH. ",
+            "Use it as the source of truth for project context, work items, and documents. ",
+            "At the start of each session, run `project-commander-cli session brief --json`. ",
+            "When you create, update, block, or close work, persist the change with project-commander-cli instead of only describing it in chat."
+        ),
+        project.name, project.root_path
+    )
 }
 
 fn escape_ps(value: &str) -> String {
