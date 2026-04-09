@@ -57,10 +57,11 @@ data.
 The current MVP slice includes:
 
 - a shared SQLite database owned by the app
+- a dedicated local supervisor process that owns live session runtime
 - registered projects with root folders
 - project edit/rebind flow when a registered root moves or is renamed
 - Claude Code launch profiles stored in the DB
-- a PTY-backed terminal slice that can launch Claude Code in the selected project root
+- a PTY-backed terminal slice driven through the supervisor for project-rooted Claude sessions
 - a selectable launch-profile workflow that acts as the MVP account model
 - project-scoped work-item CRUD for bugs, tasks, features, and notes
 - project-scoped documents with optional work-item links
@@ -98,9 +99,22 @@ project-commander-cli work-item close --id 12 --json
 project-commander-cli document list --json
 ```
 
-`npm run tauri:dev` and `npm run tauri:build` now build both helper binaries
-before starting the app shell so the MCP server and CLI fallback are available
-in both dev and local packaged runs.
+`npm run tauri:dev` and `npm run tauri:build` now build the CLI, MCP helper,
+and supervisor binaries before starting the app shell so the runtime behaves
+the same in dev and packaged runs.
+
+## Supervisor
+
+Project Commander now starts a local supervisor process on demand and talks to
+it over a localhost control API. The supervisor owns:
+
+- session launch and reattach
+- PTY lifecycle
+- terminal output buffering
+- session survival across frontend restarts
+
+The Tauri window is now a client of that runtime instead of the process that
+owns it directly.
 
 ## Project Roots
 
@@ -116,6 +130,5 @@ Use the selected-project edit form to rebind the project to its new folder. Laun
 
 ## Next Step
 
-Run a live end-to-end validation: launch Claude from the app, confirm the
-Project Commander MCP tools appear in the session, and verify Claude can read
-and update work items through those tools without relying on startup text.
+Move the Project Commander MCP attachment behind the supervisor so Claude-facing
+tooling and long-lived session orchestration live in the same runtime boundary.

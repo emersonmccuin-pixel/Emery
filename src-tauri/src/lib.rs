@@ -1,14 +1,15 @@
 pub mod db;
-mod session;
+pub mod session;
+pub mod session_api;
+pub mod session_host;
 
 use db::{
     AppState, BootstrapData, CreateDocumentInput, CreateLaunchProfileInput, CreateProjectInput,
     CreateWorkItemInput, DocumentRecord, LaunchProfileRecord, ProjectRecord, StorageInfo,
     UpdateDocumentInput, UpdateProjectInput, UpdateWorkItemInput, WorkItemRecord,
 };
-use session::{
-    LaunchSessionInput, ResizeSessionInput, SessionInput, SessionManager, SessionSnapshot,
-};
+use session::SupervisorClient;
+use session_api::{LaunchSessionInput, ResizeSessionInput, SessionInput, SessionSnapshot};
 use std::fs;
 use tauri::{AppHandle, Manager, State};
 
@@ -73,33 +74,33 @@ fn create_launch_profile(
 #[tauri::command]
 fn get_session_snapshot(
     project_id: i64,
-    state: State<SessionManager>,
+    state: State<SupervisorClient>,
+    app_handle: AppHandle,
 ) -> Result<Option<SessionSnapshot>, String> {
-    state.snapshot(project_id)
+    state.snapshot(project_id, &app_handle)
 }
 
 #[tauri::command]
 fn launch_project_session(
     input: LaunchSessionInput,
-    session_state: State<SessionManager>,
-    app_state: State<AppState>,
+    session_state: State<SupervisorClient>,
     app_handle: AppHandle,
 ) -> Result<SessionSnapshot, String> {
-    session_state.launch(input, &app_state, &app_handle)
+    session_state.launch(input, &app_handle)
 }
 
 #[tauri::command]
-fn write_session_input(input: SessionInput, state: State<SessionManager>) -> Result<(), String> {
+fn write_session_input(input: SessionInput, state: State<SupervisorClient>) -> Result<(), String> {
     state.write_input(input)
 }
 
 #[tauri::command]
-fn resize_session(input: ResizeSessionInput, state: State<SessionManager>) -> Result<(), String> {
+fn resize_session(input: ResizeSessionInput, state: State<SupervisorClient>) -> Result<(), String> {
     state.resize(input)
 }
 
 #[tauri::command]
-fn terminate_session(project_id: i64, state: State<SessionManager>) -> Result<(), String> {
+fn terminate_session(project_id: i64, state: State<SupervisorClient>) -> Result<(), String> {
     state.terminate(project_id)
 }
 
@@ -182,9 +183,10 @@ pub fn run() {
         ])
         .setup(|app| {
             let storage = ensure_storage_dirs(&app.handle())?;
-            let state = AppState::new(storage)?;
+            let state = AppState::new(storage.clone())?;
+            let supervisor = SupervisorClient::new(storage)?;
             app.manage(state);
-            app.manage(SessionManager::default());
+            app.manage(supervisor);
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(

@@ -42,6 +42,8 @@ export type SessionSnapshot = {
   isRunning: boolean
   startedAt: string
   output: string
+  exitCode?: number | null
+  exitSuccess?: boolean | null
 }
 
 export type TerminalOutputEvent = {
