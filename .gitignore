@@ -24,3 +24,6 @@ src-tauri/gen
 *.njsproj
 *.sln
 *.sw?
+
+# Project files (local docs/research)
+Project Files/
