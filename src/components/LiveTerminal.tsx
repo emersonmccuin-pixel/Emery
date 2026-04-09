@@ -43,6 +43,12 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
 
+    const focusTerminal = () => {
+      window.requestAnimationFrame(() => {
+        terminal.focus()
+      })
+    }
+
     const resizeTerminal = () => {
       fitAddon.fit()
 
@@ -58,11 +64,17 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
     }
 
     resizeTerminal()
+    focusTerminal()
 
     let disposed = false
     let outputUnlisten: (() => void) | undefined
     let exitUnlisten: (() => void) | undefined
     let resizeObserver: ResizeObserver | undefined
+    const handlePointerFocus = () => {
+      focusTerminal()
+    }
+    hostRef.current.addEventListener('pointerdown', handlePointerFocus)
+
     const bind = async () => {
       terminal.reset()
 
@@ -75,6 +87,7 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
       }
 
       terminal.write((latestSnapshot ?? snapshot).output)
+      focusTerminal()
 
       outputUnlisten = await listen<TerminalOutputEvent>('terminal-output', (event) => {
         if (event.payload.projectId !== snapshot.projectId) {
@@ -102,6 +115,7 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
 
     return () => {
       disposed = true
+      hostRef.current?.removeEventListener('pointerdown', handlePointerFocus)
       resizeObserver?.disconnect()
       outputUnlisten?.()
       exitUnlisten?.()
@@ -117,6 +131,8 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
     if (!terminal || !snapshot.isRunning) {
       return
     }
+
+    terminal.focus()
 
     const dataDisposable = terminal.onData((data) => {
       void invoke('write_session_input', {
