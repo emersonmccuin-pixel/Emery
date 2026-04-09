@@ -1,5 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useState, type FormEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
 import DocumentsPanel from './components/DocumentsPanel'
 import WorkItemsPanel from './components/WorkItemsPanel'
@@ -639,6 +640,7 @@ function App() {
 
     try {
       await invoke('terminate_session', { projectId: selectedProject.id })
+      await refreshSessionSnapshot(selectedProject.id)
     } catch (error) {
       setSessionError(error instanceof Error ? error.message : 'Failed to stop the live session.')
     } finally {
@@ -662,6 +664,28 @@ function App() {
       setSessionError(`Session exited with code ${event.exitCode}.`)
     }
   }, [])
+
+  useEffect(() => {
+    let disposed = false
+    let unlisten: (() => void) | undefined
+
+    const bind = async () => {
+      unlisten = await listen<TerminalExitEvent>('terminal-exit', (event) => {
+        if (disposed) {
+          return
+        }
+
+        handleSessionExit(event.payload)
+      })
+    }
+
+    void bind()
+
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [handleSessionExit])
 
   const isLiveSessionVisible =
     sessionSnapshot && selectedProject && sessionSnapshot.projectId === selectedProject.id
