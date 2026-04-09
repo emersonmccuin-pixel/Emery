@@ -1,4 +1,4 @@
-use crate::db::{DocumentRecord, ProjectRecord, WorkItemRecord};
+use crate::db::{DocumentRecord, ProjectRecord, SessionEventRecord, SessionRecord, WorkItemRecord};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -14,6 +14,13 @@ pub struct SessionBriefOutput {
 pub struct WorkItemDetailOutput {
     pub work_item: WorkItemRecord,
     pub linked_documents: Vec<DocumentRecord>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionHistoryOutput {
+    pub sessions: Vec<SessionRecord>,
+    pub events: Vec<SessionEventRecord>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -63,6 +70,19 @@ pub struct ListProjectDocumentsInput {
 pub struct ProjectDocumentTarget {
     pub project_id: i64,
     pub id: i64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListProjectSessionsInput {
+    pub project_id: i64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListProjectSessionEventsInput {
+    pub project_id: i64,
+    pub limit: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize)]

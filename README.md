@@ -65,6 +65,8 @@ The current MVP slice includes:
 - a selectable launch-profile workflow that acts as the MVP account model
 - project-scoped work-item CRUD for bugs, tasks, features, and notes routed through the supervisor
 - project-scoped documents with optional work-item links routed through the supervisor
+- durable session records owned by the supervisor
+- an append-only supervisor event log for session lifecycle plus work-item/document mutations
 - a supervisor-attached Project Commander MCP server for launched Claude Code sessions
 - the companion CLI bridge as a fallback for sessions where MCP tools are unavailable
 - a guided startup prompt in the app that can be copied or sent directly into the live Claude session
@@ -113,6 +115,8 @@ it over a localhost control API. The supervisor owns:
 - PTY lifecycle
 - terminal output buffering
 - session survival across frontend restarts
+- durable session history
+- append-only mutation and lifecycle events
 
 The Tauri window is now a client of that runtime instead of the process that
 owns it directly. Claude-facing Project Commander MCP tools are also attached

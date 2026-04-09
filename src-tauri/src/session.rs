@@ -7,10 +7,11 @@ use crate::session_api::{
 use crate::session_host::{now_timestamp_string, resolve_helper_binary_path};
 use crate::supervisor_api::{
     CreateProjectDocumentInput, CreateProjectWorkItemInput, ListProjectDocumentsInput,
-    ListProjectWorkItemsInput, ProjectDocumentTarget, ProjectWorkItemTarget,
-    UpdateProjectDocumentInput, UpdateProjectWorkItemInput,
+    ListProjectSessionEventsInput, ListProjectSessionsInput, ListProjectWorkItemsInput,
+    ProjectDocumentTarget, ProjectWorkItemTarget, UpdateProjectDocumentInput,
+    UpdateProjectWorkItemInput,
 };
-use crate::db::{DocumentRecord, WorkItemRecord};
+use crate::db::{DocumentRecord, SessionEventRecord, SessionRecord, WorkItemRecord};
 use reqwest::blocking::Client;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -30,6 +31,7 @@ const SUPERVISOR_BOOT_TIMEOUT: Duration = Duration::from_secs(5);
 const SUPERVISOR_BOOT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const SUPERVISOR_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 const SUPERVISOR_TERMINAL_POLL_INTERVAL: Duration = Duration::from_millis(200);
+const SUPERVISOR_REQUEST_SOURCE: &str = "desktop_ui";
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -178,6 +180,24 @@ impl SupervisorClient {
             &ProjectDocumentTarget { project_id, id },
         )
         .map(|_| ())
+    }
+
+    pub fn list_session_records(&self, project_id: i64) -> Result<Vec<SessionRecord>, String> {
+        self.request_json("session/list", &ListProjectSessionsInput { project_id })
+    }
+
+    pub fn list_session_events(
+        &self,
+        project_id: i64,
+        limit: usize,
+    ) -> Result<Vec<SessionEventRecord>, String> {
+        self.request_json(
+            "event/list",
+            &ListProjectSessionEventsInput {
+                project_id,
+                limit: Some(limit),
+            },
+        )
     }
 
     fn ensure_terminal_poller(&self, snapshot: &SessionSnapshot, app_handle: &AppHandle) {
@@ -338,6 +358,7 @@ impl SupervisorClient {
         let response = client
             .post(&url)
             .header("x-project-commander-token", &runtime.token)
+            .header("x-project-commander-source", SUPERVISOR_REQUEST_SOURCE)
             .json(payload)
             .send()
             .map_err(|error| {

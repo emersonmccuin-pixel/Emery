@@ -1,7 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 use project_commander_lib::db::{
-    AppState, CreateDocumentInput, CreateWorkItemInput, DocumentRecord, UpdateDocumentInput,
-    UpdateWorkItemInput, WorkItemRecord,
+    AppState, AppendSessionEventInput, CreateDocumentInput, CreateWorkItemInput, DocumentRecord,
+    UpdateDocumentInput, UpdateWorkItemInput, WorkItemRecord,
 };
 use project_commander_lib::session::build_supervisor_runtime_info;
 use project_commander_lib::session_api::{
@@ -11,10 +11,11 @@ use project_commander_lib::session_api::{
 use project_commander_lib::session_host::SessionRegistry;
 use project_commander_lib::supervisor_api::{
     CreateProjectDocumentInput, CreateProjectWorkItemInput, ListProjectDocumentsInput,
-    ListProjectWorkItemsInput, ProjectDocumentTarget, ProjectWorkItemTarget, SessionBriefOutput,
-    UpdateProjectDocumentInput, UpdateProjectWorkItemInput, WorkItemDetailOutput,
+    ListProjectSessionEventsInput, ListProjectSessionsInput, ListProjectWorkItemsInput,
+    ProjectDocumentTarget, ProjectWorkItemTarget, SessionBriefOutput, UpdateProjectDocumentInput,
+    UpdateProjectWorkItemInput, WorkItemDetailOutput,
 };
-use project_commander_lib::supervisor_mcp::run_supervisor_mcp_stdio;
+use project_commander_lib::supervisor_mcp::run_supervisor_mcp_stdio_with_session;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
@@ -45,11 +46,19 @@ struct McpStdioArgs {
     token: String,
     #[arg(long)]
     project_id: i64,
+    #[arg(long)]
+    session_id: Option<i64>,
 }
 
 struct RouteError {
     status: u16,
     message: String,
+}
+
+#[derive(Clone)]
+struct RequestContext {
+    source: String,
+    session_id: Option<i64>,
 }
 
 impl RouteError {
@@ -86,7 +95,14 @@ fn run() -> Result<(), String> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Command::McpStdio(args)) => run_supervisor_mcp_stdio(args.port, args.token, args.project_id),
+        Some(Command::McpStdio(args)) => {
+            run_supervisor_mcp_stdio_with_session(
+                args.port,
+                args.token,
+                args.project_id,
+                args.session_id,
+            )
+        }
         None => {
             let db_path = cli
                 .db_path
@@ -135,7 +151,9 @@ fn handle_request(
         );
     }
 
-    match route_request(&mut request, runtime, state, sessions) {
+    let context = build_request_context(&request);
+
+    match route_request(&mut request, runtime, state, sessions, &context) {
         Ok(payload) => respond_json(request, 200, &payload),
         Err(error) => respond_json(request, error.status, &json!({ "error": error.message })),
     }
@@ -146,6 +164,7 @@ fn route_request(
     runtime: &SupervisorRuntimeInfo,
     state: &AppState,
     sessions: &SessionRegistry,
+    context: &RequestContext,
 ) -> Result<Value, RouteError> {
     let route = request.url().split('?').next().unwrap_or_default();
 
@@ -161,11 +180,20 @@ fn route_request(
             serde_json::to_value(sessions.snapshot(input.project_id).map_err(RouteError::internal)?)
                 .map_err(|error| RouteError::internal(format!("failed to encode session snapshot: {error}")))
         }
+        (&Method::Post, "/session/list") => {
+            let input = read_json::<ListProjectSessionsInput>(request)?;
+            let sessions = state
+                .list_session_records(input.project_id)
+                .map_err(RouteError::internal)?;
+
+            serde_json::to_value(sessions)
+                .map_err(|error| RouteError::internal(format!("failed to encode session records: {error}")))
+        }
         (&Method::Post, "/session/launch") => {
             let input = read_json::<LaunchSessionInput>(request)?;
             serde_json::to_value(
                 sessions
-                    .launch(input, state, runtime)
+                    .launch(input, state, runtime, &context.source)
                     .map_err(RouteError::internal)?,
             )
             .map_err(|error| RouteError::internal(format!("failed to encode launched session: {error}")))
@@ -183,9 +211,18 @@ fn route_request(
         (&Method::Post, "/session/terminate") => {
             let input = read_json::<ProjectSessionTarget>(request)?;
             sessions
-                .terminate(input.project_id)
+                .terminate(input.project_id, state, &context.source)
                 .map_err(RouteError::internal)?;
             Ok(json!({ "ok": true }))
+        }
+        (&Method::Post, "/event/list") => {
+            let input = read_json::<ListProjectSessionEventsInput>(request)?;
+            let events = state
+                .list_session_events(input.project_id, input.limit.unwrap_or(100))
+                .map_err(RouteError::internal)?;
+
+            serde_json::to_value(events)
+                .map_err(|error| RouteError::internal(format!("failed to encode session events: {error}")))
         }
         (&Method::Post, "/project/current") => {
             let input = read_json::<ProjectSessionTarget>(request)?;
@@ -250,6 +287,15 @@ fn route_request(
                     status: input.status.unwrap_or_else(|| "backlog".to_string()),
                 })
                 .map_err(RouteError::internal)?;
+            append_project_event(
+                state,
+                context,
+                input.project_id,
+                "work_item.created",
+                "work_item",
+                work_item.id,
+                &work_item,
+            );
 
             serde_json::to_value(work_item)
                 .map_err(|error| RouteError::internal(format!("failed to encode created work item: {error}")))
@@ -266,6 +312,15 @@ fn route_request(
                     status: input.status.unwrap_or(existing.status),
                 })
                 .map_err(RouteError::internal)?;
+            append_project_event(
+                state,
+                context,
+                input.project_id,
+                "work_item.updated",
+                "work_item",
+                work_item.id,
+                &work_item,
+            );
 
             serde_json::to_value(work_item)
                 .map_err(|error| RouteError::internal(format!("failed to encode updated work item: {error}")))
@@ -282,16 +337,34 @@ fn route_request(
                     status: "done".to_string(),
                 })
                 .map_err(RouteError::internal)?;
+            append_project_event(
+                state,
+                context,
+                input.project_id,
+                "work_item.closed",
+                "work_item",
+                work_item.id,
+                &work_item,
+            );
 
             serde_json::to_value(work_item)
                 .map_err(|error| RouteError::internal(format!("failed to encode closed work item: {error}")))
         }
         (&Method::Post, "/work-item/delete") => {
             let input = read_json::<ProjectWorkItemTarget>(request)?;
-            let _ = require_work_item_for_project(state, input.project_id, input.id)?;
+            let work_item = require_work_item_for_project(state, input.project_id, input.id)?;
             state
                 .delete_work_item(input.id)
                 .map_err(RouteError::internal)?;
+            append_project_event(
+                state,
+                context,
+                input.project_id,
+                "work_item.deleted",
+                "work_item",
+                work_item.id,
+                &work_item,
+            );
             Ok(json!({ "ok": true }))
         }
         (&Method::Post, "/document/list") => {
@@ -328,6 +401,15 @@ fn route_request(
                     body: input.body.unwrap_or_default(),
                 })
                 .map_err(RouteError::internal)?;
+            append_project_event(
+                state,
+                context,
+                input.project_id,
+                "document.created",
+                "document",
+                document.id,
+                &document,
+            );
 
             serde_json::to_value(document)
                 .map_err(|error| RouteError::internal(format!("failed to encode created document: {error}")))
@@ -353,16 +435,34 @@ fn route_request(
                     body: input.body.unwrap_or(existing.body),
                 })
                 .map_err(RouteError::internal)?;
+            append_project_event(
+                state,
+                context,
+                input.project_id,
+                "document.updated",
+                "document",
+                document.id,
+                &document,
+            );
 
             serde_json::to_value(document)
                 .map_err(|error| RouteError::internal(format!("failed to encode updated document: {error}")))
         }
         (&Method::Post, "/document/delete") => {
             let input = read_json::<ProjectDocumentTarget>(request)?;
-            let _ = require_document_for_project(state, input.project_id, input.id)?;
+            let document = require_document_for_project(state, input.project_id, input.id)?;
             state
                 .delete_document(input.id)
                 .map_err(RouteError::internal)?;
+            append_project_event(
+                state,
+                context,
+                input.project_id,
+                "document.deleted",
+                "document",
+                document.id,
+                &document,
+            );
             Ok(json!({ "ok": true }))
         }
         _ => Err(RouteError::not_found("route not found")),
@@ -400,6 +500,56 @@ fn require_document_for_project(
                 "document #{document_id} is not part of project #{project_id}"
             ))
         })
+}
+
+fn append_project_event<T>(
+    state: &AppState,
+    context: &RequestContext,
+    project_id: i64,
+    event_type: &str,
+    entity_type: &str,
+    entity_id: i64,
+    payload: &T,
+) where
+    T: Serialize,
+{
+    let payload_json = match serde_json::to_string(payload) {
+        Ok(payload_json) => payload_json,
+        Err(error) => {
+            eprintln!("failed to encode Project Commander event payload: {error}");
+            return;
+        }
+    };
+
+    if let Err(error) = state.append_session_event(AppendSessionEventInput {
+        project_id,
+        session_id: context.session_id,
+        event_type: event_type.to_string(),
+        entity_type: Some(entity_type.to_string()),
+        entity_id: Some(entity_id),
+        source: context.source.clone(),
+        payload_json,
+    }) {
+        eprintln!("failed to append Project Commander event: {error}");
+    }
+}
+
+fn build_request_context(request: &Request) -> RequestContext {
+    let source = request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv("x-project-commander-source"))
+        .map(|header| header.value.as_str().trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let session_id = request
+        .headers()
+        .iter()
+        .find(|header| header.field.equiv("x-project-commander-session-id"))
+        .and_then(|header| header.value.as_str().trim().parse::<i64>().ok());
+
+    RequestContext { source, session_id }
 }
 
 fn is_authorized(request: &Request, expected_token: &str) -> bool {

@@ -63,6 +63,39 @@ pub struct DocumentRecord {
     pub updated_at: String,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRecord {
+    pub id: i64,
+    pub project_id: i64,
+    pub launch_profile_id: Option<i64>,
+    pub provider: String,
+    pub profile_label: String,
+    pub root_path: String,
+    pub state: String,
+    pub startup_prompt: String,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    pub exit_code: Option<i64>,
+    pub exit_success: Option<bool>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEventRecord {
+    pub id: i64,
+    pub project_id: i64,
+    pub session_id: Option<i64>,
+    pub event_type: String,
+    pub entity_type: Option<String>,
+    pub entity_id: Option<i64>,
+    pub source: String,
+    pub payload_json: String,
+    pub created_at: String,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapData {
@@ -133,6 +166,39 @@ pub struct UpdateDocumentInput {
     pub body: String,
 }
 
+#[derive(Clone)]
+pub struct CreateSessionRecordInput {
+    pub project_id: i64,
+    pub launch_profile_id: Option<i64>,
+    pub provider: String,
+    pub profile_label: String,
+    pub root_path: String,
+    pub state: String,
+    pub startup_prompt: String,
+    pub started_at: String,
+}
+
+#[derive(Clone)]
+pub struct FinishSessionRecordInput {
+    pub id: i64,
+    pub state: String,
+    pub ended_at: Option<String>,
+    pub exit_code: Option<i64>,
+    pub exit_success: Option<bool>,
+}
+
+#[derive(Clone)]
+pub struct AppendSessionEventInput {
+    pub project_id: i64,
+    pub session_id: Option<i64>,
+    pub event_type: String,
+    pub entity_type: Option<String>,
+    pub entity_id: Option<i64>,
+    pub source: String,
+    pub payload_json: String,
+}
+
+#[derive(Clone)]
 pub struct AppState {
     storage: StorageInfo,
     database_path: PathBuf,
@@ -470,6 +536,143 @@ impl AppState {
         touch_project(&connection, existing.project_id)
     }
 
+    pub fn create_session_record(
+        &self,
+        input: CreateSessionRecordInput,
+    ) -> Result<SessionRecord, String> {
+        let connection = self.connect()?;
+        self.get_project(input.project_id)?;
+
+        connection
+            .execute(
+                "INSERT INTO sessions (
+                    project_id,
+                    launch_profile_id,
+                    provider,
+                    profile_label,
+                    root_path,
+                    state,
+                    startup_prompt,
+                    started_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    input.project_id,
+                    input.launch_profile_id,
+                    input.provider,
+                    input.profile_label,
+                    input.root_path,
+                    input.state,
+                    input.startup_prompt,
+                    input.started_at,
+                ],
+            )
+            .map_err(|error| format!("failed to create session record: {error}"))?;
+
+        touch_project(&connection, input.project_id)?;
+        load_session_record_by_id(&connection, connection.last_insert_rowid())
+    }
+
+    pub fn finish_session_record(
+        &self,
+        input: FinishSessionRecordInput,
+    ) -> Result<SessionRecord, String> {
+        let connection = self.connect()?;
+        let existing = load_session_record_by_id(&connection, input.id)?;
+
+        connection
+            .execute(
+                "UPDATE sessions
+                 SET state = ?1,
+                     ended_at = ?2,
+                     exit_code = ?3,
+                     exit_success = ?4,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?5",
+                params![
+                    input.state,
+                    input.ended_at,
+                    input.exit_code,
+                    input.exit_success,
+                    input.id
+                ],
+            )
+            .map_err(|error| format!("failed to finish session record: {error}"))?;
+
+        touch_project(&connection, existing.project_id)?;
+        load_session_record_by_id(&connection, input.id)
+    }
+
+    pub fn append_session_event(
+        &self,
+        input: AppendSessionEventInput,
+    ) -> Result<SessionEventRecord, String> {
+        let connection = self.connect()?;
+        self.get_project(input.project_id)?;
+        let event_type = input.event_type.trim();
+        let source = input.source.trim();
+        let payload_json = normalize_json_payload(&input.payload_json)?;
+
+        if event_type.is_empty() {
+            return Err("session event type is required".to_string());
+        }
+
+        if source.is_empty() {
+            return Err("session event source is required".to_string());
+        }
+
+        if let Some(session_id) = input.session_id {
+            let session = load_session_record_by_id(&connection, session_id)?;
+
+            if session.project_id != input.project_id {
+                return Err(format!(
+                    "session #{session_id} does not belong to project #{}",
+                    input.project_id
+                ));
+            }
+        }
+
+        connection
+            .execute(
+                "INSERT INTO session_events (
+                    project_id,
+                    session_id,
+                    event_type,
+                    entity_type,
+                    entity_id,
+                    source,
+                    payload_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    input.project_id,
+                    input.session_id,
+                    event_type,
+                    input.entity_type,
+                    input.entity_id,
+                    source,
+                    payload_json
+                ],
+            )
+            .map_err(|error| format!("failed to append session event: {error}"))?;
+
+        load_session_event_by_id(&connection, connection.last_insert_rowid())
+    }
+
+    pub fn list_session_records(&self, project_id: i64) -> Result<Vec<SessionRecord>, String> {
+        let connection = self.connect()?;
+        self.get_project(project_id)?;
+        load_session_records_by_project_id(&connection, project_id)
+    }
+
+    pub fn list_session_events(
+        &self,
+        project_id: i64,
+        limit: usize,
+    ) -> Result<Vec<SessionEventRecord>, String> {
+        let connection = self.connect()?;
+        self.get_project(project_id)?;
+        load_session_events_by_project_id(&connection, project_id, limit)
+    }
+
     fn connect(&self) -> Result<Connection, String> {
         open_connection(&self.database_path)
     }
@@ -551,6 +754,35 @@ fn migrate(connection: &Connection) -> Result<(), String> {
               updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS sessions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              launch_profile_id INTEGER REFERENCES launch_profiles(id) ON DELETE SET NULL,
+              provider TEXT NOT NULL,
+              profile_label TEXT NOT NULL,
+              root_path TEXT NOT NULL,
+              state TEXT NOT NULL,
+              startup_prompt TEXT NOT NULL DEFAULT '',
+              started_at TEXT NOT NULL,
+              ended_at TEXT,
+              exit_code INTEGER,
+              exit_success INTEGER,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS session_events (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+              event_type TEXT NOT NULL,
+              entity_type TEXT,
+              entity_id INTEGER,
+              source TEXT NOT NULL,
+              payload_json TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE INDEX IF NOT EXISTS idx_work_items_project_id
               ON work_items(project_id);
 
@@ -559,6 +791,15 @@ fn migrate(connection: &Connection) -> Result<(), String> {
 
             CREATE INDEX IF NOT EXISTS idx_session_summaries_project_id
               ON session_summaries(project_id);
+
+            CREATE INDEX IF NOT EXISTS idx_sessions_project_id
+              ON sessions(project_id);
+
+            CREATE INDEX IF NOT EXISTS idx_session_events_project_id
+              ON session_events(project_id);
+
+            CREATE INDEX IF NOT EXISTS idx_session_events_session_id
+              ON session_events(session_id);
             ",
         )
         .map_err(|error| format!("failed to run database migrations: {error}"))
@@ -601,7 +842,7 @@ fn load_projects(connection: &Connection) -> Result<Vec<ProjectRecord>, String> 
               p.updated_at,
               (SELECT COUNT(*) FROM work_items w WHERE w.project_id = p.id) AS work_item_count,
               (SELECT COUNT(*) FROM documents d WHERE d.project_id = p.id) AS document_count,
-              (SELECT COUNT(*) FROM session_summaries s WHERE s.project_id = p.id) AS session_count
+              (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS session_count
             FROM projects p
             ORDER BY p.updated_at DESC, p.id DESC
             ",
@@ -641,7 +882,7 @@ fn load_project_by_id(connection: &Connection, id: i64) -> Result<ProjectRecord,
               p.updated_at,
               (SELECT COUNT(*) FROM work_items w WHERE w.project_id = p.id) AS work_item_count,
               (SELECT COUNT(*) FROM documents d WHERE d.project_id = p.id) AS document_count,
-              (SELECT COUNT(*) FROM session_summaries s WHERE s.project_id = p.id) AS session_count
+              (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS session_count
             FROM projects p
             WHERE p.id = ?1
             ",
@@ -893,6 +1134,165 @@ fn load_document_by_id(connection: &Connection, id: i64) -> Result<DocumentRecor
         .map_err(|error| format!("failed to load document: {error}"))
 }
 
+fn load_session_records_by_project_id(
+    connection: &Connection,
+    project_id: i64,
+) -> Result<Vec<SessionRecord>, String> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT
+              id,
+              project_id,
+              launch_profile_id,
+              provider,
+              profile_label,
+              root_path,
+              state,
+              startup_prompt,
+              started_at,
+              ended_at,
+              exit_code,
+              exit_success,
+              created_at,
+              updated_at
+            FROM sessions
+            WHERE project_id = ?1
+            ORDER BY started_at DESC, id DESC
+            ",
+        )
+        .map_err(|error| format!("failed to prepare session query: {error}"))?;
+
+    let rows = statement
+        .query_map([project_id], |row| map_session_record(row))
+        .map_err(|error| format!("failed to load sessions: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to map sessions: {error}"))
+}
+
+fn load_session_record_by_id(connection: &Connection, id: i64) -> Result<SessionRecord, String> {
+    connection
+        .query_row(
+            "
+            SELECT
+              id,
+              project_id,
+              launch_profile_id,
+              provider,
+              profile_label,
+              root_path,
+              state,
+              startup_prompt,
+              started_at,
+              ended_at,
+              exit_code,
+              exit_success,
+              created_at,
+              updated_at
+            FROM sessions
+            WHERE id = ?1
+            ",
+            [id],
+            map_session_record,
+        )
+        .map_err(|error| format!("failed to load session record: {error}"))
+}
+
+fn load_session_events_by_project_id(
+    connection: &Connection,
+    project_id: i64,
+    limit: usize,
+) -> Result<Vec<SessionEventRecord>, String> {
+    let limit = i64::try_from(limit.max(1)).map_err(|_| "session event limit is too large")?;
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT
+              id,
+              project_id,
+              session_id,
+              event_type,
+              entity_type,
+              entity_id,
+              source,
+              payload_json,
+              created_at
+            FROM session_events
+            WHERE project_id = ?1
+            ORDER BY id DESC
+            LIMIT ?2
+            ",
+        )
+        .map_err(|error| format!("failed to prepare session event query: {error}"))?;
+
+    let rows = statement
+        .query_map(params![project_id, limit], |row| map_session_event_record(row))
+        .map_err(|error| format!("failed to load session events: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to map session events: {error}"))
+}
+
+fn load_session_event_by_id(
+    connection: &Connection,
+    id: i64,
+) -> Result<SessionEventRecord, String> {
+    connection
+        .query_row(
+            "
+            SELECT
+              id,
+              project_id,
+              session_id,
+              event_type,
+              entity_type,
+              entity_id,
+              source,
+              payload_json,
+              created_at
+            FROM session_events
+            WHERE id = ?1
+            ",
+            [id],
+            map_session_event_record,
+        )
+        .map_err(|error| format!("failed to load session event: {error}"))
+}
+
+fn map_session_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRecord> {
+    Ok(SessionRecord {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        launch_profile_id: row.get(2)?,
+        provider: row.get(3)?,
+        profile_label: row.get(4)?,
+        root_path: row.get(5)?,
+        state: row.get(6)?,
+        startup_prompt: row.get(7)?,
+        started_at: row.get(8)?,
+        ended_at: row.get(9)?,
+        exit_code: row.get(10)?,
+        exit_success: row.get(11)?,
+        created_at: row.get(12)?,
+        updated_at: row.get(13)?,
+    })
+}
+
+fn map_session_event_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionEventRecord> {
+    Ok(SessionEventRecord {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        session_id: row.get(2)?,
+        event_type: row.get(3)?,
+        entity_type: row.get(4)?,
+        entity_id: row.get(5)?,
+        source: row.get(6)?,
+        payload_json: row.get(7)?,
+        created_at: row.get(8)?,
+    })
+}
+
 fn find_project_by_path(
     connection: &Connection,
     path: &Path,
@@ -984,6 +1384,20 @@ fn normalize_env_json(raw: &str) -> Result<String, String> {
 
     serde_json::to_string_pretty(&parsed)
         .map_err(|error| format!("failed to normalize environment JSON: {error}"))
+}
+
+fn normalize_json_payload(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim();
+
+    if trimmed.is_empty() {
+        return Ok("{}".to_string());
+    }
+
+    let parsed = serde_json::from_str::<serde_json::Value>(trimmed)
+        .map_err(|error| format!("event payload JSON is invalid: {error}"))?;
+
+    serde_json::to_string(&parsed)
+        .map_err(|error| format!("failed to normalize event payload JSON: {error}"))
 }
 
 fn project_root_available(root_path: &str) -> bool {

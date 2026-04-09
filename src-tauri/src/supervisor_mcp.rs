@@ -17,7 +17,32 @@ const MCP_SERVER_VERSION: &str = "0.1.0";
 const MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub fn run_supervisor_mcp_stdio(port: u16, token: String, project_id: i64) -> Result<(), String> {
-    let client = SupervisorMcpClient::new(port, token, project_id)?;
+    let client = SupervisorMcpClient::new(port, token, project_id, None)?;
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    let mut reader = BufReader::new(stdin.lock());
+    let mut writer = stdout.lock();
+
+    loop {
+        let Some(message) = read_message(&mut reader)? else {
+            break;
+        };
+
+        if let Some(response) = handle_message(&client, message)? {
+            write_message(&mut writer, &response)?;
+        }
+    }
+
+    Ok(())
+}
+
+pub fn run_supervisor_mcp_stdio_with_session(
+    port: u16,
+    token: String,
+    project_id: i64,
+    session_id: Option<i64>,
+) -> Result<(), String> {
+    let client = SupervisorMcpClient::new(port, token, project_id, session_id)?;
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut reader = BufReader::new(stdin.lock());
@@ -41,10 +66,11 @@ struct SupervisorMcpClient {
     base_url: String,
     token: String,
     project_id: i64,
+    session_id: Option<i64>,
 }
 
 impl SupervisorMcpClient {
-    fn new(port: u16, token: String, project_id: i64) -> Result<Self, String> {
+    fn new(port: u16, token: String, project_id: i64, session_id: Option<i64>) -> Result<Self, String> {
         let client = Client::builder()
             .timeout(MCP_REQUEST_TIMEOUT)
             .build()
@@ -55,6 +81,7 @@ impl SupervisorMcpClient {
             base_url: format!("http://127.0.0.1:{port}"),
             token,
             project_id,
+            session_id,
         })
     }
 
@@ -210,6 +237,13 @@ impl SupervisorMcpClient {
             .client
             .post(format!("{}/{}", self.base_url, route))
             .header("x-project-commander-token", &self.token)
+            .header("x-project-commander-source", "agent_mcp")
+            .header(
+                "x-project-commander-session-id",
+                self.session_id
+                    .map(|session_id| session_id.to_string())
+                    .unwrap_or_default(),
+            )
             .json(payload)
             .send()
             .map_err(|error| format!("failed to reach Project Commander supervisor: {error}"))?;
