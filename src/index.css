@@ -1,0 +1,251 @@
+:root {
+  font-family: 'Space Grotesk', 'Segoe UI', sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #f3efe5;
+  background:
+    radial-gradient(circle at top, rgba(231, 126, 35, 0.24), transparent 32%),
+    linear-gradient(160deg, #111313 0%, #18201f 42%, #0c0f10 100%);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  --surface: rgba(18, 23, 24, 0.82);
+  --surface-strong: rgba(25, 32, 33, 0.95);
+  --border: rgba(237, 226, 208, 0.12);
+  --muted: #c0baae;
+  --accent: #f08c3a;
+  --accent-strong: #ffd166;
+  --success: #5ed19b;
+  --danger: #ff7f6e;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+code {
+  font-family: 'JetBrains Mono', Consolas, monospace;
+}
+
+.shell {
+  width: min(1120px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 32px 0 48px;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.9fr);
+  gap: 24px;
+  align-items: stretch;
+}
+
+.hero__copy,
+.status-panel,
+.card {
+  backdrop-filter: blur(14px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.25);
+}
+
+.hero__copy {
+  padding: 40px;
+  position: relative;
+  overflow: hidden;
+}
+
+.hero__copy::after {
+  content: '';
+  position: absolute;
+  inset: auto -10% -30% 35%;
+  height: 240px;
+  background: radial-gradient(circle, rgba(240, 140, 58, 0.3), transparent 68%);
+  pointer-events: none;
+}
+
+.eyebrow {
+  margin: 0 0 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.24em;
+  font-size: 0.75rem;
+  color: var(--accent-strong);
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(3rem, 8vw, 5.8rem);
+  line-height: 0.94;
+  letter-spacing: -0.06em;
+}
+
+.lede {
+  max-width: 42rem;
+  margin: 24px 0 0;
+  font-size: 1.1rem;
+  color: var(--muted);
+}
+
+.hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 32px;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0 18px;
+  border-radius: 999px;
+  text-decoration: none;
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+.button:hover {
+  transform: translateY(-1px);
+}
+
+.button--primary {
+  background: linear-gradient(135deg, var(--accent) 0%, #f25f4c 100%);
+  color: #151515;
+  font-weight: 700;
+}
+
+.button--secondary {
+  border: 1px solid var(--border);
+  color: #f5f0e8;
+}
+
+.status-panel {
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+}
+
+.status-panel__label {
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+}
+
+.status-panel__message {
+  margin: 0;
+  color: #f8f3ea;
+}
+
+.status-badge {
+  width: fit-content;
+  padding: 8px 12px;
+  border-radius: 999px;
+  text-transform: capitalize;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.status-badge--loading {
+  background: rgba(255, 209, 102, 0.16);
+  color: var(--accent-strong);
+}
+
+.status-badge--ready {
+  background: rgba(94, 209, 155, 0.14);
+  color: var(--success);
+}
+
+.status-badge--error {
+  background: rgba(255, 127, 110, 0.14);
+  color: var(--danger);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.card {
+  padding: 24px;
+  background: var(--surface-strong);
+}
+
+.card__index {
+  display: inline-block;
+  margin-bottom: 20px;
+  color: var(--accent-strong);
+  font-size: 0.85rem;
+  letter-spacing: 0.18em;
+}
+
+.card h2 {
+  margin: 0 0 12px;
+  font-size: 1.4rem;
+}
+
+.card p {
+  margin: 0 0 18px;
+  color: var(--muted);
+}
+
+.card code {
+  display: inline-block;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+@media (max-width: 900px) {
+  .shell {
+    width: min(100%, calc(100% - 20px));
+    padding-top: 16px;
+  }
+
+  .hero,
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hero__copy,
+  .status-panel,
+  .card {
+    border-radius: 22px;
+  }
+
+  .hero__copy {
+    padding: 28px 22px;
+  }
+}

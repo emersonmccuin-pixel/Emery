@@ -1,0 +1,111 @@
+import { useEffect, useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
+
+type RuntimeStatus = 'loading' | 'ready' | 'error'
+
+function App() {
+  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>('loading')
+  const [runtimeMessage, setRuntimeMessage] = useState('Connecting to the Rust runtime...')
+
+  useEffect(() => {
+    let cancelled = false
+
+    const load = async () => {
+      try {
+        const message = await invoke<string>('health_check')
+
+        if (cancelled) {
+          return
+        }
+
+        setRuntimeStatus('ready')
+        setRuntimeMessage(message)
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+
+        setRuntimeStatus('error')
+        setRuntimeMessage(
+          error instanceof Error ? error.message : 'The Rust runtime did not respond.',
+        )
+      }
+    }
+
+    void load()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  return (
+    <main className="shell">
+      <section className="hero">
+        <div className="hero__copy">
+          <p className="eyebrow">Rust + Tauri + React</p>
+          <h1>Project Commander</h1>
+          <p className="lede">
+            A desktop foundation for command centers, internal tooling, or a
+            focused personal app without Electron overhead.
+          </p>
+          <div className="hero__actions">
+            <a className="button button--primary" href="https://tauri.app" target="_blank" rel="noreferrer">
+              Tauri Docs
+            </a>
+            <a
+              className="button button--secondary"
+              href="https://react.dev"
+              target="_blank"
+              rel="noreferrer"
+            >
+              React Docs
+            </a>
+          </div>
+        </div>
+
+        <div className="status-panel">
+          <div className="status-panel__label">Runtime status</div>
+          <div className={`status-badge status-badge--${runtimeStatus}`}>
+            {runtimeStatus}
+          </div>
+          <p className="status-panel__message">{runtimeMessage}</p>
+        </div>
+      </section>
+
+      <section className="grid">
+        <article className="card">
+          <span className="card__index">01</span>
+          <h2>Frontend workflow</h2>
+          <p>
+            Build the interface in React with Vite hot reload, then run the same
+            app inside the native Tauri shell.
+          </p>
+          <code>npm run tauri:dev</code>
+        </article>
+
+        <article className="card">
+          <span className="card__index">02</span>
+          <h2>Rust backend</h2>
+          <p>
+            Add commands in <code>src-tauri/src/lib.rs</code> and invoke them
+            from React when you need filesystem, process, or OS integrations.
+          </p>
+          <code>invoke('your_command')</code>
+        </article>
+
+        <article className="card">
+          <span className="card__index">03</span>
+          <h2>Packaging path</h2>
+          <p>
+            The Tauri config is already wired to build the Vite bundle before
+            desktop packaging.
+          </p>
+          <code>npm run tauri:build</code>
+        </article>
+      </section>
+    </main>
+  )
+}
+
+export default App
