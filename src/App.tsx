@@ -820,6 +820,24 @@ function App() {
     }
   }
 
+  const copyTerminalOutput = async () => {
+    const terminalOutput = sessionSnapshot?.output?.trim()
+
+    if (!terminalOutput) {
+      setAgentPromptMessage('No terminal output available to copy yet.')
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(terminalOutput)
+      setAgentPromptMessage('Terminal output copied.')
+    } catch (error) {
+      setAgentPromptMessage(
+        error instanceof Error ? error.message : 'Failed to copy terminal output.',
+      )
+    }
+  }
+
   const sendAgentStartupPrompt = async () => {
     if (!selectedProject || !sessionSnapshot?.isRunning || !currentTerminalPrompt) {
       return
@@ -1319,6 +1337,14 @@ function App() {
                     <div className="action-row">
                       <button className="button button--secondary" type="button" onClick={copyAgentStartupPrompt}>
                         {terminalPromptDraft ? 'Copy focus prompt' : 'Copy prompt'}
+                      </button>
+                      <button
+                        className="button button--secondary"
+                        disabled={!sessionSnapshot?.output}
+                        type="button"
+                        onClick={copyTerminalOutput}
+                      >
+                        Copy terminal output
                       </button>
                       <button
                         className="button button--primary"
