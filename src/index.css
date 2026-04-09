@@ -455,6 +455,12 @@ select:focus {
   gap: 10px;
 }
 
+.bridge-card__prompt {
+  min-height: 240px;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  line-height: 1.45;
+}
+
 .bridge-card__commands code {
   display: inline-block;
   padding: 10px 12px;

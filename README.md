@@ -64,7 +64,8 @@ The current MVP slice includes:
 - a selectable launch-profile workflow that acts as the MVP account model
 - project-scoped work-item CRUD for bugs, tasks, features, and notes
 - project-scoped documents with optional work-item links
-- an agent bridge CLI that lets launched Claude Code sessions list, create, update, and close work items
+- an agent bridge CLI that lets launched Claude Code sessions inspect project context and persist work-item changes
+- a guided startup prompt in the app that can be copied or sent directly into the live Claude session
 
 ## Agent Bridge
 
@@ -80,10 +81,11 @@ They also get the companion `project-commander-cli` helper on `PATH`.
 Example commands inside a launched Claude Code session:
 
 ```powershell
-project-commander-cli project current --json
-project-commander-cli work-item list --json
+project-commander-cli session brief --json
 project-commander-cli work-item create --type bug --title "Log a bug in Emery" --body "Describe the issue." --json
+project-commander-cli work-item update --id 12 --status in_progress --body "Started work." --json
 project-commander-cli work-item close --id 12 --json
+project-commander-cli document list --json
 ```
 
 `npm run tauri:dev` and `npm run tauri:build` now build the companion CLI before starting the app shell so the bridge is available in both dev and local packaged runs.
@@ -102,4 +104,4 @@ Use the selected-project edit form to rebind the project to its new folder. Laun
 
 ## Next Step
 
-Add session summaries so Claude Code has a persistent record of what happened in each run without storing full transcripts.
+Run a live end-to-end validation: launch Claude from the app, send the startup prompt, and confirm it creates, updates, and closes real work items through `project-commander-cli`.

@@ -1,6 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 use project_commander_lib::db::{
-    AppState, CreateWorkItemInput, ProjectRecord, UpdateWorkItemInput, WorkItemRecord,
+    AppState, CreateDocumentInput, CreateWorkItemInput, DocumentRecord, ProjectRecord,
+    UpdateDocumentInput, UpdateWorkItemInput, WorkItemRecord,
 };
 use serde::Serialize;
 use std::env;
@@ -9,7 +10,7 @@ use std::path::{Path, PathBuf};
 #[derive(Parser)]
 #[command(
     name = "project-commander-cli",
-    about = "Manage Project Commander work items from a rooted terminal session.",
+    about = "Inspect and update Project Commander project context from a rooted terminal session.",
     after_help = "When launched from Project Commander, the active project and DB path are injected automatically."
 )]
 struct Cli {
@@ -22,7 +23,9 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Project(ProjectCommand),
+    Session(SessionCommand),
     WorkItem(WorkItemCommand),
+    Document(DocumentCommand),
 }
 
 #[derive(Args)]
@@ -45,6 +48,25 @@ struct ProjectCurrentArgs {
 }
 
 #[derive(Args)]
+struct SessionCommand {
+    #[command(subcommand)]
+    command: SessionSubcommand,
+}
+
+#[derive(Subcommand)]
+enum SessionSubcommand {
+    Brief(SessionBriefArgs),
+}
+
+#[derive(Args)]
+struct SessionBriefArgs {
+    #[command(flatten)]
+    project: ProjectSelectionArgs,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args)]
 struct WorkItemCommand {
     #[command(subcommand)]
     command: WorkItemSubcommand,
@@ -56,6 +78,20 @@ enum WorkItemSubcommand {
     Create(CreateWorkItemArgs),
     Update(UpdateWorkItemArgs),
     Close(CloseWorkItemArgs),
+}
+
+#[derive(Args)]
+struct DocumentCommand {
+    #[command(subcommand)]
+    command: DocumentSubcommand,
+}
+
+#[derive(Subcommand)]
+enum DocumentSubcommand {
+    List(ListDocumentsArgs),
+    Create(CreateDocumentArgs),
+    Update(UpdateDocumentArgs),
+    Delete(DeleteDocumentArgs),
 }
 
 #[derive(Args, Clone, Copy)]
@@ -118,6 +154,64 @@ struct CloseWorkItemArgs {
     json: bool,
 }
 
+#[derive(Args)]
+struct ListDocumentsArgs {
+    #[command(flatten)]
+    project: ProjectSelectionArgs,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args)]
+struct CreateDocumentArgs {
+    #[command(flatten)]
+    project: ProjectSelectionArgs,
+    #[arg(long)]
+    title: String,
+    #[arg(long, default_value = "")]
+    body: String,
+    #[arg(long)]
+    work_item_id: Option<i64>,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args)]
+struct UpdateDocumentArgs {
+    #[command(flatten)]
+    project: ProjectSelectionArgs,
+    #[arg(long)]
+    id: i64,
+    #[arg(long)]
+    title: Option<String>,
+    #[arg(long)]
+    body: Option<String>,
+    #[arg(long, conflicts_with = "clear_work_item")]
+    work_item_id: Option<i64>,
+    #[arg(long)]
+    clear_work_item: bool,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args)]
+struct DeleteDocumentArgs {
+    #[command(flatten)]
+    project: ProjectSelectionArgs,
+    #[arg(long)]
+    id: i64,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionBriefOutput {
+    project: ProjectRecord,
+    work_items: Vec<WorkItemRecord>,
+    documents: Vec<DocumentRecord>,
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -136,7 +230,9 @@ fn run(cli: Cli) -> Result<(), String> {
 
     match cli.command {
         Command::Project(command) => handle_project_command(&state, command),
+        Command::Session(command) => handle_session_command(&state, command),
         Command::WorkItem(command) => handle_work_item_command(&state, command),
+        Command::Document(command) => handle_document_command(&state, command),
     }
 }
 
@@ -160,12 +256,52 @@ fn handle_project_command(state: &AppState, command: ProjectCommand) -> Result<(
     }
 }
 
+fn handle_session_command(state: &AppState, command: SessionCommand) -> Result<(), String> {
+    match command.command {
+        SessionSubcommand::Brief(args) => session_brief(state, args),
+    }
+}
+
 fn handle_work_item_command(state: &AppState, command: WorkItemCommand) -> Result<(), String> {
     match command.command {
         WorkItemSubcommand::List(args) => list_work_items(state, args),
         WorkItemSubcommand::Create(args) => create_work_item(state, args),
         WorkItemSubcommand::Update(args) => update_work_item(state, args),
         WorkItemSubcommand::Close(args) => close_work_item(state, args),
+    }
+}
+
+fn handle_document_command(state: &AppState, command: DocumentCommand) -> Result<(), String> {
+    match command.command {
+        DocumentSubcommand::List(args) => list_documents(state, args),
+        DocumentSubcommand::Create(args) => create_document(state, args),
+        DocumentSubcommand::Update(args) => update_document(state, args),
+        DocumentSubcommand::Delete(args) => delete_document(state, args),
+    }
+}
+
+fn session_brief(state: &AppState, args: SessionBriefArgs) -> Result<(), String> {
+    let project = resolve_project(state, args.project)?;
+    let work_items = state.list_work_items(project.id)?;
+    let documents = state.list_documents(project.id)?;
+    let brief = SessionBriefOutput {
+        project,
+        work_items,
+        documents,
+    };
+
+    if args.json {
+        print_json(&brief)
+    } else {
+        println!(
+            "Session brief for {} (#{})",
+            brief.project.name, brief.project.id
+        );
+        println!("Root: {}", brief.project.root_path);
+        println!("Work items: {}", brief.work_items.len());
+        println!("Documents: {}", brief.documents.len());
+        println!("Recommended first command: project-commander-cli session brief --json");
+        Ok(())
     }
 }
 
@@ -200,6 +336,41 @@ fn list_work_items(state: &AppState, args: ListWorkItemsArgs) -> Result<(), Stri
     }
 }
 
+fn list_documents(state: &AppState, args: ListDocumentsArgs) -> Result<(), String> {
+    let project = resolve_project(state, args.project)?;
+    let documents = state.list_documents(project.id)?;
+    let work_item_titles = work_item_title_map(&state.list_work_items(project.id)?);
+
+    if args.json {
+        print_json(&documents)
+    } else if documents.is_empty() {
+        println!("No documents for {}.", project.name);
+        Ok(())
+    } else {
+        println!("Documents for {} (#{})", project.name, project.id);
+
+        for document in documents {
+            let linked_label = document
+                .work_item_id
+                .map(|work_item_id| {
+                    work_item_titles
+                        .get(&work_item_id)
+                        .map(|title| format!("linked to #{} {}", work_item_id, title))
+                        .unwrap_or_else(|| format!("linked to work item #{}", work_item_id))
+                })
+                .unwrap_or_else(|| "project-level".to_string());
+
+            println!("#{} [{}] {}", document.id, linked_label, document.title);
+
+            if !document.body.trim().is_empty() {
+                println!("  {}", one_line(&document.body));
+            }
+        }
+
+        Ok(())
+    }
+}
+
 fn create_work_item(state: &AppState, args: CreateWorkItemArgs) -> Result<(), String> {
     let project = resolve_project(state, args.project)?;
     let item = state.create_work_item(CreateWorkItemInput {
@@ -214,6 +385,23 @@ fn create_work_item(state: &AppState, args: CreateWorkItemArgs) -> Result<(), St
         print_json(&item)
     } else {
         print_work_item_result("Created", &item);
+        Ok(())
+    }
+}
+
+fn create_document(state: &AppState, args: CreateDocumentArgs) -> Result<(), String> {
+    let project = resolve_project(state, args.project)?;
+    let document = state.create_document(CreateDocumentInput {
+        project_id: project.id,
+        work_item_id: args.work_item_id,
+        title: args.title,
+        body: args.body,
+    })?;
+
+    if args.json {
+        print_json(&document)
+    } else {
+        print_document_result("Created", &document);
         Ok(())
     }
 }
@@ -249,6 +437,50 @@ fn update_work_item(state: &AppState, args: UpdateWorkItemArgs) -> Result<(), St
     }
 }
 
+fn update_document(state: &AppState, args: UpdateDocumentArgs) -> Result<(), String> {
+    if args.title.is_none()
+        && args.body.is_none()
+        && args.work_item_id.is_none()
+        && !args.clear_work_item
+    {
+        return Err(
+            "no changes provided. Pass at least one of --title, --body, --work-item-id, or --clear-work-item."
+                .to_string(),
+        );
+    }
+
+    let project = resolve_project(state, args.project)?;
+    let existing = state
+        .list_documents(project.id)?
+        .into_iter()
+        .find(|document| document.id == args.id)
+        .ok_or_else(|| {
+            format!(
+                "document #{} does not belong to the active project",
+                args.id
+            )
+        })?;
+
+    let work_item_id = if args.clear_work_item {
+        None
+    } else {
+        args.work_item_id.or(existing.work_item_id)
+    };
+    let document = state.update_document(UpdateDocumentInput {
+        id: existing.id,
+        work_item_id,
+        title: args.title.unwrap_or(existing.title),
+        body: args.body.unwrap_or(existing.body),
+    })?;
+
+    if args.json {
+        print_json(&document)
+    } else {
+        print_document_result("Updated", &document);
+        Ok(())
+    }
+}
+
 fn close_work_item(state: &AppState, args: CloseWorkItemArgs) -> Result<(), String> {
     let project = resolve_project(state, args.project)?;
     let existing = state.get_work_item(args.id)?;
@@ -265,6 +497,32 @@ fn close_work_item(state: &AppState, args: CloseWorkItemArgs) -> Result<(), Stri
         print_json(&item)
     } else {
         print_work_item_result("Closed", &item);
+        Ok(())
+    }
+}
+
+fn delete_document(state: &AppState, args: DeleteDocumentArgs) -> Result<(), String> {
+    let project = resolve_project(state, args.project)?;
+    let existing = state
+        .list_documents(project.id)?
+        .into_iter()
+        .find(|document| document.id == args.id)
+        .ok_or_else(|| {
+            format!(
+                "document #{} does not belong to the active project",
+                args.id
+            )
+        })?;
+
+    state.delete_document(existing.id)?;
+
+    if args.json {
+        print_json(&serde_json::json!({
+            "deleted": true,
+            "id": existing.id,
+        }))
+    } else {
+        println!("Deleted document #{} {}", existing.id, existing.title);
         Ok(())
     }
 }
@@ -314,6 +572,13 @@ fn ensure_work_item_project(item: &WorkItemRecord, project: &ProjectRecord) -> R
     Ok(())
 }
 
+fn work_item_title_map(items: &[WorkItemRecord]) -> std::collections::HashMap<i64, String> {
+    items
+        .iter()
+        .map(|item| (item.id, item.title.clone()))
+        .collect()
+}
+
 fn print_json(value: &impl Serialize) -> Result<(), String> {
     let json = serde_json::to_string_pretty(value)
         .map_err(|error| format!("failed to serialize output: {error}"))?;
@@ -329,6 +594,20 @@ fn print_work_item_result(action: &str, item: &WorkItemRecord) {
 
     if !item.body.trim().is_empty() {
         println!("  {}", one_line(&item.body));
+    }
+}
+
+fn print_document_result(action: &str, document: &DocumentRecord) {
+    println!("{action} document #{} {}", document.id, document.title);
+
+    if let Some(work_item_id) = document.work_item_id {
+        println!("  linked to work item #{work_item_id}");
+    } else {
+        println!("  project-level document");
+    }
+
+    if !document.body.trim().is_empty() {
+        println!("  {}", one_line(&document.body));
     }
 }
 

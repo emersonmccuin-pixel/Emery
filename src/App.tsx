@@ -27,10 +27,11 @@ const WORK_ITEM_STATUS_ORDER: Record<WorkItemStatus, number> = {
 }
 
 const AGENT_BRIDGE_COMMANDS = [
-  'project-commander-cli project current --json',
-  'project-commander-cli work-item list --json',
+  'project-commander-cli session brief --json',
   'project-commander-cli work-item create --type bug --title "Log a bug in Emery" --body "Describe the issue." --json',
+  'project-commander-cli work-item update --id 12 --status in_progress --body "Started work." --json',
   'project-commander-cli work-item close --id 12 --json',
+  'project-commander-cli document list --json',
 ]
 
 function sortWorkItems(items: WorkItemRecord[]) {
@@ -49,6 +50,51 @@ function sortDocuments(documents: DocumentRecord[]) {
   return [...documents].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
 }
 
+function buildAgentStartupPrompt(
+  project: ProjectRecord | null,
+  workItems: WorkItemRecord[],
+  documents: DocumentRecord[],
+) {
+  if (!project) {
+    return ''
+  }
+
+  const workItemLines =
+    workItems.length === 0
+      ? ['- No work items yet. Create them with project-commander-cli when needed.']
+      : workItems.slice(0, 5).map((item) => `- #${item.id} [${item.status}/${item.itemType}] ${item.title}`)
+
+  const documentLines =
+    documents.length === 0
+      ? ['- No documents yet.']
+      : documents.slice(0, 5).map((document) => {
+          const linkedLabel =
+            document.workItemId === null ? 'project-level' : `linked to work item #${document.workItemId}`
+
+          return `- #${document.id} [${linkedLabel}] ${document.title}`
+        })
+
+  return [
+    `You are working inside Project Commander for the project "${project.name}".`,
+    'Use project-commander-cli as the source of truth for project context, work items, and documents.',
+    'First run: project-commander-cli session brief --json',
+    'When I ask you to log, update, start, block, or close work, persist it with project-commander-cli instead of only describing it in chat.',
+    'Use these commands as needed:',
+    '- project-commander-cli work-item create ...',
+    '- project-commander-cli work-item update ...',
+    '- project-commander-cli work-item close ...',
+    '- project-commander-cli document list --json',
+    'Current work items:',
+    ...workItemLines,
+    'Current documents:',
+    ...documentLines,
+  ].join('\n')
+}
+
+function flattenPromptForTerminal(prompt: string) {
+  return `${prompt.replace(/\s+/g, ' ').trim()}\r`
+}
+
 function App() {
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>('loading')
   const [runtimeMessage, setRuntimeMessage] = useState('Connecting to the Rust runtime...')
@@ -63,6 +109,7 @@ function App() {
   const [workItemError, setWorkItemError] = useState<string | null>(null)
   const [documents, setDocuments] = useState<DocumentRecord[]>([])
   const [documentError, setDocumentError] = useState<string | null>(null)
+  const [agentPromptMessage, setAgentPromptMessage] = useState<string | null>(null)
   const [projectName, setProjectName] = useState('')
   const [projectRootPath, setProjectRootPath] = useState('')
   const [projectError, setProjectError] = useState<string | null>(null)
@@ -131,6 +178,7 @@ function App() {
     launchProfiles[0] ??
     null
   const bridgeReady = Boolean(selectedProject && sessionSnapshot?.isRunning)
+  const agentStartupPrompt = buildAgentStartupPrompt(selectedProject, workItems, documents)
 
   useEffect(() => {
     if (!selectedProject && projects.length > 0) {
@@ -635,6 +683,41 @@ function App() {
     }
   }
 
+  const copyAgentStartupPrompt = async () => {
+    if (!agentStartupPrompt) {
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(agentStartupPrompt)
+      setAgentPromptMessage('Startup prompt copied.')
+    } catch (error) {
+      setAgentPromptMessage(
+        error instanceof Error ? error.message : 'Failed to copy startup prompt.',
+      )
+    }
+  }
+
+  const sendAgentStartupPrompt = async () => {
+    if (!selectedProject || !sessionSnapshot?.isRunning || !agentStartupPrompt) {
+      return
+    }
+
+    try {
+      await invoke('write_session_input', {
+        input: {
+          projectId: selectedProject.id,
+          data: flattenPromptForTerminal(agentStartupPrompt),
+        },
+      })
+      setAgentPromptMessage('Startup prompt sent to the live terminal.')
+    } catch (error) {
+      setAgentPromptMessage(
+        error instanceof Error ? error.message : 'Failed to send startup prompt.',
+      )
+    }
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -902,17 +985,38 @@ function App() {
               <article className="summary-card bridge-card">
                 <div className="bridge-card__header">
                   <div>
-                    <p className="summary-card__label">Agent bridge</p>
-                    <strong>Work-item CLI inside the session</strong>
+                    <p className="summary-card__label">Agent workflow</p>
+                    <strong>CLI and startup prompt inside the session</strong>
                   </div>
                   <span className={`status-badge ${bridgeReady ? 'status-badge--ready' : 'status-badge--stopped'}`}>
                     {bridgeReady ? 'ready in terminal' : 'available after launch'}
                   </span>
                 </div>
                 <p>
-                  The launched terminal injects the shared DB path plus the active project context, so Claude Code can
-                  manage this project&apos;s work items without extra setup.
+                  The launched terminal injects the shared DB path plus the active project context,
+                  and this prompt tells Claude Code how to use `project-commander-cli` as the real
+                  persistence layer.
                 </p>
+                <textarea
+                  className="bridge-card__prompt"
+                  readOnly
+                  rows={12}
+                  value={agentStartupPrompt}
+                />
+                <div className="action-row">
+                  <button className="button button--secondary" type="button" onClick={copyAgentStartupPrompt}>
+                    Copy prompt
+                  </button>
+                  <button
+                    className="button button--primary"
+                    disabled={!bridgeReady}
+                    type="button"
+                    onClick={sendAgentStartupPrompt}
+                  >
+                    Send to terminal
+                  </button>
+                </div>
+                {agentPromptMessage ? <p className="stack-form__note">{agentPromptMessage}</p> : null}
                 <div className="bridge-card__commands">
                   {AGENT_BRIDGE_COMMANDS.map((command) => (
                     <code key={command}>{command}</code>
