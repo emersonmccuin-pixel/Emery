@@ -42,9 +42,24 @@ The scaffold already creates a dedicated database folder inside that root:
 <app-data-dir>\db\
 ```
 
-The app UI displays the exact resolved storage path at runtime. If you store
-SQLite files or other durable state there, both `npm run tauri:dev` and the
-packaged `project-commander.exe` will use the same data.
+The app now stores its shared SQLite file at:
+
+```text
+<app-data-dir>\db\project-commander.sqlite3
+```
+
+If you store work items, documents, and session summaries there, both
+`npm run tauri:dev` and the packaged `project-commander.exe` will use the same
+data.
+
+## Current Slice
+
+The current MVP slice includes:
+
+- a shared SQLite database owned by the app
+- registered projects with root folders
+- Claude Code launch profiles stored in the DB
+- a project-first workspace layout that the terminal slice can plug into next
 
 ## Structure
 
