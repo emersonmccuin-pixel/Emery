@@ -43,8 +43,6 @@ try {
     "--bin"
     "project-commander-cli"
     "--bin"
-    "project-commander-mcp"
-    "--bin"
     "project-commander-supervisor"
   )
 

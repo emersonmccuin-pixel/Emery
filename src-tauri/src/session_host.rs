@@ -1,8 +1,9 @@
 use crate::db::AppState;
-use crate::session_api::{LaunchSessionInput, ResizeSessionInput, SessionInput, SessionSnapshot};
+use crate::session_api::{
+    LaunchSessionInput, ResizeSessionInput, SessionInput, SessionSnapshot, SupervisorRuntimeInfo,
+};
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use std::collections::HashMap;
-use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -59,6 +60,7 @@ impl SessionRegistry {
         &self,
         input: LaunchSessionInput,
         app_state: &AppState,
+        supervisor_runtime: &SupervisorRuntimeInfo,
     ) -> Result<SessionSnapshot, String> {
         if let Some(existing) = self.snapshot(input.project_id)? {
             if existing.is_running {
@@ -90,6 +92,7 @@ impl SessionRegistry {
             &project,
             &profile,
             &app_state.storage(),
+            supervisor_runtime,
             input
                 .startup_prompt
                 .as_deref()
@@ -240,12 +243,16 @@ fn build_launch_command(
     project: &crate::db::ProjectRecord,
     profile: &crate::db::LaunchProfileRecord,
     storage: &crate::db::StorageInfo,
+    supervisor_runtime: &SupervisorRuntimeInfo,
     startup_prompt: Option<&str>,
 ) -> Result<CommandBuilder, String> {
     let mut command = CommandBuilder::new("powershell.exe");
     let env_pairs = parse_env_json(&profile.env_json)?;
-    let mcp_config_path = if profile.provider == "claude_code" {
-        Some(write_project_commander_mcp_config(project, storage)?)
+    let mcp_config_json = if profile.provider == "claude_code" {
+        Some(build_project_commander_mcp_config_json(
+            project,
+            supervisor_runtime,
+        )?)
     } else {
         None
     };
@@ -302,9 +309,9 @@ fn build_launch_command(
     }
 
     if profile.provider == "claude_code" {
-        if let Some(mcp_config_path) = &mcp_config_path {
-            script.push_str(" --mcp-config ");
-            script.push_str(&format!("'{}'", escape_ps(mcp_config_path)));
+        if let Some(mcp_config_json) = &mcp_config_json {
+            script.push_str(" --mcp-config=");
+            script.push_str(&format!("'{}'", escape_ps(mcp_config_json)));
         }
 
         script.push_str(" --append-system-prompt ");
@@ -400,43 +407,34 @@ pub fn resolve_helper_binary_path(binary_stem: &str) -> Option<PathBuf> {
     })
 }
 
-fn write_project_commander_mcp_config(
+fn build_project_commander_mcp_config_json(
     project: &crate::db::ProjectRecord,
-    storage: &crate::db::StorageInfo,
+    supervisor_runtime: &SupervisorRuntimeInfo,
 ) -> Result<String, String> {
-    let mcp_binary = resolve_helper_binary_path("project-commander-mcp")
+    let supervisor_binary = resolve_helper_binary_path("project-commander-supervisor")
         .ok_or_else(|| {
-            "project-commander-mcp helper was not found. Rebuild Project Commander helpers before launching."
+            "project-commander-supervisor helper was not found. Rebuild Project Commander helpers before launching."
                 .to_string()
         })?;
-    let mcp_dir = PathBuf::from(&storage.app_data_dir).join("mcp");
-    let config_path = mcp_dir.join(format!("project-{}.mcp.json", project.id));
-
-    fs::create_dir_all(&mcp_dir)
-        .map_err(|error| format!("failed to create MCP config directory: {error}"))?;
 
     let config = serde_json::json!({
         "mcpServers": {
             "project-commander": {
-                "type": "stdio",
-                "command": mcp_binary.display().to_string(),
-                "args": [],
-                "env": {
-                    "PROJECT_COMMANDER_DB_PATH": storage.db_path,
-                    "PROJECT_COMMANDER_PROJECT_ID": project.id.to_string(),
-                    "PROJECT_COMMANDER_PROJECT_NAME": project.name,
-                    "PROJECT_COMMANDER_ROOT_PATH": project.root_path,
-                }
+                "command": supervisor_binary.display().to_string(),
+                "args": [
+                    "mcp-stdio",
+                    "--port",
+                    supervisor_runtime.port.to_string(),
+                    "--token",
+                    supervisor_runtime.token.clone(),
+                    "--project-id",
+                    project.id.to_string()
+                ]
             }
         }
     });
-    let config_json = serde_json::to_string_pretty(&config)
-        .map_err(|error| format!("failed to serialize Project Commander MCP config: {error}"))?;
-
-    fs::write(&config_path, config_json)
-        .map_err(|error| format!("failed to write Project Commander MCP config: {error}"))?;
-
-    Ok(config_path.display().to_string())
+    serde_json::to_string(&config)
+        .map_err(|error| format!("failed to serialize Project Commander MCP config: {error}"))
 }
 
 pub fn now_timestamp_string() -> String {

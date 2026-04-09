@@ -2,6 +2,8 @@ pub mod db;
 pub mod session;
 pub mod session_api;
 pub mod session_host;
+pub mod supervisor_api;
+pub mod supervisor_mcp;
 
 use db::{
     AppState, BootstrapData, CreateDocumentInput, CreateLaunchProfileInput, CreateProjectInput,

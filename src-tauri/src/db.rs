@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StorageInfo {
     pub app_data_dir: String,
@@ -11,7 +11,7 @@ pub struct StorageInfo {
     pub db_path: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectRecord {
     pub id: i64,
@@ -25,7 +25,7 @@ pub struct ProjectRecord {
     pub session_count: i64,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LaunchProfileRecord {
     pub id: i64,
@@ -38,7 +38,7 @@ pub struct LaunchProfileRecord {
     pub updated_at: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkItemRecord {
     pub id: i64,
@@ -51,7 +51,7 @@ pub struct WorkItemRecord {
     pub updated_at: String,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DocumentRecord {
     pub id: i64,
@@ -63,7 +63,7 @@ pub struct DocumentRecord {
     pub updated_at: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapData {
     pub storage: StorageInfo,
