@@ -84,11 +84,13 @@ function buildAgentStartupPrompt(
         })
 
   return [
-    `You are working inside Project Commander for the project "${project.name}".`,
+    'Project Commander startup context.',
+    `Project: ${project.name}`,
+    `Root path: ${project.rootPath}`,
     'Use project-commander-cli as the source of truth for project context, work items, and documents.',
-    'First run: project-commander-cli session brief --json',
+    'Required first action: run project-commander-cli session brief --json',
     'When I ask you to log, update, start, block, or close work, persist it with project-commander-cli instead of only describing it in chat.',
-    'Use these commands as needed:',
+    'Key commands:',
     '- project-commander-cli work-item create ...',
     '- project-commander-cli work-item update ...',
     '- project-commander-cli work-item close ...',
@@ -97,6 +99,7 @@ function buildAgentStartupPrompt(
     ...workItemLines,
     'Current documents:',
     ...documentLines,
+    'After reading this context, ask what work item or task you should take next.',
   ].join('\n')
 }
 
@@ -115,24 +118,24 @@ function buildFocusedWorkItemPrompt(
         })
 
   return [
-    `You are working inside Project Commander for the project "${project.name}".`,
-    `Focus on work item #${workItem.id}: "${workItem.title}".`,
-    `Project root: ${project.rootPath}`,
-    'Use project-commander-cli as the source of truth for all DB changes.',
-    'First run: project-commander-cli session brief --json',
-    'When you change the work item state, persist it with project-commander-cli instead of only describing it in chat.',
-    '',
-    'Target work item:',
+    'You are starting a focused Project Commander session.',
+    `Project: ${project.name}`,
+    `Root path: ${project.rootPath}`,
+    'Assigned work item:',
     `- ID: ${workItem.id}`,
     `- Type: ${workItem.itemType}`,
     `- Status: ${workItem.status}`,
     `- Title: ${workItem.title}`,
     `- Body: ${workItemBody}`,
-    '',
     'Linked documents:',
     ...documentLines,
-    '',
-    'Execute the work item directly. If you get blocked, mark it blocked with project-commander-cli and say why. If you finish, close it with project-commander-cli.',
+    'Rules:',
+    '- Use project-commander-cli as the source of truth for all DB changes.',
+    '- First run project-commander-cli session brief --json.',
+    '- Do not answer with acknowledgment only.',
+    '- First tell me the exact work item ID and title you are taking.',
+    '- Then either begin the work or say exactly why you are blocked.',
+    '- If you change state, persist it with project-commander-cli.',
   ].join('\n')
 }
 

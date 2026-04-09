@@ -378,12 +378,16 @@ fn parse_env_json(raw: &str) -> Result<Vec<(String, String)>, String> {
 fn build_claude_bridge_system_prompt(project: &crate::db::ProjectRecord) -> String {
     format!(
         concat!(
-            "You are running inside Project Commander for the project \"{}\" rooted at \"{}\". ",
+            "You are running inside Project Commander. ",
+            "Project name: {}. ",
+            "Project root path: {}. ",
             "A local companion CLI named project-commander-cli is on PATH. ",
             "Use it as the source of truth for project context, work items, and documents. ",
-            "At the start of each session, run `project-commander-cli session brief --json`. ",
+            "At the start of each session, run project-commander-cli session brief --json. ",
             "Do not use WCP or any unrelated MCP work-item tracker for Project Commander state unless I explicitly ask you to. ",
-            "When you create, update, block, or close work, persist the change with project-commander-cli instead of only describing it in chat."
+            "When you create, update, block, or close work, persist the change with project-commander-cli instead of only describing it in chat. ",
+            "If the startup user prompt assigns a work item, treat it as the active task immediately. ",
+            "Do not respond with acknowledgment only."
         ),
         project.name, project.root_path
     )
