@@ -15,7 +15,12 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
+  const onSessionExitRef = useRef(onSessionExit)
   const sessionKey = `${snapshot.projectId}:${snapshot.startedAt}`
+
+  useEffect(() => {
+    onSessionExitRef.current = onSessionExit
+  }, [onSessionExit])
 
   useEffect(() => {
     if (!hostRef.current) {
@@ -102,7 +107,7 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
           return
         }
 
-        onSessionExit(event.payload)
+        onSessionExitRef.current(event.payload)
       })
 
       resizeObserver = new ResizeObserver(() => {
@@ -123,7 +128,7 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
       terminalRef.current = null
       fitAddonRef.current = null
     }
-  }, [onSessionExit, sessionKey, snapshot.projectId])
+  }, [sessionKey, snapshot.projectId])
 
   useEffect(() => {
     const terminal = terminalRef.current

@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useState, type FormEvent } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useState, type FormEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import DocumentsPanel from './components/DocumentsPanel'
@@ -544,7 +544,7 @@ function App() {
     }
   }
 
-  const handleSessionExit = (event: TerminalExitEvent) => {
+  const handleSessionExit = useCallback((event: TerminalExitEvent) => {
     setSessionSnapshot((current) => {
       if (!current || current.projectId !== event.projectId) {
         return current
@@ -559,7 +559,7 @@ function App() {
     if (!event.success) {
       setSessionError(`Session exited with code ${event.exitCode}.`)
     }
-  }
+  }, [])
 
   const isLiveSessionVisible =
     sessionSnapshot && selectedProject && sessionSnapshot.projectId === selectedProject.id
