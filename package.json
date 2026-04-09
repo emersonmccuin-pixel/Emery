@@ -8,8 +8,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "tauri:dev": "cargo build --manifest-path src-tauri/Cargo.toml --bin project-commander-cli && tauri dev",
-    "tauri:build": "cargo build --manifest-path src-tauri/Cargo.toml --release --bin project-commander-cli && tauri build",
+    "tauri:dev": "cargo build --manifest-path src-tauri/Cargo.toml --bin project-commander-cli --bin project-commander-mcp && tauri dev",
+    "tauri:build": "cargo build --manifest-path src-tauri/Cargo.toml --release --bin project-commander-cli --bin project-commander-mcp && tauri build",
     "prod:build": "npm run tauri:build",
     "prod:run": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/run-prod.ps1"
   },

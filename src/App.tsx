@@ -35,12 +35,16 @@ const WORK_ITEM_STATUS_ORDER: Record<WorkItemStatus, number> = {
   done: 3,
 }
 
-const AGENT_BRIDGE_COMMANDS = [
-  'project-commander-cli session brief --json',
-  'project-commander-cli work-item create --type bug --title "Log a bug in Emery" --body "Describe the issue." --json',
-  'project-commander-cli work-item update --id 12 --status in_progress --body "Started work." --json',
-  'project-commander-cli work-item close --id 12 --json',
-  'project-commander-cli document list --json',
+const PROJECT_COMMANDER_TOOLS = [
+  'session_brief()',
+  'list_work_items(status?)',
+  'get_work_item(id)',
+  'create_work_item(...)',
+  'update_work_item(...)',
+  'close_work_item(id)',
+  'list_documents(workItemId?)',
+  'create_document(...)',
+  'update_document(...)',
 ]
 
 function sortWorkItems(items: WorkItemRecord[]) {
@@ -87,14 +91,16 @@ function buildAgentStartupPrompt(
     'Project Commander startup context.',
     `Project: ${project.name}`,
     `Root path: ${project.rootPath}`,
-    'Use project-commander-cli as the source of truth for project context, work items, and documents.',
-    'Required first action: run project-commander-cli session brief --json',
-    'When I ask you to log, update, start, block, or close work, persist it with project-commander-cli instead of only describing it in chat.',
-    'Key commands:',
-    '- project-commander-cli work-item create ...',
-    '- project-commander-cli work-item update ...',
-    '- project-commander-cli work-item close ...',
-    '- project-commander-cli document list --json',
+    'Project Commander MCP tools are attached to this session.',
+    'Required first action: call session_brief.',
+    'Use the Project Commander MCP tools as the source of truth for project context, work items, and documents.',
+    'If MCP tools are unavailable, fall back to project-commander-cli.',
+    'Key tools:',
+    '- session_brief()',
+    '- list_work_items(status?)',
+    '- update_work_item(...)',
+    '- close_work_item(id)',
+    '- list_documents(workItemId?)',
     'Current work items:',
     ...workItemLines,
     'Current documents:',
@@ -130,12 +136,13 @@ function buildFocusedWorkItemPrompt(
     'Linked documents:',
     ...documentLines,
     'Rules:',
-    '- Use project-commander-cli as the source of truth for all DB changes.',
-    '- First run project-commander-cli session brief --json.',
+    '- Use Project Commander MCP tools as the source of truth for all DB changes.',
+    '- First call session_brief.',
+    '- If MCP tools are unavailable, fall back to project-commander-cli.',
     '- Do not answer with acknowledgment only.',
     '- First tell me the exact work item ID and title you are taking.',
     '- Then either begin the work or say exactly why you are blocked.',
-    '- If you change state, persist it with project-commander-cli.',
+    '- If you change state, persist it with Project Commander MCP tools or the CLI fallback.',
   ].join('\n')
 }
 
@@ -1341,12 +1348,12 @@ function App() {
                       <div>
                         <p className="summary-card__label">Agent workflow</p>
                         <strong>
-                          {terminalPromptDraft?.label ?? 'CLI and startup prompt inside the session'}
+                          {terminalPromptDraft?.label ?? 'MCP and startup prompt inside the session'}
                         </strong>
                         <p>
                           {terminalPromptDraft
                             ? 'The current prompt is focused on the selected work item. You can resend it if Claude needs a nudge.'
-                            : 'Keep the guide hidden until you need to prime Claude.'}
+                            : 'Keep the guide hidden until you need to prime Claude with the attached Project Commander MCP tools.'}
                         </p>
                       </div>
                       <div className="guide-card__actions">
@@ -1402,10 +1409,14 @@ function App() {
                           value={currentTerminalPrompt}
                         />
                         <div className="bridge-card__commands">
-                          {AGENT_BRIDGE_COMMANDS.map((command) => (
-                            <code key={command}>{command}</code>
+                          {PROJECT_COMMANDER_TOOLS.map((toolName) => (
+                            <code key={toolName}>{toolName}</code>
                           ))}
                         </div>
+                        <p className="stack-form__note">
+                          `project-commander-cli` still exists as a fallback inside launched sessions, but
+                          Project Commander MCP tools are now the preferred path.
+                        </p>
                       </>
                     ) : null}
                   </article>

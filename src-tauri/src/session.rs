@@ -2,8 +2,9 @@ use crate::db::AppState;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, State};
@@ -276,6 +277,11 @@ fn build_launch_command(
 ) -> Result<CommandBuilder, String> {
     let mut command = CommandBuilder::new("powershell.exe");
     let env_pairs = parse_env_json(&profile.env_json)?;
+    let mcp_config_path = if profile.provider == "claude_code" {
+        Some(write_project_commander_mcp_config(project, storage)?)
+    } else {
+        None
+    };
     let mut script = format!(
         "Set-Location -LiteralPath '{}'; ",
         escape_ps(&project.root_path)
@@ -329,6 +335,11 @@ fn build_launch_command(
     }
 
     if profile.provider == "claude_code" {
+        if let Some(mcp_config_path) = &mcp_config_path {
+            script.push_str(" --mcp-config ");
+            script.push_str(&format!("'{}'", escape_ps(mcp_config_path)));
+        }
+
         script.push_str(" --append-system-prompt ");
         script.push_str(&format!(
             "'{}'",
@@ -381,11 +392,12 @@ fn build_claude_bridge_system_prompt(project: &crate::db::ProjectRecord) -> Stri
             "You are running inside Project Commander. ",
             "Project name: {}. ",
             "Project root path: {}. ",
-            "A local companion CLI named project-commander-cli is on PATH. ",
-            "Use it as the source of truth for project context, work items, and documents. ",
-            "At the start of each session, run project-commander-cli session brief --json. ",
+            "Project Commander MCP tools are available in this session and are already bound to the active project. ",
+            "Use the Project Commander MCP tools as the source of truth for project context, work items, and documents. ",
+            "At the start of each session, call the session_brief tool. ",
+            "The project-commander-cli helper is also available as a fallback if MCP tools are unavailable. ",
             "Do not use WCP or any unrelated MCP work-item tracker for Project Commander state unless I explicitly ask you to. ",
-            "When you create, update, block, or close work, persist the change with project-commander-cli instead of only describing it in chat. ",
+            "When you create, update, block, or close work, persist the change with Project Commander MCP tools or the CLI fallback instead of only describing it in chat. ",
             "If the startup user prompt assigns a work item, treat it as the active task immediately. ",
             "Do not respond with acknowledgment only."
         ),
@@ -398,21 +410,68 @@ fn escape_ps(value: &str) -> String {
 }
 
 fn resolve_cli_directory() -> Option<String> {
-    let cli_name = if cfg!(windows) {
-        "project-commander-cli.exe"
+    resolve_helper_binary_path("project-commander-cli").and_then(|path| {
+        path.parent()
+            .map(|parent| parent.display().to_string())
+    })
+}
+
+fn resolve_helper_binary_path(binary_stem: &str) -> Option<PathBuf> {
+    let binary_name = if cfg!(windows) {
+        format!("{binary_stem}.exe")
     } else {
-        "project-commander-cli"
+        binary_stem.to_string()
     };
 
     std::env::current_exe().ok().and_then(|path| {
         let parent = path.parent()?;
+        let candidate = parent.join(binary_name);
 
-        if parent.join(cli_name).is_file() {
-            Some(parent.display().to_string())
+        if candidate.is_file() {
+            Some(candidate)
         } else {
             None
         }
     })
+}
+
+fn write_project_commander_mcp_config(
+    project: &crate::db::ProjectRecord,
+    storage: &crate::db::StorageInfo,
+) -> Result<String, String> {
+    let mcp_binary = resolve_helper_binary_path("project-commander-mcp")
+        .ok_or_else(|| {
+            "project-commander-mcp helper was not found. Rebuild Project Commander helpers before launching."
+                .to_string()
+        })?;
+    let mcp_dir = PathBuf::from(&storage.app_data_dir).join("mcp");
+    let config_path = mcp_dir.join(format!("project-{}.mcp.json", project.id));
+
+    fs::create_dir_all(&mcp_dir)
+        .map_err(|error| format!("failed to create MCP config directory: {error}"))?;
+
+    let config = serde_json::json!({
+        "mcpServers": {
+            "project-commander": {
+                "type": "stdio",
+                "command": mcp_binary.display().to_string(),
+                "args": [],
+                "env": {
+                    "PROJECT_COMMANDER_DB_PATH": storage.db_path,
+                    "PROJECT_COMMANDER_PROJECT_ID": project.id.to_string(),
+                    "PROJECT_COMMANDER_PROJECT_NAME": project.name,
+                    "PROJECT_COMMANDER_ROOT_PATH": project.root_path,
+                }
+            }
+        }
+    });
+    let config_json = serde_json::to_string_pretty(&config)
+        .map_err(|error| format!("failed to serialize Project Commander MCP config: {error}"))?;
+
+    fs::write(&config_path, config_json)
+        .map_err(|error| format!("failed to write Project Commander MCP config: {error}"))?;
+
+    Ok(config_path.display().to_string())
 }
 
 fn now_timestamp_string() -> String {
