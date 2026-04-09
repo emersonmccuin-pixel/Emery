@@ -59,7 +59,8 @@ The current MVP slice includes:
 - a shared SQLite database owned by the app
 - registered projects with root folders
 - Claude Code launch profiles stored in the DB
-- a project-first workspace layout that the terminal slice can plug into next
+- a PTY-backed terminal slice that can launch Claude Code in the selected project root
+- a selectable launch-profile workflow that acts as the MVP account model
 
 ## Structure
 

@@ -11,7 +11,7 @@ pub struct StorageInfo {
     pub db_path: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectRecord {
     pub id: i64,
@@ -24,7 +24,7 @@ pub struct ProjectRecord {
     pub session_count: i64,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LaunchProfileRecord {
     pub id: i64,
@@ -178,6 +178,16 @@ impl AppState {
             .map_err(|error| format!("failed to create launch profile: {error}"))?;
 
         load_launch_profile_by_id(&connection, connection.last_insert_rowid())
+    }
+
+    pub fn get_project(&self, id: i64) -> Result<ProjectRecord, String> {
+        let connection = self.connect()?;
+        load_project_by_id(&connection, id)
+    }
+
+    pub fn get_launch_profile(&self, id: i64) -> Result<LaunchProfileRecord, String> {
+        let connection = self.connect()?;
+        load_launch_profile_by_id(&connection, id)
     }
 
     fn connect(&self) -> Result<Connection, String> {

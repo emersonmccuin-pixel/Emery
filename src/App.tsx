@@ -1,42 +1,17 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { Suspense, lazy, useEffect, useState, type FormEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
+import type {
+  BootstrapData,
+  LaunchProfileRecord,
+  ProjectRecord,
+  RuntimeStatus,
+  SessionSnapshot,
+  StorageInfo,
+  TerminalExitEvent,
+} from './types'
 
-type RuntimeStatus = 'loading' | 'ready' | 'error'
-
-type StorageInfo = {
-  appDataDir: string
-  dbDir: string
-  dbPath: string
-}
-
-type ProjectRecord = {
-  id: number
-  name: string
-  rootPath: string
-  createdAt: string
-  updatedAt: string
-  workItemCount: number
-  documentCount: number
-  sessionCount: number
-}
-
-type LaunchProfileRecord = {
-  id: number
-  label: string
-  provider: string
-  executable: string
-  args: string
-  envJson: string
-  createdAt: string
-  updatedAt: string
-}
-
-type BootstrapData = {
-  storage: StorageInfo
-  projects: ProjectRecord[]
-  launchProfiles: LaunchProfileRecord[]
-}
+const LiveTerminal = lazy(() => import('./components/LiveTerminal'))
 
 function App() {
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>('loading')
@@ -45,6 +20,9 @@ function App() {
   const [projects, setProjects] = useState<ProjectRecord[]>([])
   const [launchProfiles, setLaunchProfiles] = useState<LaunchProfileRecord[]>([])
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
+  const [selectedLaunchProfileId, setSelectedLaunchProfileId] = useState<number | null>(null)
+  const [sessionSnapshot, setSessionSnapshot] = useState<SessionSnapshot | null>(null)
+  const [sessionError, setSessionError] = useState<string | null>(null)
   const [projectName, setProjectName] = useState('')
   const [projectRootPath, setProjectRootPath] = useState('')
   const [projectError, setProjectError] = useState<string | null>(null)
@@ -55,6 +33,8 @@ function App() {
   const [profileError, setProfileError] = useState<string | null>(null)
   const [isCreatingProject, setIsCreatingProject] = useState(false)
   const [isCreatingProfile, setIsCreatingProfile] = useState(false)
+  const [isLaunchingSession, setIsLaunchingSession] = useState(false)
+  const [isStoppingSession, setIsStoppingSession] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -77,6 +57,7 @@ function App() {
         setProjects(bootstrap.projects)
         setLaunchProfiles(bootstrap.launchProfiles)
         setSelectedProjectId((current) => current ?? bootstrap.projects[0]?.id ?? null)
+        setSelectedLaunchProfileId((current) => current ?? bootstrap.launchProfiles[0]?.id ?? null)
       } catch (error) {
         if (cancelled) {
           return
@@ -98,12 +79,59 @@ function App() {
 
   const selectedProject =
     projects.find((project) => project.id === selectedProjectId) ?? projects[0] ?? null
+  const selectedLaunchProfile =
+    launchProfiles.find((profile) => profile.id === selectedLaunchProfileId) ??
+    launchProfiles[0] ??
+    null
 
   useEffect(() => {
     if (!selectedProject && projects.length > 0) {
       setSelectedProjectId(projects[0].id)
     }
   }, [projects, selectedProject])
+
+  useEffect(() => {
+    if (!selectedLaunchProfile && launchProfiles.length > 0) {
+      setSelectedLaunchProfileId(launchProfiles[0].id)
+    }
+  }, [launchProfiles, selectedLaunchProfile])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadSession = async () => {
+      if (!selectedProject) {
+        setSessionSnapshot(null)
+        return
+      }
+
+      try {
+        const snapshot = await invoke<SessionSnapshot | null>('get_session_snapshot', {
+          projectId: selectedProject.id,
+        })
+
+        if (cancelled) {
+          return
+        }
+
+        setSessionSnapshot(snapshot)
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+
+        setSessionError(
+          error instanceof Error ? error.message : 'Failed to inspect live session state.',
+        )
+      }
+    }
+
+    void loadSession()
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedProjectId])
 
   const browseForProjectFolder = async () => {
     setProjectError(null)
@@ -163,6 +191,7 @@ function App() {
       })
 
       setLaunchProfiles((current) => [...current, profile])
+      setSelectedLaunchProfileId(profile.id)
       setProfileLabel('')
       setProfileExecutable('claude')
       setProfileArgs('--dangerously-skip-permissions')
@@ -175,6 +204,69 @@ function App() {
       setIsCreatingProfile(false)
     }
   }
+
+  const launchSession = async () => {
+    if (!selectedProject || !selectedLaunchProfile) {
+      return
+    }
+
+    setSessionError(null)
+    setIsLaunchingSession(true)
+
+    try {
+      const snapshot = await invoke<SessionSnapshot>('launch_project_session', {
+        input: {
+          projectId: selectedProject.id,
+          launchProfileId: selectedLaunchProfile.id,
+          cols: 120,
+          rows: 32,
+        },
+      })
+
+      setSessionSnapshot(snapshot)
+    } catch (error) {
+      setSessionError(error instanceof Error ? error.message : 'Failed to launch Claude Code.')
+    } finally {
+      setIsLaunchingSession(false)
+    }
+  }
+
+  const stopSession = async () => {
+    if (!selectedProject || !sessionSnapshot?.isRunning) {
+      return
+    }
+
+    setSessionError(null)
+    setIsStoppingSession(true)
+
+    try {
+      await invoke('terminate_session', { projectId: selectedProject.id })
+    } catch (error) {
+      setSessionError(error instanceof Error ? error.message : 'Failed to stop the live session.')
+    } finally {
+      setIsStoppingSession(false)
+    }
+  }
+
+  const handleSessionExit = (event: TerminalExitEvent) => {
+    setSessionSnapshot((current) => {
+      if (!current || current.projectId !== event.projectId) {
+        return current
+      }
+
+      return {
+        ...current,
+        isRunning: false,
+      }
+    })
+
+    if (!event.success) {
+      setSessionError(`Session exited with code ${event.exitCode}.`)
+    }
+  }
+
+  const isLiveSessionVisible =
+    sessionSnapshot && selectedProject && sessionSnapshot.projectId === selectedProject.id
 
   return (
     <main className="app-shell">
@@ -205,8 +297,7 @@ function App() {
           <div className="project-list">
             {projects.length === 0 ? (
               <div className="empty-state">
-                No projects yet. Add one so the next slice can launch Claude Code in its root
-                directory.
+                No projects yet. Add one so the center pane can root a Claude Code session in it.
               </div>
             ) : (
               projects.map((project) => (
@@ -222,7 +313,7 @@ function App() {
                   <span className="project-card__path">{project.rootPath}</span>
                   <span className="project-card__meta">
                     {project.workItemCount} work items · {project.documentCount} docs ·{' '}
-                    {project.sessionCount} sessions
+                    {project.sessionCount} summaries
                   </span>
                 </button>
               ))
@@ -232,7 +323,7 @@ function App() {
           <form className="stack-form" onSubmit={submitProject}>
             <div className="stack-form__header">
               <h3>Add project</h3>
-              <p>Track a codebase and root Claude Code sessions in its folder.</p>
+              <p>Register the working directory Claude Code should open inside.</p>
             </div>
 
             <label className="field">
@@ -280,36 +371,96 @@ function App() {
           </div>
 
           {selectedProject ? (
-            <div className="console-placeholder">
-              <div className="console-placeholder__screen">
-                <p className="console-placeholder__line">
-                  Terminal embedding is the next vertical slice.
-                </p>
-                <p className="console-placeholder__line">
-                  This project is now registered and ready for a Claude Code launch session.
-                </p>
-                <p className="console-placeholder__line">
-                  Root: <code>{selectedProject.rootPath}</code>
-                </p>
+            <div className="console-body">
+              <div className="console-actions">
+                <div className="console-actions__group">
+                  <span className="summary-card__label">Selected account</span>
+                  <strong>{selectedLaunchProfile?.label ?? 'Choose a launch profile'}</strong>
+                  <p>
+                    {selectedLaunchProfile
+                      ? `${selectedLaunchProfile.executable} ${selectedLaunchProfile.args}`.trim()
+                      : 'A launch profile provides the Claude Code command, args, and env vars.'}
+                  </p>
+                </div>
+
+                <div className="console-actions__group console-actions__group--right">
+                  {isLiveSessionVisible ? (
+                    <div className="console-status">
+                      <span
+                        className={`status-badge ${
+                          sessionSnapshot.isRunning
+                            ? 'status-badge--ready'
+                            : 'status-badge--stopped'
+                        }`}
+                      >
+                        {sessionSnapshot.isRunning ? 'live session' : 'session stopped'}
+                      </span>
+                      <span className="pill">{sessionSnapshot.profileLabel}</span>
+                    </div>
+                  ) : null}
+
+                  {isLiveSessionVisible && sessionSnapshot.isRunning ? (
+                    <button
+                      className="button button--secondary"
+                      disabled={isStoppingSession}
+                      type="button"
+                      onClick={stopSession}
+                    >
+                      {isStoppingSession ? 'Stopping...' : 'Stop session'}
+                    </button>
+                  ) : (
+                    <button
+                      className="button button--primary"
+                      disabled={!selectedLaunchProfile || isLaunchingSession}
+                      type="button"
+                      onClick={launchSession}
+                    >
+                      {isLaunchingSession ? 'Launching...' : 'Launch terminal'}
+                    </button>
+                  )}
+                </div>
               </div>
 
-              <div className="console-summary">
-                <article className="summary-card">
-                  <span className="summary-card__label">Next command target</span>
-                  <strong>{selectedProject.name}</strong>
-                  <p>When terminal launch lands, this project will own the working directory.</p>
-                </article>
+              {sessionError ? <p className="form-error">{sessionError}</p> : null}
 
-                <article className="summary-card">
-                  <span className="summary-card__label">Shared persistence</span>
-                  <strong>{storageInfo ? 'SQLite foundation ready' : 'Loading storage...'}</strong>
-                  <p>Projects, work items, documents, and session summaries are keyed in one app DB.</p>
-                </article>
-              </div>
+              {isLiveSessionVisible ? (
+                <Suspense fallback={<div className="terminal-loading">Preparing terminal...</div>}>
+                  <LiveTerminal snapshot={sessionSnapshot} onSessionExit={handleSessionExit} />
+                </Suspense>
+              ) : (
+                <div className="launch-state">
+                  <div className="launch-state__copy">
+                    <p className="summary-card__label">Ready to launch</p>
+                    <h3>{selectedProject.name}</h3>
+                    <p>
+                      Start Claude Code in <code>{selectedProject.rootPath}</code> using the
+                      selected launch profile.
+                    </p>
+                  </div>
+
+                  <div className="launch-state__meta">
+                    <article className="summary-card">
+                      <span className="summary-card__label">Project root</span>
+                      <strong>{selectedProject.rootPath}</strong>
+                      <p>The PTY session will start in this folder.</p>
+                    </article>
+
+                    <article className="summary-card">
+                      <span className="summary-card__label">Launch profile</span>
+                      <strong>{selectedLaunchProfile?.label ?? 'No profile selected'}</strong>
+                      <p>
+                        {selectedLaunchProfile
+                          ? 'The profile command and env vars act as the MVP account model.'
+                          : 'Select or create a launch profile first.'}
+                      </p>
+                    </article>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="empty-state empty-state--large">
-              Pick a project from the left rail or create one to begin shaping the MVP workflow.
+              Pick a project from the left rail or create one to begin launching sessions.
             </div>
           )}
         </section>
@@ -325,14 +476,21 @@ function App() {
 
           <div className="profile-list">
             {launchProfiles.map((profile) => (
-              <article key={profile.id} className="profile-card">
+              <button
+                key={profile.id}
+                className={`profile-card ${
+                  profile.id === selectedLaunchProfile?.id ? 'profile-card--active' : ''
+                }`}
+                type="button"
+                onClick={() => setSelectedLaunchProfileId(profile.id)}
+              >
                 <div className="profile-card__head">
                   <strong>{profile.label}</strong>
                   <span className="pill">{profile.provider}</span>
                 </div>
                 <code>{profile.executable}</code>
                 <code>{profile.args || '(no args)'}</code>
-              </article>
+              </button>
             ))}
           </div>
 
@@ -340,7 +498,7 @@ function App() {
             <div className="stack-form__header">
               <h3>Add launch profile</h3>
               <p>
-                For MVP, a profile is the account selector: executable, args, and optional env vars.
+                For MVP, a profile is the account selector: command, raw args, and optional env vars.
               </p>
             </div>
 

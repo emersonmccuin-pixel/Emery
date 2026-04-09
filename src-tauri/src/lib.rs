@@ -1,8 +1,12 @@
 mod db;
+mod session;
 
 use db::{
     AppState, BootstrapData, CreateLaunchProfileInput, CreateProjectInput, LaunchProfileRecord,
     ProjectRecord, StorageInfo,
+};
+use session::{
+    LaunchSessionInput, ResizeSessionInput, SessionInput, SessionManager, SessionSnapshot,
 };
 use std::fs;
 use tauri::{AppHandle, Manager, State};
@@ -57,6 +61,39 @@ fn create_launch_profile(
     state.create_launch_profile(input)
 }
 
+#[tauri::command]
+fn get_session_snapshot(
+    project_id: i64,
+    state: State<SessionManager>,
+) -> Result<Option<SessionSnapshot>, String> {
+    state.snapshot(project_id)
+}
+
+#[tauri::command]
+fn launch_project_session(
+    input: LaunchSessionInput,
+    session_state: State<SessionManager>,
+    app_state: State<AppState>,
+    app_handle: AppHandle,
+) -> Result<SessionSnapshot, String> {
+    session_state.launch(input, &app_state, &app_handle)
+}
+
+#[tauri::command]
+fn write_session_input(input: SessionInput, state: State<SessionManager>) -> Result<(), String> {
+    state.write_input(input)
+}
+
+#[tauri::command]
+fn resize_session(input: ResizeSessionInput, state: State<SessionManager>) -> Result<(), String> {
+    state.resize(input)
+}
+
+#[tauri::command]
+fn terminate_session(project_id: i64, state: State<SessionManager>) -> Result<(), String> {
+    state.terminate(project_id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -66,12 +103,18 @@ pub fn run() {
             get_storage_info,
             bootstrap_app_state,
             create_project,
-            create_launch_profile
+            create_launch_profile,
+            get_session_snapshot,
+            launch_project_session,
+            write_session_input,
+            resize_session,
+            terminate_session
         ])
         .setup(|app| {
             let storage = ensure_storage_dirs(&app.handle())?;
             let state = AppState::new(storage)?;
             app.manage(state);
+            app.manage(SessionManager::default());
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(
