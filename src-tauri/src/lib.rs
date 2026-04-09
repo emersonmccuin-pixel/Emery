@@ -6,12 +6,15 @@ pub mod supervisor_api;
 pub mod supervisor_mcp;
 
 use db::{
-    AppState, BootstrapData, CreateDocumentInput, CreateLaunchProfileInput, CreateProjectInput,
-    CreateWorkItemInput, DocumentRecord, LaunchProfileRecord, ProjectRecord, StorageInfo,
-    UpdateDocumentInput, UpdateProjectInput, UpdateWorkItemInput, WorkItemRecord,
+    AppState, BootstrapData, CreateLaunchProfileInput, CreateProjectInput, DocumentRecord,
+    LaunchProfileRecord, ProjectRecord, StorageInfo, WorkItemRecord, UpdateProjectInput,
 };
 use session::SupervisorClient;
 use session_api::{LaunchSessionInput, ResizeSessionInput, SessionInput, SessionSnapshot};
+use supervisor_api::{
+    CreateProjectDocumentInput, CreateProjectWorkItemInput, ProjectDocumentTarget,
+    ProjectWorkItemTarget, UpdateProjectDocumentInput, UpdateProjectWorkItemInput,
+};
 use std::fs;
 use tauri::{AppHandle, Manager, State};
 
@@ -107,55 +110,67 @@ fn terminate_session(project_id: i64, state: State<SupervisorClient>) -> Result<
 }
 
 #[tauri::command]
-fn list_work_items(project_id: i64, state: State<AppState>) -> Result<Vec<WorkItemRecord>, String> {
+fn list_work_items(
+    project_id: i64,
+    state: State<SupervisorClient>,
+) -> Result<Vec<WorkItemRecord>, String> {
     state.list_work_items(project_id)
 }
 
 #[tauri::command]
 fn create_work_item(
-    input: CreateWorkItemInput,
-    state: State<AppState>,
+    input: CreateProjectWorkItemInput,
+    state: State<SupervisorClient>,
 ) -> Result<WorkItemRecord, String> {
     state.create_work_item(input)
 }
 
 #[tauri::command]
 fn update_work_item(
-    input: UpdateWorkItemInput,
-    state: State<AppState>,
+    input: UpdateProjectWorkItemInput,
+    state: State<SupervisorClient>,
 ) -> Result<WorkItemRecord, String> {
     state.update_work_item(input)
 }
 
 #[tauri::command]
-fn delete_work_item(id: i64, state: State<AppState>) -> Result<(), String> {
-    state.delete_work_item(id)
+fn delete_work_item(
+    input: ProjectWorkItemTarget,
+    state: State<SupervisorClient>,
+) -> Result<(), String> {
+    state.delete_work_item(input.project_id, input.id)
 }
 
 #[tauri::command]
-fn list_documents(project_id: i64, state: State<AppState>) -> Result<Vec<DocumentRecord>, String> {
+fn list_documents(
+    project_id: i64,
+    state: State<SupervisorClient>,
+) -> Result<Vec<DocumentRecord>, String> {
     state.list_documents(project_id)
 }
 
 #[tauri::command]
 fn create_document(
-    input: CreateDocumentInput,
-    state: State<AppState>,
+    input: CreateProjectDocumentInput,
+    state: State<SupervisorClient>,
 ) -> Result<DocumentRecord, String> {
     state.create_document(input)
 }
 
 #[tauri::command]
 fn update_document(
-    input: UpdateDocumentInput,
-    state: State<AppState>,
+    input: UpdateProjectDocumentInput,
+    state: State<SupervisorClient>,
 ) -> Result<DocumentRecord, String> {
     state.update_document(input)
 }
 
 #[tauri::command]
-fn delete_document(id: i64, state: State<AppState>) -> Result<(), String> {
-    state.delete_document(id)
+fn delete_document(
+    input: ProjectDocumentTarget,
+    state: State<SupervisorClient>,
+) -> Result<(), String> {
+    state.delete_document(input.project_id, input.id)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

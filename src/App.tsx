@@ -705,11 +705,16 @@ function App() {
     itemType: WorkItemType
     status: WorkItemStatus
   }) => {
+    if (!selectedProject) {
+      return
+    }
+
     setWorkItemError(null)
 
     try {
       const item = await invoke<WorkItemRecord>('update_work_item', {
         input: {
+          projectId: selectedProject.id,
           id: input.id,
           title: input.title,
           body: input.body,
@@ -749,7 +754,12 @@ function App() {
     setWorkItemError(null)
 
     try {
-      await invoke('delete_work_item', { id })
+      await invoke('delete_work_item', {
+        input: {
+          projectId: selectedProject.id,
+          id,
+        },
+      })
       setWorkItems((current) => current.filter((item) => item.id !== id))
       setDocuments((current) =>
         current.map((document) =>
@@ -798,13 +808,19 @@ function App() {
     body: string
     workItemId: number | null
   }) => {
+    if (!selectedProject) {
+      return
+    }
+
     setDocumentError(null)
 
     try {
       const document = await invoke<DocumentRecord>('update_document', {
         input: {
+          projectId: selectedProject.id,
           id: input.id,
           workItemId: input.workItemId,
+          clearWorkItem: input.workItemId === null,
           title: input.title,
           body: input.body,
         },
@@ -829,7 +845,12 @@ function App() {
     setDocumentError(null)
 
     try {
-      await invoke('delete_document', { id })
+      await invoke('delete_document', {
+        input: {
+          projectId: selectedProject.id,
+          id,
+        },
+      })
       setDocuments((current) => current.filter((document) => document.id !== id))
       adjustProjectDocumentCount(selectedProject.id, -1)
     } catch (error) {
@@ -923,6 +944,7 @@ function App() {
         try {
           const updatedWorkItem = await invoke<WorkItemRecord>('update_work_item', {
             input: {
+              projectId: selectedProject.id,
               id: workItem.id,
               title: workItem.title,
               body: workItem.body,

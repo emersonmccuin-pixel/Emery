@@ -5,6 +5,12 @@ use crate::session_api::{
     TERMINAL_EXIT_EVENT, TERMINAL_OUTPUT_EVENT,
 };
 use crate::session_host::{now_timestamp_string, resolve_helper_binary_path};
+use crate::supervisor_api::{
+    CreateProjectDocumentInput, CreateProjectWorkItemInput, ListProjectDocumentsInput,
+    ListProjectWorkItemsInput, ProjectDocumentTarget, ProjectWorkItemTarget,
+    UpdateProjectDocumentInput, UpdateProjectWorkItemInput,
+};
+use crate::db::{DocumentRecord, WorkItemRecord};
 use reqwest::blocking::Client;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -106,6 +112,70 @@ impl SupervisorClient {
         self.request_json::<_, serde_json::Value>(
             "session/terminate",
             &ProjectSessionTarget { project_id },
+        )
+        .map(|_| ())
+    }
+
+    pub fn list_work_items(&self, project_id: i64) -> Result<Vec<WorkItemRecord>, String> {
+        self.request_json(
+            "work-item/list",
+            &ListProjectWorkItemsInput {
+                project_id,
+                status: None,
+            },
+        )
+    }
+
+    pub fn create_work_item(
+        &self,
+        input: CreateProjectWorkItemInput,
+    ) -> Result<WorkItemRecord, String> {
+        self.request_json("work-item/create", &input)
+    }
+
+    pub fn update_work_item(
+        &self,
+        input: UpdateProjectWorkItemInput,
+    ) -> Result<WorkItemRecord, String> {
+        self.request_json("work-item/update", &input)
+    }
+
+    pub fn delete_work_item(&self, project_id: i64, id: i64) -> Result<(), String> {
+        self.request_json::<_, serde_json::Value>(
+            "work-item/delete",
+            &ProjectWorkItemTarget { project_id, id },
+        )
+        .map(|_| ())
+    }
+
+    pub fn list_documents(&self, project_id: i64) -> Result<Vec<DocumentRecord>, String> {
+        self.request_json(
+            "document/list",
+            &ListProjectDocumentsInput {
+                project_id,
+                work_item_id: None,
+            },
+        )
+    }
+
+    pub fn create_document(
+        &self,
+        input: CreateProjectDocumentInput,
+    ) -> Result<DocumentRecord, String> {
+        self.request_json("document/create", &input)
+    }
+
+    pub fn update_document(
+        &self,
+        input: UpdateProjectDocumentInput,
+    ) -> Result<DocumentRecord, String> {
+        self.request_json("document/update", &input)
+    }
+
+    pub fn delete_document(&self, project_id: i64, id: i64) -> Result<(), String> {
+        self.request_json::<_, serde_json::Value>(
+            "document/delete",
+            &ProjectDocumentTarget { project_id, id },
         )
         .map(|_| ())
     }

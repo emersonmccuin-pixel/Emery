@@ -286,6 +286,14 @@ fn route_request(
             serde_json::to_value(work_item)
                 .map_err(|error| RouteError::internal(format!("failed to encode closed work item: {error}")))
         }
+        (&Method::Post, "/work-item/delete") => {
+            let input = read_json::<ProjectWorkItemTarget>(request)?;
+            let _ = require_work_item_for_project(state, input.project_id, input.id)?;
+            state
+                .delete_work_item(input.id)
+                .map_err(RouteError::internal)?;
+            Ok(json!({ "ok": true }))
+        }
         (&Method::Post, "/document/list") => {
             let input = read_json::<ListProjectDocumentsInput>(request)?;
             state.get_project(input.project_id).map_err(RouteError::not_found)?;
