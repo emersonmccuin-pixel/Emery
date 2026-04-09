@@ -18,7 +18,7 @@ import type {
 } from './types'
 
 const LiveTerminal = lazy(() => import('./components/LiveTerminal'))
-type WorkspaceView = 'workItems' | 'documents' | 'profiles'
+type WorkspaceView = 'terminal' | 'workItems' | 'documents' | 'profiles'
 
 const WORK_ITEM_STATUS_ORDER: Record<WorkItemStatus, number> = {
   in_progress: 0,
@@ -126,7 +126,7 @@ function App() {
   const [profileError, setProfileError] = useState<string | null>(null)
   const [isProfileFormOpen, setIsProfileFormOpen] = useState(false)
   const [isAgentGuideOpen, setIsAgentGuideOpen] = useState(false)
-  const [activeView, setActiveView] = useState<WorkspaceView>('workItems')
+  const [activeView, setActiveView] = useState<WorkspaceView>('terminal')
   const [isCreatingProject, setIsCreatingProject] = useState(false)
   const [isUpdatingProject, setIsUpdatingProject] = useState(false)
   const [isCreatingProfile, setIsCreatingProfile] = useState(false)
@@ -521,6 +521,7 @@ function App() {
 
     setSessionError(null)
     setIsLaunchingSession(true)
+    setActiveView('terminal')
 
     try {
       const snapshot = await invoke<SessionSnapshot>('launch_project_session', {
@@ -1077,146 +1078,117 @@ function App() {
                 </p>
               ) : null}
 
-              <article className="summary-card bridge-card">
-                <div className="bridge-card__header">
-                  <div>
-                    <p className="summary-card__label">Agent workflow</p>
-                    <strong>CLI and startup prompt inside the session</strong>
-                    <p>Keep the guide hidden until you need to prime Claude.</p>
-                  </div>
-                  <div className="guide-card__actions">
-                    <span className={`status-badge ${bridgeReady ? 'status-badge--ready' : 'status-badge--stopped'}`}>
-                      {bridgeReady ? 'ready in terminal' : 'available after launch'}
-                    </span>
-                    <button
-                      className="button button--secondary button--compact"
-                      type="button"
-                      onClick={() => setIsAgentGuideOpen((current) => !current)}
-                    >
-                      {isAgentGuideOpen ? 'Hide guide' : 'Show guide'}
-                    </button>
-                  </div>
-                </div>
-                <div className="action-row">
-                  <button className="button button--secondary" type="button" onClick={copyAgentStartupPrompt}>
-                    Copy prompt
-                  </button>
-                  <button
-                    className="button button--primary"
-                    disabled={!bridgeReady}
-                    type="button"
-                    onClick={sendAgentStartupPrompt}
-                  >
-                    Send to terminal
-                  </button>
-                </div>
-                {agentPromptMessage ? <p className="stack-form__note">{agentPromptMessage}</p> : null}
-                {isAgentGuideOpen ? (
-                  <>
-                    <textarea
-                      className="bridge-card__prompt"
-                      readOnly
-                      rows={10}
-                      value={agentStartupPrompt}
-                    />
-                    <div className="bridge-card__commands">
-                      {AGENT_BRIDGE_COMMANDS.map((command) => (
-                        <code key={command}>{command}</code>
-                      ))}
+              <nav className="workspace-tabs workspace-tabs--main">
+                <button
+                  className={`workspace-tab ${activeView === 'terminal' ? 'workspace-tab--active' : ''}`}
+                  type="button"
+                  onClick={() => setActiveView('terminal')}
+                >
+                  <span>Terminal</span>
+                </button>
+                <button
+                  className={`workspace-tab ${activeView === 'workItems' ? 'workspace-tab--active' : ''}`}
+                  type="button"
+                  onClick={() => setActiveView('workItems')}
+                >
+                  <span>Work items</span>
+                  <span className="workspace-tab__count">{workItems.length}</span>
+                </button>
+                <button
+                  className={`workspace-tab ${activeView === 'documents' ? 'workspace-tab--active' : ''}`}
+                  type="button"
+                  onClick={() => setActiveView('documents')}
+                >
+                  <span>Documents</span>
+                  <span className="workspace-tab__count">{documents.length}</span>
+                </button>
+                <button
+                  className={`workspace-tab ${activeView === 'profiles' ? 'workspace-tab--active' : ''}`}
+                  type="button"
+                  onClick={() => setActiveView('profiles')}
+                >
+                  <span>Profiles</span>
+                  <span className="workspace-tab__count">{launchProfiles.length}</span>
+                </button>
+              </nav>
+
+              {activeView === 'terminal' ? (
+                <>
+                  <article className="summary-card bridge-card">
+                    <div className="bridge-card__header">
+                      <div>
+                        <p className="summary-card__label">Agent workflow</p>
+                        <strong>CLI and startup prompt inside the session</strong>
+                        <p>Keep the guide hidden until you need to prime Claude.</p>
+                      </div>
+                      <div className="guide-card__actions">
+                        <span className={`status-badge ${bridgeReady ? 'status-badge--ready' : 'status-badge--stopped'}`}>
+                          {bridgeReady ? 'ready in terminal' : 'available after launch'}
+                        </span>
+                        <button
+                          className="button button--secondary button--compact"
+                          type="button"
+                          onClick={() => setIsAgentGuideOpen((current) => !current)}
+                        >
+                          {isAgentGuideOpen ? 'Hide guide' : 'Show guide'}
+                        </button>
+                      </div>
                     </div>
-                  </>
-                ) : null}
-              </article>
+                    <div className="action-row">
+                      <button className="button button--secondary" type="button" onClick={copyAgentStartupPrompt}>
+                        Copy prompt
+                      </button>
+                      <button
+                        className="button button--primary"
+                        disabled={!bridgeReady}
+                        type="button"
+                        onClick={sendAgentStartupPrompt}
+                      >
+                        Send to terminal
+                      </button>
+                    </div>
+                    {agentPromptMessage ? <p className="stack-form__note">{agentPromptMessage}</p> : null}
+                    {isAgentGuideOpen ? (
+                      <>
+                        <textarea
+                          className="bridge-card__prompt"
+                          readOnly
+                          rows={10}
+                          value={agentStartupPrompt}
+                        />
+                        <div className="bridge-card__commands">
+                          {AGENT_BRIDGE_COMMANDS.map((command) => (
+                            <code key={command}>{command}</code>
+                          ))}
+                        </div>
+                      </>
+                    ) : null}
+                  </article>
 
-              {isLiveSessionVisible ? (
-                <Suspense fallback={<div className="terminal-loading">Preparing terminal...</div>}>
-                  <LiveTerminal snapshot={sessionSnapshot} onSessionExit={handleSessionExit} />
-                </Suspense>
-              ) : (
-                <div className="launch-state">
-                  <div className="launch-state__copy">
-                    <p className="summary-card__label">
-                      {selectedProject.rootAvailable ? 'Ready to launch' : 'Root needs rebind'}
-                    </p>
-                    <h3>{selectedProject.name}</h3>
-                    <p>
-                      {selectedProject.rootAvailable
-                        ? (
-                            <>
-                              Start Claude Code in <code>{selectedProject.rootPath}</code> using
-                              the selected launch profile.
-                            </>
-                          )
-                        : (
-                            <>
-                              The registered root path no longer exists. Update it with the project
-                              editor before launching another session.
-                            </>
-                          )}
-                    </p>
-                  </div>
+                  {isLiveSessionVisible ? (
+                    <Suspense fallback={<div className="terminal-loading">Preparing terminal...</div>}>
+                      <LiveTerminal snapshot={sessionSnapshot} onSessionExit={handleSessionExit} />
+                    </Suspense>
+                  ) : (
+                    <div className="launch-state launch-state--minimal">
+                      <div className="launch-state__copy">
+                        <p className="summary-card__label">
+                          {selectedProject.rootAvailable ? 'Ready to launch' : 'Root needs rebind'}
+                        </p>
+                        <h3>{selectedProject.name}</h3>
+                        <p>
+                          {selectedProject.rootAvailable
+                            ? `Start Claude Code in ${selectedProject.rootPath} using the selected launch profile.`
+                            : 'The registered root path no longer exists. Update it before launching another session.'}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : null}
 
-                  <div className="launch-state__meta">
-                    <article className="summary-card">
-                      <span className="summary-card__label">Project root</span>
-                      <strong>{selectedProject.rootPath}</strong>
-                      <p>
-                        {selectedProject.rootAvailable
-                          ? 'The PTY session will start in this folder.'
-                          : 'This path is stale. Rebind it to an existing folder first.'}
-                      </p>
-                    </article>
-
-                    <article className="summary-card">
-                      <span className="summary-card__label">Launch profile</span>
-                      <strong>{selectedLaunchProfile?.label ?? 'No profile selected'}</strong>
-                      <p>
-                        {selectedLaunchProfile
-                          ? 'The profile command and env vars act as the MVP account model.'
-                          : 'Select or create a launch profile first.'}
-                      </p>
-                    </article>
-                  </div>
-                </div>
-              )}
-
-              <section className="details-dock">
-                <div className="section-toolbar">
-                  <div>
-                    <p className="panel__eyebrow">Workspace</p>
-                    <h2>Project details</h2>
-                    <p className="section-subtitle">
-                      Keep work items, documents, and launch profiles in one vertical flow with the terminal.
-                    </p>
-                  </div>
-                </div>
-
-                <nav className="workspace-tabs">
-                  <button
-                    className={`workspace-tab ${activeView === 'workItems' ? 'workspace-tab--active' : ''}`}
-                    type="button"
-                    onClick={() => setActiveView('workItems')}
-                  >
-                    <span>Work items</span>
-                    <span className="workspace-tab__count">{workItems.length}</span>
-                  </button>
-                  <button
-                    className={`workspace-tab ${activeView === 'documents' ? 'workspace-tab--active' : ''}`}
-                    type="button"
-                    onClick={() => setActiveView('documents')}
-                  >
-                    <span>Documents</span>
-                    <span className="workspace-tab__count">{documents.length}</span>
-                  </button>
-                  <button
-                    className={`workspace-tab ${activeView === 'profiles' ? 'workspace-tab--active' : ''}`}
-                    type="button"
-                    onClick={() => setActiveView('profiles')}
-                  >
-                    <span>Profiles</span>
-                    <span className="workspace-tab__count">{launchProfiles.length}</span>
-                  </button>
-                </nav>
+              {activeView !== 'terminal' ? (
+                <section className="details-dock">
 
                 {activeView === 'profiles' ? (
                   <section className="profiles-panel">
@@ -1353,7 +1325,8 @@ function App() {
                     workItems={workItems}
                   />
                 ) : null}
-              </section>
+                </section>
+              ) : null}
             </div>
           ) : (
             <div className="empty-state empty-state--large">
