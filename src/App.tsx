@@ -925,7 +925,7 @@ function App() {
           )
         }
       } else {
-        setAgentPromptMessage(`Focused handoff queued for work item #${targetWorkItem.id}.`)
+        setAgentPromptMessage(`Focused handoff launched with work item #${targetWorkItem.id}.`)
       }
     } catch (error) {
       setSessionError(
@@ -1153,7 +1153,7 @@ function App() {
                         if (!snapshot || !agentStartupPrompt) {
                           return
                         }
-                        setAgentPromptMessage('Workspace guide queued for the fresh terminal.')
+                        setAgentPromptMessage('Workspace guide launched with the fresh terminal.')
                       })()}
                     >
                       {isLaunchingSession

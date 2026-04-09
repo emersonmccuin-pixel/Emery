@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, State};
 
@@ -131,7 +130,16 @@ impl SessionManager {
             })
             .map_err(|error| format!("failed to open pty: {error}"))?;
 
-        let command = build_launch_command(&project, &profile, &app_state.storage())?;
+        let command = build_launch_command(
+            &project,
+            &profile,
+            &app_state.storage(),
+            input
+                .startup_prompt
+                .as_deref()
+                .map(str::trim)
+                .filter(|prompt| !prompt.is_empty()),
+        )?;
         let child = pair
             .slave
             .spawn_command(command)
@@ -173,14 +181,6 @@ impl SessionManager {
             child,
             app_handle.clone(),
         );
-        spawn_startup_prompt_thread(
-            Arc::clone(&session),
-            input
-                .startup_prompt
-                .map(|prompt| prompt.trim().to_string())
-                .filter(|prompt| !prompt.is_empty()),
-        );
-
         Ok(session.snapshot(true))
     }
 
@@ -272,6 +272,7 @@ fn build_launch_command(
     project: &crate::db::ProjectRecord,
     profile: &crate::db::LaunchProfileRecord,
     storage: &crate::db::StorageInfo,
+    startup_prompt: Option<&str>,
 ) -> Result<CommandBuilder, String> {
     let mut command = CommandBuilder::new("powershell.exe");
     let env_pairs = parse_env_json(&profile.env_json)?;
@@ -333,6 +334,15 @@ fn build_launch_command(
             "'{}'",
             escape_ps(&build_claude_bridge_system_prompt(project))
         ));
+    }
+
+    if let Some(prompt) = startup_prompt {
+        let normalized_prompt = normalize_prompt_for_launch(prompt);
+
+        if !normalized_prompt.is_empty() {
+            script.push(' ');
+            script.push_str(&format!("'{}'", escape_ps(&normalized_prompt)));
+        }
     }
 
     command.arg("-NoLogo");
@@ -492,55 +502,6 @@ fn spawn_wait_thread(
     });
 }
 
-fn spawn_startup_prompt_thread(session: Arc<LiveSession>, startup_prompt: Option<String>) {
-    let Some(prompt) = startup_prompt else {
-        return;
-    };
-
-    thread::spawn(move || {
-        let normalized_prompt = normalize_prompt_for_terminal(&prompt);
-
-        if normalized_prompt.is_empty() {
-            return;
-        }
-
-        let mut saw_output = false;
-
-        for _ in 0..48 {
-            let output_len = session
-                .output_buffer
-                .lock()
-                .map(|buffer| buffer.len())
-                .unwrap_or_default();
-
-            if output_len > 0 {
-                saw_output = true;
-                break;
-            }
-
-            thread::sleep(std::time::Duration::from_millis(250));
-        }
-
-        if saw_output {
-            thread::sleep(std::time::Duration::from_millis(1800));
-        } else {
-            thread::sleep(std::time::Duration::from_millis(3000));
-        }
-
-        if let Ok(mut writer) = session.writer.lock() {
-            let _ = writer.write_all(normalized_prompt.as_bytes());
-            let _ = writer.flush();
-        }
-
-        thread::sleep(std::time::Duration::from_millis(120));
-
-        if let Ok(mut writer) = session.writer.lock() {
-            let _ = writer.write_all(b"\r");
-            let _ = writer.flush();
-        }
-    });
-}
-
-fn normalize_prompt_for_terminal(prompt: &str) -> String {
+fn normalize_prompt_for_launch(prompt: &str) -> String {
     prompt.split_whitespace().collect::<Vec<_>>().join(" ")
 }
