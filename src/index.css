@@ -728,6 +728,35 @@ select:focus {
   gap: 14px;
 }
 
+.terminal-shell {
+  display: grid;
+  gap: 10px;
+}
+
+.terminal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.terminal-toolbar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.terminal-toolbar__hint,
+.terminal-toolbar__message {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.terminal-toolbar__message {
+  color: var(--text);
+}
+
 .terminal-host {
   min-height: 460px;
   border-radius: 12px;
@@ -1089,5 +1118,10 @@ select:focus {
   .workspace-toolbar__field {
     max-width: none;
     width: 100%;
+  }
+
+  .terminal-toolbar {
+    align-items: start;
+    flex-direction: column;
   }
 }
