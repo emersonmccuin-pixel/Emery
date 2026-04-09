@@ -18,6 +18,7 @@ import type {
 } from './types'
 
 const LiveTerminal = lazy(() => import('./components/LiveTerminal'))
+type WorkspaceView = 'workItems' | 'documents' | 'profiles'
 
 const WORK_ITEM_STATUS_ORDER: Record<WorkItemStatus, number> = {
   in_progress: 0,
@@ -117,11 +118,15 @@ function App() {
   const [editProjectRootPath, setEditProjectRootPath] = useState('')
   const [projectUpdateError, setProjectUpdateError] = useState<string | null>(null)
   const [isProjectEditorOpen, setIsProjectEditorOpen] = useState(false)
+  const [isProjectCreateOpen, setIsProjectCreateOpen] = useState(false)
   const [profileLabel, setProfileLabel] = useState('Claude Code / YOLO')
   const [profileExecutable, setProfileExecutable] = useState('claude')
   const [profileArgs, setProfileArgs] = useState('--dangerously-skip-permissions')
   const [profileEnvJson, setProfileEnvJson] = useState('{}')
   const [profileError, setProfileError] = useState<string | null>(null)
+  const [isProfileFormOpen, setIsProfileFormOpen] = useState(false)
+  const [isAgentGuideOpen, setIsAgentGuideOpen] = useState(false)
+  const [activeView, setActiveView] = useState<WorkspaceView>('workItems')
   const [isCreatingProject, setIsCreatingProject] = useState(false)
   const [isUpdatingProject, setIsUpdatingProject] = useState(false)
   const [isCreatingProfile, setIsCreatingProfile] = useState(false)
@@ -180,12 +185,18 @@ function App() {
     null
   const bridgeReady = Boolean(selectedProject && sessionSnapshot?.isRunning)
   const agentStartupPrompt = buildAgentStartupPrompt(selectedProject, workItems, documents)
+  const openWorkItemCount = workItems.filter((item) => item.status !== 'done').length
+  const blockedWorkItemCount = workItems.filter((item) => item.status === 'blocked').length
 
   useEffect(() => {
     if (!selectedProject && projects.length > 0) {
       setSelectedProjectId(projects[0].id)
     }
   }, [projects, selectedProject])
+
+  useEffect(() => {
+    setIsProjectCreateOpen(projects.length === 0)
+  }, [projects.length])
 
   useEffect(() => {
     setEditProjectName(selectedProject?.name ?? '')
@@ -423,6 +434,7 @@ function App() {
       setSelectedProjectId(project.id)
       setProjectName('')
       setProjectRootPath('')
+      setIsProjectCreateOpen(false)
     } catch (error) {
       setProjectError(error instanceof Error ? error.message : 'Failed to create project.')
     } finally {
@@ -487,6 +499,7 @@ function App() {
       setProfileExecutable('claude')
       setProfileArgs('--dangerously-skip-permissions')
       setProfileEnvJson('{}')
+      setIsProfileFormOpen(false)
     } catch (error) {
       setProfileError(
         error instanceof Error ? error.message : 'Failed to create launch profile.',
@@ -759,12 +772,15 @@ function App() {
 
   return (
     <main className="app-shell">
-      <header className="topbar">
-        <div>
+      <header className="topbar topbar--compact">
+        <div className="topbar__headline">
           <p className="eyebrow">Claude Code First MVP</p>
           <h1>Project Commander</h1>
+          <p className="topbar__lede">
+            Launch Claude inside a project, keep the work items close, and keep the setup out of the way.
+          </p>
         </div>
-        <div className="runtime-panel">
+        <div className="runtime-panel runtime-panel--compact">
           <div className={`status-badge status-badge--${runtimeStatus}`}>
             {runtimeStatus}
           </div>
@@ -773,20 +789,80 @@ function App() {
         </div>
       </header>
 
-      <section className="workspace">
-        <aside className="panel rail">
+      <section className="workspace workspace--streamlined">
+        <aside className="panel sidebar">
           <div className="panel__header">
             <div>
               <p className="panel__eyebrow">Projects</p>
               <h2>Registered roots</h2>
             </div>
-            <span className="panel__count">{projects.length}</span>
+            <div className="section-toolbar__actions">
+              <span className="panel__count">{projects.length}</span>
+              <button
+                className="button button--secondary button--compact"
+                type="button"
+                onClick={() => setIsProjectCreateOpen((current) => !current)}
+              >
+                {isProjectCreateOpen ? 'Hide form' : 'Add project'}
+              </button>
+            </div>
           </div>
+
+          {isProjectCreateOpen ? (
+            <form className="stack-form" onSubmit={submitProject}>
+              <div className="stack-form__header">
+                <h3>Add project</h3>
+                <p>Register the working directory Claude Code should open inside.</p>
+              </div>
+
+              <label className="field">
+                <span>Name</span>
+                <input
+                  value={projectName}
+                  onChange={(event) => setProjectName(event.target.value)}
+                  placeholder="Emery"
+                />
+              </label>
+
+              <label className="field">
+                <span>Root folder</span>
+                <div className="input-row">
+                  <input
+                    value={projectRootPath}
+                    onChange={(event) => setProjectRootPath(event.target.value)}
+                    placeholder="E:\\Projects\\Emery"
+                  />
+                  <button
+                    className="button button--secondary"
+                    type="button"
+                    onClick={() => browseForProjectFolder(setProjectRootPath, setProjectError)}
+                  >
+                    Browse
+                  </button>
+                </div>
+              </label>
+
+              {projectError ? <p className="form-error">{projectError}</p> : null}
+
+              <div className="action-row">
+                <button className="button button--primary" disabled={isCreatingProject} type="submit">
+                  {isCreatingProject ? 'Saving...' : 'Create project'}
+                </button>
+                <button
+                  className="button button--secondary"
+                  type="button"
+                  onClick={() => setIsProjectCreateOpen(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          ) : null}
 
           <div className="project-list">
             {projects.length === 0 ? (
               <div className="empty-state">
-                No projects yet. Add one so the center pane can root a Claude Code session in it.
+                No projects yet. Add one so Claude can launch inside a registered root.
               </div>
             ) : (
               projects.map((project) => (
@@ -806,54 +882,34 @@ function App() {
                   </span>
                   <span className="project-card__path">{project.rootPath}</span>
                   <span className="project-card__meta">
-                    {project.workItemCount} work items · {project.documentCount} docs ·{' '}
-                    {project.sessionCount} summaries
+                    {project.workItemCount} work items · {project.documentCount} docs
                   </span>
                 </button>
               ))
             )}
           </div>
 
-          <form className="stack-form" onSubmit={submitProject}>
-            <div className="stack-form__header">
-              <h3>Add project</h3>
-              <p>Register the working directory Claude Code should open inside.</p>
-            </div>
-
-            <label className="field">
-              <span>Name</span>
-              <input
-                value={projectName}
-                onChange={(event) => setProjectName(event.target.value)}
-                placeholder="Emery"
-              />
-            </label>
-
-            <label className="field">
-              <span>Root folder</span>
-              <div className="input-row">
-                <input
-                  value={projectRootPath}
-                  onChange={(event) => setProjectRootPath(event.target.value)}
-                  placeholder="E:\\Projects\\Emery"
-                />
-                <button
-                  className="button button--secondary"
-                  type="button"
-                  onClick={() => browseForProjectFolder(setProjectRootPath, setProjectError)}
-                >
-                  Browse
-                </button>
+          {selectedProject ? (
+            <article className="summary-card sidebar-summary">
+              <span className="summary-card__label">Selected project</span>
+              <strong>{selectedProject.name}</strong>
+              <p>{selectedProject.rootPath}</p>
+              <div className="metric-strip">
+                <article className="metric-card">
+                  <span>Open work</span>
+                  <strong>{openWorkItemCount}</strong>
+                </article>
+                <article className="metric-card">
+                  <span>Blocked</span>
+                  <strong>{blockedWorkItemCount}</strong>
+                </article>
+                <article className="metric-card">
+                  <span>Docs</span>
+                  <strong>{documents.length}</strong>
+                </article>
               </div>
-            </label>
-
-            {projectError ? <p className="form-error">{projectError}</p> : null}
-
-            <button className="button button--primary" disabled={isCreatingProject} type="submit">
-              {isCreatingProject ? 'Saving...' : 'Create project'}
-            </button>
-          </form>
-
+            </article>
+          ) : null}
         </aside>
 
         <section className="panel console-panel">
@@ -1026,22 +1082,21 @@ function App() {
                   <div>
                     <p className="summary-card__label">Agent workflow</p>
                     <strong>CLI and startup prompt inside the session</strong>
+                    <p>Keep the guide hidden until you need to prime Claude.</p>
                   </div>
-                  <span className={`status-badge ${bridgeReady ? 'status-badge--ready' : 'status-badge--stopped'}`}>
-                    {bridgeReady ? 'ready in terminal' : 'available after launch'}
-                  </span>
+                  <div className="guide-card__actions">
+                    <span className={`status-badge ${bridgeReady ? 'status-badge--ready' : 'status-badge--stopped'}`}>
+                      {bridgeReady ? 'ready in terminal' : 'available after launch'}
+                    </span>
+                    <button
+                      className="button button--secondary button--compact"
+                      type="button"
+                      onClick={() => setIsAgentGuideOpen((current) => !current)}
+                    >
+                      {isAgentGuideOpen ? 'Hide guide' : 'Show guide'}
+                    </button>
+                  </div>
                 </div>
-                <p>
-                  The launched terminal injects the shared DB path plus the active project context,
-                  and this prompt tells Claude Code how to use `project-commander-cli` as the real
-                  persistence layer.
-                </p>
-                <textarea
-                  className="bridge-card__prompt"
-                  readOnly
-                  rows={12}
-                  value={agentStartupPrompt}
-                />
                 <div className="action-row">
                   <button className="button button--secondary" type="button" onClick={copyAgentStartupPrompt}>
                     Copy prompt
@@ -1056,11 +1111,21 @@ function App() {
                   </button>
                 </div>
                 {agentPromptMessage ? <p className="stack-form__note">{agentPromptMessage}</p> : null}
-                <div className="bridge-card__commands">
-                  {AGENT_BRIDGE_COMMANDS.map((command) => (
-                    <code key={command}>{command}</code>
-                  ))}
-                </div>
+                {isAgentGuideOpen ? (
+                  <>
+                    <textarea
+                      className="bridge-card__prompt"
+                      readOnly
+                      rows={10}
+                      value={agentStartupPrompt}
+                    />
+                    <div className="bridge-card__commands">
+                      {AGENT_BRIDGE_COMMANDS.map((command) => (
+                        <code key={command}>{command}</code>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
               </article>
 
               {isLiveSessionVisible ? (
@@ -1125,104 +1190,173 @@ function App() {
         <aside className="panel rail">
           <div className="panel__header">
             <div>
-              <p className="panel__eyebrow">Launch profiles</p>
-              <h2>Account model</h2>
+              <p className="panel__eyebrow">Workspace</p>
+              <h2>Details</h2>
             </div>
-            <span className="panel__count">{launchProfiles.length}</span>
           </div>
 
-          <div className="profile-list">
-            {launchProfiles.map((profile) => (
-              <button
-                key={profile.id}
-                className={`profile-card ${
-                  profile.id === selectedLaunchProfile?.id ? 'profile-card--active' : ''
-                }`}
-                type="button"
-                onClick={() => setSelectedLaunchProfileId(profile.id)}
-              >
-                <div className="profile-card__head">
-                  <strong>{profile.label}</strong>
-                  <span className="pill">{profile.provider}</span>
-                </div>
-                <code>{profile.executable}</code>
-                <code>{profile.args || '(no args)'}</code>
-              </button>
-            ))}
-          </div>
-
-          <form className="stack-form" onSubmit={submitLaunchProfile}>
-            <div className="stack-form__header">
-              <h3>Add launch profile</h3>
-              <p>
-                For MVP, a profile is the account selector: command, raw args, and optional env vars.
-              </p>
-            </div>
-
-            <label className="field">
-              <span>Label</span>
-              <input
-                value={profileLabel}
-                onChange={(event) => setProfileLabel(event.target.value)}
-                placeholder="Claude Code / Work"
-              />
-            </label>
-
-            <label className="field">
-              <span>Executable</span>
-              <input
-                value={profileExecutable}
-                onChange={(event) => setProfileExecutable(event.target.value)}
-                placeholder="claude"
-              />
-            </label>
-
-            <label className="field">
-              <span>Args</span>
-              <input
-                value={profileArgs}
-                onChange={(event) => setProfileArgs(event.target.value)}
-                placeholder="--dangerously-skip-permissions"
-              />
-            </label>
-
-            <label className="field">
-              <span>Environment JSON</span>
-              <textarea
-                rows={5}
-                value={profileEnvJson}
-                onChange={(event) => setProfileEnvJson(event.target.value)}
-                placeholder='{"ANTHROPIC_API_KEY":"..."}'
-              />
-            </label>
-
-            {profileError ? <p className="form-error">{profileError}</p> : null}
-
-            <button className="button button--primary" disabled={isCreatingProfile} type="submit">
-              {isCreatingProfile ? 'Saving...' : 'Create profile'}
+          <nav className="workspace-tabs workspace-tabs--secondary">
+            <button
+              className={`workspace-tab ${activeView === 'workItems' ? 'workspace-tab--active' : ''}`}
+              type="button"
+              onClick={() => setActiveView('workItems')}
+            >
+              <span>Work items</span>
+              <span className="workspace-tab__count">{workItems.length}</span>
             </button>
-          </form>
+            <button
+              className={`workspace-tab ${activeView === 'documents' ? 'workspace-tab--active' : ''}`}
+              type="button"
+              onClick={() => setActiveView('documents')}
+            >
+              <span>Documents</span>
+              <span className="workspace-tab__count">{documents.length}</span>
+            </button>
+            <button
+              className={`workspace-tab ${activeView === 'profiles' ? 'workspace-tab--active' : ''}`}
+              type="button"
+              onClick={() => setActiveView('profiles')}
+            >
+              <span>Profiles</span>
+              <span className="workspace-tab__count">{launchProfiles.length}</span>
+            </button>
+          </nav>
 
-          <WorkItemsPanel
-            error={workItemError}
-            isLoading={isLoadingWorkItems}
-            onCreate={createWorkItem}
-            onDelete={deleteWorkItem}
-            onUpdate={updateWorkItem}
-            project={selectedProject}
-            workItems={workItems}
-          />
+          {activeView === 'profiles' ? (
+            <>
+              <div className="section-toolbar">
+                <div>
+                  <p className="panel__eyebrow">Launch profiles</p>
+                  <h2>Account model</h2>
+                  <p className="section-subtitle">
+                    Pick one profile to launch with. Open the form only when you need a new one.
+                  </p>
+                </div>
+                <div className="section-toolbar__actions">
+                  <span className="panel__count">{launchProfiles.length}</span>
+                  <button
+                    className="button button--secondary button--compact"
+                    type="button"
+                    onClick={() => setIsProfileFormOpen((current) => !current)}
+                  >
+                    {isProfileFormOpen ? 'Hide form' : 'Add profile'}
+                  </button>
+                </div>
+              </div>
 
-          <DocumentsPanel
-            documents={documents}
-            error={documentError}
-            isLoading={isLoadingDocuments}
-            onCreate={createDocument}
-            onDelete={deleteDocument}
-            onUpdate={updateDocument}
-            project={selectedProject}
-            workItems={workItems}
-          />
+              {isProfileFormOpen ? (
+                <form className="stack-form" onSubmit={submitLaunchProfile}>
+                  <div className="stack-form__header">
+                    <h3>Add launch profile</h3>
+                    <p>
+                      For MVP, a profile is the account selector: command, raw args, and optional env vars.
+                    </p>
+                  </div>
+
+                  <label className="field">
+                    <span>Label</span>
+                    <input
+                      value={profileLabel}
+                      onChange={(event) => setProfileLabel(event.target.value)}
+                      placeholder="Claude Code / Work"
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Executable</span>
+                    <input
+                      value={profileExecutable}
+                      onChange={(event) => setProfileExecutable(event.target.value)}
+                      placeholder="claude"
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Args</span>
+                    <input
+                      value={profileArgs}
+                      onChange={(event) => setProfileArgs(event.target.value)}
+                      placeholder="--dangerously-skip-permissions"
+                    />
+                  </label>
+
+                  <label className="field">
+                    <span>Environment JSON</span>
+                    <textarea
+                      rows={5}
+                      value={profileEnvJson}
+                      onChange={(event) => setProfileEnvJson(event.target.value)}
+                      placeholder='{"ANTHROPIC_API_KEY":"..."}'
+                    />
+                  </label>
+
+                  {profileError ? <p className="form-error">{profileError}</p> : null}
+
+                  <div className="action-row">
+                    <button className="button button--primary" disabled={isCreatingProfile} type="submit">
+                      {isCreatingProfile ? 'Saving...' : 'Create profile'}
+                    </button>
+                    <button
+                      className="button button--secondary"
+                      type="button"
+                      onClick={() => setIsProfileFormOpen(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+
+              <div className="profile-list">
+                {launchProfiles.length === 0 ? (
+                  <div className="empty-state">Create a launch profile before starting a session.</div>
+                ) : (
+                  launchProfiles.map((profile) => (
+                    <button
+                      key={profile.id}
+                      className={`profile-card ${
+                        profile.id === selectedLaunchProfile?.id ? 'profile-card--active' : ''
+                      }`}
+                      type="button"
+                      onClick={() => setSelectedLaunchProfileId(profile.id)}
+                    >
+                      <div className="profile-card__head">
+                        <strong>{profile.label}</strong>
+                        <span className="pill">{profile.provider}</span>
+                      </div>
+                      <code>{profile.executable}</code>
+                      <code>{profile.args || '(no args)'}</code>
+                    </button>
+                  ))
+                )}
+              </div>
+            </>
+          ) : null}
+
+          {activeView === 'workItems' ? (
+            <WorkItemsPanel
+              error={workItemError}
+              isLoading={isLoadingWorkItems}
+              onCreate={createWorkItem}
+              onDelete={deleteWorkItem}
+              onUpdate={updateWorkItem}
+              project={selectedProject}
+              workItems={workItems}
+            />
+          ) : null}
+
+          {activeView === 'documents' ? (
+            <DocumentsPanel
+              documents={documents}
+              error={documentError}
+              isLoading={isLoadingDocuments}
+              onCreate={createDocument}
+              onDelete={deleteDocument}
+              onUpdate={updateDocument}
+              project={selectedProject}
+              workItems={workItems}
+            />
+          ) : null}
         </aside>
       </section>
     </main>

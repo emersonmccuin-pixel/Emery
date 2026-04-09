@@ -95,6 +95,17 @@ select:focus {
   margin-bottom: 18px;
 }
 
+.topbar__headline {
+  display: grid;
+  gap: 8px;
+}
+
+.topbar__lede {
+  margin: 0;
+  max-width: 760px;
+  color: var(--muted);
+}
+
 .topbar h1,
 .panel h2,
 .stack-form h3 {
@@ -135,6 +146,10 @@ select:focus {
   width: min(420px, 100%);
   padding: 18px 20px;
   border-radius: 24px;
+}
+
+.runtime-panel--compact {
+  gap: 8px;
 }
 
 .runtime-panel p {
@@ -186,6 +201,10 @@ select:focus {
   min-height: 0;
 }
 
+.workspace--streamlined {
+  grid-template-columns: 300px minmax(0, 1fr) 400px;
+}
+
 .panel {
   min-height: 0;
   border-radius: 28px;
@@ -193,6 +212,13 @@ select:focus {
 }
 
 .rail {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  overflow-y: auto;
+}
+
+.sidebar {
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -302,6 +328,58 @@ select:focus {
 .stack-form__note {
   margin: 0;
   color: var(--muted);
+}
+
+.section-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
+}
+
+.section-toolbar__actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: end;
+}
+
+.section-subtitle {
+  margin: 8px 0 0;
+  color: var(--muted);
+}
+
+.sidebar-summary {
+  display: grid;
+  gap: 12px;
+}
+
+.metric-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.metric-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.metric-card span {
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.metric-card strong {
+  margin: 0;
+  font-size: 1.2rem;
 }
 
 .field {
@@ -446,6 +524,14 @@ select:focus {
   align-items: start;
 }
 
+.guide-card__actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: end;
+  flex-wrap: wrap;
+}
+
 .bridge-card__header strong {
   margin-bottom: 0;
 }
@@ -453,6 +539,46 @@ select:focus {
 .bridge-card__commands {
   display: grid;
   gap: 10px;
+}
+
+.workspace-tabs {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.workspace-tabs--secondary {
+  margin-top: -4px;
+}
+
+.workspace-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+}
+
+.workspace-tab--active {
+  border-color: var(--border-strong);
+  background: rgba(240, 140, 58, 0.12);
+  color: var(--text);
+}
+
+.workspace-tab__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 0.78rem;
 }
 
 .bridge-card__prompt {
@@ -598,6 +724,22 @@ select:focus {
 .documents-section {
   display: grid;
   gap: 16px;
+}
+
+.list-detail-layout {
+  display: grid;
+  gap: 14px;
+}
+
+.list-pane,
+.detail-pane {
+  min-height: 0;
+}
+
+.detail-pane__empty {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
 }
 
 .field-grid {
@@ -788,6 +930,12 @@ select:focus {
     flex-direction: column;
   }
 
+  .section-toolbar,
+  .section-toolbar__actions,
+  .guide-card__actions {
+    align-items: start;
+  }
+
   .console-header {
     align-items: start;
   }
@@ -807,6 +955,7 @@ select:focus {
     border-radius: 22px;
   }
 
+  .sidebar,
   .rail,
   .console-panel {
     overflow: visible;
@@ -823,5 +972,9 @@ select:focus {
   .action-row {
     flex-direction: column;
     align-items: start;
+  }
+
+  .metric-strip {
+    grid-template-columns: 1fr;
   }
 }
