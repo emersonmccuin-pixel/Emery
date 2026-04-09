@@ -277,12 +277,8 @@ fn resolve_project(
         return state.get_project(project_id);
     }
 
-    if let Ok(current_dir) = env::current_dir() {
-        if let Some(project) = state.find_project_by_path(&current_dir)? {
-            return Ok(project);
-        }
-    }
-
+    // A launched terminal session should stay bound to its registered project,
+    // even if the shell later changes directories.
     if let Ok(project_id) = env::var("PROJECT_COMMANDER_PROJECT_ID") {
         if let Ok(parsed_project_id) = project_id.parse::<i64>() {
             return state.get_project(parsed_project_id);
@@ -291,6 +287,12 @@ fn resolve_project(
 
     if let Some(root_path) = env::var_os("PROJECT_COMMANDER_ROOT_PATH") {
         if let Some(project) = state.find_project_by_path(Path::new(&root_path))? {
+            return Ok(project);
+        }
+    }
+
+    if let Ok(current_dir) = env::current_dir() {
+        if let Some(project) = state.find_project_by_path(&current_dir)? {
             return Ok(project);
         }
     }
