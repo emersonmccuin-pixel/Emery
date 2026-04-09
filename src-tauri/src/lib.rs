@@ -2,9 +2,9 @@ pub mod db;
 mod session;
 
 use db::{
-    AppState, BootstrapData, CreateLaunchProfileInput, CreateProjectInput, CreateWorkItemInput,
-    LaunchProfileRecord, ProjectRecord, StorageInfo, UpdateProjectInput, UpdateWorkItemInput,
-    WorkItemRecord,
+    AppState, BootstrapData, CreateDocumentInput, CreateLaunchProfileInput, CreateProjectInput,
+    CreateWorkItemInput, DocumentRecord, LaunchProfileRecord, ProjectRecord, StorageInfo,
+    UpdateDocumentInput, UpdateProjectInput, UpdateWorkItemInput, WorkItemRecord,
 };
 use session::{
     LaunchSessionInput, ResizeSessionInput, SessionInput, SessionManager, SessionSnapshot,
@@ -129,6 +129,32 @@ fn delete_work_item(id: i64, state: State<AppState>) -> Result<(), String> {
     state.delete_work_item(id)
 }
 
+#[tauri::command]
+fn list_documents(project_id: i64, state: State<AppState>) -> Result<Vec<DocumentRecord>, String> {
+    state.list_documents(project_id)
+}
+
+#[tauri::command]
+fn create_document(
+    input: CreateDocumentInput,
+    state: State<AppState>,
+) -> Result<DocumentRecord, String> {
+    state.create_document(input)
+}
+
+#[tauri::command]
+fn update_document(
+    input: UpdateDocumentInput,
+    state: State<AppState>,
+) -> Result<DocumentRecord, String> {
+    state.update_document(input)
+}
+
+#[tauri::command]
+fn delete_document(id: i64, state: State<AppState>) -> Result<(), String> {
+    state.delete_document(id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -148,7 +174,11 @@ pub fn run() {
             list_work_items,
             create_work_item,
             update_work_item,
-            delete_work_item
+            delete_work_item,
+            list_documents,
+            create_document,
+            update_document,
+            delete_document
         ])
         .setup(|app| {
             let storage = ensure_storage_dirs(&app.handle())?;

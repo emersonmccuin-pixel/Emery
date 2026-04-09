@@ -63,6 +63,7 @@ The current MVP slice includes:
 - a PTY-backed terminal slice that can launch Claude Code in the selected project root
 - a selectable launch-profile workflow that acts as the MVP account model
 - project-scoped work-item CRUD for bugs, tasks, features, and notes
+- project-scoped documents with optional work-item links
 - an agent bridge CLI that lets launched Claude Code sessions list, create, update, and close work items
 
 ## Agent Bridge
@@ -101,4 +102,4 @@ Use the selected-project edit form to rebind the project to its new folder. Laun
 
 ## Next Step
 
-Add project documents and session summaries so Claude Code has more than just work items to read and update.
+Add session summaries so Claude Code has a persistent record of what happened in each run without storing full transcripts.

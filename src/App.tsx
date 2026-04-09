@@ -1,9 +1,11 @@
 import { Suspense, lazy, useEffect, useState, type FormEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
+import DocumentsPanel from './components/DocumentsPanel'
 import WorkItemsPanel from './components/WorkItemsPanel'
 import type {
   BootstrapData,
+  DocumentRecord,
   LaunchProfileRecord,
   ProjectRecord,
   RuntimeStatus,
@@ -43,6 +45,10 @@ function sortWorkItems(items: WorkItemRecord[]) {
   })
 }
 
+function sortDocuments(documents: DocumentRecord[]) {
+  return [...documents].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+}
+
 function App() {
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>('loading')
   const [runtimeMessage, setRuntimeMessage] = useState('Connecting to the Rust runtime...')
@@ -55,6 +61,8 @@ function App() {
   const [sessionError, setSessionError] = useState<string | null>(null)
   const [workItems, setWorkItems] = useState<WorkItemRecord[]>([])
   const [workItemError, setWorkItemError] = useState<string | null>(null)
+  const [documents, setDocuments] = useState<DocumentRecord[]>([])
+  const [documentError, setDocumentError] = useState<string | null>(null)
   const [projectName, setProjectName] = useState('')
   const [projectRootPath, setProjectRootPath] = useState('')
   const [projectError, setProjectError] = useState<string | null>(null)
@@ -73,6 +81,7 @@ function App() {
   const [isLaunchingSession, setIsLaunchingSession] = useState(false)
   const [isStoppingSession, setIsStoppingSession] = useState(false)
   const [isLoadingWorkItems, setIsLoadingWorkItems] = useState(false)
+  const [isLoadingDocuments, setIsLoadingDocuments] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -182,6 +191,48 @@ function App() {
   useEffect(() => {
     let cancelled = false
 
+    const loadDocuments = async () => {
+      if (!selectedProject) {
+        setDocuments([])
+        return
+      }
+
+      setIsLoadingDocuments(true)
+      setDocumentError(null)
+
+      try {
+        const items = await invoke<DocumentRecord[]>('list_documents', {
+          projectId: selectedProject.id,
+        })
+
+        if (cancelled) {
+          return
+        }
+
+        setDocuments(sortDocuments(items))
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+
+        setDocumentError(error instanceof Error ? error.message : 'Failed to load documents.')
+      } finally {
+        if (!cancelled) {
+          setIsLoadingDocuments(false)
+        }
+      }
+    }
+
+    void loadDocuments()
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedProjectId])
+
+  useEffect(() => {
+    let cancelled = false
+
     const loadWorkItems = async () => {
       if (!selectedProject) {
         setWorkItems([])
@@ -228,6 +279,19 @@ function App() {
           ? {
               ...project,
               workItemCount: Math.max(0, project.workItemCount + delta),
+            }
+          : project,
+      ),
+    )
+  }
+
+  const adjustProjectDocumentCount = (projectId: number, delta: number) => {
+    setProjects((current) =>
+      current.map((project) =>
+        project.id === projectId
+          ? {
+              ...project,
+              documentCount: Math.max(0, project.documentCount + delta),
             }
           : project,
       ),
@@ -484,9 +548,89 @@ function App() {
     try {
       await invoke('delete_work_item', { id })
       setWorkItems((current) => current.filter((item) => item.id !== id))
+      setDocuments((current) =>
+        current.map((document) =>
+          document.workItemId === id ? { ...document, workItemId: null } : document,
+        ),
+      )
       adjustProjectWorkItemCount(selectedProject.id, -1)
     } catch (error) {
       setWorkItemError(error instanceof Error ? error.message : 'Failed to delete work item.')
+      throw error
+    }
+  }
+
+  const createDocument = async (input: {
+    title: string
+    body: string
+    workItemId: number | null
+  }) => {
+    if (!selectedProject) {
+      return
+    }
+
+    setDocumentError(null)
+
+    try {
+      const document = await invoke<DocumentRecord>('create_document', {
+        input: {
+          projectId: selectedProject.id,
+          workItemId: input.workItemId,
+          title: input.title,
+          body: input.body,
+        },
+      })
+
+      setDocuments((current) => sortDocuments([document, ...current]))
+      adjustProjectDocumentCount(selectedProject.id, 1)
+    } catch (error) {
+      setDocumentError(error instanceof Error ? error.message : 'Failed to create document.')
+      throw error
+    }
+  }
+
+  const updateDocument = async (input: {
+    id: number
+    title: string
+    body: string
+    workItemId: number | null
+  }) => {
+    setDocumentError(null)
+
+    try {
+      const document = await invoke<DocumentRecord>('update_document', {
+        input: {
+          id: input.id,
+          workItemId: input.workItemId,
+          title: input.title,
+          body: input.body,
+        },
+      })
+
+      setDocuments((current) =>
+        sortDocuments(
+          current.map((existing) => (existing.id === document.id ? document : existing)),
+        ),
+      )
+    } catch (error) {
+      setDocumentError(error instanceof Error ? error.message : 'Failed to update document.')
+      throw error
+    }
+  }
+
+  const deleteDocument = async (id: number) => {
+    if (!selectedProject) {
+      return
+    }
+
+    setDocumentError(null)
+
+    try {
+      await invoke('delete_document', { id })
+      setDocuments((current) => current.filter((document) => document.id !== id))
+      adjustProjectDocumentCount(selectedProject.id, -1)
+    } catch (error) {
+      setDocumentError(error instanceof Error ? error.message : 'Failed to delete document.')
       throw error
     }
   }
@@ -750,8 +894,8 @@ function App() {
               {sessionError ? <p className="form-error">{sessionError}</p> : null}
               {launchBlockedByMissingRoot ? (
                 <p className="form-error">
-                  This project&apos;s registered root folder no longer exists. Rebind it in the left
-                  rail before launching a new session.
+                  This project&apos;s registered root folder no longer exists. Rebind it with the
+                  project editor before launching a new session.
                 </p>
               ) : null}
 
@@ -797,8 +941,8 @@ function App() {
                           )
                         : (
                             <>
-                              The registered root path no longer exists. Update it from the left
-                              rail before launching another session.
+                              The registered root path no longer exists. Update it with the project
+                              editor before launching another session.
                             </>
                           )}
                     </p>
@@ -922,6 +1066,17 @@ function App() {
             onCreate={createWorkItem}
             onDelete={deleteWorkItem}
             onUpdate={updateWorkItem}
+            project={selectedProject}
+            workItems={workItems}
+          />
+
+          <DocumentsPanel
+            documents={documents}
+            error={documentError}
+            isLoading={isLoadingDocuments}
+            onCreate={createDocument}
+            onDelete={deleteDocument}
+            onUpdate={updateDocument}
             project={selectedProject}
             workItems={workItems}
           />

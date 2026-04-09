@@ -51,6 +51,18 @@ pub struct WorkItemRecord {
     pub updated_at: String,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentRecord {
+    pub id: i64,
+    pub project_id: i64,
+    pub work_item_id: Option<i64>,
+    pub title: String,
+    pub body: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapData {
@@ -101,6 +113,24 @@ pub struct UpdateWorkItemInput {
     pub body: String,
     pub item_type: String,
     pub status: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateDocumentInput {
+    pub project_id: i64,
+    pub work_item_id: Option<i64>,
+    pub title: String,
+    pub body: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateDocumentInput {
+    pub id: i64,
+    pub work_item_id: Option<i64>,
+    pub title: String,
+    pub body: String,
 }
 
 pub struct AppState {
@@ -367,6 +397,75 @@ impl AppState {
         connection
             .execute("DELETE FROM work_items WHERE id = ?1", [id])
             .map_err(|error| format!("failed to delete work item: {error}"))?;
+
+        touch_project(&connection, existing.project_id)
+    }
+
+    pub fn list_documents(&self, project_id: i64) -> Result<Vec<DocumentRecord>, String> {
+        let connection = self.connect()?;
+        load_documents_by_project_id(&connection, project_id)
+    }
+
+    pub fn create_document(&self, input: CreateDocumentInput) -> Result<DocumentRecord, String> {
+        let title = input.title.trim();
+        let body = input.body.trim();
+
+        if title.is_empty() {
+            return Err("document title is required".to_string());
+        }
+
+        let connection = self.connect()?;
+        self.get_project(input.project_id)?;
+        let work_item_id =
+            validate_document_work_item_link(&connection, input.project_id, input.work_item_id)?;
+
+        connection
+            .execute(
+                "INSERT INTO documents (project_id, work_item_id, title, body) VALUES (?1, ?2, ?3, ?4)",
+                params![input.project_id, work_item_id, title, body],
+            )
+            .map_err(|error| format!("failed to create document: {error}"))?;
+
+        touch_project(&connection, input.project_id)?;
+        load_document_by_id(&connection, connection.last_insert_rowid())
+    }
+
+    pub fn update_document(&self, input: UpdateDocumentInput) -> Result<DocumentRecord, String> {
+        let title = input.title.trim();
+        let body = input.body.trim();
+
+        if title.is_empty() {
+            return Err("document title is required".to_string());
+        }
+
+        let connection = self.connect()?;
+        let existing = load_document_by_id(&connection, input.id)?;
+        let work_item_id =
+            validate_document_work_item_link(&connection, existing.project_id, input.work_item_id)?;
+
+        connection
+            .execute(
+                "UPDATE documents
+                 SET work_item_id = ?1,
+                     title = ?2,
+                     body = ?3,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?4",
+                params![work_item_id, title, body, input.id],
+            )
+            .map_err(|error| format!("failed to update document: {error}"))?;
+
+        touch_project(&connection, existing.project_id)?;
+        load_document_by_id(&connection, input.id)
+    }
+
+    pub fn delete_document(&self, id: i64) -> Result<(), String> {
+        let connection = self.connect()?;
+        let existing = load_document_by_id(&connection, id)?;
+
+        connection
+            .execute("DELETE FROM documents WHERE id = ?1", [id])
+            .map_err(|error| format!("failed to delete document: {error}"))?;
 
         touch_project(&connection, existing.project_id)
     }
@@ -723,6 +822,77 @@ fn load_work_item_by_id(connection: &Connection, id: i64) -> Result<WorkItemReco
         .map_err(|error| format!("failed to load work item: {error}"))
 }
 
+fn load_documents_by_project_id(
+    connection: &Connection,
+    project_id: i64,
+) -> Result<Vec<DocumentRecord>, String> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT
+              id,
+              project_id,
+              work_item_id,
+              title,
+              body,
+              created_at,
+              updated_at
+            FROM documents
+            WHERE project_id = ?1
+            ORDER BY updated_at DESC, id DESC
+            ",
+        )
+        .map_err(|error| format!("failed to prepare document query: {error}"))?;
+
+    let rows = statement
+        .query_map([project_id], |row| {
+            Ok(DocumentRecord {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                work_item_id: row.get(2)?,
+                title: row.get(3)?,
+                body: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        })
+        .map_err(|error| format!("failed to load documents: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to map documents: {error}"))
+}
+
+fn load_document_by_id(connection: &Connection, id: i64) -> Result<DocumentRecord, String> {
+    connection
+        .query_row(
+            "
+            SELECT
+              id,
+              project_id,
+              work_item_id,
+              title,
+              body,
+              created_at,
+              updated_at
+            FROM documents
+            WHERE id = ?1
+            ",
+            [id],
+            |row| {
+                Ok(DocumentRecord {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    work_item_id: row.get(2)?,
+                    title: row.get(3)?,
+                    body: row.get(4)?,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
+            },
+        )
+        .map_err(|error| format!("failed to load document: {error}"))
+}
+
 fn find_project_by_path(
     connection: &Connection,
     path: &Path,
@@ -767,6 +937,24 @@ fn normalize_work_item_status(value: &str) -> Result<String, String> {
         "backlog" | "in_progress" | "blocked" | "done" => Ok(normalized),
         _ => Err("work item status must be backlog, in_progress, blocked, or done".to_string()),
     }
+}
+
+fn validate_document_work_item_link(
+    connection: &Connection,
+    project_id: i64,
+    work_item_id: Option<i64>,
+) -> Result<Option<i64>, String> {
+    let Some(work_item_id) = work_item_id else {
+        return Ok(None);
+    };
+
+    let work_item = load_work_item_by_id(connection, work_item_id)?;
+
+    if work_item.project_id != project_id {
+        return Err("linked work item must belong to the same project".to_string());
+    }
+
+    Ok(Some(work_item_id))
 }
 
 fn touch_project(connection: &Connection, project_id: i64) -> Result<(), String> {

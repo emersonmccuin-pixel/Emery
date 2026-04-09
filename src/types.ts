@@ -69,3 +69,13 @@ export type WorkItemRecord = {
   createdAt: string
   updatedAt: string
 }
+
+export type DocumentRecord = {
+  id: number
+  projectId: number
+  workItemId: number | null
+  title: string
+  body: string
+  createdAt: string
+  updatedAt: string
+}
