@@ -24,6 +24,10 @@ type TerminalPromptDraft = {
   prompt: string
 }
 
+type LaunchSessionOptions = {
+  startupPrompt?: string
+}
+
 const WORK_ITEM_STATUS_ORDER: Record<WorkItemStatus, number> = {
   in_progress: 0,
   blocked: 1,
@@ -557,7 +561,7 @@ function App() {
     }
   }
 
-  const launchSession = async () => {
+  const launchSession = async (options?: LaunchSessionOptions) => {
     if (!selectedProject || !selectedLaunchProfile) {
       return null
     }
@@ -578,6 +582,7 @@ function App() {
           launchProfileId: selectedLaunchProfile.id,
           cols: 120,
           rows: 32,
+          startupPrompt: options?.startupPrompt,
         },
       })
 
@@ -701,34 +706,6 @@ function App() {
       },
     })
     setAgentPromptMessage(successMessage)
-  }
-
-  const waitForSessionBootstrap = async (projectId: number, timeoutMs = 12000) => {
-    const deadline = Date.now() + timeoutMs
-
-    while (Date.now() < deadline) {
-      const snapshot = await invoke<SessionSnapshot | null>('get_session_snapshot', {
-        projectId,
-      }).catch(() => null)
-
-      if (snapshot?.isRunning && snapshot.output.trim().length > 0) {
-        await new Promise((resolve) => window.setTimeout(resolve, 350))
-        return true
-      }
-
-      await new Promise((resolve) => window.setTimeout(resolve, 250))
-    }
-
-    return false
-  }
-
-  const sendPromptAfterFreshLaunch = async (
-    projectId: number,
-    prompt: string,
-    successMessage: string,
-  ) => {
-    await waitForSessionBootstrap(projectId)
-    await sendPromptToSession(projectId, prompt, successMessage)
   }
 
   const deleteWorkItem = async (id: number) => {
@@ -928,7 +905,8 @@ function App() {
         prompt,
       })
 
-      const activeSession = hasLiveSession ? sessionSnapshot : await launchSession()
+      const activeSession =
+        hasLiveSession ? sessionSnapshot : await launchSession({ startupPrompt: prompt })
 
       if (!activeSession) {
         return
@@ -947,17 +925,7 @@ function App() {
           )
         }
       } else {
-        try {
-          await sendPromptAfterFreshLaunch(
-            selectedProject.id,
-            prompt,
-            `Focused handoff sent for work item #${targetWorkItem.id}.`,
-          )
-        } catch (error) {
-          setSessionError(
-            error instanceof Error ? error.message : 'Failed to send focused handoff to the fresh terminal.',
-          )
-        }
+        setAgentPromptMessage(`Focused handoff queued for work item #${targetWorkItem.id}.`)
       }
     } catch (error) {
       setSessionError(
@@ -1180,23 +1148,12 @@ function App() {
                           label: 'Workspace guide',
                           prompt: agentStartupPrompt,
                         })
-                        const snapshot = await launchSession()
+                        const snapshot = await launchSession({ startupPrompt: agentStartupPrompt })
 
                         if (!snapshot || !agentStartupPrompt) {
                           return
                         }
-
-                        try {
-                          await sendPromptAfterFreshLaunch(
-                            selectedProject.id,
-                            agentStartupPrompt,
-                            'Workspace guide sent to the live terminal.',
-                          )
-                        } catch (error) {
-                          setSessionError(
-                            error instanceof Error ? error.message : 'Failed to send workspace guide to the fresh terminal.',
-                          )
-                        }
+                        setAgentPromptMessage('Workspace guide queued for the fresh terminal.')
                       })()}
                     >
                       {isLaunchingSession

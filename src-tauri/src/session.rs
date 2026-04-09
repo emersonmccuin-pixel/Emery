@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, State};
 
@@ -45,6 +46,7 @@ pub struct LaunchSessionInput {
     pub launch_profile_id: i64,
     pub cols: u16,
     pub rows: u16,
+    pub startup_prompt: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -170,6 +172,13 @@ impl SessionManager {
             input.project_id,
             child,
             app_handle.clone(),
+        );
+        spawn_startup_prompt_thread(
+            Arc::clone(&session),
+            input
+                .startup_prompt
+                .map(|prompt| prompt.trim().to_string())
+                .filter(|prompt| !prompt.is_empty()),
         );
 
         Ok(session.snapshot(true))
@@ -479,6 +488,42 @@ fn spawn_wait_thread(
                     },
                 );
             }
+        }
+    });
+}
+
+fn spawn_startup_prompt_thread(session: Arc<LiveSession>, startup_prompt: Option<String>) {
+    let Some(prompt) = startup_prompt else {
+        return;
+    };
+
+    thread::spawn(move || {
+        let mut saw_output = false;
+
+        for _ in 0..48 {
+            let output_len = session
+                .output_buffer
+                .lock()
+                .map(|buffer| buffer.len())
+                .unwrap_or_default();
+
+            if output_len > 0 {
+                saw_output = true;
+                break;
+            }
+
+            thread::sleep(std::time::Duration::from_millis(250));
+        }
+
+        if saw_output {
+            thread::sleep(std::time::Duration::from_millis(1800));
+        } else {
+            thread::sleep(std::time::Duration::from_millis(3000));
+        }
+
+        if let Ok(mut writer) = session.writer.lock() {
+            let _ = writer.write_all(format!("{}\r", prompt).as_bytes());
+            let _ = writer.flush();
         }
     });
 }
