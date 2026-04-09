@@ -193,7 +193,7 @@ Recommended hierarchy:
 - daily plans select what is in immediate focus
 - work items are execution units
 
-## Planning Model
+## Planning Model (Emerson's Note: Let's talk this through before we build/plan this)
 
 The app should eventually support planning at multiple horizons without forcing
 all planning into work-item status fields.
