@@ -393,6 +393,35 @@ select:focus {
   gap: 14px;
 }
 
+.bridge-card {
+  display: grid;
+  gap: 14px;
+}
+
+.bridge-card__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+}
+
+.bridge-card__header strong {
+  margin-bottom: 0;
+}
+
+.bridge-card__commands {
+  display: grid;
+  gap: 10px;
+}
+
+.bridge-card__commands code {
+  display: inline-block;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--surface-soft);
+  overflow-wrap: anywhere;
+}
+
 .launch-state {
   display: grid;
   gap: 18px;
@@ -635,6 +664,10 @@ select:focus {
   .console-actions {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .bridge-card__header {
+    flex-direction: column;
   }
 
   .console-actions__group--right {

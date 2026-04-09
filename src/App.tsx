@@ -24,6 +24,13 @@ const WORK_ITEM_STATUS_ORDER: Record<WorkItemStatus, number> = {
   done: 3,
 }
 
+const AGENT_BRIDGE_COMMANDS = [
+  'project-commander-cli project current --json',
+  'project-commander-cli work-item list --json',
+  'project-commander-cli work-item create --type bug --title "Log a bug in Emery" --body "Describe the issue." --json',
+  'project-commander-cli work-item close --id 12 --json',
+]
+
 function sortWorkItems(items: WorkItemRecord[]) {
   return [...items].sort((left, right) => {
     const statusDelta = WORK_ITEM_STATUS_ORDER[left.status] - WORK_ITEM_STATUS_ORDER[right.status]
@@ -109,6 +116,7 @@ function App() {
     launchProfiles.find((profile) => profile.id === selectedLaunchProfileId) ??
     launchProfiles[0] ??
     null
+  const bridgeReady = Boolean(selectedProject && sessionSnapshot?.isRunning)
 
   useEffect(() => {
     if (!selectedProject && projects.length > 0) {
@@ -580,6 +588,27 @@ function App() {
               </div>
 
               {sessionError ? <p className="form-error">{sessionError}</p> : null}
+
+              <article className="summary-card bridge-card">
+                <div className="bridge-card__header">
+                  <div>
+                    <p className="summary-card__label">Agent bridge</p>
+                    <strong>Work-item CLI inside the session</strong>
+                  </div>
+                  <span className={`status-badge ${bridgeReady ? 'status-badge--ready' : 'status-badge--stopped'}`}>
+                    {bridgeReady ? 'ready in terminal' : 'available after launch'}
+                  </span>
+                </div>
+                <p>
+                  The launched terminal injects the shared DB path plus the active project context, so Claude Code can
+                  manage this project&apos;s work items without extra setup.
+                </p>
+                <div className="bridge-card__commands">
+                  {AGENT_BRIDGE_COMMANDS.map((command) => (
+                    <code key={command}>{command}</code>
+                  ))}
+                </div>
+              </article>
 
               {isLiveSessionVisible ? (
                 <Suspense fallback={<div className="terminal-loading">Preparing terminal...</div>}>

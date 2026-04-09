@@ -118,6 +118,19 @@ impl AppState {
         })
     }
 
+    pub fn from_database_path(database_path: PathBuf) -> Result<Self, String> {
+        let db_dir = database_path
+            .parent()
+            .ok_or_else(|| "database path must include a parent directory".to_string())?;
+        let app_data_dir = db_dir.parent().unwrap_or(db_dir);
+
+        Self::new(StorageInfo {
+            app_data_dir: app_data_dir.display().to_string(),
+            db_dir: db_dir.display().to_string(),
+            db_path: database_path.display().to_string(),
+        })
+    }
+
     pub fn storage(&self) -> StorageInfo {
         self.storage.clone()
     }
@@ -223,9 +236,19 @@ impl AppState {
         load_launch_profile_by_id(&connection, id)
     }
 
+    pub fn find_project_by_path(&self, path: &Path) -> Result<Option<ProjectRecord>, String> {
+        let connection = self.connect()?;
+        find_project_by_path(&connection, path)
+    }
+
     pub fn list_work_items(&self, project_id: i64) -> Result<Vec<WorkItemRecord>, String> {
         let connection = self.connect()?;
         load_work_items_by_project_id(&connection, project_id)
+    }
+
+    pub fn get_work_item(&self, id: i64) -> Result<WorkItemRecord, String> {
+        let connection = self.connect()?;
+        load_work_item_by_id(&connection, id)
     }
 
     pub fn create_work_item(&self, input: CreateWorkItemInput) -> Result<WorkItemRecord, String> {
@@ -641,6 +664,34 @@ fn load_work_item_by_id(connection: &Connection, id: i64) -> Result<WorkItemReco
         .map_err(|error| format!("failed to load work item: {error}"))
 }
 
+fn find_project_by_path(
+    connection: &Connection,
+    path: &Path,
+) -> Result<Option<ProjectRecord>, String> {
+    let target_path = normalize_path_for_matching(path)?;
+    let mut matched_project: Option<(ProjectRecord, usize)> = None;
+
+    for project in load_projects(connection)? {
+        let root_path = normalize_path_for_matching(Path::new(&project.root_path))?;
+
+        if !path_is_within(&root_path, &target_path) {
+            continue;
+        }
+
+        let depth = root_path.components().count();
+        let should_replace = matched_project
+            .as_ref()
+            .map(|(_, existing_depth)| depth > *existing_depth)
+            .unwrap_or(true);
+
+        if should_replace {
+            matched_project = Some((project, depth));
+        }
+    }
+
+    Ok(matched_project.map(|(project, _)| project))
+}
+
 fn normalize_work_item_type(value: &str) -> Result<String, String> {
     let normalized = value.trim().to_lowercase();
 
@@ -686,4 +737,47 @@ fn normalize_env_json(raw: &str) -> Result<String, String> {
 
     serde_json::to_string_pretty(&parsed)
         .map_err(|error| format!("failed to normalize environment JSON: {error}"))
+}
+
+fn normalize_path_for_matching(path: &Path) -> Result<PathBuf, String> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| format!("failed to resolve current directory: {error}"))?
+            .join(path)
+    };
+
+    Ok(fs::canonicalize(&absolute).unwrap_or(absolute))
+}
+
+fn path_is_within(root: &Path, target: &Path) -> bool {
+    let mut root_components = root.components();
+    let mut target_components = target.components();
+
+    loop {
+        match (root_components.next(), target_components.next()) {
+            (Some(root_component), Some(target_component)) => {
+                if !path_component_equals(root_component.as_os_str(), target_component.as_os_str())
+                {
+                    return false;
+                }
+            }
+            (None, _) => return true,
+            (Some(_), None) => return false,
+        }
+    }
+}
+
+fn path_component_equals(left: &std::ffi::OsStr, right: &std::ffi::OsStr) -> bool {
+    #[cfg(windows)]
+    {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    }
+
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
 }

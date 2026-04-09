@@ -120,7 +120,7 @@ impl SessionManager {
             })
             .map_err(|error| format!("failed to open pty: {error}"))?;
 
-        let command = build_launch_command(&project.root_path, &profile)?;
+        let command = build_launch_command(&project, &profile, &app_state.storage())?;
         let child = pair
             .slave
             .spawn_command(command)
@@ -251,17 +251,57 @@ impl LiveSession {
 }
 
 fn build_launch_command(
-    root_path: &str,
+    project: &crate::db::ProjectRecord,
     profile: &crate::db::LaunchProfileRecord,
+    storage: &crate::db::StorageInfo,
 ) -> Result<CommandBuilder, String> {
     let mut command = CommandBuilder::new("powershell.exe");
     let env_pairs = parse_env_json(&profile.env_json)?;
-    let mut script = format!("Set-Location -LiteralPath '{}'; ", escape_ps(root_path));
+    let mut script = format!(
+        "Set-Location -LiteralPath '{}'; ",
+        escape_ps(&project.root_path)
+    );
+
+    let cli_available = resolve_cli_directory();
+
+    if let Some(cli_directory) = &cli_available {
+        script.push_str(&format!(
+            "$env:PATH = '{};' + $env:PATH; ",
+            escape_ps(cli_directory)
+        ));
+    }
+
+    script.push_str(&format!(
+        "$env:PROJECT_COMMANDER_DB_PATH = '{}'; ",
+        escape_ps(&storage.db_path)
+    ));
+    script.push_str(&format!(
+        "$env:PROJECT_COMMANDER_PROJECT_ID = '{}'; ",
+        project.id
+    ));
+    script.push_str(&format!(
+        "$env:PROJECT_COMMANDER_PROJECT_NAME = '{}'; ",
+        escape_ps(&project.name)
+    ));
+    script.push_str(&format!(
+        "$env:PROJECT_COMMANDER_ROOT_PATH = '{}'; ",
+        escape_ps(&project.root_path)
+    ));
+    script.push_str("$env:PROJECT_COMMANDER_CLI = 'project-commander-cli'; ");
 
     for (key, value) in env_pairs {
         script.push_str(&format!("$env:{} = '{}'; ", key, escape_ps(&value)));
     }
 
+    if cli_available.is_some() {
+        script.push_str(&format!(
+            "Write-Host '[Project Commander] Work item bridge ready for {}.'; ",
+            escape_ps(&project.name)
+        ));
+        script.push_str(
+            "Write-Host '[Project Commander] Try: project-commander-cli work-item list --json'; ",
+        );
+    }
     script.push_str(&format!("& '{}'", escape_ps(&profile.executable)));
 
     if !profile.args.trim().is_empty() {
@@ -301,6 +341,24 @@ fn parse_env_json(raw: &str) -> Result<Vec<(String, String)>, String> {
 
 fn escape_ps(value: &str) -> String {
     value.replace('\'', "''")
+}
+
+fn resolve_cli_directory() -> Option<String> {
+    let cli_name = if cfg!(windows) {
+        "project-commander-cli.exe"
+    } else {
+        "project-commander-cli"
+    };
+
+    std::env::current_exe().ok().and_then(|path| {
+        let parent = path.parent()?;
+
+        if parent.join(cli_name).is_file() {
+            Some(parent.display().to_string())
+        } else {
+            None
+        }
+    })
 }
 
 fn now_timestamp_string() -> String {

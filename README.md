@@ -62,6 +62,29 @@ The current MVP slice includes:
 - a PTY-backed terminal slice that can launch Claude Code in the selected project root
 - a selectable launch-profile workflow that acts as the MVP account model
 - project-scoped work-item CRUD for bugs, tasks, features, and notes
+- an agent bridge CLI that lets launched Claude Code sessions list, create, update, and close work items
+
+## Agent Bridge
+
+Launched terminal sessions now inherit:
+
+- `PROJECT_COMMANDER_DB_PATH`
+- `PROJECT_COMMANDER_PROJECT_ID`
+- `PROJECT_COMMANDER_PROJECT_NAME`
+- `PROJECT_COMMANDER_ROOT_PATH`
+
+They also get the companion `project-commander-cli` helper on `PATH`.
+
+Example commands inside a launched Claude Code session:
+
+```powershell
+project-commander-cli project current --json
+project-commander-cli work-item list --json
+project-commander-cli work-item create --type bug --title "Log a bug in Emery" --body "Describe the issue." --json
+project-commander-cli work-item close --id 12 --json
+```
+
+`npm run tauri:dev` and `npm run tauri:build` now build the companion CLI before starting the app shell so the bridge is available in both dev and local packaged runs.
 
 ## Structure
 
@@ -71,4 +94,4 @@ The current MVP slice includes:
 
 ## Next Step
 
-Add Tauri commands in `src-tauri/src/lib.rs` and call them from React with `invoke(...)`.
+Add project documents and session summaries so Claude Code has more than just work items to read and update.
