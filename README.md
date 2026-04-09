@@ -61,6 +61,7 @@ The current MVP slice includes:
 - Claude Code launch profiles stored in the DB
 - a PTY-backed terminal slice that can launch Claude Code in the selected project root
 - a selectable launch-profile workflow that acts as the MVP account model
+- project-scoped work-item CRUD for bugs, tasks, features, and notes
 
 ## Structure
 

@@ -2,8 +2,8 @@ mod db;
 mod session;
 
 use db::{
-    AppState, BootstrapData, CreateLaunchProfileInput, CreateProjectInput, LaunchProfileRecord,
-    ProjectRecord, StorageInfo,
+    AppState, BootstrapData, CreateLaunchProfileInput, CreateProjectInput, CreateWorkItemInput,
+    LaunchProfileRecord, ProjectRecord, StorageInfo, UpdateWorkItemInput, WorkItemRecord,
 };
 use session::{
     LaunchSessionInput, ResizeSessionInput, SessionInput, SessionManager, SessionSnapshot,
@@ -94,6 +94,32 @@ fn terminate_session(project_id: i64, state: State<SessionManager>) -> Result<()
     state.terminate(project_id)
 }
 
+#[tauri::command]
+fn list_work_items(project_id: i64, state: State<AppState>) -> Result<Vec<WorkItemRecord>, String> {
+    state.list_work_items(project_id)
+}
+
+#[tauri::command]
+fn create_work_item(
+    input: CreateWorkItemInput,
+    state: State<AppState>,
+) -> Result<WorkItemRecord, String> {
+    state.create_work_item(input)
+}
+
+#[tauri::command]
+fn update_work_item(
+    input: UpdateWorkItemInput,
+    state: State<AppState>,
+) -> Result<WorkItemRecord, String> {
+    state.update_work_item(input)
+}
+
+#[tauri::command]
+fn delete_work_item(id: i64, state: State<AppState>) -> Result<(), String> {
+    state.delete_work_item(id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -108,7 +134,11 @@ pub fn run() {
             launch_project_session,
             write_session_input,
             resize_session,
-            terminate_session
+            terminate_session,
+            list_work_items,
+            create_work_item,
+            update_work_item,
+            delete_work_item
         ])
         .setup(|app| {
             let storage = ensure_storage_dirs(&app.handle())?;

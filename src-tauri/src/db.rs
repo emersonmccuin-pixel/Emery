@@ -37,6 +37,19 @@ pub struct LaunchProfileRecord {
     pub updated_at: String,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkItemRecord {
+    pub id: i64,
+    pub project_id: i64,
+    pub title: String,
+    pub body: String,
+    pub item_type: String,
+    pub status: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapData {
@@ -59,6 +72,26 @@ pub struct CreateLaunchProfileInput {
     pub executable: String,
     pub args: String,
     pub env_json: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateWorkItemInput {
+    pub project_id: i64,
+    pub title: String,
+    pub body: String,
+    pub item_type: String,
+    pub status: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateWorkItemInput {
+    pub id: i64,
+    pub title: String,
+    pub body: String,
+    pub item_type: String,
+    pub status: String,
 }
 
 pub struct AppState {
@@ -188,6 +221,76 @@ impl AppState {
     pub fn get_launch_profile(&self, id: i64) -> Result<LaunchProfileRecord, String> {
         let connection = self.connect()?;
         load_launch_profile_by_id(&connection, id)
+    }
+
+    pub fn list_work_items(&self, project_id: i64) -> Result<Vec<WorkItemRecord>, String> {
+        let connection = self.connect()?;
+        load_work_items_by_project_id(&connection, project_id)
+    }
+
+    pub fn create_work_item(&self, input: CreateWorkItemInput) -> Result<WorkItemRecord, String> {
+        let title = input.title.trim();
+        let body = input.body.trim();
+        let item_type = normalize_work_item_type(&input.item_type)?;
+        let status = normalize_work_item_status(&input.status)?;
+
+        if title.is_empty() {
+            return Err("work item title is required".to_string());
+        }
+
+        let connection = self.connect()?;
+        self.get_project(input.project_id)?;
+
+        connection
+            .execute(
+                "INSERT INTO work_items (project_id, title, body, item_type, status) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![input.project_id, title, body, item_type, status],
+            )
+            .map_err(|error| format!("failed to create work item: {error}"))?;
+
+        touch_project(&connection, input.project_id)?;
+        load_work_item_by_id(&connection, connection.last_insert_rowid())
+    }
+
+    pub fn update_work_item(&self, input: UpdateWorkItemInput) -> Result<WorkItemRecord, String> {
+        let title = input.title.trim();
+        let body = input.body.trim();
+        let item_type = normalize_work_item_type(&input.item_type)?;
+        let status = normalize_work_item_status(&input.status)?;
+
+        if title.is_empty() {
+            return Err("work item title is required".to_string());
+        }
+
+        let connection = self.connect()?;
+        let existing = load_work_item_by_id(&connection, input.id)?;
+
+        connection
+            .execute(
+                "UPDATE work_items
+                 SET title = ?1,
+                     body = ?2,
+                     item_type = ?3,
+                     status = ?4,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?5",
+                params![title, body, item_type, status, input.id],
+            )
+            .map_err(|error| format!("failed to update work item: {error}"))?;
+
+        touch_project(&connection, existing.project_id)?;
+        load_work_item_by_id(&connection, input.id)
+    }
+
+    pub fn delete_work_item(&self, id: i64) -> Result<(), String> {
+        let connection = self.connect()?;
+        let existing = load_work_item_by_id(&connection, id)?;
+
+        connection
+            .execute("DELETE FROM work_items WHERE id = ?1", [id])
+            .map_err(|error| format!("failed to delete work item: {error}"))?;
+
+        touch_project(&connection, existing.project_id)
     }
 
     fn connect(&self) -> Result<Connection, String> {
@@ -452,6 +555,119 @@ fn load_launch_profile_by_id(
             },
         )
         .map_err(|error| format!("failed to load created launch profile: {error}"))
+}
+
+fn load_work_items_by_project_id(
+    connection: &Connection,
+    project_id: i64,
+) -> Result<Vec<WorkItemRecord>, String> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT
+              id,
+              project_id,
+              title,
+              body,
+              item_type,
+              status,
+              created_at,
+              updated_at
+            FROM work_items
+            WHERE project_id = ?1
+            ORDER BY
+              CASE status
+                WHEN 'in_progress' THEN 0
+                WHEN 'blocked' THEN 1
+                WHEN 'backlog' THEN 2
+                WHEN 'done' THEN 3
+                ELSE 4
+              END,
+              updated_at DESC,
+              id DESC
+            ",
+        )
+        .map_err(|error| format!("failed to prepare work item query: {error}"))?;
+
+    let rows = statement
+        .query_map([project_id], |row| {
+            Ok(WorkItemRecord {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                title: row.get(2)?,
+                body: row.get(3)?,
+                item_type: row.get(4)?,
+                status: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+            })
+        })
+        .map_err(|error| format!("failed to load work items: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to map work items: {error}"))
+}
+
+fn load_work_item_by_id(connection: &Connection, id: i64) -> Result<WorkItemRecord, String> {
+    connection
+        .query_row(
+            "
+            SELECT
+              id,
+              project_id,
+              title,
+              body,
+              item_type,
+              status,
+              created_at,
+              updated_at
+            FROM work_items
+            WHERE id = ?1
+            ",
+            [id],
+            |row| {
+                Ok(WorkItemRecord {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    title: row.get(2)?,
+                    body: row.get(3)?,
+                    item_type: row.get(4)?,
+                    status: row.get(5)?,
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
+                })
+            },
+        )
+        .map_err(|error| format!("failed to load work item: {error}"))
+}
+
+fn normalize_work_item_type(value: &str) -> Result<String, String> {
+    let normalized = value.trim().to_lowercase();
+
+    match normalized.as_str() {
+        "bug" | "task" | "feature" | "note" => Ok(normalized),
+        _ => Err("work item type must be bug, task, feature, or note".to_string()),
+    }
+}
+
+fn normalize_work_item_status(value: &str) -> Result<String, String> {
+    let normalized = value.trim().to_lowercase();
+
+    match normalized.as_str() {
+        "backlog" | "in_progress" | "blocked" | "done" => Ok(normalized),
+        _ => Err("work item status must be backlog, in_progress, blocked, or done".to_string()),
+    }
+}
+
+fn touch_project(connection: &Connection, project_id: i64) -> Result<(), String> {
+    connection
+        .execute(
+            "UPDATE projects SET updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
+            [project_id],
+        )
+        .map_err(|error| format!("failed to update project timestamp: {error}"))?;
+
+    Ok(())
 }
 
 fn normalize_env_json(raw: &str) -> Result<String, String> {

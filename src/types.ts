@@ -53,3 +53,18 @@ export type TerminalExitEvent = {
   exitCode: number
   success: boolean
 }
+
+export type WorkItemStatus = 'backlog' | 'in_progress' | 'blocked' | 'done'
+
+export type WorkItemType = 'bug' | 'task' | 'feature' | 'note'
+
+export type WorkItemRecord = {
+  id: number
+  projectId: number
+  title: string
+  body: string
+  itemType: WorkItemType
+  status: WorkItemStatus
+  createdAt: string
+  updatedAt: string
+}

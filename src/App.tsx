@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect, useState, type FormEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
+import WorkItemsPanel from './components/WorkItemsPanel'
 import type {
   BootstrapData,
   LaunchProfileRecord,
@@ -9,9 +10,31 @@ import type {
   SessionSnapshot,
   StorageInfo,
   TerminalExitEvent,
+  WorkItemRecord,
+  WorkItemStatus,
+  WorkItemType,
 } from './types'
 
 const LiveTerminal = lazy(() => import('./components/LiveTerminal'))
+
+const WORK_ITEM_STATUS_ORDER: Record<WorkItemStatus, number> = {
+  in_progress: 0,
+  blocked: 1,
+  backlog: 2,
+  done: 3,
+}
+
+function sortWorkItems(items: WorkItemRecord[]) {
+  return [...items].sort((left, right) => {
+    const statusDelta = WORK_ITEM_STATUS_ORDER[left.status] - WORK_ITEM_STATUS_ORDER[right.status]
+
+    if (statusDelta !== 0) {
+      return statusDelta
+    }
+
+    return right.updatedAt.localeCompare(left.updatedAt)
+  })
+}
 
 function App() {
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>('loading')
@@ -23,6 +46,8 @@ function App() {
   const [selectedLaunchProfileId, setSelectedLaunchProfileId] = useState<number | null>(null)
   const [sessionSnapshot, setSessionSnapshot] = useState<SessionSnapshot | null>(null)
   const [sessionError, setSessionError] = useState<string | null>(null)
+  const [workItems, setWorkItems] = useState<WorkItemRecord[]>([])
+  const [workItemError, setWorkItemError] = useState<string | null>(null)
   const [projectName, setProjectName] = useState('')
   const [projectRootPath, setProjectRootPath] = useState('')
   const [projectError, setProjectError] = useState<string | null>(null)
@@ -35,6 +60,7 @@ function App() {
   const [isCreatingProfile, setIsCreatingProfile] = useState(false)
   const [isLaunchingSession, setIsLaunchingSession] = useState(false)
   const [isStoppingSession, setIsStoppingSession] = useState(false)
+  const [isLoadingWorkItems, setIsLoadingWorkItems] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -132,6 +158,61 @@ function App() {
       cancelled = true
     }
   }, [selectedProjectId])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadWorkItems = async () => {
+      if (!selectedProject) {
+        setWorkItems([])
+        return
+      }
+
+      setIsLoadingWorkItems(true)
+      setWorkItemError(null)
+
+      try {
+        const items = await invoke<WorkItemRecord[]>('list_work_items', {
+          projectId: selectedProject.id,
+        })
+
+        if (cancelled) {
+          return
+        }
+
+        setWorkItems(sortWorkItems(items))
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+
+        setWorkItemError(error instanceof Error ? error.message : 'Failed to load work items.')
+      } finally {
+        if (!cancelled) {
+          setIsLoadingWorkItems(false)
+        }
+      }
+    }
+
+    void loadWorkItems()
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedProjectId])
+
+  const adjustProjectWorkItemCount = (projectId: number, delta: number) => {
+    setProjects((current) =>
+      current.map((project) =>
+        project.id === projectId
+          ? {
+              ...project,
+              workItemCount: Math.max(0, project.workItemCount + delta),
+            }
+          : project,
+      ),
+    )
+  }
 
   const browseForProjectFolder = async () => {
     setProjectError(null)
@@ -267,6 +348,83 @@ function App() {
 
   const isLiveSessionVisible =
     sessionSnapshot && selectedProject && sessionSnapshot.projectId === selectedProject.id
+
+  const createWorkItem = async (input: {
+    title: string
+    body: string
+    itemType: WorkItemType
+    status: WorkItemStatus
+  }) => {
+    if (!selectedProject) {
+      return
+    }
+
+    setWorkItemError(null)
+
+    try {
+      const item = await invoke<WorkItemRecord>('create_work_item', {
+        input: {
+          projectId: selectedProject.id,
+          title: input.title,
+          body: input.body,
+          itemType: input.itemType,
+          status: input.status,
+        },
+      })
+
+      setWorkItems((current) => sortWorkItems([item, ...current]))
+      adjustProjectWorkItemCount(selectedProject.id, 1)
+    } catch (error) {
+      setWorkItemError(error instanceof Error ? error.message : 'Failed to create work item.')
+      throw error
+    }
+  }
+
+  const updateWorkItem = async (input: {
+    id: number
+    title: string
+    body: string
+    itemType: WorkItemType
+    status: WorkItemStatus
+  }) => {
+    setWorkItemError(null)
+
+    try {
+      const item = await invoke<WorkItemRecord>('update_work_item', {
+        input: {
+          id: input.id,
+          title: input.title,
+          body: input.body,
+          itemType: input.itemType,
+          status: input.status,
+        },
+      })
+
+      setWorkItems((current) =>
+        sortWorkItems(current.map((existing) => (existing.id === item.id ? item : existing))),
+      )
+    } catch (error) {
+      setWorkItemError(error instanceof Error ? error.message : 'Failed to update work item.')
+      throw error
+    }
+  }
+
+  const deleteWorkItem = async (id: number) => {
+    if (!selectedProject) {
+      return
+    }
+
+    setWorkItemError(null)
+
+    try {
+      await invoke('delete_work_item', { id })
+      setWorkItems((current) => current.filter((item) => item.id !== id))
+      adjustProjectWorkItemCount(selectedProject.id, -1)
+    } catch (error) {
+      setWorkItemError(error instanceof Error ? error.message : 'Failed to delete work item.')
+      throw error
+    }
+  }
 
   return (
     <main className="app-shell">
@@ -545,6 +703,16 @@ function App() {
               {isCreatingProfile ? 'Saving...' : 'Create profile'}
             </button>
           </form>
+
+          <WorkItemsPanel
+            error={workItemError}
+            isLoading={isLoadingWorkItems}
+            onCreate={createWorkItem}
+            onDelete={deleteWorkItem}
+            onUpdate={updateWorkItem}
+            project={selectedProject}
+            workItems={workItems}
+          />
         </aside>
       </section>
     </main>
