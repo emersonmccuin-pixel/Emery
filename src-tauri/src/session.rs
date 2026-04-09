@@ -498,6 +498,12 @@ fn spawn_startup_prompt_thread(session: Arc<LiveSession>, startup_prompt: Option
     };
 
     thread::spawn(move || {
+        let normalized_prompt = normalize_prompt_for_terminal(&prompt);
+
+        if normalized_prompt.is_empty() {
+            return;
+        }
+
         let mut saw_output = false;
 
         for _ in 0..48 {
@@ -522,8 +528,19 @@ fn spawn_startup_prompt_thread(session: Arc<LiveSession>, startup_prompt: Option
         }
 
         if let Ok(mut writer) = session.writer.lock() {
-            let _ = writer.write_all(format!("{}\r", prompt).as_bytes());
+            let _ = writer.write_all(normalized_prompt.as_bytes());
+            let _ = writer.flush();
+        }
+
+        thread::sleep(std::time::Duration::from_millis(120));
+
+        if let Ok(mut writer) = session.writer.lock() {
+            let _ = writer.write_all(b"\r");
             let _ = writer.flush();
         }
     });
+}
+
+fn normalize_prompt_for_terminal(prompt: &str) -> String {
+    prompt.split_whitespace().collect::<Vec<_>>().join(" ")
 }
