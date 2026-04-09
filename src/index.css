@@ -202,7 +202,7 @@ select:focus {
 }
 
 .workspace--streamlined {
-  grid-template-columns: 300px minmax(0, 1fr) 400px;
+  grid-template-columns: 300px minmax(0, 1fr);
 }
 
 .panel {
@@ -541,6 +541,12 @@ select:focus {
   gap: 10px;
 }
 
+.details-dock,
+.profiles-panel {
+  display: grid;
+  gap: 16px;
+}
+
 .workspace-tabs {
   display: flex;
   gap: 10px;
@@ -714,6 +720,11 @@ select:focus {
   border-radius: 12px;
   background: var(--surface-soft);
   overflow-wrap: anywhere;
+}
+
+.profile-grid {
+  display: grid;
+  gap: 12px;
 }
 
 .work-items-section {

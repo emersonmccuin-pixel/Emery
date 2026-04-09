@@ -1179,185 +1179,189 @@ function App() {
                   </div>
                 </div>
               )}
+
+              <section className="details-dock">
+                <div className="section-toolbar">
+                  <div>
+                    <p className="panel__eyebrow">Workspace</p>
+                    <h2>Project details</h2>
+                    <p className="section-subtitle">
+                      Keep work items, documents, and launch profiles in one vertical flow with the terminal.
+                    </p>
+                  </div>
+                </div>
+
+                <nav className="workspace-tabs">
+                  <button
+                    className={`workspace-tab ${activeView === 'workItems' ? 'workspace-tab--active' : ''}`}
+                    type="button"
+                    onClick={() => setActiveView('workItems')}
+                  >
+                    <span>Work items</span>
+                    <span className="workspace-tab__count">{workItems.length}</span>
+                  </button>
+                  <button
+                    className={`workspace-tab ${activeView === 'documents' ? 'workspace-tab--active' : ''}`}
+                    type="button"
+                    onClick={() => setActiveView('documents')}
+                  >
+                    <span>Documents</span>
+                    <span className="workspace-tab__count">{documents.length}</span>
+                  </button>
+                  <button
+                    className={`workspace-tab ${activeView === 'profiles' ? 'workspace-tab--active' : ''}`}
+                    type="button"
+                    onClick={() => setActiveView('profiles')}
+                  >
+                    <span>Profiles</span>
+                    <span className="workspace-tab__count">{launchProfiles.length}</span>
+                  </button>
+                </nav>
+
+                {activeView === 'profiles' ? (
+                  <section className="profiles-panel">
+                    <div className="section-toolbar">
+                      <div>
+                        <p className="panel__eyebrow">Launch profiles</p>
+                        <h2>Account model</h2>
+                        <p className="section-subtitle">
+                          Pick one profile to launch with. Only open the form when you need a new one.
+                        </p>
+                      </div>
+                      <div className="section-toolbar__actions">
+                        <span className="panel__count">{launchProfiles.length}</span>
+                        <button
+                          className="button button--secondary button--compact"
+                          type="button"
+                          onClick={() => setIsProfileFormOpen((current) => !current)}
+                        >
+                          {isProfileFormOpen ? 'Hide form' : 'Add profile'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {isProfileFormOpen ? (
+                      <form className="stack-form" onSubmit={submitLaunchProfile}>
+                        <div className="stack-form__header">
+                          <h3>Add launch profile</h3>
+                          <p>
+                            For MVP, a profile is the account selector: command, raw args, and optional env vars.
+                          </p>
+                        </div>
+
+                        <label className="field">
+                          <span>Label</span>
+                          <input
+                            value={profileLabel}
+                            onChange={(event) => setProfileLabel(event.target.value)}
+                            placeholder="Claude Code / Work"
+                          />
+                        </label>
+
+                        <label className="field">
+                          <span>Executable</span>
+                          <input
+                            value={profileExecutable}
+                            onChange={(event) => setProfileExecutable(event.target.value)}
+                            placeholder="claude"
+                          />
+                        </label>
+
+                        <label className="field">
+                          <span>Args</span>
+                          <input
+                            value={profileArgs}
+                            onChange={(event) => setProfileArgs(event.target.value)}
+                            placeholder="--dangerously-skip-permissions"
+                          />
+                        </label>
+
+                        <label className="field">
+                          <span>Environment JSON</span>
+                          <textarea
+                            rows={5}
+                            value={profileEnvJson}
+                            onChange={(event) => setProfileEnvJson(event.target.value)}
+                            placeholder='{"ANTHROPIC_API_KEY":"..."}'
+                          />
+                        </label>
+
+                        {profileError ? <p className="form-error">{profileError}</p> : null}
+
+                        <div className="action-row">
+                          <button className="button button--primary" disabled={isCreatingProfile} type="submit">
+                            {isCreatingProfile ? 'Saving...' : 'Create profile'}
+                          </button>
+                          <button
+                            className="button button--secondary"
+                            type="button"
+                            onClick={() => setIsProfileFormOpen(false)}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    ) : null}
+
+                    <div className="profile-grid">
+                      {launchProfiles.length === 0 ? (
+                        <div className="empty-state">Create a launch profile before starting a session.</div>
+                      ) : (
+                        launchProfiles.map((profile) => (
+                          <button
+                            key={profile.id}
+                            className={`profile-card ${
+                              profile.id === selectedLaunchProfile?.id ? 'profile-card--active' : ''
+                            }`}
+                            type="button"
+                            onClick={() => setSelectedLaunchProfileId(profile.id)}
+                          >
+                            <div className="profile-card__head">
+                              <strong>{profile.label}</strong>
+                              <span className="pill">{profile.provider}</span>
+                            </div>
+                            <code>{profile.executable}</code>
+                            <code>{profile.args || '(no args)'}</code>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </section>
+                ) : null}
+
+                {activeView === 'workItems' ? (
+                  <WorkItemsPanel
+                    error={workItemError}
+                    isLoading={isLoadingWorkItems}
+                    onCreate={createWorkItem}
+                    onDelete={deleteWorkItem}
+                    onUpdate={updateWorkItem}
+                    project={selectedProject}
+                    workItems={workItems}
+                  />
+                ) : null}
+
+                {activeView === 'documents' ? (
+                  <DocumentsPanel
+                    documents={documents}
+                    error={documentError}
+                    isLoading={isLoadingDocuments}
+                    onCreate={createDocument}
+                    onDelete={deleteDocument}
+                    onUpdate={updateDocument}
+                    project={selectedProject}
+                    workItems={workItems}
+                  />
+                ) : null}
+              </section>
             </div>
           ) : (
             <div className="empty-state empty-state--large">
-              Pick a project from the left rail or create one to begin launching sessions.
+              Pick a project from the sidebar or create one to begin launching sessions.
             </div>
           )}
         </section>
 
-        <aside className="panel rail">
-          <div className="panel__header">
-            <div>
-              <p className="panel__eyebrow">Workspace</p>
-              <h2>Details</h2>
-            </div>
-          </div>
-
-          <nav className="workspace-tabs workspace-tabs--secondary">
-            <button
-              className={`workspace-tab ${activeView === 'workItems' ? 'workspace-tab--active' : ''}`}
-              type="button"
-              onClick={() => setActiveView('workItems')}
-            >
-              <span>Work items</span>
-              <span className="workspace-tab__count">{workItems.length}</span>
-            </button>
-            <button
-              className={`workspace-tab ${activeView === 'documents' ? 'workspace-tab--active' : ''}`}
-              type="button"
-              onClick={() => setActiveView('documents')}
-            >
-              <span>Documents</span>
-              <span className="workspace-tab__count">{documents.length}</span>
-            </button>
-            <button
-              className={`workspace-tab ${activeView === 'profiles' ? 'workspace-tab--active' : ''}`}
-              type="button"
-              onClick={() => setActiveView('profiles')}
-            >
-              <span>Profiles</span>
-              <span className="workspace-tab__count">{launchProfiles.length}</span>
-            </button>
-          </nav>
-
-          {activeView === 'profiles' ? (
-            <>
-              <div className="section-toolbar">
-                <div>
-                  <p className="panel__eyebrow">Launch profiles</p>
-                  <h2>Account model</h2>
-                  <p className="section-subtitle">
-                    Pick one profile to launch with. Open the form only when you need a new one.
-                  </p>
-                </div>
-                <div className="section-toolbar__actions">
-                  <span className="panel__count">{launchProfiles.length}</span>
-                  <button
-                    className="button button--secondary button--compact"
-                    type="button"
-                    onClick={() => setIsProfileFormOpen((current) => !current)}
-                  >
-                    {isProfileFormOpen ? 'Hide form' : 'Add profile'}
-                  </button>
-                </div>
-              </div>
-
-              {isProfileFormOpen ? (
-                <form className="stack-form" onSubmit={submitLaunchProfile}>
-                  <div className="stack-form__header">
-                    <h3>Add launch profile</h3>
-                    <p>
-                      For MVP, a profile is the account selector: command, raw args, and optional env vars.
-                    </p>
-                  </div>
-
-                  <label className="field">
-                    <span>Label</span>
-                    <input
-                      value={profileLabel}
-                      onChange={(event) => setProfileLabel(event.target.value)}
-                      placeholder="Claude Code / Work"
-                    />
-                  </label>
-
-                  <label className="field">
-                    <span>Executable</span>
-                    <input
-                      value={profileExecutable}
-                      onChange={(event) => setProfileExecutable(event.target.value)}
-                      placeholder="claude"
-                    />
-                  </label>
-
-                  <label className="field">
-                    <span>Args</span>
-                    <input
-                      value={profileArgs}
-                      onChange={(event) => setProfileArgs(event.target.value)}
-                      placeholder="--dangerously-skip-permissions"
-                    />
-                  </label>
-
-                  <label className="field">
-                    <span>Environment JSON</span>
-                    <textarea
-                      rows={5}
-                      value={profileEnvJson}
-                      onChange={(event) => setProfileEnvJson(event.target.value)}
-                      placeholder='{"ANTHROPIC_API_KEY":"..."}'
-                    />
-                  </label>
-
-                  {profileError ? <p className="form-error">{profileError}</p> : null}
-
-                  <div className="action-row">
-                    <button className="button button--primary" disabled={isCreatingProfile} type="submit">
-                      {isCreatingProfile ? 'Saving...' : 'Create profile'}
-                    </button>
-                    <button
-                      className="button button--secondary"
-                      type="button"
-                      onClick={() => setIsProfileFormOpen(false)}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </form>
-              ) : null}
-
-              <div className="profile-list">
-                {launchProfiles.length === 0 ? (
-                  <div className="empty-state">Create a launch profile before starting a session.</div>
-                ) : (
-                  launchProfiles.map((profile) => (
-                    <button
-                      key={profile.id}
-                      className={`profile-card ${
-                        profile.id === selectedLaunchProfile?.id ? 'profile-card--active' : ''
-                      }`}
-                      type="button"
-                      onClick={() => setSelectedLaunchProfileId(profile.id)}
-                    >
-                      <div className="profile-card__head">
-                        <strong>{profile.label}</strong>
-                        <span className="pill">{profile.provider}</span>
-                      </div>
-                      <code>{profile.executable}</code>
-                      <code>{profile.args || '(no args)'}</code>
-                    </button>
-                  ))
-                )}
-              </div>
-            </>
-          ) : null}
-
-          {activeView === 'workItems' ? (
-            <WorkItemsPanel
-              error={workItemError}
-              isLoading={isLoadingWorkItems}
-              onCreate={createWorkItem}
-              onDelete={deleteWorkItem}
-              onUpdate={updateWorkItem}
-              project={selectedProject}
-              workItems={workItems}
-            />
-          ) : null}
-
-          {activeView === 'documents' ? (
-            <DocumentsPanel
-              documents={documents}
-              error={documentError}
-              isLoading={isLoadingDocuments}
-              onCreate={createDocument}
-              onDelete={deleteDocument}
-              onUpdate={updateDocument}
-              project={selectedProject}
-              workItems={workItems}
-            />
-          ) : null}
-        </aside>
       </section>
     </main>
   )
