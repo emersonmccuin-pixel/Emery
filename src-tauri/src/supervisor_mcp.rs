@@ -373,8 +373,9 @@ fn call_tool(client: &SupervisorMcpClient, tool_name: &str, arguments: Value) ->
                 .get("status")
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned);
-            Ok(serde_json::to_value(client.list_work_items(status)?)
-                .map_err(|error| format!("failed to encode work items result: {error}"))?)
+            Ok(json!({
+                "workItems": client.list_work_items(status)?
+            }))
         }
         "get_work_item" => {
             let id = read_required_i64(&arguments, "id")?;
@@ -400,10 +401,9 @@ fn call_tool(client: &SupervisorMcpClient, tool_name: &str, arguments: Value) ->
             &arguments, "id",
         )?)?)
         .map_err(|error| format!("failed to encode closed work item: {error}"))?),
-        "list_documents" => Ok(serde_json::to_value(client.list_documents(
-            read_optional_i64(&arguments, "workItemId"),
-        )?)
-        .map_err(|error| format!("failed to encode documents result: {error}"))?),
+        "list_documents" => Ok(json!({
+            "documents": client.list_documents(read_optional_i64(&arguments, "workItemId"))?
+        })),
         "create_document" => Ok(serde_json::to_value(client.create_document(
             read_required_string(&arguments, "title")?,
             read_optional_string(&arguments, "body"),
