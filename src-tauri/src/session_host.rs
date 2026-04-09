@@ -465,52 +465,91 @@ fn build_launch_command(
     startup_prompt: Option<&str>,
     session_record_id: i64,
 ) -> Result<CommandBuilder, String> {
+    if profile.provider == "claude_code" {
+        return build_claude_launch_command(
+            project,
+            profile,
+            storage,
+            supervisor_runtime,
+            startup_prompt,
+            session_record_id,
+        );
+    }
+
+    build_wrapped_launch_command(
+        project,
+        profile,
+        storage,
+        supervisor_runtime,
+        startup_prompt,
+        session_record_id,
+    )
+}
+
+fn build_claude_launch_command(
+    project: &crate::db::ProjectRecord,
+    profile: &crate::db::LaunchProfileRecord,
+    storage: &crate::db::StorageInfo,
+    supervisor_runtime: &SupervisorRuntimeInfo,
+    startup_prompt: Option<&str>,
+    session_record_id: i64,
+) -> Result<CommandBuilder, String> {
+    let mut command = CommandBuilder::new(&profile.executable);
+    command.cwd(&project.root_path);
+
+    apply_project_commander_env(
+        &mut command,
+        project,
+        storage,
+        session_record_id,
+        resolve_cli_directory(),
+    );
+
+    for arg in parse_profile_args(&profile.args)? {
+        command.arg(arg);
+    }
+
+    let mcp_config_json =
+        build_project_commander_mcp_config_json(project, supervisor_runtime, session_record_id)?;
+    command.arg(format!("--mcp-config={mcp_config_json}"));
+    command.arg("--strict-mcp-config");
+    command.arg("--append-system-prompt");
+    command.arg(build_claude_bridge_system_prompt(project));
+
+    if let Some(prompt) = startup_prompt {
+        let normalized_prompt = normalize_prompt_for_launch(prompt);
+
+        if !normalized_prompt.is_empty() {
+            command.arg(normalized_prompt);
+        }
+    }
+
+    Ok(command)
+}
+
+fn build_wrapped_launch_command(
+    project: &crate::db::ProjectRecord,
+    profile: &crate::db::LaunchProfileRecord,
+    storage: &crate::db::StorageInfo,
+    _supervisor_runtime: &SupervisorRuntimeInfo,
+    startup_prompt: Option<&str>,
+    session_record_id: i64,
+) -> Result<CommandBuilder, String> {
     let mut command = CommandBuilder::new("powershell.exe");
     let env_pairs = parse_env_json(&profile.env_json)?;
-    let mcp_config_json = if profile.provider == "claude_code" {
-        Some(build_project_commander_mcp_config_json(
-            project,
-            supervisor_runtime,
-            session_record_id,
-        )?)
-    } else {
-        None
-    };
+    let mcp_config_json = None::<String>;
     let mut script = format!(
         "Set-Location -LiteralPath '{}'; ",
         escape_ps(&project.root_path)
     );
 
     let cli_available = resolve_cli_directory();
-
-    if let Some(cli_directory) = &cli_available {
-        script.push_str(&format!(
-            "$env:PATH = '{};' + $env:PATH; ",
-            escape_ps(cli_directory)
-        ));
-    }
-
-    script.push_str(&format!(
-        "$env:PROJECT_COMMANDER_DB_PATH = '{}'; ",
-        escape_ps(&storage.db_path)
+    script.push_str(&build_project_commander_env_script(
+        project,
+        storage,
+        session_record_id,
+        cli_available.as_deref(),
     ));
-    script.push_str(&format!(
-        "$env:PROJECT_COMMANDER_PROJECT_ID = '{}'; ",
-        project.id
-    ));
-    script.push_str(&format!(
-        "$env:PROJECT_COMMANDER_PROJECT_NAME = '{}'; ",
-        escape_ps(&project.name)
-    ));
-    script.push_str(&format!(
-        "$env:PROJECT_COMMANDER_ROOT_PATH = '{}'; ",
-        escape_ps(&project.root_path)
-    ));
-    script.push_str(&format!(
-        "$env:PROJECT_COMMANDER_SESSION_ID = '{}'; ",
-        session_record_id
-    ));
-    script.push_str("$env:PROJECT_COMMANDER_CLI = 'project-commander-cli'; ");
 
     for (key, value) in env_pairs {
         script.push_str(&format!("$env:{} = '{}'; ", key, escape_ps(&value)));
@@ -565,6 +604,74 @@ fn build_launch_command(
     Ok(command)
 }
 
+fn apply_project_commander_env(
+    command: &mut CommandBuilder,
+    project: &crate::db::ProjectRecord,
+    storage: &crate::db::StorageInfo,
+    session_record_id: i64,
+    cli_directory: Option<String>,
+) {
+    if let Some(cli_directory) = cli_directory {
+        let existing_path = command
+            .get_env("PATH")
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let merged_path = if existing_path.is_empty() {
+            cli_directory
+        } else {
+            format!("{cli_directory};{existing_path}")
+        };
+        command.env("PATH", merged_path);
+    }
+
+    command.env("PROJECT_COMMANDER_DB_PATH", &storage.db_path);
+    command.env("PROJECT_COMMANDER_PROJECT_ID", project.id.to_string());
+    command.env("PROJECT_COMMANDER_PROJECT_NAME", &project.name);
+    command.env("PROJECT_COMMANDER_ROOT_PATH", &project.root_path);
+    command.env("PROJECT_COMMANDER_SESSION_ID", session_record_id.to_string());
+    command.env("PROJECT_COMMANDER_CLI", "project-commander-cli");
+}
+
+fn build_project_commander_env_script(
+    project: &crate::db::ProjectRecord,
+    storage: &crate::db::StorageInfo,
+    session_record_id: i64,
+    cli_directory: Option<&str>,
+) -> String {
+    let mut script = String::new();
+
+    if let Some(cli_directory) = cli_directory {
+        script.push_str(&format!(
+            "$env:PATH = '{};' + $env:PATH; ",
+            escape_ps(cli_directory)
+        ));
+    }
+
+    script.push_str(&format!(
+        "$env:PROJECT_COMMANDER_DB_PATH = '{}'; ",
+        escape_ps(&storage.db_path)
+    ));
+    script.push_str(&format!(
+        "$env:PROJECT_COMMANDER_PROJECT_ID = '{}'; ",
+        project.id
+    ));
+    script.push_str(&format!(
+        "$env:PROJECT_COMMANDER_PROJECT_NAME = '{}'; ",
+        escape_ps(&project.name)
+    ));
+    script.push_str(&format!(
+        "$env:PROJECT_COMMANDER_ROOT_PATH = '{}'; ",
+        escape_ps(&project.root_path)
+    ));
+    script.push_str(&format!(
+        "$env:PROJECT_COMMANDER_SESSION_ID = '{}'; ",
+        session_record_id
+    ));
+    script.push_str("$env:PROJECT_COMMANDER_CLI = 'project-commander-cli'; ");
+
+    script
+}
+
 fn parse_env_json(raw: &str) -> Result<Vec<(String, String)>, String> {
     let value = serde_json::from_str::<serde_json::Value>(raw)
         .map_err(|error| format!("invalid env JSON: {error}"))?;
@@ -585,6 +692,40 @@ fn parse_env_json(raw: &str) -> Result<Vec<(String, String)>, String> {
             )
         })
         .collect())
+}
+
+fn parse_profile_args(raw: &str) -> Result<Vec<String>, String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+
+    for ch in raw.chars() {
+        match quote {
+            Some(active_quote) if ch == active_quote => {
+                quote = None;
+            }
+            Some(_) => current.push(ch),
+            None if ch == '"' || ch == '\'' => {
+                quote = Some(ch);
+            }
+            None if ch.is_whitespace() => {
+                if !current.is_empty() {
+                    args.push(std::mem::take(&mut current));
+                }
+            }
+            None => current.push(ch),
+        }
+    }
+
+    if quote.is_some() {
+        return Err("launch profile args contain an unclosed quote".to_string());
+    }
+
+    if !current.is_empty() {
+        args.push(current);
+    }
+
+    Ok(args)
 }
 
 fn build_claude_bridge_system_prompt(project: &crate::db::ProjectRecord) -> String {
