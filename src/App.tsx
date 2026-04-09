@@ -300,6 +300,22 @@ function App() {
     }
   }, [selectedProjectId])
 
+  const refreshSessionSnapshot = useCallback(async (projectId: number) => {
+    try {
+      const snapshot = await invoke<SessionSnapshot | null>('get_session_snapshot', {
+        projectId,
+      })
+
+      setSessionSnapshot(snapshot)
+      return snapshot
+    } catch (error) {
+      setSessionError(
+        error instanceof Error ? error.message : 'Failed to inspect live session state.',
+      )
+      return null
+    }
+  }, [])
+
   useEffect(() => {
     if (
       !selectedProject ||
@@ -576,6 +592,13 @@ function App() {
     setActiveView('terminal')
 
     try {
+      const existingSnapshot = await refreshSessionSnapshot(selectedProject.id)
+
+      if (existingSnapshot?.isRunning) {
+        setSessionSnapshot(existingSnapshot)
+        return existingSnapshot
+      }
+
       const snapshot = await invoke<SessionSnapshot>('launch_project_session', {
         input: {
           projectId: selectedProject.id,
@@ -879,9 +902,11 @@ function App() {
     setActiveView('terminal')
 
     try {
+      const currentSessionSnapshot = await refreshSessionSnapshot(selectedProject.id)
       let targetWorkItem = workItem
       const hasLiveSession = Boolean(
-        sessionSnapshot?.isRunning && sessionSnapshot.projectId === selectedProject.id,
+        currentSessionSnapshot?.isRunning &&
+          currentSessionSnapshot.projectId === selectedProject.id,
       )
 
       if (workItem.status !== 'in_progress' && workItem.status !== 'done') {
@@ -924,7 +949,7 @@ function App() {
       })
 
       const activeSession =
-        hasLiveSession ? sessionSnapshot : await launchSession({ startupPrompt: prompt })
+        hasLiveSession ? currentSessionSnapshot : await launchSession({ startupPrompt: prompt })
 
       if (!activeSession) {
         return
