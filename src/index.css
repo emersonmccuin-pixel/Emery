@@ -1261,6 +1261,10 @@ body {
   overflow: hidden;
 }
 
+.side-rail--sessions {
+  overflow-y: auto;
+}
+
 .side-rail--collapsed {
   padding: 8px;
 }
@@ -1586,6 +1590,7 @@ body {
 .rail-section {
   display: grid;
   gap: 10px;
+  min-height: 0;
 }
 
 .empty-state--rail,

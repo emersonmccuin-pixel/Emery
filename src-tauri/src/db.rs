@@ -650,6 +650,28 @@ impl AppState {
         load_worktree_by_project_and_work_item(&connection, project_id, work_item_id)
     }
 
+    pub fn delete_worktree(&self, id: i64) -> Result<(), String> {
+        let connection = self.connect()?;
+        let existing = load_worktree_by_id(&connection, id)?;
+
+        connection
+            .execute("DELETE FROM worktrees WHERE id = ?1", [id])
+            .map_err(|error| format!("failed to delete worktree record: {error}"))?;
+
+        touch_project(&connection, existing.project_id)
+    }
+
+    pub fn clear_worktrees(&self, project_id: i64) -> Result<(), String> {
+        let connection = self.connect()?;
+        self.get_project(project_id)?;
+
+        connection
+            .execute("DELETE FROM worktrees WHERE project_id = ?1", [project_id])
+            .map_err(|error| format!("failed to clear worktree records: {error}"))?;
+
+        touch_project(&connection, project_id)
+    }
+
     pub fn create_session_record(
         &self,
         input: CreateSessionRecordInput,

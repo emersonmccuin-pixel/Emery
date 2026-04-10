@@ -121,3 +121,9 @@ pub struct EnsureProjectWorktreeInput {
 pub struct ListProjectWorktreesInput {
     pub project_id: i64,
 }
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClearProjectWorktreesInput {
+    pub project_id: i64,
+}

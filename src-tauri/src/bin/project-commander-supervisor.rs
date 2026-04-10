@@ -15,7 +15,7 @@ use project_commander_lib::supervisor_api::{
     ListProjectSessionEventsInput, ListProjectSessionsInput, ListProjectWorkItemsInput,
     ListProjectWorktreesInput, ProjectDocumentTarget, ProjectWorkItemTarget, SessionBriefOutput,
     UpdateProjectDocumentInput, UpdateProjectWorkItemInput, WorkItemDetailOutput,
-    EnsureProjectWorktreeInput,
+    EnsureProjectWorktreeInput, ClearProjectWorktreesInput,
 };
 use project_commander_lib::supervisor_mcp::run_supervisor_mcp_stdio_with_session;
 use serde::Serialize;
@@ -511,6 +511,20 @@ fn route_request(
             serde_json::to_value(worktree)
                 .map_err(|error| RouteError::internal(format!("failed to encode worktree: {error}")))
         }
+        (&Method::Post, "/worktree/clear") => {
+            let input = read_json::<ClearProjectWorktreesInput>(request)?;
+            let cleared = clear_project_worktrees(state, input.project_id)?;
+            append_project_event(
+                state,
+                context,
+                input.project_id,
+                "worktree.cleared",
+                "worktree",
+                0,
+                &json!({ "count": cleared }),
+            );
+            Ok(json!({ "ok": true, "count": cleared }))
+        }
         _ => Err(RouteError::not_found("route not found")),
     }
 }
@@ -629,6 +643,46 @@ fn ensure_project_worktree(
             worktree_path: worktree_path.display().to_string(),
         })
         .map_err(RouteError::internal)
+}
+
+fn clear_project_worktrees(state: &AppState, project_id: i64) -> Result<usize, RouteError> {
+    let project = state.get_project(project_id).map_err(RouteError::not_found)?;
+    let worktrees = state.list_worktrees(project_id).map_err(RouteError::internal)?;
+    let project_git_root = resolve_git_root(&project.root_path)?;
+    let worktree_root = PathBuf::from(state.storage().app_data_dir).join("worktrees");
+    let mut cleared = 0_usize;
+
+    for worktree in &worktrees {
+        let worktree_path = PathBuf::from(&worktree.worktree_path);
+
+        if worktree_path.is_dir() {
+            if is_git_worktree_path(&worktree_path) {
+                run_git_command(
+                    &project_git_root,
+                    &["worktree", "remove", "--force", &worktree.worktree_path],
+                )?;
+            } else if path_is_within(&worktree_root, &worktree_path) {
+                fs::remove_dir_all(&worktree_path).map_err(|error| {
+                    RouteError::internal(format!(
+                        "failed to remove stale worktree directory {}: {error}",
+                        worktree_path.display()
+                    ))
+                })?;
+            } else {
+                return Err(RouteError::bad_request(format!(
+                    "refusing to remove unexpected worktree path outside managed root: {}",
+                    worktree_path.display()
+                )));
+            }
+        }
+
+        state
+            .delete_worktree(worktree.id)
+            .map_err(RouteError::internal)?;
+        cleared += 1;
+    }
+
+    Ok(cleared)
 }
 
 fn build_worktree_branch_name(project_name: &str, work_item_id: i64, work_item_title: &str) -> String {
@@ -762,6 +816,20 @@ fn run_git_command(project_git_root: &Path, args: &[&str]) -> Result<(), RouteEr
     };
 
     Err(RouteError::bad_request(message))
+}
+
+fn path_is_within(root: &Path, candidate: &Path) -> bool {
+    let root = match root.canonicalize() {
+        Ok(root) => root,
+        Err(_) => return false,
+    };
+
+    let candidate = match candidate.canonicalize() {
+        Ok(candidate) => candidate,
+        Err(_) => return false,
+    };
+
+    candidate.starts_with(root)
 }
 
 fn append_project_event<T>(
