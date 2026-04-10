@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
@@ -205,6 +205,7 @@ function App() {
   const [isLoadingDocuments, setIsLoadingDocuments] = useState(false)
   const [startingWorkItemId, setStartingWorkItemId] = useState<number | null>(null)
   const [contextRefreshKey, setContextRefreshKey] = useState(0)
+  const worktreeRequestIdRef = useRef(0)
 
   useEffect(() => {
     let cancelled = false
@@ -346,6 +347,29 @@ function App() {
     }
   }, [])
 
+  const refreshWorktrees = useCallback(async (projectId: number) => {
+    const requestId = ++worktreeRequestIdRef.current
+
+    try {
+      const items = await invoke<WorktreeRecord[]>('list_worktrees', {
+        projectId,
+      })
+
+      if (requestId !== worktreeRequestIdRef.current) {
+        return items
+      }
+
+      setWorktrees(items)
+      return items
+    } catch (error) {
+      if (requestId === worktreeRequestIdRef.current) {
+        setSessionError(error instanceof Error ? error.message : 'Failed to load worktrees.')
+      }
+
+      return []
+    }
+  }, [])
+
   const refreshSelectedSessionSnapshot = useCallback(async () => {
     if (!selectedProject) {
       setSessionSnapshot(null)
@@ -474,39 +498,18 @@ function App() {
   }, [contextRefreshKey, selectedProjectId])
 
   useEffect(() => {
-    let cancelled = false
-
     const loadWorktrees = async () => {
       if (!selectedProject) {
+        worktreeRequestIdRef.current += 1
         setWorktrees([])
         return
       }
 
-      try {
-        const items = await invoke<WorktreeRecord[]>('list_worktrees', {
-          projectId: selectedProject.id,
-        })
-
-        if (cancelled) {
-          return
-        }
-
-        setWorktrees(items)
-      } catch (error) {
-        if (cancelled) {
-          return
-        }
-
-        setSessionError(error instanceof Error ? error.message : 'Failed to load worktrees.')
-      }
+      await refreshWorktrees(selectedProject.id)
     }
 
     void loadWorktrees()
-
-    return () => {
-      cancelled = true
-    }
-  }, [contextRefreshKey, selectedProjectId])
+  }, [contextRefreshKey, refreshWorktrees, selectedProjectId])
 
   useEffect(() => {
     let cancelled = false
@@ -1213,6 +1216,7 @@ function App() {
         return [worktree, ...next]
       })
       setSelectedTerminalWorktreeId(worktree.id)
+      await refreshWorktrees(selectedProject.id)
 
       const currentSessionSnapshot = await fetchSessionSnapshot(selectedProject.id, worktree.id)
       const hasLiveSession = Boolean(
