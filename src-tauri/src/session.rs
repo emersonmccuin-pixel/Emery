@@ -1,4 +1,9 @@
-use crate::db::StorageInfo;
+use crate::db::{
+    AppSettings, BootstrapData, CreateLaunchProfileInput, CreateProjectInput, DocumentRecord,
+    LaunchProfileRecord, ProjectRecord, SessionEventRecord, SessionRecord, StorageInfo,
+    UpdateAppSettingsInput, UpdateLaunchProfileInput, UpdateProjectInput, WorkItemRecord,
+    WorktreeRecord,
+};
 use crate::session_api::{
     LaunchSessionInput, ProjectSessionTarget, ResizeSessionInput, SessionInput, SessionSnapshot,
     SupervisorHealth, SupervisorRuntimeInfo, TerminalExitEvent, TerminalOutputEvent,
@@ -6,15 +11,17 @@ use crate::session_api::{
 };
 use crate::session_host::{now_timestamp_string, resolve_helper_binary_path};
 use crate::supervisor_api::{
-    CreateProjectDocumentInput, CreateProjectWorkItemInput, ListProjectDocumentsInput,
-    ListProjectSessionEventsInput, ListProjectSessionsInput, ListProjectWorkItemsInput,
-    ListProjectWorktreesInput, ProjectDocumentTarget, ProjectWorkItemTarget,
-    UpdateProjectDocumentInput, UpdateProjectWorkItemInput, EnsureProjectWorktreeInput,
+    CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget, CleanupRepairOutput,
+    CreateProjectDocumentInput, CreateProjectWorkItemInput, EnsureProjectWorktreeInput,
+    LaunchProfileTarget,
+    ListCleanupCandidatesInput, ListProjectDocumentsInput, ListProjectSessionEventsInput,
+    ListProjectSessionsInput, ListProjectWorkItemsInput, ListProjectWorktreesInput,
+    ProjectDocumentTarget, ProjectSessionRecordTarget, ProjectWorkItemTarget, RepairCleanupInput,
+    UpdateProjectDocumentInput, UpdateProjectWorkItemInput,
 };
-use crate::db::{DocumentRecord, SessionEventRecord, SessionRecord, WorkItemRecord, WorktreeRecord};
 use reqwest::blocking::Client;
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -29,7 +36,8 @@ use std::os::windows::process::CommandExt;
 
 const SUPERVISOR_BOOT_TIMEOUT: Duration = Duration::from_secs(5);
 const SUPERVISOR_BOOT_POLL_INTERVAL: Duration = Duration::from_millis(100);
-const SUPERVISOR_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
+const SUPERVISOR_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+const SUPERVISOR_LONG_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const SUPERVISOR_TERMINAL_POLL_INTERVAL: Duration = Duration::from_millis(200);
 const SUPERVISOR_REQUEST_SOURCE: &str = "desktop_ui";
 
@@ -88,6 +96,18 @@ impl SupervisorClient {
         }
 
         Ok(snapshot)
+    }
+
+    pub fn storage(&self) -> StorageInfo {
+        self.inner.storage.clone()
+    }
+
+    pub fn bootstrap(&self) -> Result<BootstrapData, String> {
+        self.request_json::<_, BootstrapData>("bootstrap", &serde_json::json!({}))
+    }
+
+    pub fn update_app_settings(&self, input: UpdateAppSettingsInput) -> Result<AppSettings, String> {
+        self.request_json("settings/update", &input)
     }
 
     pub fn launch(
@@ -204,7 +224,11 @@ impl SupervisorClient {
         self.request_json("worktree/list", &ListProjectWorktreesInput { project_id })
     }
 
-    pub fn ensure_worktree(&self, project_id: i64, work_item_id: i64) -> Result<WorktreeRecord, String> {
+    pub fn ensure_worktree(
+        &self,
+        project_id: i64,
+        work_item_id: i64,
+    ) -> Result<WorktreeRecord, String> {
         self.request_json(
             "worktree/ensure",
             &EnsureProjectWorktreeInput {
@@ -216,6 +240,74 @@ impl SupervisorClient {
 
     pub fn list_session_records(&self, project_id: i64) -> Result<Vec<SessionRecord>, String> {
         self.request_json("session/list", &ListProjectSessionsInput { project_id })
+    }
+
+    pub fn list_orphaned_sessions(&self, project_id: i64) -> Result<Vec<SessionRecord>, String> {
+        self.request_json(
+            "session/orphaned-list",
+            &ListProjectSessionsInput { project_id },
+        )
+    }
+
+    pub fn terminate_orphaned_session(
+        &self,
+        project_id: i64,
+        session_id: i64,
+    ) -> Result<SessionRecord, String> {
+        self.request_json_with_timeout(
+            "session/orphaned-terminate",
+            &ProjectSessionRecordTarget {
+                project_id,
+                session_id,
+            },
+            SUPERVISOR_LONG_REQUEST_TIMEOUT,
+        )
+    }
+
+    pub fn list_cleanup_candidates(&self) -> Result<Vec<CleanupCandidate>, String> {
+        self.request_json("cleanup/list", &ListCleanupCandidatesInput {})
+    }
+
+    pub fn remove_cleanup_candidate(
+        &self,
+        input: CleanupCandidateTarget,
+    ) -> Result<CleanupActionOutput, String> {
+        self.request_json_with_timeout("cleanup/remove", &input, SUPERVISOR_LONG_REQUEST_TIMEOUT)
+    }
+
+    pub fn repair_cleanup_candidates(&self) -> Result<CleanupRepairOutput, String> {
+        self.request_json_with_timeout(
+            "cleanup/repair-all",
+            &RepairCleanupInput {},
+            SUPERVISOR_LONG_REQUEST_TIMEOUT,
+        )
+    }
+
+    pub fn create_project(&self, input: CreateProjectInput) -> Result<ProjectRecord, String> {
+        self.request_json("project/create", &input)
+    }
+
+    pub fn update_project(&self, input: UpdateProjectInput) -> Result<ProjectRecord, String> {
+        self.request_json("project/update", &input)
+    }
+
+    pub fn create_launch_profile(
+        &self,
+        input: CreateLaunchProfileInput,
+    ) -> Result<LaunchProfileRecord, String> {
+        self.request_json("launch-profile/create", &input)
+    }
+
+    pub fn update_launch_profile(
+        &self,
+        input: UpdateLaunchProfileInput,
+    ) -> Result<LaunchProfileRecord, String> {
+        self.request_json("launch-profile/update", &input)
+    }
+
+    pub fn delete_launch_profile(&self, id: i64) -> Result<(), String> {
+        self.request_json::<_, serde_json::Value>("launch-profile/delete", &LaunchProfileTarget { id })
+            .map(|_| ())
     }
 
     pub fn list_session_events(
@@ -351,7 +443,10 @@ impl SupervisorClient {
         }
     }
 
-    fn fetch_snapshot(&self, target: ProjectSessionTarget) -> Result<Option<SessionSnapshot>, String> {
+    fn fetch_snapshot(
+        &self,
+        target: ProjectSessionTarget,
+    ) -> Result<Option<SessionSnapshot>, String> {
         self.request_json("session/snapshot", &target)
     }
 
@@ -364,10 +459,23 @@ impl SupervisorClient {
         TRequest: Serialize,
         TResponse: DeserializeOwned,
     {
+        self.request_json_with_timeout(route, payload, SUPERVISOR_REQUEST_TIMEOUT)
+    }
+
+    fn request_json_with_timeout<TRequest, TResponse>(
+        &self,
+        route: &str,
+        payload: &TRequest,
+        timeout: Duration,
+    ) -> Result<TResponse, String>
+    where
+        TRequest: Serialize,
+        TResponse: DeserializeOwned,
+    {
         for attempt in 0..2 {
             let runtime = self.ensure_runtime()?;
 
-            match self.send_json(&runtime, route, payload) {
+            match self.send_json(&runtime, route, payload, timeout) {
                 Ok(value) => return Ok(value),
                 Err(RequestFailure::Fatal(message)) => return Err(message),
                 Err(RequestFailure::Retryable(message)) if attempt == 1 => return Err(message),
@@ -385,15 +493,18 @@ impl SupervisorClient {
         runtime: &SupervisorRuntimeInfo,
         route: &str,
         payload: &TRequest,
+        timeout: Duration,
     ) -> Result<TResponse, RequestFailure>
     where
         TRequest: Serialize,
         TResponse: DeserializeOwned,
     {
         let client = Client::builder()
-            .timeout(SUPERVISOR_REQUEST_TIMEOUT)
+            .timeout(timeout)
             .build()
-            .map_err(|error| RequestFailure::Fatal(format!("failed to build supervisor client: {error}")))?;
+            .map_err(|error| {
+                RequestFailure::Fatal(format!("failed to build supervisor client: {error}"))
+            })?;
 
         let url = format!("http://127.0.0.1:{}/{}", runtime.port, route);
         let response = client
@@ -424,9 +535,9 @@ impl SupervisorClient {
             return Err(RequestFailure::Fatal(message));
         }
 
-        response
-            .json::<TResponse>()
-            .map_err(|error| RequestFailure::Retryable(format!("failed to decode supervisor response: {error}")))
+        response.json::<TResponse>().map_err(|error| {
+            RequestFailure::Retryable(format!("failed to decode supervisor response: {error}"))
+        })
     }
 
     fn ensure_runtime(&self) -> Result<SupervisorRuntimeInfo, String> {

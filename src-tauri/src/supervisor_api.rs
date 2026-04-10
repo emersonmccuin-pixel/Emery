@@ -27,6 +27,30 @@ pub struct SessionHistoryOutput {
     pub events: Vec<SessionEventRecord>,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanupCandidate {
+    pub kind: String,
+    pub path: String,
+    pub project_id: Option<i64>,
+    pub worktree_id: Option<i64>,
+    pub session_id: Option<i64>,
+    pub reason: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanupActionOutput {
+    pub removed: bool,
+    pub candidate: CleanupCandidate,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanupRepairOutput {
+    pub actions: Vec<CleanupActionOutput>,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListProjectWorkItemsInput {
@@ -81,6 +105,34 @@ pub struct ProjectDocumentTarget {
 pub struct ListProjectSessionsInput {
     pub project_id: i64,
 }
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSessionRecordTarget {
+    pub project_id: i64,
+    pub session_id: i64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchProfileTarget {
+    pub id: i64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListCleanupCandidatesInput {}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanupCandidateTarget {
+    pub kind: String,
+    pub path: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepairCleanupInput {}
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

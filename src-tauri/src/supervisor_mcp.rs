@@ -6,8 +6,8 @@ use crate::supervisor_api::{
     UpdateProjectDocumentInput, UpdateProjectWorkItemInput, WorkItemDetailOutput,
 };
 use reqwest::blocking::Client;
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::io::{self, BufRead, BufReader, Write};
 use std::time::Duration;
@@ -100,10 +100,13 @@ impl SupervisorMcpClient {
     }
 
     fn current_project(&self) -> Result<ProjectRecord, String> {
-        self.post("project/current", &ProjectSessionTarget {
-            project_id: self.project_id,
-            worktree_id: self.worktree_id,
-        })
+        self.post(
+            "project/current",
+            &ProjectSessionTarget {
+                project_id: self.project_id,
+                worktree_id: self.worktree_id,
+            },
+        )
     }
 
     fn session_brief(&self) -> Result<SessionBriefOutput, String> {
@@ -244,7 +247,11 @@ impl SupervisorMcpClient {
         )
     }
 
-    fn post<TRequest, TResponse>(&self, route: &str, payload: &TRequest) -> Result<TResponse, String>
+    fn post<TRequest, TResponse>(
+        &self,
+        route: &str,
+        payload: &TRequest,
+    ) -> Result<TResponse, String>
     where
         TRequest: Serialize,
         TResponse: DeserializeOwned,
@@ -265,16 +272,14 @@ impl SupervisorMcpClient {
             .map_err(|error| format!("failed to reach Project Commander supervisor: {error}"))?;
 
         if !response.status().is_success() {
-            return Err(
-                response
-                    .text()
-                    .unwrap_or_else(|_| "Project Commander supervisor returned an error".to_string()),
-            );
+            return Err(response
+                .text()
+                .unwrap_or_else(|_| "Project Commander supervisor returned an error".to_string()));
         }
 
-        response
-            .json::<TResponse>()
-            .map_err(|error| format!("failed to decode Project Commander supervisor response: {error}"))
+        response.json::<TResponse>().map_err(|error| {
+            format!("failed to decode Project Commander supervisor response: {error}")
+        })
     }
 }
 
@@ -378,7 +383,11 @@ fn handle_message(client: &SupervisorMcpClient, message: Value) -> Result<Option
     }
 }
 
-fn call_tool(client: &SupervisorMcpClient, tool_name: &str, arguments: Value) -> Result<Value, String> {
+fn call_tool(
+    client: &SupervisorMcpClient,
+    tool_name: &str,
+    arguments: Value,
+) -> Result<Value, String> {
     match tool_name {
         "current_project" => Ok(serde_json::to_value(client.current_project()?)
             .map_err(|error| format!("failed to encode current project result: {error}"))?),
@@ -413,9 +422,9 @@ fn call_tool(client: &SupervisorMcpClient, tool_name: &str, arguments: Value) ->
             read_optional_string(&arguments, "status"),
         )?)
         .map_err(|error| format!("failed to encode updated work item: {error}"))?),
-        "close_work_item" => Ok(serde_json::to_value(client.close_work_item(read_required_i64(
-            &arguments, "id",
-        )?)?)
+        "close_work_item" => Ok(serde_json::to_value(
+            client.close_work_item(read_required_i64(&arguments, "id")?)?,
+        )
         .map_err(|error| format!("failed to encode closed work item: {error}"))?),
         "list_documents" => Ok(json!({
             "documents": client.list_documents(read_optional_i64(&arguments, "workItemId"))?
@@ -426,16 +435,18 @@ fn call_tool(client: &SupervisorMcpClient, tool_name: &str, arguments: Value) ->
             read_optional_i64(&arguments, "workItemId"),
         )?)
         .map_err(|error| format!("failed to encode created document: {error}"))?),
-        "update_document" => Ok(serde_json::to_value(client.update_document(
-            read_required_i64(&arguments, "id")?,
-            read_optional_string(&arguments, "title"),
-            read_optional_string(&arguments, "body"),
-            read_optional_i64(&arguments, "workItemId"),
-            arguments
-                .get("clearWorkItem")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-        )?)
+        "update_document" => Ok(serde_json::to_value(
+            client.update_document(
+                read_required_i64(&arguments, "id")?,
+                read_optional_string(&arguments, "title"),
+                read_optional_string(&arguments, "body"),
+                read_optional_i64(&arguments, "workItemId"),
+                arguments
+                    .get("clearWorkItem")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            )?,
+        )
         .map_err(|error| format!("failed to encode updated document: {error}"))?),
         "delete_document" => Ok(client.delete_document(read_required_i64(&arguments, "id")?)?),
         _ => Err(format!("unknown tool: {tool_name}")),

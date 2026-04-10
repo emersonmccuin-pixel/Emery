@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import type { DocumentRecord, ProjectRecord, WorkItemRecord } from '../types'
+import { Button } from './ui/button'
+import { Input } from './ui/input'
+import { ScrollArea } from './ui/scroll-area'
+import { Trash2 } from 'lucide-react'
 
 type DocumentsPanelProps = {
   project: ProjectRecord | null
@@ -43,11 +47,6 @@ function DocumentsPanel({
   const [isSaving, setIsSaving] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
 
-  const workItemTitles = useMemo(
-    () => new Map(workItems.map((item) => [item.id, item.title])),
-    [workItems],
-  )
-
   const selectedDocument = useMemo(
     () => documents.find((document) => document.id === selectedDocumentId) ?? documents[0] ?? null,
     [documents, selectedDocumentId],
@@ -56,10 +55,6 @@ function DocumentsPanel({
   useEffect(() => {
     setSelectedDocumentId(documents[0]?.id ?? null)
   }, [project?.id])
-
-  useEffect(() => {
-    setIsCreateOpen(documents.length === 0)
-  }, [documents.length, project?.id])
 
   useEffect(() => {
     if (!selectedDocument && documents.length > 0) {
@@ -132,6 +127,10 @@ function DocumentsPanel({
       return
     }
 
+    if (!confirm('Are you sure you want to delete this document?')) {
+      return
+    }
+
     setIsDeleting(true)
 
     try {
@@ -143,161 +142,56 @@ function DocumentsPanel({
   }
 
   return (
-    <section className="documents-section">
-      <div className="section-toolbar">
-        <div>
-          <p className="panel__eyebrow">Documents</p>
-          <h2>{project ? `${project.name} context` : 'Select a project'}</h2>
-          {project ? (
-            <p className="section-subtitle">
-              Keep attached context close to the project or link it to one work item.
-            </p>
-          ) : null}
+    <div className="flex flex-col h-[500px] overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-card/50">
+        <div className="flex items-center gap-3">
+          <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Knowledge Base</span>
+          <div className="h-3 w-[1px] bg-border" />
+          <span className="text-[10px] font-mono">{documents.length} docs</span>
         </div>
-        {project ? (
-          <div className="section-toolbar__actions">
-            <span className="panel__count">{documents.length}</span>
-            <button
-              className="button button--secondary button--compact"
-              type="button"
-              onClick={() => setIsCreateOpen((current) => !current)}
-            >
-              {isCreateOpen ? 'Hide add form' : 'Add document'}
-            </button>
-          </div>
-        ) : (
-          <span className="panel__count">{documents.length}</span>
-        )}
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-6 text-[9px] uppercase tracking-wider"
+          onClick={() => setIsCreateOpen(!isCreateOpen)}
+        >
+          {isCreateOpen ? 'CLOSE' : 'ADD DOCUMENT'}
+        </Button>
       </div>
 
-      {!project ? (
-        <div className="empty-state">
-          Select a project to manage docs, briefs, notes, and attached context.
-        </div>
-      ) : (
-        <>
-          {isCreateOpen ? (
-            <form className="stack-form" onSubmit={submitCreate}>
-              <div className="stack-form__header">
-                <h3>Add document</h3>
-                <p>Store supporting context and optionally attach it to one work item.</p>
-              </div>
+      <div className="flex-1 overflow-hidden">
+        {isCreateOpen ? (
+          <ScrollArea className="h-full">
+            <div className="p-4">
+              <form className="space-y-4 border border-border bg-card/30 p-4 rounded" onSubmit={submitCreate}>
+                <div className="space-y-1">
+                  <h3 className="text-xs font-bold uppercase tracking-wider">New Document</h3>
+                </div>
 
-              <label className="field">
-                <span>Title</span>
-                <input
-                  value={createTitle}
-                  onChange={(event) => setCreateTitle(event.target.value)}
-                  placeholder="Release checklist"
-                />
-              </label>
-
-              <label className="field">
-                <span>Linked work item</span>
-                <select
-                  value={createWorkItemId === null ? '' : String(createWorkItemId)}
-                  onChange={(event) =>
-                    setCreateWorkItemId(
-                      event.target.value === '' ? null : Number(event.target.value),
-                    )
-                  }
-                >
-                  <option value="">Project-level document</option>
-                  {workItems.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      #{item.id} {item.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="field">
-                <span>Body</span>
-                <textarea
-                  rows={5}
-                  value={createBody}
-                  onChange={(event) => setCreateBody(event.target.value)}
-                  placeholder="Capture architecture notes, acceptance criteria, or reference context."
-                />
-              </label>
-
-              <div className="action-row">
-                <button className="button button--primary" disabled={isCreating || isLoading} type="submit">
-                  {isCreating ? 'Saving...' : 'Create document'}
-                </button>
-                <button
-                  className="button button--secondary"
-                  type="button"
-                  onClick={() => setIsCreateOpen(false)}
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
-          ) : null}
-
-          {error ? <p className="form-error">{error}</p> : null}
-
-          <div className="list-detail-layout">
-            <div className="list-pane">
-              <div className="document-list">
-                {isLoading ? (
-                  <div className="empty-state">Loading documents...</div>
-                ) : documents.length === 0 ? (
-                  <div className="empty-state">No documents yet for this project.</div>
-                ) : (
-                  documents.map((document) => {
-                    const linkedTitle =
-                      document.workItemId === null
-                        ? 'Project-level document'
-                        : workItemTitles.get(document.workItemId) ?? `Work item #${document.workItemId}`
-
-                    return (
-                      <button
-                        key={document.id}
-                        className={`document-card ${
-                          document.id === selectedDocument?.id ? 'document-card--active' : ''
-                        }`}
-                        type="button"
-                        onClick={() => setSelectedDocumentId(document.id)}
-                      >
-                        <div className="document-card__header">
-                          <strong>{document.title}</strong>
-                          <span className="pill">{document.workItemId === null ? 'project' : 'linked'}</span>
-                        </div>
-                        <div className="document-card__meta">
-                          <span>{linkedTitle}</span>
-                          <span>Updated {document.updatedAt}</span>
-                        </div>
-                      </button>
-                    )
-                  })
-                )}
-              </div>
-            </div>
-
-            <div className="detail-pane">
-              {selectedDocument ? (
-                <form className="stack-form" onSubmit={submitUpdate}>
-                  <div className="stack-form__header">
-                    <h3>Edit document</h3>
-                    <p>Keep reference material attached to the project or the most relevant work item.</p>
-                  </div>
-
+                <div className="space-y-3">
                   <label className="field">
-                    <span>Title</span>
-                    <input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} />
+                    <span className="text-[9px] uppercase text-muted-foreground">Title</span>
+                    <Input
+                      value={createTitle}
+                      onChange={(event) => setCreateTitle(event.target.value)}
+                      placeholder="Context title"
+                      className="h-8 text-xs"
+                      required
+                    />
                   </label>
 
                   <label className="field">
-                    <span>Linked work item</span>
+                    <span className="text-[9px] uppercase text-muted-foreground">Linked Work Item</span>
                     <select
-                      value={editWorkItemId === null ? '' : String(editWorkItemId)}
+                      className="w-full h-8 text-xs bg-background border border-border rounded px-2"
+                      value={createWorkItemId === null ? '' : String(createWorkItemId)}
                       onChange={(event) =>
-                        setEditWorkItemId(event.target.value === '' ? null : Number(event.target.value))
+                        setCreateWorkItemId(
+                          event.target.value === '' ? null : Number(event.target.value),
+                        )
                       }
                     >
-                      <option value="">Project-level document</option>
+                      <option value="">Project-level context</option>
                       {workItems.map((item) => (
                         <option key={item.id} value={item.id}>
                           #{item.id} {item.title}
@@ -307,34 +201,157 @@ function DocumentsPanel({
                   </label>
 
                   <label className="field">
-                    <span>Body</span>
-                    <textarea rows={10} value={editBody} onChange={(event) => setEditBody(event.target.value)} />
+                    <span className="text-[9px] uppercase text-muted-foreground">Content</span>
+                    <textarea
+                      className="w-full bg-background border border-border rounded p-3 font-mono text-xs leading-relaxed focus:ring-1 focus:ring-primary/30 outline-none min-h-[150px]"
+                      value={createBody}
+                      onChange={(event) => setCreateBody(event.target.value)}
+                      placeholder="Architecture notes, reference material, etc..."
+                    />
                   </label>
+                </div>
 
-                  <div className="action-row">
-                    <button className="button button--primary" disabled={isSaving} type="submit">
-                      {isSaving ? 'Saving...' : 'Save changes'}
-                    </button>
-                    <button
-                      className="button button--danger"
-                      disabled={isDeleting}
-                      type="button"
-                      onClick={handleDelete}
-                    >
-                      {isDeleting ? 'Deleting...' : 'Delete'}
-                    </button>
+                <div className="flex gap-2">
+                  <Button variant="default" className="flex-1 h-8 text-[10px] font-bold uppercase tracking-widest" disabled={isCreating || isLoading} type="submit">
+                    {isCreating ? 'SAVING...' : 'CREATE DOCUMENT'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="h-8 text-[10px] font-bold uppercase tracking-widest"
+                    type="button"
+                    onClick={() => setIsCreateOpen(false)}
+                  >
+                    CANCEL
+                  </Button>
+                </div>
+              </form>
+            </div>
+          </ScrollArea>
+        ) : (
+          <div className="flex h-full">
+            {/* List Pane */}
+            <div className="w-1/3 border-r border-border bg-black/10">
+              <ScrollArea className="h-full">
+                <div className="p-1.5 space-y-0.5">
+                  {documents.length === 0 ? (
+                    <div className="text-center py-8 px-2 italic text-muted-foreground text-[10px]">
+                      No documents.
+                    </div>
+                  ) : (
+                    documents.map((doc) => (
+                      <button
+                        key={doc.id}
+                        className={`w-full text-left p-2 border border-transparent transition-all group ${
+                          doc.id === selectedDocument?.id 
+                            ? 'bg-primary/10 border-primary/20' 
+                            : 'hover:bg-muted/30'
+                        }`}
+                        type="button"
+                        onClick={() => setSelectedDocumentId(doc.id)}
+                      >
+                        <div className="flex justify-between items-start mb-0.5">
+                          <span className={`text-[10px] font-bold truncate pr-2 ${doc.id === selectedDocument?.id ? 'text-primary' : ''}`}>
+                            {doc.title}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-[8px] opacity-60">
+                          <span className="uppercase tracking-wider">
+                            {doc.workItemId ? `#${doc.workItemId}` : 'PROJECT'}
+                          </span>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </ScrollArea>
+            </div>
+
+            {/* Detail Pane */}
+            <div className="flex-1 bg-black/5">
+              {selectedDocument ? (
+                <ScrollArea className="h-full">
+                  <div className="p-4">
+                    <form className="space-y-4" onSubmit={submitUpdate}>
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                          <label className="field">
+                            <span className="text-[9px] uppercase text-muted-foreground mb-1">Document Title</span>
+                            <Input 
+                              value={editTitle} 
+                              onChange={(event) => setEditTitle(event.target.value)} 
+                              className="text-xs font-bold border-transparent bg-transparent hover:border-border focus:bg-background h-8 -ml-1.5"
+                            />
+                          </label>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4 border-y border-border/50 py-3">
+                        <label className="field">
+                          <span className="text-[9px] uppercase text-muted-foreground">Linked Work Item</span>
+                          <select 
+                            className="w-full h-7 text-[10px] bg-background border border-border rounded px-2"
+                            value={editWorkItemId === null ? '' : String(editWorkItemId)}
+                            onChange={(event) =>
+                              setEditWorkItemId(event.target.value === '' ? null : Number(event.target.value))
+                            }
+                          >
+                            <option value="">Project-level context</option>
+                            {workItems.map((item) => (
+                              <option key={item.id} value={item.id}>
+                                #{item.id} {item.title}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <div className="flex flex-col">
+                          <span className="text-[9px] uppercase text-muted-foreground mb-1">Last Updated</span>
+                          <span className="text-[10px] opacity-60 font-mono py-1">{selectedDocument.updatedAt}</span>
+                        </div>
+                      </div>
+
+                      <label className="field">
+                        <span className="text-[9px] uppercase text-muted-foreground">Content</span>
+                        <textarea 
+                          rows={12} 
+                          className="w-full bg-black/20 border border-border/50 rounded p-3 font-mono text-xs leading-relaxed focus:ring-1 focus:ring-primary/20 outline-none min-h-[250px]"
+                          value={editBody} 
+                          onChange={(event) => setEditBody(event.target.value)} 
+                        />
+                      </label>
+
+                      <div className="flex justify-between border-t border-border/50 pt-4">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10 h-7 text-[9px] font-bold"
+                          disabled={isDeleting}
+                          type="button"
+                          onClick={handleDelete}
+                        >
+                          <Trash2 size={10} className="mr-1.5" />
+                          DELETE DOCUMENT
+                        </Button>
+                        
+                        <Button variant="outline" size="sm" className="h-7 text-[9px] font-bold uppercase tracking-widest px-6" disabled={isSaving} type="submit">
+                          {isSaving ? 'SAVING...' : 'SAVE CHANGES'}
+                        </Button>
+                      </div>
+                    </form>
                   </div>
-                </form>
+                </ScrollArea>
               ) : (
-                <div className="empty-state detail-pane__empty">
-                  Select a document to edit it.
+                <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                  <p className="text-[9px] uppercase tracking-widest">Select document to inspect</p>
                 </div>
               )}
             </div>
           </div>
-        </>
-      )}
-    </section>
+        )}
+      </div>
+
+      {error ? <p className="px-3 py-1 bg-destructive/20 text-destructive text-[9px]">{error}</p> : null}
+    </div>
   )
 }
 

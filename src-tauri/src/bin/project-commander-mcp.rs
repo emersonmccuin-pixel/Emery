@@ -261,7 +261,12 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
                 .list_documents(project.id)?
                 .into_iter()
                 .find(|document| document.id == args.id)
-                .ok_or_else(|| format!("document #{} does not belong to the active project", args.id))?;
+                .ok_or_else(|| {
+                    format!(
+                        "document #{} does not belong to the active project",
+                        args.id
+                    )
+                })?;
 
             if args.title.is_none()
                 && args.body.is_none()
@@ -293,7 +298,12 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
                 .list_documents(project.id)?
                 .into_iter()
                 .find(|document| document.id == args.id)
-                .ok_or_else(|| format!("document #{} does not belong to the active project", args.id))?;
+                .ok_or_else(|| {
+                    format!(
+                        "document #{} does not belong to the active project",
+                        args.id
+                    )
+                })?;
 
             state.delete_document(existing.id)?;
 
@@ -303,7 +313,9 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
                 "title": existing.title
             }))
         }),
-        _ => Err(McpError::method_not_found(format!("unknown tool: {tool_name}"))),
+        _ => Err(McpError::method_not_found(format!(
+            "unknown tool: {tool_name}"
+        ))),
     }
 }
 
@@ -535,7 +547,12 @@ fn tool_definitions() -> Vec<Value> {
     ]
 }
 
-fn tool_definition(name: &str, description: &str, input_schema: Value, large_output: bool) -> Value {
+fn tool_definition(
+    name: &str,
+    description: &str,
+    input_schema: Value,
+    large_output: bool,
+) -> Value {
     let mut tool = json!({
         "name": name,
         "description": description,
@@ -639,9 +656,9 @@ fn read_message(reader: &mut impl BufRead) -> Result<Option<Value>, String> {
         .read_exact(&mut payload)
         .map_err(|error| format!("failed to read MCP payload: {error}"))?;
 
-    serde_json::from_slice(&payload).map(Some).map_err(|error| {
-        format!("failed to decode MCP JSON payload: {error}")
-    })
+    serde_json::from_slice(&payload)
+        .map(Some)
+        .map_err(|error| format!("failed to decode MCP JSON payload: {error}"))
 }
 
 fn write_message(writer: &mut impl Write, message: &Value) -> Result<(), String> {

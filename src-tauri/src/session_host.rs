@@ -1,7 +1,10 @@
-use crate::db::{AppState, AppendSessionEventInput, CreateSessionRecordInput, FinishSessionRecordInput};
+use crate::db::{
+    AppState, AppendSessionEventInput, CreateSessionRecordInput, FinishSessionRecordInput,
+    UpdateSessionRuntimeMetadataInput,
+};
 use crate::session_api::{
-    LaunchSessionInput, ResizeSessionInput, SessionInput, SessionSnapshot, SupervisorRuntimeInfo,
-    ProjectSessionTarget,
+    LaunchSessionInput, ProjectSessionTarget, ResizeSessionInput, SessionInput, SessionSnapshot,
+    SupervisorRuntimeInfo,
 };
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
@@ -72,14 +75,19 @@ impl SessionTargetKey {
 }
 
 impl SessionRegistry {
-    pub fn snapshot(&self, target: ProjectSessionTarget) -> Result<Option<SessionSnapshot>, String> {
+    pub fn snapshot(
+        &self,
+        target: ProjectSessionTarget,
+    ) -> Result<Option<SessionSnapshot>, String> {
         let session = {
             let sessions = self
                 .sessions
                 .lock()
                 .map_err(|_| "failed to access session registry".to_string())?;
 
-            sessions.get(&SessionTargetKey::from_target(&target)).cloned()
+            sessions
+                .get(&SessionTargetKey::from_target(&target))
+                .cloned()
         };
 
         Ok(session.map(|session| session.snapshot()))
@@ -165,15 +173,13 @@ impl SessionRegistry {
             .unwrap_or_else(|| project.root_path.clone());
 
         if !Path::new(&launch_root_path).is_dir() {
-            return Err(
-                if worktree.is_some() {
-                    "selected worktree path no longer exists. Recreate the worktree before launching."
+            return Err(if worktree.is_some() {
+                "selected worktree path no longer exists. Recreate the worktree before launching."
+                    .to_string()
+            } else {
+                "selected project root folder no longer exists. Rebind the project before launching."
                         .to_string()
-                } else {
-                    "selected project root folder no longer exists. Rebind the project before launching."
-                        .to_string()
-                },
-            );
+            });
         }
 
         let pty_system = native_pty_system();
@@ -190,6 +196,8 @@ impl SessionRegistry {
             project_id: input.project_id,
             launch_profile_id: Some(input.launch_profile_id),
             worktree_id: input.worktree_id,
+            process_id: None,
+            supervisor_pid: None,
             provider: profile.provider.clone(),
             profile_label: profile.label.clone(),
             root_path: launch_root_path.clone(),
@@ -240,10 +248,7 @@ impl SessionRegistry {
                 return Err(error);
             }
         };
-        let child = match pair
-            .slave
-            .spawn_command(command)
-        {
+        let child = match pair.slave.spawn_command(command) {
             Ok(child) => child,
             Err(error) => {
                 let ended_at = now_timestamp_string();
@@ -286,6 +291,44 @@ impl SessionRegistry {
             .take_writer()
             .map_err(|error| format!("failed to open pty writer: {error}"))?;
         let killer = child.clone_killer();
+        let process_id = child.process_id().map(i64::from);
+
+        if let Err(error) =
+            app_state.update_session_runtime_metadata(UpdateSessionRuntimeMetadataInput {
+                id: session_record.id,
+                process_id,
+                supervisor_pid: Some(i64::from(supervisor_runtime.pid)),
+            })
+        {
+            let ended_at = now_timestamp_string();
+            let _ = app_state.finish_session_record(FinishSessionRecordInput {
+                id: session_record.id,
+                state: "launch_failed".to_string(),
+                ended_at: Some(ended_at.clone()),
+                exit_code: None,
+                exit_success: Some(false),
+            });
+            try_append_session_event(
+                app_state,
+                project.id,
+                Some(session_record.id),
+                "session.launch_failed",
+                Some("session"),
+                Some(session_record.id),
+                "supervisor_runtime",
+                &json!({
+                    "projectId": project.id,
+                    "worktreeId": input.worktree_id,
+                    "launchProfileId": profile.id,
+                    "profileLabel": profile.label,
+                    "rootPath": launch_root_path.clone(),
+                    "endedAt": ended_at,
+                    "error": error,
+                    "requestedBy": source,
+                }),
+            );
+            return Err("failed to persist session runtime metadata".to_string());
+        }
 
         let session = Arc::new(HostedSession {
             session_record_id: session_record.id,
@@ -326,6 +369,8 @@ impl SessionRegistry {
                 "profileLabel": session.profile_label.clone(),
                 "provider": profile.provider,
                 "rootPath": launch_root_path,
+                "processId": process_id,
+                "supervisorPid": supervisor_runtime.pid,
                 "startedAt": session.started_at.clone(),
                 "hasStartupPrompt": !session_record.startup_prompt.is_empty(),
                 "requestedBy": source,
@@ -414,7 +459,10 @@ impl SessionRegistry {
                     return Ok(());
                 }
 
-                if session.try_update_exit_from_child(app_state).unwrap_or(false) {
+                if session
+                    .try_update_exit_from_child(app_state)
+                    .unwrap_or(false)
+                {
                     return Ok(());
                 }
 
@@ -440,10 +488,14 @@ impl SessionRegistry {
             })
             .map_err(|error| format!("failed to terminate session: {error}"))?;
 
-        record_session_exit(
+        let exit_state = session.current_exit_state().unwrap_or(ExitState {
+            exit_code: 127,
+            success: false,
+        });
+        force_record_session_exit(
             &session,
             app_state,
-            127,
+            exit_state.exit_code,
             false,
             "session.terminated",
             Some("terminated"),
@@ -453,7 +505,10 @@ impl SessionRegistry {
         Ok(())
     }
 
-    fn get_session(&self, target_key: &SessionTargetKey) -> Result<Option<Arc<HostedSession>>, String> {
+    fn get_session(
+        &self,
+        target_key: &SessionTargetKey,
+    ) -> Result<Option<Arc<HostedSession>>, String> {
         let sessions = self
             .sessions
             .lock()
@@ -462,7 +517,10 @@ impl SessionRegistry {
         Ok(sessions.get(target_key).cloned())
     }
 
-    fn get_running_session(&self, target: &ProjectSessionTarget) -> Result<Arc<HostedSession>, String> {
+    fn get_running_session(
+        &self,
+        target: &ProjectSessionTarget,
+    ) -> Result<Arc<HostedSession>, String> {
         let session = self
             .get_session(&SessionTargetKey::from_target(target))?
             .ok_or_else(|| build_missing_session_message(target.worktree_id))?;
@@ -548,10 +606,11 @@ impl HostedSession {
     }
 
     fn process_id(&self) -> Option<u32> {
-        self.child
-            .lock()
-            .ok()
-            .and_then(|child| child.process_id())
+        self.child.lock().ok().and_then(|child| child.process_id())
+    }
+
+    fn current_exit_state(&self) -> Option<ExitState> {
+        self.exit_state.lock().map(|state| *state).unwrap_or(None)
     }
 }
 
@@ -624,13 +683,12 @@ fn build_claude_launch_command(
         command.arg(arg);
     }
 
-    let mcp_config_json =
-        build_project_commander_mcp_config_json(
-            project,
-            worktree,
-            supervisor_runtime,
-            session_record_id,
-        )?;
+    let mcp_config_json = build_project_commander_mcp_config_json(
+        project,
+        worktree,
+        supervisor_runtime,
+        session_record_id,
+    )?;
     command.arg(format!("--mcp-config={mcp_config_json}"));
     command.arg("--strict-mcp-config");
     command.arg("--append-system-prompt");
@@ -762,7 +820,10 @@ fn apply_project_commander_env(
     command.env("PROJECT_COMMANDER_PROJECT_ID", project.id.to_string());
     command.env("PROJECT_COMMANDER_PROJECT_NAME", &project.name);
     command.env("PROJECT_COMMANDER_ROOT_PATH", launch_root_path);
-    command.env("PROJECT_COMMANDER_SESSION_ID", session_record_id.to_string());
+    command.env(
+        "PROJECT_COMMANDER_SESSION_ID",
+        session_record_id.to_string(),
+    );
     command.env("PROJECT_COMMANDER_CLI", "project-commander-cli");
 
     if let Some(worktree) = worktree {
@@ -944,6 +1005,14 @@ pub fn resolve_helper_binary_path(binary_stem: &str) -> Option<PathBuf> {
         binary_stem.to_string()
     };
 
+    if let Some(helper_dir) = std::env::var_os("PROJECT_COMMANDER_HELPER_DIR") {
+        let candidate = PathBuf::from(helper_dir).join(&binary_name);
+
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
     std::env::current_exe().ok().and_then(|path| {
         let parent = path.parent()?;
         let candidate = parent.join(binary_name);
@@ -1049,17 +1118,17 @@ fn spawn_exit_watch_thread(session: Arc<HostedSession>, app_state: AppState) {
             let mut child = match session.child.lock() {
                 Ok(child) => child,
                 Err(_) => {
-                record_session_exit(
-                    &session,
-                    &app_state,
-                    1,
-                    false,
-                    "session.wait_failed",
-                    None,
-                    Some("failed to access session child"),
-                );
-                break;
-            }
+                    record_session_exit(
+                        &session,
+                        &app_state,
+                        1,
+                        false,
+                        "session.wait_failed",
+                        None,
+                        Some("failed to access session child"),
+                    );
+                    break;
+                }
             };
 
             child.try_wait()
@@ -1147,15 +1216,77 @@ fn record_session_exit(
         return;
     }
 
+    persist_session_exit(
+        session,
+        app_state,
+        exit_code,
+        success,
+        event_type,
+        state_override,
+        error,
+    );
+}
+
+fn force_record_session_exit(
+    session: &HostedSession,
+    app_state: &AppState,
+    exit_code: u32,
+    success: bool,
+    event_type: &str,
+    state_override: Option<&str>,
+    error: Option<&str>,
+) {
+    let _ = session.mark_exited_once(exit_code, success);
+    persist_session_exit(
+        session,
+        app_state,
+        exit_code,
+        success,
+        event_type,
+        state_override,
+        error,
+    );
+}
+
+fn persist_session_exit(
+    session: &HostedSession,
+    app_state: &AppState,
+    exit_code: u32,
+    success: bool,
+    event_type: &str,
+    state_override: Option<&str>,
+    error: Option<&str>,
+) {
     let ended_at = now_timestamp_string();
     let state = state_override.unwrap_or(if success { "exited" } else { "failed" });
-    let _ = app_state.finish_session_record(FinishSessionRecordInput {
+    let finish_input = FinishSessionRecordInput {
         id: session.session_record_id,
         state: state.to_string(),
         ended_at: Some(ended_at.clone()),
         exit_code: Some(i64::from(exit_code)),
         exit_success: Some(success),
-    });
+    };
+    let mut finish_error = None;
+
+    for attempt in 0..3 {
+        match app_state.finish_session_record(finish_input.clone()) {
+            Ok(_) => {
+                finish_error = None;
+                break;
+            }
+            Err(error) => {
+                finish_error = Some(error);
+
+                if attempt < 2 {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+            }
+        }
+    }
+
+    if let Some(error) = finish_error {
+        eprintln!("failed to finish Project Commander session record: {error}");
+    }
     try_append_session_event(
         app_state,
         session.project_id,
@@ -1183,6 +1314,8 @@ fn record_session_exit(
 fn try_taskkill(pid: Option<u32>) -> Result<(), String> {
     let pid = pid.ok_or_else(|| "missing session process id".to_string())?;
     let status = std::process::Command::new("taskkill")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .args(["/PID", &pid.to_string(), "/T", "/F"])
         .status()
         .map_err(|error| format!("failed to run taskkill: {error}"))?;
@@ -1191,5 +1324,171 @@ fn try_taskkill(pid: Option<u32>) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!("taskkill exited with status {status}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{ProjectRecord, StorageInfo, WorktreeRecord};
+    use crate::session_api::SupervisorRuntimeInfo;
+    use serde_json::Value;
+    use std::fs;
+    use std::path::PathBuf;
+
+    struct TemporaryHelperBinary {
+        path: PathBuf,
+        created: bool,
+    }
+
+    impl TemporaryHelperBinary {
+        fn create(binary_stem: &str) -> Self {
+            let binary_name = if cfg!(windows) {
+                format!("{binary_stem}.exe")
+            } else {
+                binary_stem.to_string()
+            };
+            let current_exe = std::env::current_exe().expect("current exe should resolve");
+            let path = current_exe
+                .parent()
+                .expect("current exe should have a parent directory")
+                .join(binary_name);
+            let created = !path.exists();
+
+            if created {
+                fs::write(&path, b"test-helper").expect("helper binary marker should be written");
+            }
+
+            Self { path, created }
+        }
+    }
+
+    impl Drop for TemporaryHelperBinary {
+        fn drop(&mut self) {
+            if self.created {
+                let _ = fs::remove_file(&self.path);
+            }
+        }
+    }
+
+    #[test]
+    fn build_project_commander_mcp_config_binds_project_worktree_and_session_context() {
+        let helper = TemporaryHelperBinary::create("project-commander-supervisor");
+        let project = ProjectRecord {
+            id: 11,
+            name: "Commander".to_string(),
+            root_path: "E:\\repo".to_string(),
+            root_available: true,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+            work_item_count: 0,
+            document_count: 0,
+            session_count: 0,
+        };
+        let worktree = WorktreeRecord {
+            id: 22,
+            project_id: project.id,
+            work_item_id: 33,
+            work_item_title: "Fix MCP attach".to_string(),
+            branch_name: "pc/commander-33-fix-mcp-attach".to_string(),
+            worktree_path: "E:\\worktrees\\commander-33".to_string(),
+            path_available: true,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+        let runtime = SupervisorRuntimeInfo {
+            port: 43123,
+            token: "test-token".to_string(),
+            pid: 999,
+            started_at: "now".to_string(),
+        };
+
+        let config_json =
+            build_project_commander_mcp_config_json(&project, Some(&worktree), &runtime, 44)
+                .expect("MCP config should build");
+        let config: Value =
+            serde_json::from_str(&config_json).expect("MCP config should decode as JSON");
+        let server = &config["mcpServers"]["project-commander"];
+        let args = server["args"]
+            .as_array()
+            .expect("MCP args should be an array")
+            .iter()
+            .map(|value| value.as_str().expect("MCP arg should be a string"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            server["command"].as_str(),
+            Some(helper.path.display().to_string().as_str())
+        );
+        assert_eq!(
+            args,
+            vec![
+                "mcp-stdio",
+                "--port",
+                "43123",
+                "--token",
+                "test-token",
+                "--project-id",
+                "11",
+                "--worktree-id",
+                "22",
+                "--session-id",
+                "44",
+            ]
+        );
+    }
+
+    #[test]
+    fn build_project_commander_env_script_includes_worktree_fields() {
+        let project = ProjectRecord {
+            id: 11,
+            name: "Commander".to_string(),
+            root_path: "E:\\repo".to_string(),
+            root_available: true,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+            work_item_count: 0,
+            document_count: 0,
+            session_count: 0,
+        };
+        let worktree = WorktreeRecord {
+            id: 22,
+            project_id: project.id,
+            work_item_id: 33,
+            work_item_title: "Fix bridge".to_string(),
+            branch_name: "pc/commander-33-fix-bridge".to_string(),
+            worktree_path: "E:\\worktrees\\commander-33".to_string(),
+            path_available: true,
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        };
+        let storage = StorageInfo {
+            app_data_dir: "E:\\app-data".to_string(),
+            db_dir: "E:\\app-data\\db".to_string(),
+            db_path: "E:\\app-data\\db\\project-commander.sqlite3".to_string(),
+        };
+
+        let script = build_project_commander_env_script(
+            &project,
+            Some(&worktree),
+            &worktree.worktree_path,
+            &storage,
+            44,
+            Some("E:\\helpers"),
+        );
+
+        assert!(script.contains(
+            "$env:PROJECT_COMMANDER_DB_PATH = 'E:\\app-data\\db\\project-commander.sqlite3';"
+        ));
+        assert!(script.contains("$env:PROJECT_COMMANDER_PROJECT_ID = '11';"));
+        assert!(
+            script.contains("$env:PROJECT_COMMANDER_ROOT_PATH = 'E:\\worktrees\\commander-33';")
+        );
+        assert!(script.contains("$env:PROJECT_COMMANDER_SESSION_ID = '44';"));
+        assert!(script.contains("$env:PROJECT_COMMANDER_WORKTREE_ID = '22';"));
+        assert!(script
+            .contains("$env:PROJECT_COMMANDER_WORKTREE_BRANCH = 'pc/commander-33-fix-bridge';"));
+        assert!(script.contains("$env:PROJECT_COMMANDER_WORKTREE_WORK_ITEM_ID = '33';"));
+        assert!(script.contains("$env:PROJECT_COMMANDER_WORKTREE_WORK_ITEM_TITLE = 'Fix bridge';"));
     }
 }

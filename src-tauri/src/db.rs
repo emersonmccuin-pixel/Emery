@@ -1,7 +1,9 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -9,6 +11,13 @@ pub struct StorageInfo {
     pub app_data_dir: String,
     pub db_dir: String,
     pub db_path: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppSettings {
+    pub default_launch_profile_id: Option<i64>,
+    pub auto_repair_safe_cleanup_on_startup: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -84,6 +93,8 @@ pub struct SessionRecord {
     pub project_id: i64,
     pub launch_profile_id: Option<i64>,
     pub worktree_id: Option<i64>,
+    pub process_id: Option<i64>,
+    pub supervisor_pid: Option<i64>,
     pub provider: String,
     pub profile_label: String,
     pub root_path: String,
@@ -115,18 +126,19 @@ pub struct SessionEventRecord {
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapData {
     pub storage: StorageInfo,
+    pub settings: AppSettings,
     pub projects: Vec<ProjectRecord>,
     pub launch_profiles: Vec<LaunchProfileRecord>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateProjectInput {
     pub name: String,
     pub root_path: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateProjectInput {
     pub id: i64,
@@ -134,13 +146,30 @@ pub struct UpdateProjectInput {
     pub root_path: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateLaunchProfileInput {
     pub label: String,
     pub executable: String,
     pub args: String,
     pub env_json: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateLaunchProfileInput {
+    pub id: i64,
+    pub label: String,
+    pub executable: String,
+    pub args: String,
+    pub env_json: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateAppSettingsInput {
+    pub default_launch_profile_id: Option<i64>,
+    pub auto_repair_safe_cleanup_on_startup: bool,
 }
 
 #[derive(Deserialize)]
@@ -194,6 +223,8 @@ pub struct CreateSessionRecordInput {
     pub project_id: i64,
     pub launch_profile_id: Option<i64>,
     pub worktree_id: Option<i64>,
+    pub process_id: Option<i64>,
+    pub supervisor_pid: Option<i64>,
     pub provider: String,
     pub profile_label: String,
     pub root_path: String,
@@ -209,6 +240,13 @@ pub struct FinishSessionRecordInput {
     pub ended_at: Option<String>,
     pub exit_code: Option<i64>,
     pub exit_success: Option<bool>,
+}
+
+#[derive(Clone)]
+pub struct UpdateSessionRuntimeMetadataInput {
+    pub id: i64,
+    pub process_id: Option<i64>,
+    pub supervisor_pid: Option<i64>,
 }
 
 #[derive(Clone)]
@@ -269,9 +307,50 @@ impl AppState {
 
         Ok(BootstrapData {
             storage: self.storage(),
+            settings: load_app_settings(&connection)?,
             projects: load_projects(&connection)?,
             launch_profiles: load_launch_profiles(&connection)?,
         })
+    }
+
+    pub fn get_app_settings(&self) -> Result<AppSettings, String> {
+        let connection = self.connect()?;
+        load_app_settings(&connection)
+    }
+
+    pub fn update_app_settings(&self, input: UpdateAppSettingsInput) -> Result<AppSettings, String> {
+        let connection = self.connect()?;
+
+        if let Some(default_launch_profile_id) = input.default_launch_profile_id {
+            load_launch_profile_by_id(&connection, default_launch_profile_id)?;
+            upsert_app_setting(
+                &connection,
+                APP_SETTING_DEFAULT_LAUNCH_PROFILE_ID,
+                &default_launch_profile_id.to_string(),
+            )?;
+        } else {
+            delete_app_setting(&connection, APP_SETTING_DEFAULT_LAUNCH_PROFILE_ID)?;
+        }
+
+        if input.auto_repair_safe_cleanup_on_startup {
+            upsert_app_setting(
+                &connection,
+                APP_SETTING_AUTO_REPAIR_SAFE_CLEANUP_ON_STARTUP,
+                "true",
+            )?;
+        } else {
+            delete_app_setting(
+                &connection,
+                APP_SETTING_AUTO_REPAIR_SAFE_CLEANUP_ON_STARTUP,
+            )?;
+        }
+
+        load_app_settings(&connection)
+    }
+
+    pub fn list_projects(&self) -> Result<Vec<ProjectRecord>, String> {
+        let connection = self.connect()?;
+        load_projects(&connection)
     }
 
     pub fn create_project(&self, input: CreateProjectInput) -> Result<ProjectRecord, String> {
@@ -399,6 +478,70 @@ impl AppState {
             .map_err(|error| format!("failed to create launch profile: {error}"))?;
 
         load_launch_profile_by_id(&connection, connection.last_insert_rowid())
+    }
+
+    pub fn update_launch_profile(
+        &self,
+        input: UpdateLaunchProfileInput,
+    ) -> Result<LaunchProfileRecord, String> {
+        let label = input.label.trim();
+        let executable = input.executable.trim();
+        let args = input.args.trim();
+        let env_json = normalize_env_json(&input.env_json)?;
+
+        if label.is_empty() {
+            return Err("launch profile label is required".to_string());
+        }
+
+        if executable.is_empty() {
+            return Err("launch profile executable is required".to_string());
+        }
+
+        let connection = self.connect()?;
+        load_launch_profile_by_id(&connection, input.id)?;
+
+        let existing = connection
+            .query_row(
+                "SELECT id FROM launch_profiles WHERE label = ?1 AND id <> ?2",
+                params![label, input.id],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(|error| format!("failed to check existing launch profile: {error}"))?;
+
+        if existing.is_some() {
+            return Err("a launch profile with that label already exists".to_string());
+        }
+
+        connection
+            .execute(
+                "UPDATE launch_profiles
+                 SET label = ?1,
+                     executable = ?2,
+                     args = ?3,
+                     env_json = ?4,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?5",
+                params![label, executable, args, env_json, input.id],
+            )
+            .map_err(|error| format!("failed to update launch profile: {error}"))?;
+
+        load_launch_profile_by_id(&connection, input.id)
+    }
+
+    pub fn delete_launch_profile(&self, id: i64) -> Result<(), String> {
+        let connection = self.connect()?;
+        load_launch_profile_by_id(&connection, id)?;
+
+        connection
+            .execute("DELETE FROM launch_profiles WHERE id = ?1", [id])
+            .map_err(|error| format!("failed to delete launch profile: {error}"))?;
+
+        if load_app_settings(&connection)?.default_launch_profile_id == Some(id) {
+            delete_app_setting(&connection, APP_SETTING_DEFAULT_LAUNCH_PROFILE_ID)?;
+        }
+
+        Ok(())
     }
 
     pub fn get_project(&self, id: i64) -> Result<ProjectRecord, String> {
@@ -696,17 +839,21 @@ impl AppState {
                     project_id,
                     launch_profile_id,
                     worktree_id,
+                    process_id,
+                    supervisor_pid,
                     provider,
                     profile_label,
                     root_path,
                     state,
                     startup_prompt,
                     started_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     input.project_id,
                     input.launch_profile_id,
                     input.worktree_id,
+                    input.process_id,
+                    input.supervisor_pid,
                     input.provider,
                     input.profile_label,
                     input.root_path,
@@ -719,6 +866,28 @@ impl AppState {
 
         touch_project(&connection, input.project_id)?;
         load_session_record_by_id(&connection, connection.last_insert_rowid())
+    }
+
+    pub fn update_session_runtime_metadata(
+        &self,
+        input: UpdateSessionRuntimeMetadataInput,
+    ) -> Result<SessionRecord, String> {
+        let connection = self.connect()?;
+        let existing = load_session_record_by_id(&connection, input.id)?;
+
+        connection
+            .execute(
+                "UPDATE sessions
+                 SET process_id = ?1,
+                     supervisor_pid = ?2,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?3",
+                params![input.process_id, input.supervisor_pid, input.id],
+            )
+            .map_err(|error| format!("failed to update session runtime metadata: {error}"))?;
+
+        touch_project(&connection, existing.project_id)?;
+        load_session_record_by_id(&connection, input.id)
     }
 
     pub fn finish_session_record(
@@ -812,6 +981,20 @@ impl AppState {
         load_session_records_by_project_id(&connection, project_id)
     }
 
+    pub fn list_orphaned_session_records(
+        &self,
+        project_id: i64,
+    ) -> Result<Vec<SessionRecord>, String> {
+        let connection = self.connect()?;
+        self.get_project(project_id)?;
+        load_orphaned_session_records_by_project_id(&connection, project_id)
+    }
+
+    pub fn get_session_record(&self, id: i64) -> Result<SessionRecord, String> {
+        let connection = self.connect()?;
+        load_session_record_by_id(&connection, id)
+    }
+
     pub fn list_session_events(
         &self,
         project_id: i64,
@@ -820,6 +1003,68 @@ impl AppState {
         let connection = self.connect()?;
         self.get_project(project_id)?;
         load_session_events_by_project_id(&connection, project_id, limit)
+    }
+
+    pub fn reconcile_orphaned_running_sessions(&self) -> Result<Vec<SessionRecord>, String> {
+        let connection = self.connect()?;
+        let running_sessions = load_running_session_records(&connection)?;
+        drop(connection);
+
+        let mut reconciled = Vec::with_capacity(running_sessions.len());
+
+        for session in running_sessions {
+            let ended_at = now_timestamp_string();
+            let state = match session
+                .process_id
+                .and_then(|process_id| u32::try_from(process_id).ok())
+            {
+                Some(process_id) if process_is_alive(process_id) => "orphaned",
+                _ => "interrupted",
+            };
+            let event_type = match state {
+                "orphaned" => "session.orphaned",
+                _ => "session.interrupted",
+            };
+            let reason = match state {
+                "orphaned" => "supervisor restarted while the recorded child process still exists",
+                _ => "supervisor restarted without an attached live runtime",
+            };
+            let updated = self.finish_session_record(FinishSessionRecordInput {
+                id: session.id,
+                state: state.to_string(),
+                ended_at: Some(ended_at.clone()),
+                exit_code: None,
+                exit_success: Some(false),
+            })?;
+            let payload_json = serde_json::to_string(&json!({
+                "projectId": session.project_id,
+                "worktreeId": session.worktree_id,
+                "launchProfileId": session.launch_profile_id,
+                "processId": session.process_id,
+                "supervisorPid": session.supervisor_pid,
+                "profileLabel": session.profile_label,
+                "rootPath": session.root_path,
+                "startedAt": session.started_at,
+                "endedAt": ended_at,
+                "previousState": "running",
+                "reason": reason,
+            }))
+            .map_err(|error| format!("failed to encode recovery session event payload: {error}"))?;
+
+            self.append_session_event(AppendSessionEventInput {
+                project_id: session.project_id,
+                session_id: Some(session.id),
+                event_type: event_type.to_string(),
+                entity_type: Some("session".to_string()),
+                entity_id: Some(session.id),
+                source: "supervisor_recovery".to_string(),
+                payload_json,
+            })?;
+
+            reconciled.push(updated);
+        }
+
+        Ok(reconciled)
     }
 
     fn connect(&self) -> Result<Connection, String> {
@@ -837,12 +1082,17 @@ fn open_connection(database_path: &Path) -> Result<Connection, String> {
             PRAGMA foreign_keys = ON;
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
+            PRAGMA busy_timeout = 5000;
             ",
         )
         .map_err(|error| format!("failed to configure database pragmas: {error}"))?;
 
     Ok(connection)
 }
+
+const APP_SETTING_DEFAULT_LAUNCH_PROFILE_ID: &str = "default_launch_profile_id";
+const APP_SETTING_AUTO_REPAIR_SAFE_CLEANUP_ON_STARTUP: &str =
+    "auto_repair_safe_cleanup_on_startup";
 
 fn migrate(connection: &Connection) -> Result<(), String> {
     connection
@@ -917,6 +1167,8 @@ fn migrate(connection: &Connection) -> Result<(), String> {
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
               launch_profile_id INTEGER REFERENCES launch_profiles(id) ON DELETE SET NULL,
+              process_id INTEGER,
+              supervisor_pid INTEGER,
               provider TEXT NOT NULL,
               profile_label TEXT NOT NULL,
               root_path TEXT NOT NULL,
@@ -975,6 +1227,8 @@ fn migrate(connection: &Connection) -> Result<(), String> {
         "worktree_id",
         "INTEGER REFERENCES worktrees(id) ON DELETE SET NULL",
     )?;
+    ensure_column_exists(connection, "sessions", "process_id", "INTEGER")?;
+    ensure_column_exists(connection, "sessions", "supervisor_pid", "INTEGER")?;
 
     Ok(())
 }
@@ -1002,6 +1256,90 @@ fn seed_defaults(connection: &Connection) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn load_app_settings(connection: &Connection) -> Result<AppSettings, String> {
+    let default_launch_profile_id = load_app_setting(connection, APP_SETTING_DEFAULT_LAUNCH_PROFILE_ID)?
+        .map(|raw| {
+            raw.parse::<i64>().map_err(|error| {
+                format!(
+                    "failed to parse app setting {APP_SETTING_DEFAULT_LAUNCH_PROFILE_ID}: {error}"
+                )
+            })
+        })
+        .transpose()?;
+    let auto_repair_safe_cleanup_on_startup = load_app_setting(
+        connection,
+        APP_SETTING_AUTO_REPAIR_SAFE_CLEANUP_ON_STARTUP,
+    )?
+    .map(|raw| parse_bool_app_setting(APP_SETTING_AUTO_REPAIR_SAFE_CLEANUP_ON_STARTUP, &raw))
+    .transpose()?
+    .unwrap_or(false);
+
+    let default_launch_profile_id = match default_launch_profile_id {
+        Some(profile_id) => {
+            let existing = connection
+                .query_row(
+                    "SELECT id FROM launch_profiles WHERE id = ?1",
+                    [profile_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()
+                .map_err(|error| {
+                    format!("failed to validate default launch profile setting: {error}")
+                })?;
+
+            existing
+        }
+        None => None,
+    };
+
+    Ok(AppSettings {
+        default_launch_profile_id,
+        auto_repair_safe_cleanup_on_startup,
+    })
+}
+
+fn load_app_setting(connection: &Connection, key: &str) -> Result<Option<String>, String> {
+    connection
+        .query_row(
+            "SELECT value FROM app_settings WHERE key = ?1",
+            [key],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("failed to load app setting {key}: {error}"))
+}
+
+fn upsert_app_setting(connection: &Connection, key: &str, value: &str) -> Result<(), String> {
+    connection
+        .execute(
+            "INSERT INTO app_settings (key, value, updated_at)
+             VALUES (?1, ?2, CURRENT_TIMESTAMP)
+             ON CONFLICT(key) DO UPDATE
+             SET value = excluded.value,
+                 updated_at = CURRENT_TIMESTAMP",
+            params![key, value],
+        )
+        .map_err(|error| format!("failed to save app setting {key}: {error}"))?;
+
+    Ok(())
+}
+
+fn delete_app_setting(connection: &Connection, key: &str) -> Result<(), String> {
+    connection
+        .execute("DELETE FROM app_settings WHERE key = ?1", [key])
+        .map_err(|error| format!("failed to clear app setting {key}: {error}"))?;
+
+    Ok(())
+}
+
+fn parse_bool_app_setting(key: &str, raw: &str) -> Result<bool, String> {
+    match raw {
+        "true" | "1" => Ok(true),
+        "false" | "0" => Ok(false),
+        _ => Err(format!("invalid boolean value for app setting {key}: {raw}")),
+    }
 }
 
 fn load_projects(connection: &Connection) -> Result<Vec<ProjectRecord>, String> {
@@ -1403,6 +1741,8 @@ fn load_session_records_by_project_id(
               project_id,
               launch_profile_id,
               worktree_id,
+              process_id,
+              supervisor_pid,
               provider,
               profile_label,
               root_path,
@@ -1429,6 +1769,83 @@ fn load_session_records_by_project_id(
         .map_err(|error| format!("failed to map sessions: {error}"))
 }
 
+fn load_running_session_records(connection: &Connection) -> Result<Vec<SessionRecord>, String> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT
+              id,
+              project_id,
+              launch_profile_id,
+              worktree_id,
+              process_id,
+              supervisor_pid,
+              provider,
+              profile_label,
+              root_path,
+              state,
+              startup_prompt,
+              started_at,
+              ended_at,
+              exit_code,
+              exit_success,
+              created_at,
+              updated_at
+            FROM sessions
+            WHERE state = 'running'
+            ORDER BY started_at DESC, id DESC
+            ",
+        )
+        .map_err(|error| format!("failed to prepare running session query: {error}"))?;
+
+    let rows = statement
+        .query_map([], map_session_record)
+        .map_err(|error| format!("failed to load running sessions: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to map running sessions: {error}"))
+}
+
+fn load_orphaned_session_records_by_project_id(
+    connection: &Connection,
+    project_id: i64,
+) -> Result<Vec<SessionRecord>, String> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT
+              id,
+              project_id,
+              launch_profile_id,
+              worktree_id,
+              process_id,
+              supervisor_pid,
+              provider,
+              profile_label,
+              root_path,
+              state,
+              startup_prompt,
+              started_at,
+              ended_at,
+              exit_code,
+              exit_success,
+              created_at,
+              updated_at
+            FROM sessions
+            WHERE project_id = ?1 AND state = 'orphaned'
+            ORDER BY started_at DESC, id DESC
+            ",
+        )
+        .map_err(|error| format!("failed to prepare orphaned session query: {error}"))?;
+
+    let rows = statement
+        .query_map([project_id], map_session_record)
+        .map_err(|error| format!("failed to load orphaned sessions: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to map orphaned sessions: {error}"))
+}
+
 fn load_session_record_by_id(connection: &Connection, id: i64) -> Result<SessionRecord, String> {
     connection
         .query_row(
@@ -1438,6 +1855,8 @@ fn load_session_record_by_id(connection: &Connection, id: i64) -> Result<Session
               project_id,
               launch_profile_id,
               worktree_id,
+              process_id,
+              supervisor_pid,
               provider,
               profile_label,
               root_path,
@@ -1456,6 +1875,13 @@ fn load_session_record_by_id(connection: &Connection, id: i64) -> Result<Session
             map_session_record,
         )
         .map_err(|error| format!("failed to load session record: {error}"))
+}
+
+fn now_timestamp_string() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs().to_string())
+        .unwrap_or_else(|_| "0".to_string())
 }
 
 fn load_session_events_by_project_id(
@@ -1486,7 +1912,9 @@ fn load_session_events_by_project_id(
         .map_err(|error| format!("failed to prepare session event query: {error}"))?;
 
     let rows = statement
-        .query_map(params![project_id, limit], |row| map_session_event_record(row))
+        .query_map(params![project_id, limit], |row| {
+            map_session_event_record(row)
+        })
         .map_err(|error| format!("failed to load session events: {error}"))?;
 
     rows.collect::<Result<Vec<_>, _>>()
@@ -1525,17 +1953,19 @@ fn map_session_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRecord
         project_id: row.get(1)?,
         launch_profile_id: row.get(2)?,
         worktree_id: row.get(3)?,
-        provider: row.get(4)?,
-        profile_label: row.get(5)?,
-        root_path: row.get(6)?,
-        state: row.get(7)?,
-        startup_prompt: row.get(8)?,
-        started_at: row.get(9)?,
-        ended_at: row.get(10)?,
-        exit_code: row.get(11)?,
-        exit_success: row.get(12)?,
-        created_at: row.get(13)?,
-        updated_at: row.get(14)?,
+        process_id: row.get(4)?,
+        supervisor_pid: row.get(5)?,
+        provider: row.get(6)?,
+        profile_label: row.get(7)?,
+        root_path: row.get(8)?,
+        state: row.get(9)?,
+        startup_prompt: row.get(10)?,
+        started_at: row.get(11)?,
+        ended_at: row.get(12)?,
+        exit_code: row.get(13)?,
+        exit_success: row.get(14)?,
+        created_at: row.get(15)?,
+        updated_at: row.get(16)?,
     })
 }
 
@@ -1652,9 +2082,9 @@ fn ensure_column_exists(
         .next()
         .map_err(|error| format!("failed to iterate table columns for {table_name}: {error}"))?
     {
-        let existing_name = row
-            .get::<_, String>(1)
-            .map_err(|error| format!("failed to decode table column name for {table_name}: {error}"))?;
+        let existing_name = row.get::<_, String>(1).map_err(|error| {
+            format!("failed to decode table column name for {table_name}: {error}")
+        })?;
 
         if existing_name == column_name {
             return Ok(());
@@ -1667,9 +2097,7 @@ fn ensure_column_exists(
             [],
         )
         .map_err(|error| {
-            format!(
-                "failed to add {column_name} column to {table_name} during migration: {error}"
-            )
+            format!("failed to add {column_name} column to {table_name} during migration: {error}")
         })?;
 
     Ok(())
@@ -1762,5 +2190,33 @@ fn path_component_equals(left: &std::ffi::OsStr, right: &std::ffi::OsStr) -> boo
     #[cfg(not(windows))]
     {
         left == right
+    }
+}
+
+fn process_is_alive(process_id: u32) -> bool {
+    #[cfg(windows)]
+    {
+        let filter = format!("PID eq {process_id}");
+        return std::process::Command::new("tasklist")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .args(["/FI", &filter, "/FO", "CSV", "/NH"])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                stdout.contains(&format!("\"{process_id}\""))
+            })
+            .unwrap_or(false);
+    }
+
+    #[cfg(not(windows))]
+    {
+        return std::process::Command::new("kill")
+            .args(["-0", &process_id.to_string()])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
     }
 }

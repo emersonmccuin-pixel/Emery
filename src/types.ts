@@ -6,6 +6,11 @@ export type StorageInfo = {
   dbPath: string
 }
 
+export type AppSettings = {
+  defaultLaunchProfileId: number | null
+  autoRepairSafeCleanupOnStartup: boolean
+}
+
 export type ProjectRecord = {
   id: number
   name: string
@@ -31,6 +36,7 @@ export type LaunchProfileRecord = {
 
 export type BootstrapData = {
   storage: StorageInfo
+  settings: AppSettings
   projects: ProjectRecord[]
   launchProfiles: LaunchProfileRecord[]
 }
@@ -97,4 +103,42 @@ export type WorktreeRecord = {
   pathAvailable: boolean
   createdAt: string
   updatedAt: string
+}
+
+export type SessionRecord = {
+  id: number
+  projectId: number
+  launchProfileId?: number | null
+  worktreeId?: number | null
+  processId?: number | null
+  supervisorPid?: number | null
+  provider: string
+  profileLabel: string
+  rootPath: string
+  state: string
+  startupPrompt: string
+  startedAt: string
+  endedAt?: string | null
+  exitCode?: number | null
+  exitSuccess?: boolean | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type CleanupCandidate = {
+  kind: string
+  path: string
+  projectId?: number | null
+  worktreeId?: number | null
+  sessionId?: number | null
+  reason: string
+}
+
+export type CleanupActionOutput = {
+  removed: boolean
+  candidate: CleanupCandidate
+}
+
+export type CleanupRepairOutput = {
+  actions: CleanupActionOutput[]
 }

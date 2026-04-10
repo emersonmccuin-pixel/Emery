@@ -6,20 +6,21 @@ pub mod supervisor_api;
 pub mod supervisor_mcp;
 
 use db::{
-    AppState, BootstrapData, CreateLaunchProfileInput, CreateProjectInput, DocumentRecord,
-    LaunchProfileRecord, ProjectRecord, StorageInfo, WorkItemRecord, WorktreeRecord,
-    UpdateProjectInput,
+    AppSettings, BootstrapData, CreateLaunchProfileInput, CreateProjectInput, DocumentRecord,
+    LaunchProfileRecord, ProjectRecord, SessionRecord, StorageInfo, UpdateAppSettingsInput,
+    UpdateLaunchProfileInput, UpdateProjectInput, WorkItemRecord, WorktreeRecord,
 };
 use session::SupervisorClient;
 use session_api::{
     LaunchSessionInput, ProjectSessionTarget, ResizeSessionInput, SessionInput, SessionSnapshot,
 };
+use std::fs;
 use supervisor_api::{
+    CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget, CleanupRepairOutput,
     CreateProjectDocumentInput, CreateProjectWorkItemInput, EnsureProjectWorktreeInput,
     ProjectDocumentTarget, ProjectWorkItemTarget, UpdateProjectDocumentInput,
     UpdateProjectWorkItemInput,
 };
-use std::fs;
 use tauri::{AppHandle, Manager, State};
 
 fn ensure_storage_dirs(app: &AppHandle) -> Result<StorageInfo, String> {
@@ -47,19 +48,27 @@ fn health_check() -> String {
 }
 
 #[tauri::command]
-fn get_storage_info(state: State<AppState>) -> StorageInfo {
+fn get_storage_info(state: State<SupervisorClient>) -> StorageInfo {
     state.storage()
 }
 
 #[tauri::command]
-fn bootstrap_app_state(state: State<AppState>) -> Result<BootstrapData, String> {
+fn bootstrap_app_state(state: State<SupervisorClient>) -> Result<BootstrapData, String> {
     state.bootstrap()
+}
+
+#[tauri::command]
+fn update_app_settings(
+    input: UpdateAppSettingsInput,
+    state: State<SupervisorClient>,
+) -> Result<AppSettings, String> {
+    state.update_app_settings(input)
 }
 
 #[tauri::command]
 fn create_project(
     input: CreateProjectInput,
-    state: State<AppState>,
+    state: State<SupervisorClient>,
 ) -> Result<ProjectRecord, String> {
     state.create_project(input)
 }
@@ -67,7 +76,7 @@ fn create_project(
 #[tauri::command]
 fn update_project(
     input: UpdateProjectInput,
-    state: State<AppState>,
+    state: State<SupervisorClient>,
 ) -> Result<ProjectRecord, String> {
     state.update_project(input)
 }
@@ -75,9 +84,22 @@ fn update_project(
 #[tauri::command]
 fn create_launch_profile(
     input: CreateLaunchProfileInput,
-    state: State<AppState>,
+    state: State<SupervisorClient>,
 ) -> Result<LaunchProfileRecord, String> {
     state.create_launch_profile(input)
+}
+
+#[tauri::command]
+fn update_launch_profile(
+    input: UpdateLaunchProfileInput,
+    state: State<SupervisorClient>,
+) -> Result<LaunchProfileRecord, String> {
+    state.update_launch_profile(input)
+}
+
+#[tauri::command]
+fn delete_launch_profile(id: i64, state: State<SupervisorClient>) -> Result<(), String> {
+    state.delete_launch_profile(id)
 }
 
 #[tauri::command]
@@ -220,6 +242,45 @@ fn ensure_worktree(
     state.ensure_worktree(input.project_id, input.work_item_id)
 }
 
+#[tauri::command]
+fn list_orphaned_sessions(
+    project_id: i64,
+    state: State<SupervisorClient>,
+) -> Result<Vec<SessionRecord>, String> {
+    state.list_orphaned_sessions(project_id)
+}
+
+#[tauri::command]
+fn terminate_orphaned_session(
+    project_id: i64,
+    session_id: i64,
+    state: State<SupervisorClient>,
+) -> Result<SessionRecord, String> {
+    state.terminate_orphaned_session(project_id, session_id)
+}
+
+#[tauri::command]
+fn list_cleanup_candidates(
+    state: State<SupervisorClient>,
+) -> Result<Vec<CleanupCandidate>, String> {
+    state.list_cleanup_candidates()
+}
+
+#[tauri::command]
+fn remove_cleanup_candidate(
+    input: CleanupCandidateTarget,
+    state: State<SupervisorClient>,
+) -> Result<CleanupActionOutput, String> {
+    state.remove_cleanup_candidate(input)
+}
+
+#[tauri::command]
+fn repair_cleanup_candidates(
+    state: State<SupervisorClient>,
+) -> Result<CleanupRepairOutput, String> {
+    state.repair_cleanup_candidates()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -228,9 +289,12 @@ pub fn run() {
             health_check,
             get_storage_info,
             bootstrap_app_state,
+            update_app_settings,
             create_project,
             update_project,
             create_launch_profile,
+            update_launch_profile,
+            delete_launch_profile,
             get_session_snapshot,
             launch_project_session,
             write_session_input,
@@ -247,13 +311,16 @@ pub fn run() {
             update_document,
             delete_document,
             list_worktrees,
-            ensure_worktree
+            ensure_worktree,
+            list_orphaned_sessions,
+            terminate_orphaned_session,
+            list_cleanup_candidates,
+            remove_cleanup_candidate,
+            repair_cleanup_candidates
         ])
         .setup(|app| {
             let storage = ensure_storage_dirs(&app.handle())?;
-            let state = AppState::new(storage.clone())?;
             let supervisor = SupervisorClient::new(storage)?;
-            app.manage(state);
             app.manage(supervisor);
 
             if cfg!(debug_assertions) {

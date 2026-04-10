@@ -5,11 +5,16 @@ import { listen } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
 import WorkspaceShell from './components/WorkspaceShell'
 import type {
+  AppSettings,
   BootstrapData,
+  CleanupActionOutput,
+  CleanupCandidate,
+  CleanupRepairOutput,
   DocumentRecord,
   LaunchProfileRecord,
   ProjectRecord,
   RuntimeStatus,
+  SessionRecord,
   SessionSnapshot,
   StorageInfo,
   TerminalExitEvent,
@@ -18,7 +23,8 @@ import type {
   WorkItemType,
   WorktreeRecord,
 } from './types'
-type WorkspaceView = 'terminal' | 'overview' | 'workItems'
+import { findWorktreeTarget, mergeWorktreesForProject, sortWorktrees } from './worktrees'
+type WorkspaceView = 'terminal' | 'overview' | 'settings' | 'workItems'
 type TerminalPromptDraft = {
   label: string
   prompt: string
@@ -27,6 +33,7 @@ type TerminalPromptDraft = {
 type LaunchSessionOptions = {
   startupPrompt?: string
   worktreeId?: number | null
+  worktree?: WorktreeRecord | null
 }
 
 const WORK_ITEM_STATUS_ORDER: Record<WorkItemStatus, number> = {
@@ -48,6 +55,54 @@ const PROJECT_COMMANDER_TOOLS = [
   'update_document(...)',
 ]
 
+const DEFAULT_APP_SETTINGS: AppSettings = {
+  defaultLaunchProfileId: null,
+  autoRepairSafeCleanupOnStartup: false,
+}
+
+const DEFAULT_PROFILE_LABEL = 'Claude Code / YOLO'
+const DEFAULT_PROFILE_EXECUTABLE = 'claude'
+const DEFAULT_PROFILE_ARGS = '--dangerously-skip-permissions'
+const DEFAULT_PROFILE_ENV_JSON = '{}'
+
+function getErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message
+  }
+
+  if (typeof error === 'string' && error.trim()) {
+    try {
+      const parsed = JSON.parse(error) as { error?: unknown; message?: unknown }
+
+      if (typeof parsed.error === 'string' && parsed.error.trim()) {
+        return parsed.error
+      }
+
+      if (typeof parsed.message === 'string' && parsed.message.trim()) {
+        return parsed.message
+      }
+    } catch {
+      return error
+    }
+
+    return error
+  }
+
+  if (error && typeof error === 'object') {
+    const candidate = error as { error?: unknown; message?: unknown }
+
+    if (typeof candidate.error === 'string' && candidate.error.trim()) {
+      return candidate.error
+    }
+
+    if (typeof candidate.message === 'string' && candidate.message.trim()) {
+      return candidate.message
+    }
+  }
+
+  return fallback
+}
+
 function sortWorkItems(items: WorkItemRecord[]) {
   return [...items].sort((left, right) => {
     const statusDelta = WORK_ITEM_STATUS_ORDER[left.status] - WORK_ITEM_STATUS_ORDER[right.status]
@@ -62,26 +117,6 @@ function sortWorkItems(items: WorkItemRecord[]) {
 
 function sortDocuments(documents: DocumentRecord[]) {
   return [...documents].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-}
-
-function sortWorktrees(records: WorktreeRecord[]) {
-  return [...records].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-}
-
-function mergeWorktrees(persisted: WorktreeRecord[], staged: WorktreeRecord[]) {
-  const merged = new Map<number, WorktreeRecord>()
-
-  for (const worktree of persisted) {
-    merged.set(worktree.id, worktree)
-  }
-
-  for (const worktree of staged) {
-    if (!merged.has(worktree.id)) {
-      merged.set(worktree.id, worktree)
-    }
-  }
-
-  return sortWorktrees([...merged.values()])
 }
 
 function buildAgentStartupPrompt(
@@ -183,6 +218,7 @@ function App() {
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>('loading')
   const [runtimeMessage, setRuntimeMessage] = useState('Connecting to the Rust runtime...')
   const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null)
+  const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS)
   const [projects, setProjects] = useState<ProjectRecord[]>([])
   const [launchProfiles, setLaunchProfiles] = useState<LaunchProfileRecord[]>([])
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
@@ -197,34 +233,53 @@ function App() {
   const [documentError, setDocumentError] = useState<string | null>(null)
   const [worktrees, setWorktrees] = useState<WorktreeRecord[]>([])
   const [stagedWorktrees, setStagedWorktrees] = useState<WorktreeRecord[]>([])
+  const [orphanedSessions, setOrphanedSessions] = useState<SessionRecord[]>([])
+  const [cleanupCandidates, setCleanupCandidates] = useState<CleanupCandidate[]>([])
+  const [cleanupError, setCleanupError] = useState<string | null>(null)
+  const [cleanupMessage, setCleanupMessage] = useState<string | null>(null)
   const [agentPromptMessage, setAgentPromptMessage] = useState<string | null>(null)
   const [terminalPromptDraft, setTerminalPromptDraft] = useState<TerminalPromptDraft | null>(null)
   const [projectName, setProjectName] = useState('')
   const [projectRootPath, setProjectRootPath] = useState('')
   const [projectError, setProjectError] = useState<string | null>(null)
+  const [settingsError, setSettingsError] = useState<string | null>(null)
+  const [settingsMessage, setSettingsMessage] = useState<string | null>(null)
+  const [defaultLaunchProfileSettingId, setDefaultLaunchProfileSettingId] = useState<number | null>(
+    null,
+  )
+  const [autoRepairSafeCleanupOnStartup, setAutoRepairSafeCleanupOnStartup] = useState(false)
   const [editProjectName, setEditProjectName] = useState('')
   const [editProjectRootPath, setEditProjectRootPath] = useState('')
   const [projectUpdateError, setProjectUpdateError] = useState<string | null>(null)
   const [isProjectEditorOpen, setIsProjectEditorOpen] = useState(false)
   const [isProjectCreateOpen, setIsProjectCreateOpen] = useState(false)
-  const [profileLabel, setProfileLabel] = useState('Claude Code / YOLO')
-  const [profileExecutable, setProfileExecutable] = useState('claude')
-  const [profileArgs, setProfileArgs] = useState('--dangerously-skip-permissions')
-  const [profileEnvJson, setProfileEnvJson] = useState('{}')
+  const [profileLabel, setProfileLabel] = useState(DEFAULT_PROFILE_LABEL)
+  const [profileExecutable, setProfileExecutable] = useState(DEFAULT_PROFILE_EXECUTABLE)
+  const [profileArgs, setProfileArgs] = useState(DEFAULT_PROFILE_ARGS)
+  const [profileEnvJson, setProfileEnvJson] = useState(DEFAULT_PROFILE_ENV_JSON)
   const [profileError, setProfileError] = useState<string | null>(null)
   const [isProfileFormOpen, setIsProfileFormOpen] = useState(false)
+  const [editingLaunchProfileId, setEditingLaunchProfileId] = useState<number | null>(null)
   const [isDocumentsManagerOpen, setIsDocumentsManagerOpen] = useState(false)
   const [isAgentGuideOpen, setIsAgentGuideOpen] = useState(false)
   const [activeView, setActiveView] = useState<WorkspaceView>('terminal')
   const [isProjectRailCollapsed, setIsProjectRailCollapsed] = useState(false)
   const [isSessionRailCollapsed, setIsSessionRailCollapsed] = useState(false)
   const [isCreatingProject, setIsCreatingProject] = useState(false)
+  const [isSavingAppSettings, setIsSavingAppSettings] = useState(false)
   const [isUpdatingProject, setIsUpdatingProject] = useState(false)
   const [isCreatingProfile, setIsCreatingProfile] = useState(false)
+  const [activeDeleteLaunchProfileId, setActiveDeleteLaunchProfileId] = useState<number | null>(
+    null,
+  )
   const [isLaunchingSession, setIsLaunchingSession] = useState(false)
   const [isStoppingSession, setIsStoppingSession] = useState(false)
   const [isLoadingWorkItems, setIsLoadingWorkItems] = useState(false)
   const [isLoadingDocuments, setIsLoadingDocuments] = useState(false)
+  const [isLoadingCleanup, setIsLoadingCleanup] = useState(false)
+  const [activeOrphanSessionId, setActiveOrphanSessionId] = useState<number | null>(null)
+  const [activeCleanupPath, setActiveCleanupPath] = useState<string | null>(null)
+  const [isRepairingCleanup, setIsRepairingCleanup] = useState(false)
   const [startingWorkItemId, setStartingWorkItemId] = useState<number | null>(null)
   const [contextRefreshKey, setContextRefreshKey] = useState(0)
   const [sessionRailRevision, setSessionRailRevision] = useState(0)
@@ -248,19 +303,24 @@ function App() {
         setRuntimeStatus('ready')
         setRuntimeMessage(message)
         setStorageInfo(storage)
+        setAppSettings(bootstrap.settings)
         setProjects(bootstrap.projects)
         setLaunchProfiles(bootstrap.launchProfiles)
         setSelectedProjectId((current) => current ?? bootstrap.projects[0]?.id ?? null)
-        setSelectedLaunchProfileId((current) => current ?? bootstrap.launchProfiles[0]?.id ?? null)
+        setSelectedLaunchProfileId(
+          (current) =>
+            current ??
+            bootstrap.settings.defaultLaunchProfileId ??
+            bootstrap.launchProfiles[0]?.id ??
+            null,
+        )
       } catch (error) {
         if (cancelled) {
           return
         }
 
         setRuntimeStatus('error')
-        setRuntimeMessage(
-          error instanceof Error ? error.message : 'The Rust runtime did not respond.',
-        )
+        setRuntimeMessage(getErrorMessage(error, 'The Rust runtime did not respond.'))
       }
     }
 
@@ -273,7 +333,7 @@ function App() {
 
   const selectedProject =
     projects.find((project) => project.id === selectedProjectId) ?? projects[0] ?? null
-  const visibleWorktrees = mergeWorktrees(worktrees, stagedWorktrees)
+  const visibleWorktrees = mergeWorktreesForProject(selectedProjectId, worktrees, stagedWorktrees)
   const selectedWorktree =
     visibleWorktrees.find((worktree) => worktree.id === selectedTerminalWorktreeId) ?? null
   const selectedLaunchProfile =
@@ -315,6 +375,14 @@ function App() {
   }, [projects.length])
 
   useEffect(() => {
+    setDefaultLaunchProfileSettingId(appSettings.defaultLaunchProfileId)
+    setAutoRepairSafeCleanupOnStartup(appSettings.autoRepairSafeCleanupOnStartup)
+  }, [
+    appSettings.defaultLaunchProfileId,
+    appSettings.autoRepairSafeCleanupOnStartup,
+  ])
+
+  useEffect(() => {
     setEditProjectName(selectedProject?.name ?? '')
     setEditProjectRootPath(selectedProject?.rootPath ?? '')
     setProjectUpdateError(null)
@@ -328,9 +396,11 @@ function App() {
 
   useEffect(() => {
     if (!selectedLaunchProfile && launchProfiles.length > 0) {
-      setSelectedLaunchProfileId(launchProfiles[0].id)
+      setSelectedLaunchProfileId(
+        appSettings.defaultLaunchProfileId ?? launchProfiles[0].id,
+      )
     }
-  }, [launchProfiles, selectedLaunchProfile])
+  }, [appSettings.defaultLaunchProfileId, launchProfiles, selectedLaunchProfile])
 
   useEffect(() => {
     if (
@@ -361,9 +431,7 @@ function App() {
           worktreeId,
         })
       } catch (error) {
-        setSessionError(
-          error instanceof Error ? error.message : 'Failed to inspect live session state.',
-        )
+        setSessionError(getErrorMessage(error, 'Failed to inspect live session state.'))
         return null
       }
     },
@@ -377,9 +445,7 @@ function App() {
       setSessionRailRevision((current) => current + 1)
       return snapshots
     } catch (error) {
-      setSessionError(
-        error instanceof Error ? error.message : 'Failed to inspect live session directory.',
-      )
+      setSessionError(getErrorMessage(error, 'Failed to inspect live session directory.'))
       return []
     }
   }, [])
@@ -401,9 +467,31 @@ function App() {
       return items
     } catch (error) {
       if (requestId === worktreeRequestIdRef.current) {
-        setSessionError(error instanceof Error ? error.message : 'Failed to load worktrees.')
+        setSessionError(getErrorMessage(error, 'Failed to load worktrees.'))
       }
 
+      return []
+    }
+  }, [])
+
+  const refreshOrphanedSessions = useCallback(async (projectId: number) => {
+    try {
+      const records = await invoke<SessionRecord[]>('list_orphaned_sessions', { projectId })
+      setOrphanedSessions(records)
+      return records
+    } catch (error) {
+      setCleanupError(getErrorMessage(error, 'Failed to load orphaned sessions.'))
+      return []
+    }
+  }, [])
+
+  const refreshCleanupCandidates = useCallback(async () => {
+    try {
+      const candidates = await invoke<CleanupCandidate[]>('list_cleanup_candidates')
+      setCleanupCandidates(candidates)
+      return candidates
+    } catch (error) {
+      setCleanupError(getErrorMessage(error, 'Failed to load cleanup candidates.'))
       return []
     }
   }, [])
@@ -520,7 +608,7 @@ function App() {
           return
         }
 
-        setDocumentError(error instanceof Error ? error.message : 'Failed to load documents.')
+        setDocumentError(getErrorMessage(error, 'Failed to load documents.'))
       } finally {
         if (!cancelled) {
           setIsLoadingDocuments(false)
@@ -548,6 +636,78 @@ function App() {
 
     void loadWorktrees()
   }, [contextRefreshKey, refreshWorktrees, selectedProjectId])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadOrphanedSessions = async () => {
+      if (!selectedProject) {
+        setOrphanedSessions([])
+        return
+      }
+
+      setCleanupError(null)
+      setIsLoadingCleanup(true)
+
+      try {
+        const records = await invoke<SessionRecord[]>('list_orphaned_sessions', {
+          projectId: selectedProject.id,
+        })
+
+        if (cancelled) {
+          return
+        }
+
+        setOrphanedSessions(records)
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+
+        setCleanupError(getErrorMessage(error, 'Failed to load orphaned sessions.'))
+      } finally {
+        if (!cancelled) {
+          setIsLoadingCleanup(false)
+        }
+      }
+    }
+
+    void loadOrphanedSessions()
+
+    return () => {
+      cancelled = true
+    }
+  }, [contextRefreshKey, selectedProjectId])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadCleanupCandidates = async () => {
+      setCleanupError(null)
+
+      try {
+        const candidates = await invoke<CleanupCandidate[]>('list_cleanup_candidates')
+
+        if (cancelled) {
+          return
+        }
+
+        setCleanupCandidates(candidates)
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+
+        setCleanupError(getErrorMessage(error, 'Failed to load cleanup candidates.'))
+      }
+    }
+
+    void loadCleanupCandidates()
+
+    return () => {
+      cancelled = true
+    }
+  }, [contextRefreshKey, selectedProjectId])
 
   useEffect(() => {
     let cancelled = false
@@ -586,7 +746,7 @@ function App() {
           return
         }
 
-        setWorkItemError(error instanceof Error ? error.message : 'Failed to load work items.')
+        setWorkItemError(getErrorMessage(error, 'Failed to load work items.'))
       } finally {
         if (!cancelled) {
           setIsLoadingWorkItems(false)
@@ -644,8 +804,41 @@ function App() {
         applyPath(selected)
       }
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'Failed to open folder picker.')
+      setError(getErrorMessage(error, 'Failed to open folder picker.'))
     }
+  }
+
+  const resetLaunchProfileForm = () => {
+    setEditingLaunchProfileId(null)
+    setProfileLabel(DEFAULT_PROFILE_LABEL)
+    setProfileExecutable(DEFAULT_PROFILE_EXECUTABLE)
+    setProfileArgs(DEFAULT_PROFILE_ARGS)
+    setProfileEnvJson(DEFAULT_PROFILE_ENV_JSON)
+    setProfileError(null)
+  }
+
+  const startCreateLaunchProfile = () => {
+    resetLaunchProfileForm()
+    setSettingsMessage(null)
+    setIsProfileFormOpen(true)
+    setActiveView('settings')
+  }
+
+  const startEditLaunchProfile = (profile: LaunchProfileRecord) => {
+    setEditingLaunchProfileId(profile.id)
+    setProfileLabel(profile.label)
+    setProfileExecutable(profile.executable)
+    setProfileArgs(profile.args)
+    setProfileEnvJson(profile.envJson)
+    setProfileError(null)
+    setSettingsMessage(null)
+    setIsProfileFormOpen(true)
+    setActiveView('settings')
+  }
+
+  const cancelLaunchProfileEditor = () => {
+    resetLaunchProfileForm()
+    setIsProfileFormOpen(false)
   }
 
   const submitProject = async (event: FormEvent<HTMLFormElement>) => {
@@ -667,7 +860,7 @@ function App() {
       setProjectRootPath('')
       setIsProjectCreateOpen(false)
     } catch (error) {
-      setProjectError(error instanceof Error ? error.message : 'Failed to create project.')
+      setProjectError(getErrorMessage(error, 'Failed to create project.'))
     } finally {
       setIsCreatingProject(false)
     }
@@ -703,40 +896,135 @@ function App() {
           : current,
       )
     } catch (error) {
-      setProjectUpdateError(error instanceof Error ? error.message : 'Failed to update project.')
+      setProjectUpdateError(getErrorMessage(error, 'Failed to update project.'))
     } finally {
       setIsUpdatingProject(false)
+    }
+  }
+
+  const submitAppSettings = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setSettingsError(null)
+    setSettingsMessage(null)
+    setIsSavingAppSettings(true)
+
+    try {
+      const settings = await invoke<AppSettings>('update_app_settings', {
+        input: {
+          defaultLaunchProfileId: defaultLaunchProfileSettingId,
+          autoRepairSafeCleanupOnStartup,
+        },
+      })
+
+      setAppSettings(settings)
+      setSettingsMessage('Settings saved.')
+
+      if (settings.defaultLaunchProfileId !== null) {
+        setSelectedLaunchProfileId(settings.defaultLaunchProfileId)
+      }
+    } catch (error) {
+      setSettingsError(getErrorMessage(error, 'Failed to save app settings.'))
+    } finally {
+      setIsSavingAppSettings(false)
     }
   }
 
   const submitLaunchProfile = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setProfileError(null)
+    setSettingsMessage(null)
     setIsCreatingProfile(true)
 
     try {
-      const profile = await invoke<LaunchProfileRecord>('create_launch_profile', {
-        input: {
-          label: profileLabel,
-          executable: profileExecutable,
-          args: profileArgs,
-          envJson: profileEnvJson,
-        },
-      })
+      const profile = editingLaunchProfileId === null
+        ? await invoke<LaunchProfileRecord>('create_launch_profile', {
+            input: {
+              label: profileLabel,
+              executable: profileExecutable,
+              args: profileArgs,
+              envJson: profileEnvJson,
+            },
+          })
+        : await invoke<LaunchProfileRecord>('update_launch_profile', {
+            input: {
+              id: editingLaunchProfileId,
+              label: profileLabel,
+              executable: profileExecutable,
+              args: profileArgs,
+              envJson: profileEnvJson,
+            },
+          })
 
-      setLaunchProfiles((current) => [...current, profile])
+      setLaunchProfiles((current) =>
+        editingLaunchProfileId === null
+          ? [...current, profile]
+          : current.map((existing) => (existing.id === profile.id ? profile : existing)),
+      )
       setSelectedLaunchProfileId(profile.id)
-      setProfileLabel('')
-      setProfileExecutable('claude')
-      setProfileArgs('--dangerously-skip-permissions')
-      setProfileEnvJson('{}')
-      setIsProfileFormOpen(false)
+      setSettingsMessage(
+        editingLaunchProfileId === null
+          ? 'Launch profile created.'
+          : 'Launch profile updated.',
+      )
+      cancelLaunchProfileEditor()
     } catch (error) {
       setProfileError(
-        error instanceof Error ? error.message : 'Failed to create launch profile.',
+        getErrorMessage(
+          error,
+          editingLaunchProfileId === null
+            ? 'Failed to create launch profile.'
+            : 'Failed to update launch profile.',
+        ),
       )
     } finally {
       setIsCreatingProfile(false)
+    }
+  }
+
+  const deleteLaunchProfile = async (profile: LaunchProfileRecord) => {
+    if (
+      !window.confirm(
+        `Delete launch profile "${profile.label}"? Existing session records will be preserved.`,
+      )
+    ) {
+      return
+    }
+
+    setProfileError(null)
+    setSettingsError(null)
+    setSettingsMessage(null)
+    setActiveDeleteLaunchProfileId(profile.id)
+
+    try {
+      await invoke('delete_launch_profile', { id: profile.id })
+
+      const remainingProfiles = launchProfiles.filter((existing) => existing.id !== profile.id)
+      setLaunchProfiles(remainingProfiles)
+
+      if (selectedLaunchProfileId === profile.id) {
+        const nextSelectedProfileId =
+          appSettings.defaultLaunchProfileId === profile.id
+            ? remainingProfiles[0]?.id ?? null
+            : appSettings.defaultLaunchProfileId ?? remainingProfiles[0]?.id ?? null
+        setSelectedLaunchProfileId(nextSelectedProfileId)
+      }
+
+      if (appSettings.defaultLaunchProfileId === profile.id) {
+        setAppSettings((current) => ({
+          ...current,
+          defaultLaunchProfileId: null,
+        }))
+      }
+
+      if (editingLaunchProfileId === profile.id) {
+        cancelLaunchProfileEditor()
+      }
+
+      setSettingsMessage('Launch profile deleted.')
+    } catch (error) {
+      setSettingsError(getErrorMessage(error, 'Failed to delete launch profile.'))
+    } finally {
+      setActiveDeleteLaunchProfileId(null)
     }
   }
 
@@ -746,10 +1034,12 @@ function App() {
     }
 
     const targetWorktreeId = options?.worktreeId ?? selectedTerminalWorktreeId ?? null
-    const targetWorktree =
-      targetWorktreeId === null
-        ? null
-        : worktrees.find((worktree) => worktree.id === targetWorktreeId) ?? null
+    const targetWorktree = findWorktreeTarget(
+      worktrees,
+      stagedWorktrees,
+      targetWorktreeId,
+      options?.worktree,
+    )
     const targetRootAvailable =
       targetWorktreeId === null ? selectedProject.rootAvailable : Boolean(targetWorktree?.pathAvailable)
 
@@ -794,7 +1084,7 @@ function App() {
       await refreshLiveSessions(selectedProject.id)
       return snapshot
     } catch (error) {
-      setSessionError(error instanceof Error ? error.message : 'Failed to launch Claude Code.')
+      setSessionError(getErrorMessage(error, 'Failed to launch Claude Code.'))
       return null
     } finally {
       setIsLaunchingSession(false)
@@ -855,10 +1145,99 @@ function App() {
           ),
         )
       } else {
-        setSessionError(error instanceof Error ? error.message : 'Failed to stop the live session.')
+        setSessionError(getErrorMessage(error, 'Failed to stop the live session.'))
       }
     } finally {
       setIsStoppingSession(false)
+    }
+  }
+
+  const terminateRecoveredSession = async (sessionId: number) => {
+    if (!selectedProject) {
+      return
+    }
+
+    setCleanupError(null)
+    setCleanupMessage(null)
+    setActiveOrphanSessionId(sessionId)
+
+    try {
+      const record = await invoke<SessionRecord>('terminate_orphaned_session', {
+        projectId: selectedProject.id,
+        sessionId,
+      })
+
+      await Promise.all([
+        refreshOrphanedSessions(selectedProject.id),
+        refreshCleanupCandidates(),
+      ])
+      setContextRefreshKey((current) => current + 1)
+      setCleanupMessage(
+        record.state === 'terminated'
+          ? `Supervisor terminated orphaned session #${sessionId}.`
+          : `Supervisor reconciled orphaned session #${sessionId}.`,
+      )
+    } catch (error) {
+      setCleanupError(getErrorMessage(error, 'Failed to clean up the orphaned session.'))
+    } finally {
+      setActiveOrphanSessionId(null)
+    }
+  }
+
+  const removeStaleArtifact = async (candidate: CleanupCandidate) => {
+    setCleanupError(null)
+    setCleanupMessage(null)
+    setActiveCleanupPath(candidate.path)
+
+    try {
+      const result = await invoke<CleanupActionOutput>('remove_cleanup_candidate', {
+        input: {
+          kind: candidate.kind,
+          path: candidate.path,
+        },
+      })
+
+      await Promise.all([
+        selectedProject ? refreshOrphanedSessions(selectedProject.id) : Promise.resolve([]),
+        refreshCleanupCandidates(),
+      ])
+      setContextRefreshKey((current) => current + 1)
+      setCleanupMessage(
+        result.candidate.kind === 'runtime_artifact'
+          ? 'Supervisor removed a stale runtime artifact.'
+          : result.candidate.kind === 'stale_worktree_record'
+            ? 'Supervisor removed a stale worktree record.'
+            : 'Supervisor removed a stale managed worktree directory.',
+      )
+    } catch (error) {
+      setCleanupError(getErrorMessage(error, 'Failed to remove the cleanup candidate.'))
+    } finally {
+      setActiveCleanupPath(null)
+    }
+  }
+
+  const repairCleanupCandidates = async () => {
+    setCleanupError(null)
+    setCleanupMessage(null)
+    setIsRepairingCleanup(true)
+
+    try {
+      const result = await invoke<CleanupRepairOutput>('repair_cleanup_candidates')
+
+      await Promise.all([
+        selectedProject ? refreshOrphanedSessions(selectedProject.id) : Promise.resolve([]),
+        refreshCleanupCandidates(),
+      ])
+      setContextRefreshKey((current) => current + 1)
+      setCleanupMessage(
+        result.actions.length === 0
+          ? 'No safe cleanup actions were pending.'
+          : `Supervisor repaired ${result.actions.length} safe cleanup item${result.actions.length === 1 ? '' : 's'}.`,
+      )
+    } catch (error) {
+      setCleanupError(getErrorMessage(error, 'Failed to repair cleanup candidates.'))
+    } finally {
+      setIsRepairingCleanup(false)
     }
   }
 
@@ -951,7 +1330,7 @@ function App() {
       setWorkItems((current) => sortWorkItems([item, ...current]))
       adjustProjectWorkItemCount(selectedProject.id, 1)
     } catch (error) {
-      setWorkItemError(error instanceof Error ? error.message : 'Failed to create work item.')
+      setWorkItemError(getErrorMessage(error, 'Failed to create work item.'))
       throw error
     }
   }
@@ -985,7 +1364,7 @@ function App() {
         sortWorkItems(current.map((existing) => (existing.id === item.id ? item : existing))),
       )
     } catch (error) {
-      setWorkItemError(error instanceof Error ? error.message : 'Failed to update work item.')
+      setWorkItemError(getErrorMessage(error, 'Failed to update work item.'))
       throw error
     }
   }
@@ -1028,7 +1407,7 @@ function App() {
       )
       adjustProjectWorkItemCount(selectedProject.id, -1)
     } catch (error) {
-      setWorkItemError(error instanceof Error ? error.message : 'Failed to delete work item.')
+      setWorkItemError(getErrorMessage(error, 'Failed to delete work item.'))
       throw error
     }
   }
@@ -1057,7 +1436,7 @@ function App() {
       setDocuments((current) => sortDocuments([document, ...current]))
       adjustProjectDocumentCount(selectedProject.id, 1)
     } catch (error) {
-      setDocumentError(error instanceof Error ? error.message : 'Failed to create document.')
+      setDocumentError(getErrorMessage(error, 'Failed to create document.'))
       throw error
     }
   }
@@ -1092,7 +1471,7 @@ function App() {
         ),
       )
     } catch (error) {
-      setDocumentError(error instanceof Error ? error.message : 'Failed to update document.')
+      setDocumentError(getErrorMessage(error, 'Failed to update document.'))
       throw error
     }
   }
@@ -1114,7 +1493,7 @@ function App() {
       setDocuments((current) => current.filter((document) => document.id !== id))
       adjustProjectDocumentCount(selectedProject.id, -1)
     } catch (error) {
-      setDocumentError(error instanceof Error ? error.message : 'Failed to delete document.')
+      setDocumentError(getErrorMessage(error, 'Failed to delete document.'))
       throw error
     }
   }
@@ -1129,7 +1508,7 @@ function App() {
       setAgentPromptMessage(`${currentTerminalPromptLabel} copied.`)
     } catch (error) {
       setAgentPromptMessage(
-        error instanceof Error ? error.message : `Failed to copy ${currentTerminalPromptLabel.toLowerCase()}.`,
+        getErrorMessage(error, `Failed to copy ${currentTerminalPromptLabel.toLowerCase()}.`),
       )
     }
   }
@@ -1146,9 +1525,7 @@ function App() {
       await navigator.clipboard.writeText(terminalOutput)
       setAgentPromptMessage('Terminal output copied.')
     } catch (error) {
-      setAgentPromptMessage(
-        error instanceof Error ? error.message : 'Failed to copy terminal output.',
-      )
+      setAgentPromptMessage(getErrorMessage(error, 'Failed to copy terminal output.'))
     }
   }
 
@@ -1166,7 +1543,7 @@ function App() {
       )
     } catch (error) {
       setAgentPromptMessage(
-        error instanceof Error ? error.message : `Failed to send ${currentTerminalPromptLabel.toLowerCase()}.`,
+        getErrorMessage(error, `Failed to send ${currentTerminalPromptLabel.toLowerCase()}.`),
       )
     }
   }
@@ -1235,9 +1612,7 @@ function App() {
             ),
           )
         } catch (error) {
-          setWorkItemError(
-            error instanceof Error ? error.message : 'Failed to update work item status.',
-          )
+          setWorkItemError(getErrorMessage(error, 'Failed to update work item status.'))
           return
         }
       }
@@ -1290,7 +1665,11 @@ function App() {
 
       const activeSession = hasLiveSession
         ? currentSessionSnapshot
-        : await launchSession({ startupPrompt: prompt, worktreeId: worktree.id })
+        : await launchSession({
+            startupPrompt: prompt,
+            worktreeId: worktree.id,
+            worktree,
+          })
 
       if (!activeSession) {
         return
@@ -1308,9 +1687,7 @@ function App() {
             `Focused handoff sent for work item #${targetWorkItem.id}.`,
           )
         } catch (error) {
-          setSessionError(
-            error instanceof Error ? error.message : 'Failed to send focused handoff to the terminal.',
-          )
+          setSessionError(getErrorMessage(error, 'Failed to send focused handoff to the terminal.'))
         }
       } else {
         setAgentPromptMessage(
@@ -1318,9 +1695,7 @@ function App() {
         )
       }
     } catch (error) {
-      setSessionError(
-        error instanceof Error ? error.message : 'Failed to hand work item off to the terminal.',
-      )
+      setSessionError(getErrorMessage(error, 'Failed to hand work item off to the terminal.'))
     } finally {
       setStartingWorkItemId(null)
     }
@@ -1340,6 +1715,22 @@ function App() {
     snapshot:
       liveSessionSnapshots.find((snapshot) => snapshot.worktreeId === worktree.id) ?? null,
   }))
+  const runtimeCleanupCandidates = cleanupCandidates.filter(
+    (candidate) => candidate.kind === 'runtime_artifact',
+  )
+  const staleWorktreeCleanupCandidates = cleanupCandidates.filter(
+    (candidate) => candidate.kind === 'stale_managed_worktree_dir',
+  )
+  const staleWorktreeRecordCandidates = cleanupCandidates.filter(
+    (candidate) =>
+      candidate.kind === 'stale_worktree_record' &&
+      (selectedProjectId === null || candidate.projectId === selectedProjectId),
+  )
+  const recoveryActionCount =
+    orphanedSessions.length +
+    runtimeCleanupCandidates.length +
+    staleWorktreeCleanupCandidates.length +
+    staleWorktreeRecordCandidates.length
 
   const recentDocuments = documents.slice(0, 4)
   const selectedProjectLaunchLabel = selectedLaunchProfile?.label ?? 'No account selected'
@@ -1356,6 +1747,7 @@ function App() {
         runtimeStatus,
         runtimeMessage,
         storageInfo,
+        appSettings,
         projects,
         selectedProject,
         selectedProjectId,
@@ -1380,6 +1772,17 @@ function App() {
         recentDocuments,
         liveSessions,
         worktreeSessions,
+        orphanedSessions,
+        runtimeCleanupCandidates,
+        staleWorktreeCleanupCandidates,
+        staleWorktreeRecordCandidates,
+        recoveryActionCount,
+        cleanupError,
+        cleanupMessage,
+        isLoadingCleanup,
+        activeOrphanSessionId,
+        activeCleanupPath,
+        isRepairingCleanup,
         sessionRailRevision,
         hasSelectedProjectLiveSession,
         launchBlockedByMissingRoot,
@@ -1389,6 +1792,10 @@ function App() {
         projectName,
         projectRootPath,
         projectError,
+        settingsError,
+        settingsMessage,
+        defaultLaunchProfileSettingId,
+        autoRepairSafeCleanupOnStartup,
         isProjectCreateOpen,
         editProjectName,
         editProjectRootPath,
@@ -1400,14 +1807,17 @@ function App() {
         profileEnvJson,
         profileError,
         isProfileFormOpen,
+        editingLaunchProfileId,
         isDocumentsManagerOpen,
         isAgentGuideOpen,
         activeView,
         isProjectRailCollapsed,
         isSessionRailCollapsed,
         isCreatingProject,
+        isSavingAppSettings,
         isUpdatingProject,
         isCreatingProfile,
+        activeDeleteLaunchProfileId,
         isLaunchingSession,
         isStoppingSession,
         isLoadingWorkItems,
@@ -1418,10 +1828,13 @@ function App() {
       }}
       actions={{
         setProjectError,
+        setSettingsError,
         setProjectUpdateError,
         setSelectedLaunchProfileId,
         setProjectName,
         setProjectRootPath,
+        setDefaultLaunchProfileSettingId,
+        setAutoRepairSafeCleanupOnStartup,
         setIsProjectCreateOpen,
         setEditProjectName,
         setEditProjectRootPath,
@@ -1443,9 +1856,17 @@ function App() {
         browseForProjectFolder,
         submitProject,
         submitProjectUpdate,
+        submitAppSettings,
         submitLaunchProfile,
+        startCreateLaunchProfile,
+        startEditLaunchProfile,
+        cancelLaunchProfileEditor,
+        deleteLaunchProfile,
         launchWorkspaceGuide,
         stopSession,
+        terminateRecoveredSession,
+        removeStaleArtifact,
+        repairCleanupCandidates,
         copyAgentStartupPrompt,
         sendAgentStartupPrompt,
         copyTerminalOutput,

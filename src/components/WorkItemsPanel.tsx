@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import type { ProjectRecord, WorkItemRecord, WorkItemStatus, WorkItemType } from '../types'
+import { Button } from './ui/button'
+import { Input } from './ui/input'
+import { Badge } from './ui/badge'
+import { ScrollArea } from './ui/scroll-area'
+import { Trash2, Play } from 'lucide-react'
 
 const WORK_ITEM_TYPES: WorkItemType[] = ['bug', 'task', 'feature', 'note']
 const WORK_ITEM_STATUSES: WorkItemStatus[] = ['backlog', 'in_progress', 'blocked', 'done']
@@ -56,18 +61,10 @@ function WorkItemsPanel({
     () => workItems.find((item) => item.id === selectedWorkItemId) ?? workItems[0] ?? null,
     [selectedWorkItemId, workItems],
   )
-  const openWorkItemCount = useMemo(
-    () => workItems.filter((item) => item.status !== 'done').length,
-    [workItems],
-  )
 
   useEffect(() => {
     setSelectedWorkItemId(workItems[0]?.id ?? null)
   }, [project?.id])
-
-  useEffect(() => {
-    setIsCreateOpen(workItems.length === 0)
-  }, [project?.id, workItems.length])
 
   useEffect(() => {
     if (!selectedWorkItem && workItems.length > 0) {
@@ -146,6 +143,10 @@ function WorkItemsPanel({
       return
     }
 
+    if (!confirm('Are you sure you want to delete this work item?')) {
+      return
+    }
+
     setIsDeleting(true)
 
     try {
@@ -157,175 +158,71 @@ function WorkItemsPanel({
   }
 
   return (
-    <section className="work-items-section">
-      <div className="section-toolbar">
-        <div>
-          <p className="panel__eyebrow">Work items</p>
-          <h2>{project ? `${project.name} backlog` : 'Select a project'}</h2>
-          {project ? (
-            <p className="section-subtitle">
-              Track the smallest real unit of work the agent or you can act on directly.
-            </p>
-          ) : null}
+    <div className="flex flex-col h-full overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-card/50">
+        <div className="flex items-center gap-3">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Work Items</span>
+          <div className="h-4 w-[1px] bg-border" />
+          <span className="text-xs font-mono">{workItems.length} items</span>
         </div>
-        {project ? (
-          <div className="section-toolbar__actions">
-            <span className="pill">{openWorkItemCount} open</span>
-            <span className="panel__count">{workItems.length}</span>
-            <button
-              className="button button--secondary button--compact"
-              type="button"
-              onClick={() => setIsCreateOpen((current) => !current)}
-            >
-              {isCreateOpen ? 'Hide add form' : 'Add work item'}
-            </button>
-          </div>
-        ) : (
-          <span className="panel__count">{workItems.length}</span>
-        )}
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 text-[10px] uppercase tracking-wider"
+          onClick={() => setIsCreateOpen(!isCreateOpen)}
+        >
+          {isCreateOpen ? 'CLOSE' : 'ADD ITEM'}
+        </Button>
       </div>
 
-      {!project ? (
-        <div className="empty-state">Select a project to manage bugs, tasks, features, and notes.</div>
-      ) : (
-        <>
-          {isCreateOpen ? (
-            <form className="stack-form" onSubmit={submitCreate}>
-              <div className="stack-form__header">
-                <h3>Add work item</h3>
-                <p>Start with the smallest real unit of work you want the agent or you to act on.</p>
-              </div>
+      <div className="flex-1 overflow-hidden">
+        {isCreateOpen ? (
+          <ScrollArea className="h-full">
+            <div className="p-4 max-w-2xl mx-auto">
+              <form className="space-y-6 border border-border bg-card/30 p-6 rounded" onSubmit={submitCreate}>
+                <div className="space-y-1">
+                  <h3 className="text-sm font-bold uppercase tracking-wider">New Work Item</h3>
+                  <p className="text-[10px] text-muted-foreground uppercase">Define a specific task for the agent</p>
+                </div>
 
-              <label className="field">
-                <span>Title</span>
-                <input
-                  value={createTitle}
-                  onChange={(event) => setCreateTitle(event.target.value)}
-                  placeholder="Log a bug in Emery"
-                />
-              </label>
-
-              <div className="field-grid">
-                <label className="field">
-                  <span>Type</span>
-                  <select value={createType} onChange={(event) => setCreateType(event.target.value as WorkItemType)}>
-                    {WORK_ITEM_TYPES.map((itemType) => (
-                      <option key={itemType} value={itemType}>
-                        {itemType}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="field">
-                  <span>Status</span>
-                  <select
-                    value={createStatus}
-                    onChange={(event) => setCreateStatus(event.target.value as WorkItemStatus)}
-                  >
-                    {WORK_ITEM_STATUSES.map((status) => (
-                      <option key={status} value={status}>
-                        {status}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-
-              <label className="field">
-                <span>Body</span>
-                <textarea
-                  rows={4}
-                  value={createBody}
-                  onChange={(event) => setCreateBody(event.target.value)}
-                  placeholder="Describe the bug, expected behavior, or next action."
-                />
-              </label>
-
-              <div className="action-row">
-                <button className="button button--primary" disabled={isCreating || isLoading} type="submit">
-                  {isCreating ? 'Saving...' : 'Create work item'}
-                </button>
-                <button
-                  className="button button--secondary"
-                  type="button"
-                  onClick={() => setIsCreateOpen(false)}
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
-          ) : null}
-
-          {error ? <p className="form-error">{error}</p> : null}
-
-          <div className="list-detail-layout">
-            <div className="list-pane">
-              <div className="work-item-list">
-                {isLoading ? (
-                  <div className="empty-state">Loading work items...</div>
-                ) : workItems.length === 0 ? (
-                  <div className="empty-state">No work items yet for this project.</div>
-                ) : (
-                  workItems.map((item) => (
-                    <button
-                      key={item.id}
-                      className={`work-item-card ${
-                        item.id === selectedWorkItem?.id ? 'work-item-card--active' : ''
-                      }`}
-                      type="button"
-                      onClick={() => setSelectedWorkItemId(item.id)}
-                    >
-                      <div className="work-item-card__header">
-                        <strong>{item.title}</strong>
-                        <span className={`work-item-status work-item-status--${item.status}`}>
-                          {item.status}
-                        </span>
-                      </div>
-                      <div className="work-item-card__meta">
-                        <span className="pill">{item.itemType}</span>
-                        <span>Updated {item.updatedAt}</span>
-                      </div>
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
-
-            <div className="detail-pane">
-              {selectedWorkItem ? (
-                <form className="stack-form" onSubmit={submitUpdate}>
-                  <div className="stack-form__header">
-                    <h3>Edit work item</h3>
-                    <p>Keep the item clear enough that you or Claude Code can act on it directly.</p>
-                  </div>
-
+                <div className="space-y-4">
                   <label className="field">
-                    <span>Title</span>
-                    <input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} />
+                    <span className="text-[10px] uppercase text-muted-foreground">Title</span>
+                    <Input
+                      value={createTitle}
+                      onChange={(event) => setCreateTitle(event.target.value)}
+                      placeholder="Identify specific action"
+                      className="h-9 text-xs"
+                      required
+                    />
                   </label>
 
-                  <div className="field-grid">
+                  <div className="grid grid-cols-2 gap-4">
                     <label className="field">
-                      <span>Type</span>
-                      <select value={editType} onChange={(event) => setEditType(event.target.value as WorkItemType)}>
+                      <span className="text-[10px] uppercase text-muted-foreground">Type</span>
+                      <select 
+                        className="w-full h-9 text-xs bg-background border border-border rounded px-2"
+                        value={createType} 
+                        onChange={(event) => setCreateType(event.target.value as WorkItemType)}
+                      >
                         {WORK_ITEM_TYPES.map((itemType) => (
                           <option key={itemType} value={itemType}>
-                            {itemType}
+                            {itemType.toUpperCase()}
                           </option>
                         ))}
                       </select>
                     </label>
 
                     <label className="field">
-                      <span>Status</span>
+                      <span className="text-[10px] uppercase text-muted-foreground">Initial Status</span>
                       <select
-                        value={editStatus}
-                        onChange={(event) => setEditStatus(event.target.value as WorkItemStatus)}
+                        className="w-full h-9 text-xs bg-background border border-border rounded px-2"
+                        value={createStatus}
+                        onChange={(event) => setCreateStatus(event.target.value as WorkItemStatus)}
                       >
                         {WORK_ITEM_STATUSES.map((status) => (
                           <option key={status} value={status}>
-                            {status}
+                            {status.toUpperCase().replace('_', ' ')}
                           </option>
                         ))}
                       </select>
@@ -333,44 +230,191 @@ function WorkItemsPanel({
                   </div>
 
                   <label className="field">
-                    <span>Body</span>
-                    <textarea rows={8} value={editBody} onChange={(event) => setEditBody(event.target.value)} />
+                    <span className="text-[10px] uppercase text-muted-foreground">Description / Context</span>
+                    <textarea
+                      className="w-full bg-background border border-border rounded p-3 font-mono text-xs leading-relaxed focus:ring-1 focus:ring-primary/30 outline-none min-h-[120px]"
+                      value={createBody}
+                      onChange={(event) => setCreateBody(event.target.value)}
+                      placeholder="Provide constraints, requirements, and background info..."
+                    />
                   </label>
+                </div>
 
-                  <div className="action-row">
-                    <button
-                      className="button button--secondary"
-                      disabled={startingWorkItemId === selectedWorkItem.id}
-                      type="button"
-                      onClick={() => void onStartInTerminal(selectedWorkItem.id)}
-                    >
-                      {startingWorkItemId === selectedWorkItem.id
-                        ? 'Starting worktree...'
-                        : 'Start in worktree'}
-                    </button>
-                    <button className="button button--primary" disabled={isSaving} type="submit">
-                      {isSaving ? 'Saving...' : 'Save changes'}
-                    </button>
-                    <button
-                      className="button button--danger"
-                      disabled={isDeleting}
-                      type="button"
-                      onClick={handleDelete}
-                    >
-                      {isDeleting ? 'Deleting...' : 'Delete'}
-                    </button>
+                <div className="flex gap-3">
+                  <Button variant="default" className="flex-1 h-10 text-xs font-bold uppercase tracking-widest" disabled={isCreating || isLoading} type="submit">
+                    {isCreating ? 'SAVING...' : 'CREATE ITEM'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="h-10 text-xs font-bold uppercase tracking-widest"
+                    type="button"
+                    onClick={() => setIsCreateOpen(false)}
+                  >
+                    CANCEL
+                  </Button>
+                </div>
+              </form>
+            </div>
+          </ScrollArea>
+        ) : (
+          <div className="flex h-full">
+            {/* List Pane */}
+            <div className="w-1/3 border-r border-border bg-black/10">
+              <ScrollArea className="h-full">
+                <div className="p-2 space-y-1">
+                  {workItems.length === 0 ? (
+                    <div className="text-center py-12 px-4 italic text-muted-foreground text-xs">
+                      No items defined for this project.
+                    </div>
+                  ) : (
+                    workItems.map((item) => (
+                      <button
+                        key={item.id}
+                        className={`w-full text-left p-2 border border-transparent transition-all group ${
+                          item.id === selectedWorkItem?.id 
+                            ? 'bg-primary/10 border-primary/20' 
+                            : 'hover:bg-muted/30'
+                        }`}
+                        type="button"
+                        onClick={() => setSelectedWorkItemId(item.id)}
+                      >
+                        <div className="flex justify-between items-start mb-1">
+                          <span className={`text-[10px] font-bold truncate pr-2 ${item.id === selectedWorkItem?.id ? 'text-primary' : ''}`}>
+                            {item.title}
+                          </span>
+                          <Badge 
+                            variant="default" 
+                            className={`h-3.5 text-[8px] px-1 font-bold ${
+                              item.status === 'done' ? 'opacity-40' : ''
+                            }`}
+                          >
+                            {item.status.toUpperCase().replace('_', ' ')}
+                          </Badge>
+                        </div>
+                        <div className="flex items-center justify-between text-[9px] opacity-60">
+                          <span className="uppercase tracking-wider">{item.itemType}</span>
+                          <span className="group-hover:opacity-100 transition-opacity">#{item.id}</span>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </ScrollArea>
+            </div>
+
+            {/* Detail Pane */}
+            <div className="flex-1 bg-black/5">
+              {selectedWorkItem ? (
+                <ScrollArea className="h-full">
+                  <div className="p-6">
+                    <form className="space-y-6" onSubmit={submitUpdate}>
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                          <label className="field">
+                            <span className="text-[10px] uppercase text-muted-foreground mb-1">Work Item Title</span>
+                            <Input 
+                              value={editTitle} 
+                              onChange={(event) => setEditTitle(event.target.value)} 
+                              className="text-sm font-bold border-transparent bg-transparent hover:border-border focus:bg-background h-9 -ml-2"
+                            />
+                          </label>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="default"
+                            size="sm"
+                            className="h-8 text-[10px] font-bold uppercase tracking-widest bg-primary text-primary-foreground"
+                            disabled={startingWorkItemId === selectedWorkItem.id}
+                            type="button"
+                            onClick={() => void onStartInTerminal(selectedWorkItem.id)}
+                          >
+                            <Play size={12} className="mr-1.5" />
+                            {startingWorkItemId === selectedWorkItem.id
+                              ? 'STARTING...'
+                              : 'START WORK'}
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-4 border-y border-border/50 py-4">
+                        <label className="field">
+                          <span className="text-[10px] uppercase text-muted-foreground">Type</span>
+                          <select 
+                            className="w-full h-8 text-[11px] bg-background border border-border rounded px-2"
+                            value={editType} 
+                            onChange={(event) => setEditType(event.target.value as WorkItemType)}
+                          >
+                            {WORK_ITEM_TYPES.map((itemType) => (
+                              <option key={itemType} value={itemType}>
+                                {itemType.toUpperCase()}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label className="field">
+                          <span className="text-[10px] uppercase text-muted-foreground">Status</span>
+                          <select
+                            className="w-full h-8 text-[11px] bg-background border border-border rounded px-2"
+                            value={editStatus}
+                            onChange={(event) => setEditStatus(event.target.value as WorkItemStatus)}
+                          >
+                            {WORK_ITEM_STATUSES.map((status) => (
+                              <option key={status} value={status}>
+                                {status.toUpperCase().replace('_', ' ')}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <div className="flex flex-col">
+                          <span className="text-[10px] uppercase text-muted-foreground mb-1">Modified</span>
+                          <span className="text-[11px] opacity-60 font-mono py-1.5">{selectedWorkItem.updatedAt}</span>
+                        </div>
+                      </div>
+
+                      <label className="field">
+                        <span className="text-[10px] uppercase text-muted-foreground">Requirements & Notes</span>
+                        <textarea 
+                          rows={12} 
+                          className="w-full bg-black/20 border border-border/50 rounded p-4 font-mono text-xs leading-relaxed focus:ring-1 focus:ring-primary/20 outline-none"
+                          value={editBody} 
+                          onChange={(event) => setEditBody(event.target.value)} 
+                        />
+                      </label>
+
+                      <div className="flex justify-between border-t border-border/50 pt-6">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10 h-8 text-[10px] font-bold"
+                          disabled={isDeleting}
+                          type="button"
+                          onClick={handleDelete}
+                        >
+                          <Trash2 size={12} className="mr-1.5" />
+                          DELETE ITEM
+                        </Button>
+                        
+                        <Button variant="outline" size="sm" className="h-8 text-[10px] font-bold uppercase tracking-widest px-8" disabled={isSaving} type="submit">
+                          {isSaving ? 'SAVING...' : 'SAVE CHANGES'}
+                        </Button>
+                      </div>
+                    </form>
                   </div>
-                </form>
+                </ScrollArea>
               ) : (
-                <div className="empty-state detail-pane__empty">
-                  Select a work item to edit it.
+                <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                  <p className="text-[10px] uppercase tracking-widest">Select item to inspect</p>
                 </div>
               )}
             </div>
           </div>
-        </>
-      )}
-    </section>
+        )}
+      </div>
+
+      {error ? <p className="px-3 py-1 bg-destructive/20 text-destructive text-[10px]">{error}</p> : null}
+    </div>
   )
 }
 
