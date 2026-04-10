@@ -1,9 +1,8 @@
-import { Suspense, lazy, useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
-import DocumentsPanel from './components/DocumentsPanel'
-import WorkItemsPanel from './components/WorkItemsPanel'
+import WorkspaceShell from './components/WorkspaceShell'
 import type {
   BootstrapData,
   DocumentRecord,
@@ -17,9 +16,7 @@ import type {
   WorkItemStatus,
   WorkItemType,
 } from './types'
-
-const LiveTerminal = lazy(() => import('./components/LiveTerminal'))
-type WorkspaceView = 'terminal' | 'workItems' | 'documents' | 'profiles'
+type WorkspaceView = 'terminal' | 'overview' | 'workItems'
 type TerminalPromptDraft = {
   label: string
   prompt: string
@@ -181,8 +178,11 @@ function App() {
   const [profileEnvJson, setProfileEnvJson] = useState('{}')
   const [profileError, setProfileError] = useState<string | null>(null)
   const [isProfileFormOpen, setIsProfileFormOpen] = useState(false)
+  const [isDocumentsManagerOpen, setIsDocumentsManagerOpen] = useState(false)
   const [isAgentGuideOpen, setIsAgentGuideOpen] = useState(false)
   const [activeView, setActiveView] = useState<WorkspaceView>('terminal')
+  const [isProjectRailCollapsed, setIsProjectRailCollapsed] = useState(false)
+  const [isSessionRailCollapsed, setIsSessionRailCollapsed] = useState(false)
   const [isCreatingProject, setIsCreatingProject] = useState(false)
   const [isUpdatingProject, setIsUpdatingProject] = useState(false)
   const [isCreatingProfile, setIsCreatingProfile] = useState(false)
@@ -240,6 +240,10 @@ function App() {
     launchProfiles.find((profile) => profile.id === selectedLaunchProfileId) ??
     launchProfiles[0] ??
     null
+  const selectProject = useCallback((projectId: number) => {
+    setSelectedProjectId(projectId)
+    setActiveView('terminal')
+  }, [])
   const bridgeReady = Boolean(selectedProject && sessionSnapshot?.isRunning)
   const agentStartupPrompt = buildAgentStartupPrompt(selectedProject, workItems, documents)
   const currentTerminalPrompt = terminalPromptDraft?.prompt ?? agentStartupPrompt
@@ -951,6 +955,21 @@ function App() {
     }
   }
 
+  const launchWorkspaceGuide = async () => {
+    setTerminalPromptDraft({
+      label: 'Workspace guide',
+      prompt: agentStartupPrompt,
+    })
+
+    const snapshot = await launchSession({ startupPrompt: agentStartupPrompt })
+
+    if (!snapshot || !agentStartupPrompt) {
+      return
+    }
+
+    setAgentPromptMessage('Workspace guide launched with the fresh terminal.')
+  }
+
   const startWorkItemInTerminal = async (workItemId: number) => {
     if (!selectedProject) {
       return
@@ -1052,612 +1071,116 @@ function App() {
     }
   }
 
+  const liveSessions =
+    selectedProject && sessionSnapshot?.isRunning && sessionSnapshot.projectId === selectedProject.id
+      ? [{ project: selectedProject, snapshot: sessionSnapshot }]
+      : []
+
+  const recentDocuments = documents.slice(0, 4)
+  const selectedProjectLaunchLabel = selectedLaunchProfile?.label ?? 'No account selected'
+  const hasSelectedProjectLiveSession = Boolean(isLiveSessionVisible && sessionSnapshot?.isRunning)
+
+
   return (
-    <main className="app-shell">
-      <header className="topbar topbar--compact">
-        <div className="topbar__headline">
-          <p className="eyebrow">Claude Code First MVP</p>
-          <h1>Project Commander</h1>
-          <p className="topbar__lede">
-            Launch Claude inside a project, keep the work items close, and keep the setup out of the way.
-          </p>
-        </div>
-        <div className="runtime-panel runtime-panel--compact">
-          <div className={`status-badge status-badge--${runtimeStatus}`}>
-            {runtimeStatus}
-          </div>
-          <p>{runtimeMessage}</p>
-          {storageInfo ? <code>{storageInfo.dbPath}</code> : null}
-        </div>
-      </header>
-
-      <section className="workspace workspace--streamlined">
-        <aside className="panel sidebar">
-          <div className="panel__header">
-            <div>
-              <p className="panel__eyebrow">Projects</p>
-              <h2>Registered roots</h2>
-            </div>
-            <div className="section-toolbar__actions">
-              <span className="panel__count">{projects.length}</span>
-              <button
-                className="button button--secondary button--compact"
-                type="button"
-                onClick={() => setIsProjectCreateOpen((current) => !current)}
-              >
-                {isProjectCreateOpen ? 'Hide form' : 'Add project'}
-              </button>
-            </div>
-          </div>
-
-          {isProjectCreateOpen ? (
-            <form className="stack-form" onSubmit={submitProject}>
-              <div className="stack-form__header">
-                <h3>Add project</h3>
-                <p>Register the working directory Claude Code should open inside.</p>
-              </div>
-
-              <label className="field">
-                <span>Name</span>
-                <input
-                  value={projectName}
-                  onChange={(event) => setProjectName(event.target.value)}
-                  placeholder="Emery"
-                />
-              </label>
-
-              <label className="field">
-                <span>Root folder</span>
-                <div className="input-row">
-                  <input
-                    value={projectRootPath}
-                    onChange={(event) => setProjectRootPath(event.target.value)}
-                    placeholder="E:\\Projects\\Emery"
-                  />
-                  <button
-                    className="button button--secondary"
-                    type="button"
-                    onClick={() => browseForProjectFolder(setProjectRootPath, setProjectError)}
-                  >
-                    Browse
-                  </button>
-                </div>
-              </label>
-
-              {projectError ? <p className="form-error">{projectError}</p> : null}
-
-              <div className="action-row">
-                <button className="button button--primary" disabled={isCreatingProject} type="submit">
-                  {isCreatingProject ? 'Saving...' : 'Create project'}
-                </button>
-                <button
-                  className="button button--secondary"
-                  type="button"
-                  onClick={() => setIsProjectCreateOpen(false)}
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
-          ) : null}
-
-          <div className="project-list">
-            {projects.length === 0 ? (
-              <div className="empty-state">
-                No projects yet. Add one so Claude can launch inside a registered root.
-              </div>
-            ) : (
-              projects.map((project) => (
-                <button
-                  key={project.id}
-                  className={`project-card ${
-                    project.id === selectedProject?.id ? 'project-card--active' : ''
-                  }`}
-                  type="button"
-                  onClick={() => setSelectedProjectId(project.id)}
-                >
-                  <span className="project-card__name">{project.name}</span>
-                  <span className="project-card__status">
-                    <span className={`pill ${project.rootAvailable ? '' : 'pill--danger'}`}>
-                      {project.rootAvailable ? 'root ready' : 'root missing'}
-                    </span>
-                  </span>
-                  <span className="project-card__path">{project.rootPath}</span>
-                  <span className="project-card__meta">
-                    {project.workItemCount} work items · {project.documentCount} docs
-                  </span>
-                </button>
-              ))
-            )}
-          </div>
-
-          {selectedProject ? (
-            <article className="summary-card sidebar-summary">
-              <span className="summary-card__label">Selected project</span>
-              <strong>{selectedProject.name}</strong>
-              <p>{selectedProject.rootPath}</p>
-              <div className="metric-strip">
-                <article className="metric-card">
-                  <span>Open work</span>
-                  <strong>{openWorkItemCount}</strong>
-                </article>
-                <article className="metric-card">
-                  <span>Blocked</span>
-                  <strong>{blockedWorkItemCount}</strong>
-                </article>
-                <article className="metric-card">
-                  <span>Docs</span>
-                  <strong>{documents.length}</strong>
-                </article>
-              </div>
-            </article>
-          ) : null}
-        </aside>
-
-        <section className="panel console-panel">
-          <div className="panel__header console-header">
-            <div>
-              <p className="panel__eyebrow">Console</p>
-              <h2>{selectedProject ? selectedProject.name : 'Select a project'}</h2>
-            </div>
-            {selectedProject ? (
-              <div className="console-header__actions">
-                <span className={`pill ${selectedProject.rootAvailable ? '' : 'pill--danger'}`}>
-                  {selectedProject.rootAvailable ? selectedProject.rootPath : 'root missing'}
-                </span>
-                <button
-                  className="button button--secondary button--compact"
-                  type="button"
-                  onClick={() => setIsProjectEditorOpen((current) => !current)}
-                >
-                  {isProjectEditorOpen ? 'Hide editor' : selectedProject.rootAvailable ? 'Edit project' : 'Rebind root'}
-                </button>
-              </div>
-            ) : null}
-          </div>
-
-          {selectedProject ? (
-            <div className="console-body">
-              <div className="console-actions">
-                <div className="console-actions__group">
-                  <span className="summary-card__label">Selected account</span>
-                  <strong>{selectedLaunchProfile?.label ?? 'Choose a launch profile'}</strong>
-                  <p>
-                    {selectedLaunchProfile
-                      ? `${selectedLaunchProfile.executable} ${selectedLaunchProfile.args}`.trim()
-                      : 'A launch profile provides the Claude Code command, args, and env vars.'}
-                  </p>
-                </div>
-
-                <div className="console-actions__group console-actions__group--right">
-                  {isLiveSessionVisible ? (
-                    <div className="console-status">
-                      <span
-                        className={`status-badge ${
-                          sessionSnapshot.isRunning
-                            ? 'status-badge--ready'
-                            : 'status-badge--stopped'
-                        }`}
-                      >
-                        {sessionSnapshot.isRunning ? 'live session' : 'session stopped'}
-                      </span>
-                      <span className="pill">{sessionSnapshot.profileLabel}</span>
-                    </div>
-                  ) : null}
-
-                  {isLiveSessionVisible && sessionSnapshot.isRunning ? (
-                    <button
-                      className="button button--secondary"
-                      disabled={isStoppingSession}
-                      type="button"
-                      onClick={stopSession}
-                    >
-                      {isStoppingSession ? 'Stopping...' : 'Stop session'}
-                    </button>
-                  ) : (
-                    <button
-                      className="button button--primary"
-                      disabled={!selectedLaunchProfile || isLaunchingSession || launchBlockedByMissingRoot}
-                      type="button"
-                      onClick={() => void (async () => {
-                        setTerminalPromptDraft({
-                          label: 'Workspace guide',
-                          prompt: agentStartupPrompt,
-                        })
-                        const snapshot = await launchSession({ startupPrompt: agentStartupPrompt })
-
-                        if (!snapshot || !agentStartupPrompt) {
-                          return
-                        }
-                        setAgentPromptMessage('Workspace guide launched with the fresh terminal.')
-                      })()}
-                    >
-                      {isLaunchingSession
-                        ? 'Launching...'
-                        : launchBlockedByMissingRoot
-                          ? 'Rebind root to launch'
-                          : 'Launch terminal'}
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {isProjectEditorOpen ? (
-                <form className="stack-form project-editor-card" onSubmit={submitProjectUpdate}>
-                  <div className="stack-form__header">
-                    <h3>{selectedProject.rootAvailable ? 'Edit selected project' : 'Rebind project root'}</h3>
-                    <p>Rename it or rebind the registered root if the folder moved or was renamed.</p>
-                  </div>
-
-                  {!selectedProject.rootAvailable ? (
-                    <p className="form-error">
-                      The current registered root is missing. Pick the new folder and save to repair
-                      launch.
-                    </p>
-                  ) : null}
-
-                  {isLiveSessionVisible && sessionSnapshot?.isRunning ? (
-                    <p className="stack-form__note">
-                      Changes affect the next launch. The current live terminal stays attached to
-                      the root it started with.
-                    </p>
-                  ) : null}
-
-                  <div className="field-grid">
-                    <label className="field">
-                      <span>Name</span>
-                      <input
-                        value={editProjectName}
-                        onChange={(event) => setEditProjectName(event.target.value)}
-                        placeholder="Emery"
-                      />
-                    </label>
-
-                    <label className="field">
-                      <span>Root folder</span>
-                      <div className="input-row">
-                        <input
-                          value={editProjectRootPath}
-                          onChange={(event) => setEditProjectRootPath(event.target.value)}
-                          placeholder="E:\\Projects\\Emery"
-                        />
-                        <button
-                          className="button button--secondary"
-                          type="button"
-                          onClick={() =>
-                            browseForProjectFolder(
-                              setEditProjectRootPath,
-                              setProjectUpdateError,
-                            )
-                          }
-                        >
-                          Browse
-                        </button>
-                      </div>
-                    </label>
-                  </div>
-
-                  {projectUpdateError ? <p className="form-error">{projectUpdateError}</p> : null}
-
-                  <div className="action-row">
-                    <button
-                      className="button button--primary"
-                      disabled={isUpdatingProject}
-                      type="submit"
-                    >
-                      {isUpdatingProject
-                        ? 'Saving...'
-                        : selectedProject.rootAvailable
-                          ? 'Save changes'
-                          : 'Rebind project'}
-                    </button>
-                    <button
-                      className="button button--secondary"
-                      type="button"
-                      onClick={() => setIsProjectEditorOpen(false)}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </form>
-              ) : null}
-
-              {sessionError ? <p className="form-error">{sessionError}</p> : null}
-              {launchBlockedByMissingRoot ? (
-                <p className="form-error">
-                  This project&apos;s registered root folder no longer exists. Rebind it with the
-                  project editor before launching a new session.
-                </p>
-              ) : null}
-
-              <nav className="workspace-tabs workspace-tabs--main">
-                <button
-                  className={`workspace-tab ${activeView === 'terminal' ? 'workspace-tab--active' : ''}`}
-                  type="button"
-                  onClick={() => setActiveView('terminal')}
-                >
-                  <span>Terminal</span>
-                </button>
-                <button
-                  className={`workspace-tab ${activeView === 'workItems' ? 'workspace-tab--active' : ''}`}
-                  type="button"
-                  onClick={() => setActiveView('workItems')}
-                >
-                  <span>Work items</span>
-                  <span className="workspace-tab__count">{workItems.length}</span>
-                </button>
-                <button
-                  className={`workspace-tab ${activeView === 'documents' ? 'workspace-tab--active' : ''}`}
-                  type="button"
-                  onClick={() => setActiveView('documents')}
-                >
-                  <span>Documents</span>
-                  <span className="workspace-tab__count">{documents.length}</span>
-                </button>
-                <button
-                  className={`workspace-tab ${activeView === 'profiles' ? 'workspace-tab--active' : ''}`}
-                  type="button"
-                  onClick={() => setActiveView('profiles')}
-                >
-                  <span>Profiles</span>
-                  <span className="workspace-tab__count">{launchProfiles.length}</span>
-                </button>
-              </nav>
-
-              {activeView === 'terminal' ? (
-                <>
-                  <article className="summary-card bridge-card">
-                    <div className="bridge-card__header">
-                      <div>
-                        <p className="summary-card__label">Agent workflow</p>
-                        <strong>
-                          {terminalPromptDraft?.label ?? 'MCP and startup prompt inside the session'}
-                        </strong>
-                        <p>
-                          {terminalPromptDraft
-                            ? 'The current prompt is focused on the selected work item. You can resend it if Claude needs a nudge.'
-                            : 'Keep the guide hidden until you need to prime Claude with the attached Project Commander MCP tools.'}
-                        </p>
-                      </div>
-                      <div className="guide-card__actions">
-                        <span className={`status-badge ${bridgeReady ? 'status-badge--ready' : 'status-badge--stopped'}`}>
-                          {bridgeReady ? 'ready in terminal' : 'available after launch'}
-                        </span>
-                        <button
-                          className="button button--secondary button--compact"
-                          type="button"
-                          onClick={() => setIsAgentGuideOpen((current) => !current)}
-                        >
-                          {isAgentGuideOpen ? 'Hide guide' : 'Show guide'}
-                        </button>
-                      </div>
-                    </div>
-                    <div className="action-row">
-                      <button className="button button--secondary" type="button" onClick={copyAgentStartupPrompt}>
-                        {terminalPromptDraft ? 'Copy focus prompt' : 'Copy prompt'}
-                      </button>
-                      <button
-                        className="button button--secondary"
-                        disabled={!sessionSnapshot?.output}
-                        type="button"
-                        onClick={copyTerminalOutput}
-                      >
-                        Copy terminal output
-                      </button>
-                      <button
-                        className="button button--primary"
-                        disabled={!bridgeReady}
-                        type="button"
-                        onClick={sendAgentStartupPrompt}
-                      >
-                        {terminalPromptDraft ? 'Send focus prompt' : 'Send to terminal'}
-                      </button>
-                      {terminalPromptDraft ? (
-                        <button
-                          className="button button--secondary"
-                          type="button"
-                          onClick={() => setTerminalPromptDraft(null)}
-                        >
-                          Use startup guide
-                        </button>
-                      ) : null}
-                    </div>
-                    {agentPromptMessage ? <p className="stack-form__note">{agentPromptMessage}</p> : null}
-                    {isAgentGuideOpen ? (
-                      <>
-                        <textarea
-                          className="bridge-card__prompt"
-                          readOnly
-                          rows={10}
-                          value={currentTerminalPrompt}
-                        />
-                        <div className="bridge-card__commands">
-                          {PROJECT_COMMANDER_TOOLS.map((toolName) => (
-                            <code key={toolName}>{toolName}</code>
-                          ))}
-                        </div>
-                        <p className="stack-form__note">
-                          `project-commander-cli` still exists as a fallback inside launched sessions, but
-                          Project Commander MCP tools are now the preferred path.
-                        </p>
-                      </>
-                    ) : null}
-                  </article>
-
-                  {isLiveSessionVisible ? (
-                    <Suspense fallback={<div className="terminal-loading">Preparing terminal...</div>}>
-                      <LiveTerminal snapshot={sessionSnapshot} onSessionExit={handleSessionExit} />
-                    </Suspense>
-                  ) : (
-                    <div className="launch-state launch-state--minimal">
-                      <div className="launch-state__copy">
-                        <p className="summary-card__label">
-                          {selectedProject.rootAvailable ? 'Ready to launch' : 'Root needs rebind'}
-                        </p>
-                        <h3>{selectedProject.name}</h3>
-                        <p>
-                          {selectedProject.rootAvailable
-                            ? `Start Claude Code in ${selectedProject.rootPath} using the selected launch profile.`
-                            : 'The registered root path no longer exists. Update it before launching another session.'}
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : null}
-
-              {activeView !== 'terminal' ? (
-                <section className="details-dock">
-
-                {activeView === 'profiles' ? (
-                  <section className="profiles-panel">
-                    <div className="section-toolbar">
-                      <div>
-                        <p className="panel__eyebrow">Launch profiles</p>
-                        <h2>Account model</h2>
-                        <p className="section-subtitle">
-                          Pick one profile to launch with. Only open the form when you need a new one.
-                        </p>
-                      </div>
-                      <div className="section-toolbar__actions">
-                        <span className="panel__count">{launchProfiles.length}</span>
-                        <button
-                          className="button button--secondary button--compact"
-                          type="button"
-                          onClick={() => setIsProfileFormOpen((current) => !current)}
-                        >
-                          {isProfileFormOpen ? 'Hide form' : 'Add profile'}
-                        </button>
-                      </div>
-                    </div>
-
-                    {isProfileFormOpen ? (
-                      <form className="stack-form" onSubmit={submitLaunchProfile}>
-                        <div className="stack-form__header">
-                          <h3>Add launch profile</h3>
-                          <p>
-                            For MVP, a profile is the account selector: command, raw args, and optional env vars.
-                          </p>
-                        </div>
-
-                        <label className="field">
-                          <span>Label</span>
-                          <input
-                            value={profileLabel}
-                            onChange={(event) => setProfileLabel(event.target.value)}
-                            placeholder="Claude Code / Work"
-                          />
-                        </label>
-
-                        <label className="field">
-                          <span>Executable</span>
-                          <input
-                            value={profileExecutable}
-                            onChange={(event) => setProfileExecutable(event.target.value)}
-                            placeholder="claude"
-                          />
-                        </label>
-
-                        <label className="field">
-                          <span>Args</span>
-                          <input
-                            value={profileArgs}
-                            onChange={(event) => setProfileArgs(event.target.value)}
-                            placeholder="--dangerously-skip-permissions"
-                          />
-                        </label>
-
-                        <label className="field">
-                          <span>Environment JSON</span>
-                          <textarea
-                            rows={5}
-                            value={profileEnvJson}
-                            onChange={(event) => setProfileEnvJson(event.target.value)}
-                            placeholder='{"ANTHROPIC_API_KEY":"..."}'
-                          />
-                        </label>
-
-                        {profileError ? <p className="form-error">{profileError}</p> : null}
-
-                        <div className="action-row">
-                          <button className="button button--primary" disabled={isCreatingProfile} type="submit">
-                            {isCreatingProfile ? 'Saving...' : 'Create profile'}
-                          </button>
-                          <button
-                            className="button button--secondary"
-                            type="button"
-                            onClick={() => setIsProfileFormOpen(false)}
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </form>
-                    ) : null}
-
-                    <div className="profile-grid">
-                      {launchProfiles.length === 0 ? (
-                        <div className="empty-state">Create a launch profile before starting a session.</div>
-                      ) : (
-                        launchProfiles.map((profile) => (
-                          <button
-                            key={profile.id}
-                            className={`profile-card ${
-                              profile.id === selectedLaunchProfile?.id ? 'profile-card--active' : ''
-                            }`}
-                            type="button"
-                            onClick={() => setSelectedLaunchProfileId(profile.id)}
-                          >
-                            <div className="profile-card__head">
-                              <strong>{profile.label}</strong>
-                              <span className="pill">{profile.provider}</span>
-                            </div>
-                            <code>{profile.executable}</code>
-                            <code>{profile.args || '(no args)'}</code>
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  </section>
-                ) : null}
-
-                {activeView === 'workItems' ? (
-                  <WorkItemsPanel
-                    error={workItemError}
-                    isLoading={isLoadingWorkItems}
-                    onCreate={createWorkItem}
-                    onDelete={deleteWorkItem}
-                    onStartInTerminal={startWorkItemInTerminal}
-                    onUpdate={updateWorkItem}
-                    project={selectedProject}
-                    startingWorkItemId={startingWorkItemId}
-                    workItems={workItems}
-                  />
-                ) : null}
-
-                {activeView === 'documents' ? (
-                  <DocumentsPanel
-                    documents={documents}
-                    error={documentError}
-                    isLoading={isLoadingDocuments}
-                    onCreate={createDocument}
-                    onDelete={deleteDocument}
-                    onUpdate={updateDocument}
-                    project={selectedProject}
-                    workItems={workItems}
-                  />
-                ) : null}
-                </section>
-              ) : null}
-            </div>
-          ) : (
-            <div className="empty-state empty-state--large">
-              Pick a project from the sidebar or create one to begin launching sessions.
-            </div>
-          )}
-        </section>
-
-      </section>
-    </main>
+    <WorkspaceShell
+      state={{
+        runtimeStatus,
+        runtimeMessage,
+        storageInfo,
+        projects,
+        selectedProject,
+        selectedProjectId,
+        selectedLaunchProfile,
+        selectedLaunchProfileId,
+        sessionSnapshot,
+        sessionError,
+        workItems,
+        workItemError,
+        documents,
+        documentError,
+        agentPromptMessage,
+        currentTerminalPrompt,
+        currentTerminalPromptLabel,
+        hasFocusedPrompt: Boolean(terminalPromptDraft),
+        bridgeReady,
+        openWorkItemCount,
+        blockedWorkItemCount,
+        recentDocuments,
+        liveSessions,
+        hasSelectedProjectLiveSession,
+        launchBlockedByMissingRoot,
+        selectedProjectLaunchLabel,
+        projectName,
+        projectRootPath,
+        projectError,
+        isProjectCreateOpen,
+        editProjectName,
+        editProjectRootPath,
+        projectUpdateError,
+        isProjectEditorOpen,
+        profileLabel,
+        profileExecutable,
+        profileArgs,
+        profileEnvJson,
+        profileError,
+        isProfileFormOpen,
+        isDocumentsManagerOpen,
+        isAgentGuideOpen,
+        activeView,
+        isProjectRailCollapsed,
+        isSessionRailCollapsed,
+        isCreatingProject,
+        isUpdatingProject,
+        isCreatingProfile,
+        isLaunchingSession,
+        isStoppingSession,
+        isLoadingWorkItems,
+        isLoadingDocuments,
+        startingWorkItemId,
+        launchProfiles,
+        projectCommanderTools: PROJECT_COMMANDER_TOOLS,
+      }}
+      actions={{
+        setProjectError,
+        setProjectUpdateError,
+        setSelectedLaunchProfileId,
+        setProjectName,
+        setProjectRootPath,
+        setIsProjectCreateOpen,
+        setEditProjectName,
+        setEditProjectRootPath,
+        setIsProjectEditorOpen,
+        setProfileLabel,
+        setProfileExecutable,
+        setProfileArgs,
+        setProfileEnvJson,
+        setIsProfileFormOpen,
+        setIsDocumentsManagerOpen,
+        setIsAgentGuideOpen,
+        setActiveView,
+        setIsProjectRailCollapsed,
+        setIsSessionRailCollapsed,
+        setTerminalPromptDraft,
+        selectProject,
+        browseForProjectFolder,
+        submitProject,
+        submitProjectUpdate,
+        submitLaunchProfile,
+        launchWorkspaceGuide,
+        stopSession,
+        copyAgentStartupPrompt,
+        sendAgentStartupPrompt,
+        copyTerminalOutput,
+        handleSessionExit,
+        createWorkItem,
+        updateWorkItem,
+        deleteWorkItem,
+        startWorkItemInTerminal,
+        createDocument,
+        updateDocument,
+        deleteDocument,
+      }}
+    />
   )
 }
 
