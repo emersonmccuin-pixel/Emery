@@ -53,7 +53,7 @@ the Tauri/React app.
 - background jobs
 - durable event history
 - orchestration policy
-- worktree lifecycle later
+- worktree lifecycle
 - indexing, summaries, and semantic jobs later
 
 ### UI owns
@@ -81,14 +81,18 @@ The current app already has the right architectural direction:
 - local supervisor process
 - supervisor-owned session runtime
 - supervisor-routed MCP attachment for Claude Code
-- work items and documents in the shared DB
+- supervisor-routed work-item and document CRUD
+- durable session records and append-only session events
+- supervisor-owned worktree creation and worktree-backed sessions
 
-The main architectural gap is that durable project data is still split:
+The main architectural gaps are now narrower:
 
-- session runtime goes through the supervisor
-- some CRUD still talks directly to the DB from Tauri
+- project and launch-profile management still partly live on the Tauri side
+- supervisor integration tests are still thin
+- at least one frontend/runtime sync issue remains around newly created worktrees appearing in the runtime rail
 
-That split is acceptable during transition, but it should not remain long term.
+The direction is still correct, but the remaining split authority and missing
+test coverage should be resolved before major expansion.
 
 ## Target Runtime Shape
 
@@ -153,7 +157,7 @@ The domain should eventually include these layers:
 - launch profile
 - project settings
 - repository roots
-- worktree registry later
+- worktree registry
 
 ### Knowledge layer
 
@@ -389,12 +393,13 @@ The eventual coordination stack should look like this:
 
 ## Hardening Required Before Major Expansion
 
-Before adding dashboards, agent pods, worktrees, or workflow automation, the
-following must be hardened.
+Before adding dashboards, agent pods, richer workflow automation, or agent
+coordination layers, the following must be hardened.
 
 ### 1. Single writer
 
-Move work item and document CRUD fully behind the supervisor.
+Move the remaining project, launch-profile, and settings authority behind the
+supervisor.
 
 Reason:
 
@@ -405,7 +410,7 @@ Reason:
 
 ### 2. Session records
 
-Add durable session records owned by the supervisor.
+Keep durable session records owned by the supervisor and extend them as needed.
 
 Need:
 
@@ -419,7 +424,7 @@ Need:
 
 ### 3. Event log
 
-Add a supervisor-owned append-only event log.
+Keep the supervisor-owned append-only event log and extend its coverage.
 
 Examples:
 
@@ -437,7 +442,7 @@ Define what happens when:
 - frontend crashes
 - supervisor restarts
 - provider process exits
-- worktree disappears later
+- worktree disappears
 - project root moves
 
 ### 5. Locking and claims
@@ -457,6 +462,7 @@ Need real tests around:
 - session launch
 - MCP attachment
 - CRUD through supervisor
+- worktree creation and worktree-backed launch
 - frontend reconnect
 - packaged app runtime
 
@@ -470,9 +476,9 @@ Otherwise the UI will hard-code assumptions that later have to be ripped out.
 
 Recommended next sequence:
 
-1. Move work item and document CRUD behind supervisor APIs.
-2. Add session records and session event log.
-3. Add supervisor integration tests for launch and MCP flows.
+1. Fix the runtime-rail worktree refresh bug.
+2. Add supervisor integration tests for launch, MCP, worktree, stop, and reconnect flows.
+3. Move remaining project/profile/settings authority behind supervisor APIs.
 4. Define planning entities and workflow schema in a second design doc.
 5. Only then build planning and workflow UI.
 

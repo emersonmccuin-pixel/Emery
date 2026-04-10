@@ -52,24 +52,27 @@ If you store work items, documents, and session summaries there, both
 `npm run tauri:dev` and the packaged `project-commander.exe` will use the same
 data.
 
-## Current Slice
+## Current Baseline
 
-The current MVP slice includes:
+The current working baseline includes:
 
-- a shared SQLite database owned by the app
-- a dedicated local supervisor process that owns live session runtime
+- a shared SQLite database under the shared Tauri app-data root
+- a dedicated local supervisor process that owns live runtime behavior
 - registered projects with root folders
 - project edit/rebind flow when a registered root moves or is renamed
 - Claude Code launch profiles stored in the DB
 - a PTY-backed terminal slice driven through the supervisor for project-rooted Claude sessions
-- a selectable launch-profile workflow that acts as the MVP account model
+- a supervisor-attached Project Commander MCP server for launched Claude Code sessions
+- the companion CLI bridge as a fallback when MCP is unavailable
 - project-scoped work-item CRUD for bugs, tasks, features, and notes routed through the supervisor
 - project-scoped documents with optional work-item links routed through the supervisor
 - durable session records owned by the supervisor
 - an append-only supervisor event log for session lifecycle plus work-item/document mutations
-- a supervisor-attached Project Commander MCP server for launched Claude Code sessions
-- the companion CLI bridge as a fallback for sessions where MCP tools are unavailable
-- a guided startup prompt in the app that can be copied or sent directly into the live Claude session
+- worktree records and supervisor-owned git worktree creation/reuse per work item
+- a terminal-first three-panel UI shell with:
+  - projects on the left
+  - tabbed center pane for `Terminal`, `Project Overview`, and `Work Items`
+  - runtime rail on the right for live sessions and worktree sessions
 
 ## Agent Bridge
 
@@ -126,6 +129,9 @@ Work-item and document CRUD invoked from the UI now also go through the
 supervisor, so session runtime, agent tools, and desktop edits share the same
 authority boundary.
 
+Worktree creation and worktree-backed session launch now also go through the
+supervisor.
+
 ## Project Roots
 
 Launches are blocked when a registered project root no longer exists.
@@ -139,13 +145,33 @@ Use the selected-project edit form to rebind the project to its new folder. Laun
 - `scripts/`: local helper scripts for development and release workflows
 - `Project Files/Docs/`: design notes and architecture docs
 - `docs/ui/frontend-overhaul-brief.md`: constrained redesign brief for a frontend-only UI overhaul
+- `docs/status/current-state.md`: current implementation checkpoint, gaps, and next steps
+
+## Known Gaps
+
+These are the main known issues or intentionally deferred areas at this
+checkpoint:
+
+- newly created worktrees do not always appear in the right runtime rail until the frontend is refreshed
+- supervisor integration tests are still thin; most validation so far has been manual drive-through testing
+- project and launch-profile management still need to be moved behind the supervisor for full single-writer discipline
+- planning entities for quarter, sprint, week, and day are not implemented yet
+- workflow templates and workflow runs are not implemented yet
+- agent claims, locking, and agent-to-agent coordination are not implemented yet
+- worktree cleanup, merge/rebase flows, and richer worktree lifecycle operations are not implemented yet
+- session summaries, semantic search, graph relations, and knowledge indexing are intentionally out of the current MVP baseline
 
 ## Next Step
 
-Run a live end-to-end validation: launch Claude from the app, confirm the
-supervisor-attached Project Commander MCP tools appear in the session, and
-verify Claude can read and update work items through those tools.
+The next hardening and product work should happen in this order:
+
+1. Fix the remaining worktree-runtime-rail refresh bug.
+2. Add supervisor integration tests for launch, MCP attach, worktree flows, stop, and reopen/reattach.
+3. Move remaining project/profile/settings authority behind the supervisor.
+4. Define the planning and workflow data model before building planning dashboards.
+5. Add worktree lifecycle cleanup and richer worktree session controls.
 
 Architecture checkpoint:
 
 - `docs/architecture/supervisor-planning-architecture.md`
+- `docs/status/current-state.md`
