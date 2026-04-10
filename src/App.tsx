@@ -64,6 +64,26 @@ function sortDocuments(documents: DocumentRecord[]) {
   return [...documents].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
 }
 
+function sortWorktrees(records: WorktreeRecord[]) {
+  return [...records].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+}
+
+function mergeWorktrees(persisted: WorktreeRecord[], staged: WorktreeRecord[]) {
+  const merged = new Map<number, WorktreeRecord>()
+
+  for (const worktree of persisted) {
+    merged.set(worktree.id, worktree)
+  }
+
+  for (const worktree of staged) {
+    if (!merged.has(worktree.id)) {
+      merged.set(worktree.id, worktree)
+    }
+  }
+
+  return sortWorktrees([...merged.values()])
+}
+
 function buildAgentStartupPrompt(
   project: ProjectRecord | null,
   workItems: WorkItemRecord[],
@@ -176,6 +196,7 @@ function App() {
   const [documents, setDocuments] = useState<DocumentRecord[]>([])
   const [documentError, setDocumentError] = useState<string | null>(null)
   const [worktrees, setWorktrees] = useState<WorktreeRecord[]>([])
+  const [stagedWorktrees, setStagedWorktrees] = useState<WorktreeRecord[]>([])
   const [agentPromptMessage, setAgentPromptMessage] = useState<string | null>(null)
   const [terminalPromptDraft, setTerminalPromptDraft] = useState<TerminalPromptDraft | null>(null)
   const [projectName, setProjectName] = useState('')
@@ -251,8 +272,9 @@ function App() {
 
   const selectedProject =
     projects.find((project) => project.id === selectedProjectId) ?? projects[0] ?? null
+  const visibleWorktrees = mergeWorktrees(worktrees, stagedWorktrees)
   const selectedWorktree =
-    worktrees.find((worktree) => worktree.id === selectedTerminalWorktreeId) ?? null
+    visibleWorktrees.find((worktree) => worktree.id === selectedTerminalWorktreeId) ?? null
   const selectedLaunchProfile =
     launchProfiles.find((profile) => profile.id === selectedLaunchProfileId) ??
     launchProfiles[0] ??
@@ -312,11 +334,23 @@ function App() {
   useEffect(() => {
     if (
       selectedTerminalWorktreeId !== null &&
-      !worktrees.some((worktree) => worktree.id === selectedTerminalWorktreeId)
+      !visibleWorktrees.some((worktree) => worktree.id === selectedTerminalWorktreeId)
     ) {
       setSelectedTerminalWorktreeId(null)
     }
-  }, [selectedTerminalWorktreeId, worktrees])
+  }, [selectedTerminalWorktreeId, visibleWorktrees])
+
+  useEffect(() => {
+    if (stagedWorktrees.length === 0 || worktrees.length === 0) {
+      return
+    }
+
+    setStagedWorktrees((current) =>
+      current.filter(
+        (stagedWorktree) => !worktrees.some((worktree) => worktree.id === stagedWorktree.id),
+      ),
+    )
+  }, [stagedWorktrees.length, worktrees])
 
   const fetchSessionSnapshot = useCallback(
     async (projectId: number, worktreeId: number | null = null) => {
@@ -360,7 +394,7 @@ function App() {
         return items
       }
 
-      setWorktrees(items)
+      setWorktrees(sortWorktrees(items))
       return items
     } catch (error) {
       if (requestId === worktreeRequestIdRef.current) {
@@ -1215,7 +1249,11 @@ function App() {
       flushSync(() => {
         setWorktrees((current) => {
           const next = current.filter((existing) => existing.id !== worktree.id)
-          return [worktree, ...next]
+          return sortWorktrees([worktree, ...next])
+        })
+        setStagedWorktrees((current) => {
+          const next = current.filter((existing) => existing.id !== worktree.id)
+          return sortWorktrees([worktree, ...next])
         })
         setSelectedTerminalWorktreeId(worktree.id)
       })
@@ -1293,7 +1331,7 @@ function App() {
           .map((snapshot) => ({ project: selectedProject, snapshot }))
       : []
 
-  const worktreeSessions = worktrees.map((worktree) => ({
+  const worktreeSessions = visibleWorktrees.map((worktree) => ({
     worktree,
     snapshot:
       liveSessionSnapshots.find((snapshot) => snapshot.worktreeId === worktree.id) ?? null,
@@ -1342,7 +1380,7 @@ function App() {
         launchBlockedByMissingRoot,
         selectedProjectLaunchLabel,
         selectedTerminalLaunchLabel,
-        worktrees,
+        worktrees: visibleWorktrees,
         projectName,
         projectRootPath,
         projectError,
