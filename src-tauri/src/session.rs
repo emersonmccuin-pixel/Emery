@@ -8,10 +8,10 @@ use crate::session_host::{now_timestamp_string, resolve_helper_binary_path};
 use crate::supervisor_api::{
     CreateProjectDocumentInput, CreateProjectWorkItemInput, ListProjectDocumentsInput,
     ListProjectSessionEventsInput, ListProjectSessionsInput, ListProjectWorkItemsInput,
-    ProjectDocumentTarget, ProjectWorkItemTarget, UpdateProjectDocumentInput,
-    UpdateProjectWorkItemInput,
+    ListProjectWorktreesInput, ProjectDocumentTarget, ProjectWorkItemTarget,
+    UpdateProjectDocumentInput, UpdateProjectWorkItemInput, EnsureProjectWorktreeInput,
 };
-use crate::db::{DocumentRecord, SessionEventRecord, SessionRecord, WorkItemRecord};
+use crate::db::{DocumentRecord, SessionEventRecord, SessionRecord, WorkItemRecord, WorktreeRecord};
 use reqwest::blocking::Client;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -46,7 +46,7 @@ pub struct SupervisorClient {
 struct SupervisorClientInner {
     storage: StorageInfo,
     runtime_file: PathBuf,
-    pollers: Mutex<HashMap<i64, PollerHandle>>,
+    pollers: Mutex<HashMap<String, PollerHandle>>,
 }
 
 struct PollerHandle {
@@ -78,10 +78,10 @@ impl SupervisorClient {
 
     pub fn snapshot(
         &self,
-        project_id: i64,
+        target: ProjectSessionTarget,
         app_handle: &AppHandle,
     ) -> Result<Option<SessionSnapshot>, String> {
-        let snapshot = self.request_json("session/snapshot", &ProjectSessionTarget { project_id })?;
+        let snapshot = self.request_json("session/snapshot", &target)?;
 
         if let Some(snapshot) = &snapshot {
             self.ensure_terminal_poller(snapshot, app_handle);
@@ -113,9 +113,27 @@ impl SupervisorClient {
     pub fn terminate(&self, project_id: i64) -> Result<(), String> {
         self.request_json::<_, serde_json::Value>(
             "session/terminate",
-            &ProjectSessionTarget { project_id },
+            &ProjectSessionTarget {
+                project_id,
+                worktree_id: None,
+            },
         )
         .map(|_| ())
+    }
+
+    pub fn terminate_target(&self, target: ProjectSessionTarget) -> Result<(), String> {
+        self.request_json::<_, serde_json::Value>("session/terminate", &target)
+            .map(|_| ())
+    }
+
+    pub fn list_live_sessions(&self, project_id: i64) -> Result<Vec<SessionSnapshot>, String> {
+        self.request_json(
+            "session/live-list",
+            &ProjectSessionTarget {
+                project_id,
+                worktree_id: None,
+            },
+        )
     }
 
     pub fn list_work_items(&self, project_id: i64) -> Result<Vec<WorkItemRecord>, String> {
@@ -182,6 +200,20 @@ impl SupervisorClient {
         .map(|_| ())
     }
 
+    pub fn list_worktrees(&self, project_id: i64) -> Result<Vec<WorktreeRecord>, String> {
+        self.request_json("worktree/list", &ListProjectWorktreesInput { project_id })
+    }
+
+    pub fn ensure_worktree(&self, project_id: i64, work_item_id: i64) -> Result<WorktreeRecord, String> {
+        self.request_json(
+            "worktree/ensure",
+            &EnsureProjectWorktreeInput {
+                project_id,
+                work_item_id,
+            },
+        )
+    }
+
     pub fn list_session_records(&self, project_id: i64) -> Result<Vec<SessionRecord>, String> {
         self.request_json("session/list", &ListProjectSessionsInput { project_id })
     }
@@ -210,7 +242,9 @@ impl SupervisorClient {
             Err(_) => return,
         };
 
-        if let Some(existing) = pollers.get(&snapshot.project_id) {
+        let poller_key = poller_key_for_snapshot(snapshot);
+
+        if let Some(existing) = pollers.get(&poller_key) {
             if existing.started_at == snapshot.started_at {
                 return;
             }
@@ -220,7 +254,7 @@ impl SupervisorClient {
 
         let stop = Arc::new(AtomicBool::new(false));
         pollers.insert(
-            snapshot.project_id,
+            poller_key,
             PollerHandle {
                 started_at: snapshot.started_at.clone(),
                 stop: Arc::clone(&stop),
@@ -244,6 +278,7 @@ impl SupervisorClient {
     ) {
         let mut previous_output = initial_snapshot.output.clone();
         let project_id = initial_snapshot.project_id;
+        let worktree_id = initial_snapshot.worktree_id;
         let started_at = initial_snapshot.started_at.clone();
 
         loop {
@@ -253,7 +288,10 @@ impl SupervisorClient {
 
             std::thread::sleep(SUPERVISOR_TERMINAL_POLL_INTERVAL);
 
-            let snapshot = match self.fetch_snapshot(project_id) {
+            let snapshot = match self.fetch_snapshot(ProjectSessionTarget {
+                project_id,
+                worktree_id,
+            }) {
                 Ok(Some(snapshot)) => snapshot,
                 Ok(None) => break,
                 Err(_) => continue,
@@ -273,6 +311,7 @@ impl SupervisorClient {
                         TERMINAL_OUTPUT_EVENT,
                         TerminalOutputEvent {
                             project_id,
+                            worktree_id,
                             data: chunk.to_string(),
                         },
                     );
@@ -286,6 +325,7 @@ impl SupervisorClient {
                     TERMINAL_EXIT_EVENT,
                     TerminalExitEvent {
                         project_id,
+                        worktree_id,
                         exit_code: snapshot.exit_code.unwrap_or(1),
                         success: snapshot.exit_success.unwrap_or(false),
                     },
@@ -294,24 +334,25 @@ impl SupervisorClient {
             }
         }
 
-        self.clear_poller(project_id, &started_at);
+        self.clear_poller(project_id, worktree_id, &started_at);
     }
 
-    fn clear_poller(&self, project_id: i64, started_at: &str) {
+    fn clear_poller(&self, project_id: i64, worktree_id: Option<i64>, started_at: &str) {
         if let Ok(mut pollers) = self.inner.pollers.lock() {
+            let poller_key = poller_key(project_id, worktree_id);
             let should_remove = pollers
-                .get(&project_id)
+                .get(&poller_key)
                 .map(|handle| handle.started_at == started_at)
                 .unwrap_or(false);
 
             if should_remove {
-                pollers.remove(&project_id);
+                pollers.remove(&poller_key);
             }
         }
     }
 
-    fn fetch_snapshot(&self, project_id: i64) -> Result<Option<SessionSnapshot>, String> {
-        self.request_json("session/snapshot", &ProjectSessionTarget { project_id })
+    fn fetch_snapshot(&self, target: ProjectSessionTarget) -> Result<Option<SessionSnapshot>, String> {
+        self.request_json("session/snapshot", &target)
     }
 
     fn request_json<TRequest, TResponse>(
@@ -492,6 +533,17 @@ impl SupervisorClient {
     fn invalidate_runtime(&self) {
         let _ = fs::remove_file(&self.inner.runtime_file);
     }
+}
+
+fn poller_key(project_id: i64, worktree_id: Option<i64>) -> String {
+    match worktree_id {
+        Some(worktree_id) => format!("{project_id}:worktree:{worktree_id}"),
+        None => format!("{project_id}:project"),
+    }
+}
+
+fn poller_key_for_snapshot(snapshot: &SessionSnapshot) -> String {
+    poller_key(snapshot.project_id, snapshot.worktree_id)
 }
 
 pub fn build_supervisor_runtime_info(port: u16) -> SupervisorRuntimeInfo {

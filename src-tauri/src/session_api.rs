@@ -6,9 +6,12 @@ pub const TERMINAL_EXIT_EVENT: &str = "terminal-exit";
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSnapshot {
+    pub session_id: i64,
     pub project_id: i64,
+    pub worktree_id: Option<i64>,
     pub launch_profile_id: i64,
     pub profile_label: String,
+    pub root_path: String,
     pub is_running: bool,
     pub started_at: String,
     pub output: String,
@@ -20,6 +23,7 @@ pub struct SessionSnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct TerminalOutputEvent {
     pub project_id: i64,
+    pub worktree_id: Option<i64>,
     pub data: String,
 }
 
@@ -27,6 +31,7 @@ pub struct TerminalOutputEvent {
 #[serde(rename_all = "camelCase")]
 pub struct TerminalExitEvent {
     pub project_id: i64,
+    pub worktree_id: Option<i64>,
     pub exit_code: u32,
     pub success: bool,
 }
@@ -35,6 +40,7 @@ pub struct TerminalExitEvent {
 #[serde(rename_all = "camelCase")]
 pub struct LaunchSessionInput {
     pub project_id: i64,
+    pub worktree_id: Option<i64>,
     pub launch_profile_id: i64,
     pub cols: u16,
     pub rows: u16,
@@ -45,6 +51,7 @@ pub struct LaunchSessionInput {
 #[serde(rename_all = "camelCase")]
 pub struct SessionInput {
     pub project_id: i64,
+    pub worktree_id: Option<i64>,
     pub data: String,
 }
 
@@ -52,6 +59,7 @@ pub struct SessionInput {
 #[serde(rename_all = "camelCase")]
 pub struct ResizeSessionInput {
     pub project_id: i64,
+    pub worktree_id: Option<i64>,
     pub cols: u16,
     pub rows: u16,
 }
@@ -60,6 +68,7 @@ pub struct ResizeSessionInput {
 #[serde(rename_all = "camelCase")]
 pub struct ProjectSessionTarget {
     pub project_id: i64,
+    pub worktree_id: Option<i64>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

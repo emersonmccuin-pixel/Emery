@@ -1,7 +1,8 @@
 use clap::{Args, Parser, Subcommand};
 use project_commander_lib::db::{
     AppState, AppendSessionEventInput, CreateDocumentInput, CreateWorkItemInput, DocumentRecord,
-    UpdateDocumentInput, UpdateWorkItemInput, WorkItemRecord,
+    UpdateDocumentInput, UpdateWorkItemInput, UpsertWorktreeRecordInput, WorkItemRecord,
+    WorktreeRecord,
 };
 use project_commander_lib::session::build_supervisor_runtime_info;
 use project_commander_lib::session_api::{
@@ -12,8 +13,9 @@ use project_commander_lib::session_host::SessionRegistry;
 use project_commander_lib::supervisor_api::{
     CreateProjectDocumentInput, CreateProjectWorkItemInput, ListProjectDocumentsInput,
     ListProjectSessionEventsInput, ListProjectSessionsInput, ListProjectWorkItemsInput,
-    ProjectDocumentTarget, ProjectWorkItemTarget, SessionBriefOutput, UpdateProjectDocumentInput,
-    UpdateProjectWorkItemInput, WorkItemDetailOutput,
+    ListProjectWorktreesInput, ProjectDocumentTarget, ProjectWorkItemTarget, SessionBriefOutput,
+    UpdateProjectDocumentInput, UpdateProjectWorkItemInput, WorkItemDetailOutput,
+    EnsureProjectWorktreeInput,
 };
 use project_commander_lib::supervisor_mcp::run_supervisor_mcp_stdio_with_session;
 use serde::Serialize;
@@ -21,6 +23,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 #[derive(Parser)]
@@ -46,6 +49,8 @@ struct McpStdioArgs {
     token: String,
     #[arg(long)]
     project_id: i64,
+    #[arg(long)]
+    worktree_id: Option<i64>,
     #[arg(long)]
     session_id: Option<i64>,
 }
@@ -100,6 +105,7 @@ fn run() -> Result<(), String> {
                 args.port,
                 args.token,
                 args.project_id,
+                args.worktree_id,
                 args.session_id,
             )
         }
@@ -177,8 +183,17 @@ fn route_request(
         .map_err(|error| RouteError::internal(format!("failed to encode health response: {error}"))),
         (&Method::Post, "/session/snapshot") => {
             let input = read_json::<ProjectSessionTarget>(request)?;
-            serde_json::to_value(sessions.snapshot(input.project_id).map_err(RouteError::internal)?)
+            serde_json::to_value(sessions.snapshot(input).map_err(RouteError::internal)?)
                 .map_err(|error| RouteError::internal(format!("failed to encode session snapshot: {error}")))
+        }
+        (&Method::Post, "/session/live-list") => {
+            let input = read_json::<ProjectSessionTarget>(request)?;
+            let snapshots = sessions
+                .list_running_snapshots(input.project_id)
+                .map_err(RouteError::internal)?;
+
+            serde_json::to_value(snapshots)
+                .map_err(|error| RouteError::internal(format!("failed to encode live sessions: {error}")))
         }
         (&Method::Post, "/session/list") => {
             let input = read_json::<ListProjectSessionsInput>(request)?;
@@ -211,7 +226,7 @@ fn route_request(
         (&Method::Post, "/session/terminate") => {
             let input = read_json::<ProjectSessionTarget>(request)?;
             sessions
-                .terminate(input.project_id, state, &context.source)
+                .terminate(input, state, &context.source)
                 .map_err(RouteError::internal)?;
             Ok(json!({ "ok": true }))
         }
@@ -232,6 +247,10 @@ fn route_request(
         (&Method::Post, "/project/session-brief") => {
             let input = read_json::<ProjectSessionTarget>(request)?;
             let project = state.get_project(input.project_id).map_err(RouteError::not_found)?;
+            let active_worktree = match input.worktree_id {
+                Some(worktree_id) => Some(require_worktree_for_project(state, input.project_id, worktree_id)?),
+                None => None,
+            };
             let work_items = state
                 .list_work_items(input.project_id)
                 .map_err(RouteError::internal)?;
@@ -241,6 +260,7 @@ fn route_request(
 
             serde_json::to_value(SessionBriefOutput {
                 project,
+                active_worktree,
                 work_items,
                 documents,
             })
@@ -465,6 +485,32 @@ fn route_request(
             );
             Ok(json!({ "ok": true }))
         }
+        (&Method::Post, "/worktree/list") => {
+            let input = read_json::<ListProjectWorktreesInput>(request)?;
+            state.get_project(input.project_id).map_err(RouteError::not_found)?;
+            let worktrees = state
+                .list_worktrees(input.project_id)
+                .map_err(RouteError::internal)?;
+
+            serde_json::to_value(worktrees)
+                .map_err(|error| RouteError::internal(format!("failed to encode worktrees: {error}")))
+        }
+        (&Method::Post, "/worktree/ensure") => {
+            let input = read_json::<EnsureProjectWorktreeInput>(request)?;
+            let worktree = ensure_project_worktree(state, input.project_id, input.work_item_id)?;
+            append_project_event(
+                state,
+                context,
+                input.project_id,
+                "worktree.ready",
+                "worktree",
+                worktree.id,
+                &worktree,
+            );
+
+            serde_json::to_value(worktree)
+                .map_err(|error| RouteError::internal(format!("failed to encode worktree: {error}")))
+        }
         _ => Err(RouteError::not_found("route not found")),
     }
 }
@@ -500,6 +546,222 @@ fn require_document_for_project(
                 "document #{document_id} is not part of project #{project_id}"
             ))
         })
+}
+
+fn require_worktree_for_project(
+    state: &AppState,
+    project_id: i64,
+    worktree_id: i64,
+) -> Result<WorktreeRecord, RouteError> {
+    let worktree = state.get_worktree(worktree_id).map_err(RouteError::not_found)?;
+
+    if worktree.project_id != project_id {
+        return Err(RouteError::not_found(format!(
+            "worktree #{worktree_id} is not part of project #{project_id}"
+        )));
+    }
+
+    Ok(worktree)
+}
+
+fn ensure_project_worktree(
+    state: &AppState,
+    project_id: i64,
+    work_item_id: i64,
+) -> Result<WorktreeRecord, RouteError> {
+    let project = state.get_project(project_id).map_err(RouteError::not_found)?;
+    let work_item = require_work_item_for_project(state, project_id, work_item_id)?;
+
+    let existing = state
+        .get_worktree_for_project_and_work_item(project_id, work_item_id)
+        .map_err(RouteError::internal)?;
+    let branch_name = existing
+        .as_ref()
+        .map(|record| record.branch_name.clone())
+        .unwrap_or_else(|| build_worktree_branch_name(&project.name, work_item.id, &work_item.title));
+    let worktree_path = existing
+        .as_ref()
+        .map(|record| PathBuf::from(&record.worktree_path))
+        .unwrap_or_else(|| build_worktree_path(state, &project.name, work_item.id, &work_item.title));
+
+    if worktree_path.exists() {
+        if !is_git_worktree_path(&worktree_path) {
+            return Err(RouteError::bad_request(format!(
+                "worktree path already exists but is not a valid git worktree: {}",
+                worktree_path.display()
+            )));
+        }
+    } else {
+        let project_git_root = resolve_git_root(&project.root_path)?;
+
+        if let Some(parent) = worktree_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| RouteError::internal(format!("failed to create worktree directory: {error}")))?;
+        }
+
+        let worktree_path_string = worktree_path.to_string_lossy().to_string();
+
+        if git_local_branch_exists(&project_git_root, &branch_name)? {
+            run_git_command(
+                &project_git_root,
+                &["worktree", "add", &worktree_path_string, &branch_name],
+            )?;
+        } else {
+            run_git_command(
+                &project_git_root,
+                &[
+                    "worktree",
+                    "add",
+                    "-b",
+                    &branch_name,
+                    &worktree_path_string,
+                    "HEAD",
+                ],
+            )?;
+        }
+    }
+
+    state
+        .upsert_worktree_record(UpsertWorktreeRecordInput {
+            project_id,
+            work_item_id,
+            branch_name,
+            worktree_path: worktree_path.display().to_string(),
+        })
+        .map_err(RouteError::internal)
+}
+
+fn build_worktree_branch_name(project_name: &str, work_item_id: i64, work_item_title: &str) -> String {
+    let project_slug = slugify_path_segment(project_name, 24);
+    let work_item_slug = slugify_path_segment(work_item_title, 40);
+    format!("pc/{project_slug}-{work_item_id}-{work_item_slug}")
+}
+
+fn build_worktree_path(
+    state: &AppState,
+    project_name: &str,
+    work_item_id: i64,
+    work_item_title: &str,
+) -> PathBuf {
+    let storage = state.storage();
+    let project_slug = slugify_path_segment(project_name, 32);
+    let work_item_slug = slugify_path_segment(work_item_title, 40);
+
+    PathBuf::from(storage.app_data_dir)
+        .join("worktrees")
+        .join(&project_slug)
+        .join(format!("{project_slug}-{work_item_id}-{work_item_slug}"))
+}
+
+fn slugify_path_segment(value: &str, max_len: usize) -> String {
+    let mut slug = String::new();
+    let mut last_was_dash = false;
+
+    for ch in value.chars() {
+        let normalized = if ch.is_ascii_alphanumeric() {
+            ch.to_ascii_lowercase()
+        } else {
+            '-'
+        };
+
+        if normalized == '-' {
+            if slug.is_empty() || last_was_dash {
+                continue;
+            }
+
+            slug.push('-');
+            last_was_dash = true;
+        } else {
+            slug.push(normalized);
+            last_was_dash = false;
+        }
+
+        if slug.len() >= max_len {
+            break;
+        }
+    }
+
+    let trimmed = slug.trim_matches('-');
+
+    if trimmed.is_empty() {
+        "work".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn resolve_git_root(project_root_path: &str) -> Result<PathBuf, RouteError> {
+    let output = ProcessCommand::new("git")
+        .args(["-C", project_root_path, "rev-parse", "--show-toplevel"])
+        .output()
+        .map_err(|error| RouteError::internal(format!("failed to run git: {error}")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(RouteError::bad_request(
+            if stderr.is_empty() {
+                "project root is not a git repository".to_string()
+            } else {
+                stderr
+            },
+        ));
+    }
+
+    let git_root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    if git_root.is_empty() {
+        return Err(RouteError::bad_request(
+            "project root did not resolve to a git repository".to_string(),
+        ));
+    }
+
+    Ok(PathBuf::from(git_root))
+}
+
+fn git_local_branch_exists(project_git_root: &Path, branch_name: &str) -> Result<bool, RouteError> {
+    let output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(project_git_root)
+        .args(["show-ref", "--verify", "--quiet", &format!("refs/heads/{branch_name}")])
+        .output()
+        .map_err(|error| RouteError::internal(format!("failed to inspect git branches: {error}")))?;
+
+    Ok(output.status.success())
+}
+
+fn is_git_worktree_path(worktree_path: &Path) -> bool {
+    ProcessCommand::new("git")
+        .arg("-C")
+        .arg(worktree_path)
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+fn run_git_command(project_git_root: &Path, args: &[&str]) -> Result<(), RouteError> {
+    let output = ProcessCommand::new("git")
+        .arg("-C")
+        .arg(project_git_root)
+        .args(args)
+        .output()
+        .map_err(|error| RouteError::internal(format!("failed to run git {:?}: {error}", args)))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let message = if !stderr.is_empty() {
+        stderr
+    } else if !stdout.is_empty() {
+        stdout
+    } else {
+        format!("git {:?} failed with status {}", args, output.status)
+    };
+
+    Err(RouteError::bad_request(message))
 }
 
 fn append_project_event<T>(

@@ -16,7 +16,7 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const onSessionExitRef = useRef(onSessionExit)
-  const sessionKey = `${snapshot.projectId}:${snapshot.startedAt}`
+  const sessionKey = `${snapshot.projectId}:${snapshot.worktreeId ?? 'project'}:${snapshot.startedAt}`
   const [selectionText, setSelectionText] = useState('')
   const [clipboardMessage, setClipboardMessage] = useState<string | null>(null)
 
@@ -98,6 +98,7 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
         void invoke('resize_session', {
           input: {
             projectId: snapshot.projectId,
+            worktreeId: snapshot.worktreeId,
             cols: terminal.cols,
             rows: terminal.rows,
           },
@@ -147,6 +148,7 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
         await invoke('write_session_input', {
           input: {
             projectId: snapshot.projectId,
+            worktreeId: snapshot.worktreeId,
             data: text,
           },
         })
@@ -165,6 +167,7 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
 
       const latestSnapshot = await invoke<SessionSnapshot | null>('get_session_snapshot', {
         projectId: snapshot.projectId,
+        worktreeId: snapshot.worktreeId,
       }).catch(() => snapshot)
 
       if (disposed) {
@@ -180,7 +183,10 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
       })
 
       outputUnlisten = await listen<TerminalOutputEvent>('terminal-output', (event) => {
-        if (event.payload.projectId !== snapshot.projectId) {
+        if (
+          event.payload.projectId !== snapshot.projectId ||
+          (event.payload.worktreeId ?? null) !== (snapshot.worktreeId ?? null)
+        ) {
           return
         }
 
@@ -188,7 +194,10 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
       })
 
       exitUnlisten = await listen<TerminalExitEvent>('terminal-exit', (event) => {
-        if (event.payload.projectId !== snapshot.projectId) {
+        if (
+          event.payload.projectId !== snapshot.projectId ||
+          (event.payload.worktreeId ?? null) !== (snapshot.worktreeId ?? null)
+        ) {
           return
         }
 
@@ -228,6 +237,7 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
       void invoke('write_session_input', {
         input: {
           projectId: snapshot.projectId,
+          worktreeId: snapshot.worktreeId,
           data,
         },
       }).catch(() => undefined)
@@ -236,7 +246,7 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
     return () => {
       dataDisposable.dispose()
     }
-  }, [sessionKey, snapshot.isRunning, snapshot.projectId])
+  }, [sessionKey, snapshot.isRunning, snapshot.projectId, snapshot.worktreeId])
 
   const copySelection = async () => {
     const terminal = terminalRef.current
@@ -287,6 +297,7 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
       await invoke('write_session_input', {
         input: {
           projectId: snapshot.projectId,
+          worktreeId: snapshot.worktreeId,
           data: text,
         },
       })

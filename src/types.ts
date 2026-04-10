@@ -36,9 +36,12 @@ export type BootstrapData = {
 }
 
 export type SessionSnapshot = {
+  sessionId: number
   projectId: number
+  worktreeId?: number | null
   launchProfileId: number
   profileLabel: string
+  rootPath: string
   isRunning: boolean
   startedAt: string
   output: string
@@ -48,11 +51,13 @@ export type SessionSnapshot = {
 
 export type TerminalOutputEvent = {
   projectId: number
+  worktreeId?: number | null
   data: string
 }
 
 export type TerminalExitEvent = {
   projectId: number
+  worktreeId?: number | null
   exitCode: number
   success: boolean
 }
@@ -78,6 +83,18 @@ export type DocumentRecord = {
   workItemId: number | null
   title: string
   body: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type WorktreeRecord = {
+  id: number
+  projectId: number
+  workItemId: number
+  workItemTitle: string
+  branchName: string
+  worktreePath: string
+  pathAvailable: boolean
   createdAt: string
   updatedAt: string
 }

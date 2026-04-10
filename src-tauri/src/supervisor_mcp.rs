@@ -16,8 +16,13 @@ const MCP_SERVER_NAME: &str = "project-commander";
 const MCP_SERVER_VERSION: &str = "0.1.0";
 const MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
-pub fn run_supervisor_mcp_stdio(port: u16, token: String, project_id: i64) -> Result<(), String> {
-    let client = SupervisorMcpClient::new(port, token, project_id, None)?;
+pub fn run_supervisor_mcp_stdio(
+    port: u16,
+    token: String,
+    project_id: i64,
+    worktree_id: Option<i64>,
+) -> Result<(), String> {
+    let client = SupervisorMcpClient::new(port, token, project_id, worktree_id, None)?;
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut reader = BufReader::new(stdin.lock());
@@ -40,9 +45,10 @@ pub fn run_supervisor_mcp_stdio_with_session(
     port: u16,
     token: String,
     project_id: i64,
+    worktree_id: Option<i64>,
     session_id: Option<i64>,
 ) -> Result<(), String> {
-    let client = SupervisorMcpClient::new(port, token, project_id, session_id)?;
+    let client = SupervisorMcpClient::new(port, token, project_id, worktree_id, session_id)?;
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut reader = BufReader::new(stdin.lock());
@@ -66,11 +72,18 @@ struct SupervisorMcpClient {
     base_url: String,
     token: String,
     project_id: i64,
+    worktree_id: Option<i64>,
     session_id: Option<i64>,
 }
 
 impl SupervisorMcpClient {
-    fn new(port: u16, token: String, project_id: i64, session_id: Option<i64>) -> Result<Self, String> {
+    fn new(
+        port: u16,
+        token: String,
+        project_id: i64,
+        worktree_id: Option<i64>,
+        session_id: Option<i64>,
+    ) -> Result<Self, String> {
         let client = Client::builder()
             .timeout(MCP_REQUEST_TIMEOUT)
             .build()
@@ -81,6 +94,7 @@ impl SupervisorMcpClient {
             base_url: format!("http://127.0.0.1:{port}"),
             token,
             project_id,
+            worktree_id,
             session_id,
         })
     }
@@ -88,6 +102,7 @@ impl SupervisorMcpClient {
     fn current_project(&self) -> Result<ProjectRecord, String> {
         self.post("project/current", &ProjectSessionTarget {
             project_id: self.project_id,
+            worktree_id: self.worktree_id,
         })
     }
 
@@ -96,6 +111,7 @@ impl SupervisorMcpClient {
             "project/session-brief",
             &ProjectSessionTarget {
                 project_id: self.project_id,
+                worktree_id: self.worktree_id,
             },
         )
     }

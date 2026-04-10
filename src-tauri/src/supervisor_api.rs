@@ -1,10 +1,14 @@
-use crate::db::{DocumentRecord, ProjectRecord, SessionEventRecord, SessionRecord, WorkItemRecord};
+use crate::db::{
+    DocumentRecord, ProjectRecord, SessionEventRecord, SessionRecord, WorkItemRecord,
+    WorktreeRecord,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionBriefOutput {
     pub project: ProjectRecord,
+    pub active_worktree: Option<WorktreeRecord>,
     pub work_items: Vec<WorkItemRecord>,
     pub documents: Vec<DocumentRecord>,
 }
@@ -103,4 +107,17 @@ pub struct UpdateProjectDocumentInput {
     pub body: Option<String>,
     pub work_item_id: Option<i64>,
     pub clear_work_item: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnsureProjectWorktreeInput {
+    pub project_id: i64,
+    pub work_item_id: i64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListProjectWorktreesInput {
+    pub project_id: i64,
 }

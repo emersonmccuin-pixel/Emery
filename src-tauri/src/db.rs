@@ -65,10 +65,25 @@ pub struct DocumentRecord {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct WorktreeRecord {
+    pub id: i64,
+    pub project_id: i64,
+    pub work_item_id: i64,
+    pub work_item_title: String,
+    pub branch_name: String,
+    pub worktree_path: String,
+    pub path_available: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionRecord {
     pub id: i64,
     pub project_id: i64,
     pub launch_profile_id: Option<i64>,
+    pub worktree_id: Option<i64>,
     pub provider: String,
     pub profile_label: String,
     pub root_path: String,
@@ -167,9 +182,18 @@ pub struct UpdateDocumentInput {
 }
 
 #[derive(Clone)]
+pub struct UpsertWorktreeRecordInput {
+    pub project_id: i64,
+    pub work_item_id: i64,
+    pub branch_name: String,
+    pub worktree_path: String,
+}
+
+#[derive(Clone)]
 pub struct CreateSessionRecordInput {
     pub project_id: i64,
     pub launch_profile_id: Option<i64>,
+    pub worktree_id: Option<i64>,
     pub provider: String,
     pub profile_label: String,
     pub root_path: String,
@@ -536,6 +560,96 @@ impl AppState {
         touch_project(&connection, existing.project_id)
     }
 
+    pub fn upsert_worktree_record(
+        &self,
+        input: UpsertWorktreeRecordInput,
+    ) -> Result<WorktreeRecord, String> {
+        let connection = self.connect()?;
+        self.get_project(input.project_id)?;
+        let work_item = load_work_item_by_id(&connection, input.work_item_id)?;
+
+        if work_item.project_id != input.project_id {
+            return Err("worktree work item must belong to the selected project".to_string());
+        }
+
+        let branch_name = input.branch_name.trim();
+        let worktree_path = input.worktree_path.trim();
+
+        if branch_name.is_empty() {
+            return Err("worktree branch name is required".to_string());
+        }
+
+        if worktree_path.is_empty() {
+            return Err("worktree path is required".to_string());
+        }
+
+        let existing = connection
+            .query_row(
+                "SELECT id FROM worktrees WHERE work_item_id = ?1",
+                [input.work_item_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()
+            .map_err(|error| format!("failed to inspect existing worktree: {error}"))?;
+
+        if let Some(id) = existing {
+            connection
+                .execute(
+                    "UPDATE worktrees
+                     SET branch_name = ?1,
+                         worktree_path = ?2,
+                         updated_at = CURRENT_TIMESTAMP
+                     WHERE id = ?3",
+                    params![branch_name, worktree_path, id],
+                )
+                .map_err(|error| format!("failed to update worktree record: {error}"))?;
+
+            touch_project(&connection, input.project_id)?;
+            return load_worktree_by_id(&connection, id);
+        }
+
+        connection
+            .execute(
+                "INSERT INTO worktrees (
+                    project_id,
+                    work_item_id,
+                    branch_name,
+                    worktree_path
+                 ) VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    input.project_id,
+                    input.work_item_id,
+                    branch_name,
+                    worktree_path,
+                ],
+            )
+            .map_err(|error| format!("failed to create worktree record: {error}"))?;
+
+        touch_project(&connection, input.project_id)?;
+        load_worktree_by_id(&connection, connection.last_insert_rowid())
+    }
+
+    pub fn list_worktrees(&self, project_id: i64) -> Result<Vec<WorktreeRecord>, String> {
+        let connection = self.connect()?;
+        self.get_project(project_id)?;
+        load_worktrees_by_project_id(&connection, project_id)
+    }
+
+    pub fn get_worktree(&self, id: i64) -> Result<WorktreeRecord, String> {
+        let connection = self.connect()?;
+        load_worktree_by_id(&connection, id)
+    }
+
+    pub fn get_worktree_for_project_and_work_item(
+        &self,
+        project_id: i64,
+        work_item_id: i64,
+    ) -> Result<Option<WorktreeRecord>, String> {
+        let connection = self.connect()?;
+        self.get_project(project_id)?;
+        load_worktree_by_project_and_work_item(&connection, project_id, work_item_id)
+    }
+
     pub fn create_session_record(
         &self,
         input: CreateSessionRecordInput,
@@ -543,21 +657,34 @@ impl AppState {
         let connection = self.connect()?;
         self.get_project(input.project_id)?;
 
+        if let Some(worktree_id) = input.worktree_id {
+            let worktree = load_worktree_by_id(&connection, worktree_id)?;
+
+            if worktree.project_id != input.project_id {
+                return Err(format!(
+                    "worktree #{worktree_id} does not belong to project #{}",
+                    input.project_id
+                ));
+            }
+        }
+
         connection
             .execute(
                 "INSERT INTO sessions (
                     project_id,
                     launch_profile_id,
+                    worktree_id,
                     provider,
                     profile_label,
                     root_path,
                     state,
                     startup_prompt,
                     started_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     input.project_id,
                     input.launch_profile_id,
+                    input.worktree_id,
                     input.provider,
                     input.profile_label,
                     input.root_path,
@@ -745,6 +872,16 @@ fn migrate(connection: &Connection) -> Result<(), String> {
               updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS worktrees (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              work_item_id INTEGER NOT NULL UNIQUE REFERENCES work_items(id) ON DELETE CASCADE,
+              branch_name TEXT NOT NULL,
+              worktree_path TEXT NOT NULL,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS session_summaries (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -789,6 +926,12 @@ fn migrate(connection: &Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS idx_documents_project_id
               ON documents(project_id);
 
+            CREATE INDEX IF NOT EXISTS idx_worktrees_project_id
+              ON worktrees(project_id);
+
+            CREATE INDEX IF NOT EXISTS idx_worktrees_work_item_id
+              ON worktrees(work_item_id);
+
             CREATE INDEX IF NOT EXISTS idx_session_summaries_project_id
               ON session_summaries(project_id);
 
@@ -802,7 +945,16 @@ fn migrate(connection: &Connection) -> Result<(), String> {
               ON session_events(session_id);
             ",
         )
-        .map_err(|error| format!("failed to run database migrations: {error}"))
+        .map_err(|error| format!("failed to run database migrations: {error}"))?;
+
+    ensure_column_exists(
+        connection,
+        "sessions",
+        "worktree_id",
+        "INTEGER REFERENCES worktrees(id) ON DELETE SET NULL",
+    )?;
+
+    Ok(())
 }
 
 fn seed_defaults(connection: &Connection) -> Result<(), String> {
@@ -1134,6 +1286,89 @@ fn load_document_by_id(connection: &Connection, id: i64) -> Result<DocumentRecor
         .map_err(|error| format!("failed to load document: {error}"))
 }
 
+fn load_worktrees_by_project_id(
+    connection: &Connection,
+    project_id: i64,
+) -> Result<Vec<WorktreeRecord>, String> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT
+              wt.id,
+              wt.project_id,
+              wt.work_item_id,
+              wi.title,
+              wt.branch_name,
+              wt.worktree_path,
+              wt.created_at,
+              wt.updated_at
+            FROM worktrees wt
+            INNER JOIN work_items wi ON wi.id = wt.work_item_id
+            WHERE wt.project_id = ?1
+            ORDER BY wt.updated_at DESC, wt.id DESC
+            ",
+        )
+        .map_err(|error| format!("failed to prepare worktree query: {error}"))?;
+
+    let rows = statement
+        .query_map([project_id], |row| map_worktree_record(row))
+        .map_err(|error| format!("failed to load worktrees: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to map worktrees: {error}"))
+}
+
+fn load_worktree_by_id(connection: &Connection, id: i64) -> Result<WorktreeRecord, String> {
+    connection
+        .query_row(
+            "
+            SELECT
+              wt.id,
+              wt.project_id,
+              wt.work_item_id,
+              wi.title,
+              wt.branch_name,
+              wt.worktree_path,
+              wt.created_at,
+              wt.updated_at
+            FROM worktrees wt
+            INNER JOIN work_items wi ON wi.id = wt.work_item_id
+            WHERE wt.id = ?1
+            ",
+            [id],
+            map_worktree_record,
+        )
+        .map_err(|error| format!("failed to load worktree: {error}"))
+}
+
+fn load_worktree_by_project_and_work_item(
+    connection: &Connection,
+    project_id: i64,
+    work_item_id: i64,
+) -> Result<Option<WorktreeRecord>, String> {
+    connection
+        .query_row(
+            "
+            SELECT
+              wt.id,
+              wt.project_id,
+              wt.work_item_id,
+              wi.title,
+              wt.branch_name,
+              wt.worktree_path,
+              wt.created_at,
+              wt.updated_at
+            FROM worktrees wt
+            INNER JOIN work_items wi ON wi.id = wt.work_item_id
+            WHERE wt.project_id = ?1 AND wt.work_item_id = ?2
+            ",
+            params![project_id, work_item_id],
+            map_worktree_record,
+        )
+        .optional()
+        .map_err(|error| format!("failed to load worktree for work item: {error}"))
+}
+
 fn load_session_records_by_project_id(
     connection: &Connection,
     project_id: i64,
@@ -1145,6 +1380,7 @@ fn load_session_records_by_project_id(
               id,
               project_id,
               launch_profile_id,
+              worktree_id,
               provider,
               profile_label,
               root_path,
@@ -1179,6 +1415,7 @@ fn load_session_record_by_id(connection: &Connection, id: i64) -> Result<Session
               id,
               project_id,
               launch_profile_id,
+              worktree_id,
               provider,
               profile_label,
               root_path,
@@ -1265,17 +1502,34 @@ fn map_session_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRecord
         id: row.get(0)?,
         project_id: row.get(1)?,
         launch_profile_id: row.get(2)?,
-        provider: row.get(3)?,
-        profile_label: row.get(4)?,
-        root_path: row.get(5)?,
-        state: row.get(6)?,
-        startup_prompt: row.get(7)?,
-        started_at: row.get(8)?,
-        ended_at: row.get(9)?,
-        exit_code: row.get(10)?,
-        exit_success: row.get(11)?,
-        created_at: row.get(12)?,
-        updated_at: row.get(13)?,
+        worktree_id: row.get(3)?,
+        provider: row.get(4)?,
+        profile_label: row.get(5)?,
+        root_path: row.get(6)?,
+        state: row.get(7)?,
+        startup_prompt: row.get(8)?,
+        started_at: row.get(9)?,
+        ended_at: row.get(10)?,
+        exit_code: row.get(11)?,
+        exit_success: row.get(12)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
+    })
+}
+
+fn map_worktree_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorktreeRecord> {
+    let worktree_path: String = row.get(5)?;
+
+    Ok(WorktreeRecord {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        work_item_id: row.get(2)?,
+        work_item_title: row.get(3)?,
+        branch_name: row.get(4)?,
+        worktree_path: worktree_path.clone(),
+        path_available: Path::new(&worktree_path).is_dir(),
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
     })
 }
 
@@ -1355,6 +1609,48 @@ fn validate_document_work_item_link(
     }
 
     Ok(Some(work_item_id))
+}
+
+fn ensure_column_exists(
+    connection: &Connection,
+    table_name: &str,
+    column_name: &str,
+    definition: &str,
+) -> Result<(), String> {
+    let pragma = format!("PRAGMA table_info({table_name})");
+    let mut statement = connection
+        .prepare(&pragma)
+        .map_err(|error| format!("failed to inspect table columns for {table_name}: {error}"))?;
+
+    let mut rows = statement
+        .query([])
+        .map_err(|error| format!("failed to query table columns for {table_name}: {error}"))?;
+
+    while let Some(row) = rows
+        .next()
+        .map_err(|error| format!("failed to iterate table columns for {table_name}: {error}"))?
+    {
+        let existing_name = row
+            .get::<_, String>(1)
+            .map_err(|error| format!("failed to decode table column name for {table_name}: {error}"))?;
+
+        if existing_name == column_name {
+            return Ok(());
+        }
+    }
+
+    connection
+        .execute(
+            &format!("ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}"),
+            [],
+        )
+        .map_err(|error| {
+            format!(
+                "failed to add {column_name} column to {table_name} during migration: {error}"
+            )
+        })?;
+
+    Ok(())
 }
 
 fn touch_project(connection: &Connection, project_id: i64) -> Result<(), String> {

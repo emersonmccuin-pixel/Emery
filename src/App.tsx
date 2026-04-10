@@ -15,6 +15,7 @@ import type {
   WorkItemRecord,
   WorkItemStatus,
   WorkItemType,
+  WorktreeRecord,
 } from './types'
 type WorkspaceView = 'terminal' | 'overview' | 'workItems'
 type TerminalPromptDraft = {
@@ -24,6 +25,7 @@ type TerminalPromptDraft = {
 
 type LaunchSessionOptions = {
   startupPrompt?: string
+  worktreeId?: number | null
 }
 
 const WORK_ITEM_STATUS_ORDER: Record<WorkItemStatus, number> = {
@@ -111,6 +113,7 @@ function buildFocusedWorkItemPrompt(
   project: ProjectRecord,
   workItem: WorkItemRecord,
   linkedDocuments: DocumentRecord[],
+  worktree?: WorktreeRecord | null,
 ) {
   const workItemBody = workItem.body.trim() || 'No extra body provided.'
   const documentLines =
@@ -125,6 +128,13 @@ function buildFocusedWorkItemPrompt(
     'You are starting a focused Project Commander session.',
     `Project: ${project.name}`,
     `Root path: ${project.rootPath}`,
+    ...(worktree
+      ? [
+          `Worktree ID: ${worktree.id}`,
+          `Worktree branch: ${worktree.branchName}`,
+          `Worktree path: ${worktree.worktreePath}`,
+        ]
+      : []),
     'Assigned work item:',
     `- ID: ${workItem.id}`,
     `- Type: ${workItem.itemType}`,
@@ -156,12 +166,15 @@ function App() {
   const [launchProfiles, setLaunchProfiles] = useState<LaunchProfileRecord[]>([])
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null)
   const [selectedLaunchProfileId, setSelectedLaunchProfileId] = useState<number | null>(null)
+  const [selectedTerminalWorktreeId, setSelectedTerminalWorktreeId] = useState<number | null>(null)
   const [sessionSnapshot, setSessionSnapshot] = useState<SessionSnapshot | null>(null)
+  const [liveSessionSnapshots, setLiveSessionSnapshots] = useState<SessionSnapshot[]>([])
   const [sessionError, setSessionError] = useState<string | null>(null)
   const [workItems, setWorkItems] = useState<WorkItemRecord[]>([])
   const [workItemError, setWorkItemError] = useState<string | null>(null)
   const [documents, setDocuments] = useState<DocumentRecord[]>([])
   const [documentError, setDocumentError] = useState<string | null>(null)
+  const [worktrees, setWorktrees] = useState<WorktreeRecord[]>([])
   const [agentPromptMessage, setAgentPromptMessage] = useState<string | null>(null)
   const [terminalPromptDraft, setTerminalPromptDraft] = useState<TerminalPromptDraft | null>(null)
   const [projectName, setProjectName] = useState('')
@@ -236,15 +249,30 @@ function App() {
 
   const selectedProject =
     projects.find((project) => project.id === selectedProjectId) ?? projects[0] ?? null
+  const selectedWorktree =
+    worktrees.find((worktree) => worktree.id === selectedTerminalWorktreeId) ?? null
   const selectedLaunchProfile =
     launchProfiles.find((profile) => profile.id === selectedLaunchProfileId) ??
     launchProfiles[0] ??
     null
   const selectProject = useCallback((projectId: number) => {
     setSelectedProjectId(projectId)
+    setSelectedTerminalWorktreeId(null)
     setActiveView('terminal')
   }, [])
-  const bridgeReady = Boolean(selectedProject && sessionSnapshot?.isRunning)
+  const selectMainTerminal = useCallback(() => {
+    setSelectedTerminalWorktreeId(null)
+    setActiveView('terminal')
+  }, [])
+  const selectWorktreeTerminal = useCallback((worktreeId: number) => {
+    setSelectedTerminalWorktreeId(worktreeId)
+    setActiveView('terminal')
+  }, [])
+  const isSelectedSessionTarget =
+    Boolean(selectedProject) &&
+    (sessionSnapshot?.worktreeId ?? null) === selectedTerminalWorktreeId &&
+    sessionSnapshot?.projectId === selectedProject?.id
+  const bridgeReady = Boolean(selectedProject && sessionSnapshot?.isRunning && isSelectedSessionTarget)
   const agentStartupPrompt = buildAgentStartupPrompt(selectedProject, workItems, documents)
   const currentTerminalPrompt = terminalPromptDraft?.prompt ?? agentStartupPrompt
   const currentTerminalPromptLabel = terminalPromptDraft?.label ?? 'Workspace guide'
@@ -270,6 +298,7 @@ function App() {
 
   useEffect(() => {
     setTerminalPromptDraft(null)
+    setSelectedTerminalWorktreeId(null)
   }, [selectedProject?.id])
 
   useEffect(() => {
@@ -279,33 +308,96 @@ function App() {
   }, [launchProfiles, selectedLaunchProfile])
 
   useEffect(() => {
-    let cancelled = false
+    if (
+      selectedTerminalWorktreeId !== null &&
+      !worktrees.some((worktree) => worktree.id === selectedTerminalWorktreeId)
+    ) {
+      setSelectedTerminalWorktreeId(null)
+    }
+  }, [selectedTerminalWorktreeId, worktrees])
 
-    const loadSession = async () => {
-      if (!selectedProject) {
-        setSessionSnapshot(null)
-        return
-      }
-
+  const fetchSessionSnapshot = useCallback(
+    async (projectId: number, worktreeId: number | null = null) => {
       try {
-        const snapshot = await invoke<SessionSnapshot | null>('get_session_snapshot', {
-          projectId: selectedProject.id,
+        return await invoke<SessionSnapshot | null>('get_session_snapshot', {
+          projectId,
+          worktreeId,
         })
-
-        if (cancelled) {
-          return
-        }
-
-        setSessionSnapshot(snapshot)
       } catch (error) {
-        if (cancelled) {
-          return
-        }
-
         setSessionError(
           error instanceof Error ? error.message : 'Failed to inspect live session state.',
         )
+        return null
       }
+    },
+    [],
+  )
+
+  const refreshLiveSessions = useCallback(async (projectId: number) => {
+    try {
+      const snapshots = await invoke<SessionSnapshot[]>('list_live_sessions', { projectId })
+      setLiveSessionSnapshots(snapshots)
+      return snapshots
+    } catch (error) {
+      setSessionError(
+        error instanceof Error ? error.message : 'Failed to inspect live session directory.',
+      )
+      return []
+    }
+  }, [])
+
+  const refreshSelectedSessionSnapshot = useCallback(async () => {
+    if (!selectedProject) {
+      setSessionSnapshot(null)
+      return null
+    }
+
+    const snapshot = await fetchSessionSnapshot(selectedProject.id, selectedTerminalWorktreeId)
+    setSessionSnapshot(snapshot)
+    return snapshot
+  }, [fetchSessionSnapshot, selectedProject, selectedTerminalWorktreeId])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadLiveSessions = async () => {
+      if (!selectedProject) {
+        setLiveSessionSnapshots([])
+        return
+      }
+
+      const snapshots = await refreshLiveSessions(selectedProject.id)
+
+      if (cancelled) {
+        return
+      }
+
+      const hasMainSession = snapshots.some((snapshot) => snapshot.worktreeId == null)
+      const mostRecentWorktreeSession = snapshots.find((snapshot) => snapshot.worktreeId != null)
+
+      if (!hasMainSession && selectedTerminalWorktreeId === null && mostRecentWorktreeSession?.worktreeId) {
+        setSelectedTerminalWorktreeId(mostRecentWorktreeSession.worktreeId)
+      }
+    }
+
+    void loadLiveSessions()
+
+    return () => {
+      cancelled = true
+    }
+  }, [refreshLiveSessions, selectedProject, selectedTerminalWorktreeId])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadSession = async () => {
+      const snapshot = await refreshSelectedSessionSnapshot()
+
+      if (cancelled) {
+        return
+      }
+
+      setSessionSnapshot(snapshot)
     }
 
     void loadSession()
@@ -313,30 +405,10 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [selectedProjectId])
-
-  const refreshSessionSnapshot = useCallback(async (projectId: number) => {
-    try {
-      const snapshot = await invoke<SessionSnapshot | null>('get_session_snapshot', {
-        projectId,
-      })
-
-      setSessionSnapshot(snapshot)
-      return snapshot
-    } catch (error) {
-      setSessionError(
-        error instanceof Error ? error.message : 'Failed to inspect live session state.',
-      )
-      return null
-    }
-  }, [])
+  }, [refreshSelectedSessionSnapshot])
 
   useEffect(() => {
-    if (
-      !selectedProject ||
-      !sessionSnapshot?.isRunning ||
-      sessionSnapshot.projectId !== selectedProject.id
-    ) {
+    if (!selectedProject || liveSessionSnapshots.length === 0) {
       return
     }
 
@@ -347,7 +419,7 @@ function App() {
     return () => {
       window.clearInterval(intervalId)
     }
-  }, [selectedProject?.id, sessionSnapshot?.isRunning, sessionSnapshot?.projectId])
+  }, [selectedProject?.id, liveSessionSnapshots.length])
 
   useEffect(() => {
     let cancelled = false
@@ -395,6 +467,41 @@ function App() {
     }
 
     void loadDocuments()
+
+    return () => {
+      cancelled = true
+    }
+  }, [contextRefreshKey, selectedProjectId])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadWorktrees = async () => {
+      if (!selectedProject) {
+        setWorktrees([])
+        return
+      }
+
+      try {
+        const items = await invoke<WorktreeRecord[]>('list_worktrees', {
+          projectId: selectedProject.id,
+        })
+
+        if (cancelled) {
+          return
+        }
+
+        setWorktrees(items)
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+
+        setSessionError(error instanceof Error ? error.message : 'Failed to load worktrees.')
+      }
+    }
+
+    void loadWorktrees()
 
     return () => {
       cancelled = true
@@ -597,8 +704,20 @@ function App() {
       return null
     }
 
-    if (!selectedProject.rootAvailable) {
-      setSessionError('selected project root folder no longer exists. Rebind the project before launching.')
+    const targetWorktreeId = options?.worktreeId ?? selectedTerminalWorktreeId ?? null
+    const targetWorktree =
+      targetWorktreeId === null
+        ? null
+        : worktrees.find((worktree) => worktree.id === targetWorktreeId) ?? null
+    const targetRootAvailable =
+      targetWorktreeId === null ? selectedProject.rootAvailable : Boolean(targetWorktree?.pathAvailable)
+
+    if (!targetRootAvailable) {
+      setSessionError(
+        targetWorktreeId === null
+          ? 'selected project root folder no longer exists. Rebind the project before launching.'
+          : 'selected worktree path no longer exists. Recreate the worktree before launching.',
+      )
       return null
     }
 
@@ -607,16 +726,20 @@ function App() {
     setActiveView('terminal')
 
     try {
-      const existingSnapshot = await refreshSessionSnapshot(selectedProject.id)
+      const existingSnapshot = await fetchSessionSnapshot(selectedProject.id, targetWorktreeId)
 
       if (existingSnapshot?.isRunning) {
-        setSessionSnapshot(existingSnapshot)
+        if ((selectedTerminalWorktreeId ?? null) === targetWorktreeId) {
+          setSessionSnapshot(existingSnapshot)
+        }
+        await refreshLiveSessions(selectedProject.id)
         return existingSnapshot
       }
 
       const snapshot = await invoke<SessionSnapshot>('launch_project_session', {
         input: {
           projectId: selectedProject.id,
+          worktreeId: targetWorktreeId,
           launchProfileId: selectedLaunchProfile.id,
           cols: 120,
           rows: 32,
@@ -624,7 +747,10 @@ function App() {
         },
       })
 
-      setSessionSnapshot(snapshot)
+      if ((selectedTerminalWorktreeId ?? null) === targetWorktreeId) {
+        setSessionSnapshot(snapshot)
+      }
+      await refreshLiveSessions(selectedProject.id)
       return snapshot
     } catch (error) {
       setSessionError(error instanceof Error ? error.message : 'Failed to launch Claude Code.')
@@ -639,13 +765,21 @@ function App() {
       return
     }
 
+    const targetWorktreeId = selectedTerminalWorktreeId
     setSessionError(null)
     setIsStoppingSession(true)
 
     try {
-      await invoke('terminate_session', { projectId: selectedProject.id })
+      await invoke('terminate_session_target', {
+        projectId: selectedProject.id,
+        worktreeId: targetWorktreeId,
+      })
       setSessionSnapshot((current) => {
-        if (!current || current.projectId !== selectedProject.id) {
+        if (
+          !current ||
+          current.projectId !== selectedProject.id ||
+          (current.worktreeId ?? null) !== targetWorktreeId
+        ) {
           return current
         }
 
@@ -656,11 +790,29 @@ function App() {
           exitSuccess: current.exitSuccess ?? false,
         }
       })
+      setLiveSessionSnapshots((current) =>
+        current.filter(
+          (snapshot) =>
+            !(
+              snapshot.projectId === selectedProject.id &&
+              (snapshot.worktreeId ?? null) === targetWorktreeId
+            ),
+        ),
+      )
     } catch (error) {
-      const snapshot = await refreshSessionSnapshot(selectedProject.id)
+      const snapshot = await fetchSessionSnapshot(selectedProject.id, targetWorktreeId)
 
       if (!snapshot || !snapshot.isRunning) {
         setSessionError(null)
+        setLiveSessionSnapshots((current) =>
+          current.filter(
+            (liveSnapshot) =>
+              !(
+                liveSnapshot.projectId === selectedProject.id &&
+                (liveSnapshot.worktreeId ?? null) === targetWorktreeId
+              ),
+          ),
+        )
       } else {
         setSessionError(error instanceof Error ? error.message : 'Failed to stop the live session.')
       }
@@ -671,7 +823,11 @@ function App() {
 
   const handleSessionExit = useCallback((event: TerminalExitEvent) => {
     setSessionSnapshot((current) => {
-      if (!current || current.projectId !== event.projectId) {
+      if (
+        !current ||
+        current.projectId !== event.projectId ||
+        (current.worktreeId ?? null) !== (event.worktreeId ?? null)
+      ) {
         return current
       }
 
@@ -680,6 +836,15 @@ function App() {
         isRunning: false,
       }
     })
+    setLiveSessionSnapshots((current) =>
+      current.filter(
+        (snapshot) =>
+          !(
+            snapshot.projectId === event.projectId &&
+            (snapshot.worktreeId ?? null) === (event.worktreeId ?? null)
+          ),
+      ),
+    )
 
     if (!event.success) {
       setSessionError(`Session exited with code ${event.exitCode}.`)
@@ -709,8 +874,15 @@ function App() {
   }, [handleSessionExit])
 
   const isLiveSessionVisible =
-    sessionSnapshot && selectedProject && sessionSnapshot.projectId === selectedProject.id
-  const launchBlockedByMissingRoot = Boolean(selectedProject && !selectedProject.rootAvailable)
+    Boolean(selectedProject) &&
+    Boolean(sessionSnapshot) &&
+    sessionSnapshot?.projectId === selectedProject?.id &&
+    (sessionSnapshot?.worktreeId ?? null) === selectedTerminalWorktreeId
+  const launchBlockedByMissingRoot = Boolean(
+    selectedTerminalWorktreeId === null
+      ? selectedProject && !selectedProject.rootAvailable
+      : selectedWorktree && !selectedWorktree.pathAvailable,
+  )
 
   const createWorkItem = async (input: {
     title: string
@@ -779,12 +951,14 @@ function App() {
 
   const sendPromptToSession = async (
     projectId: number,
+    worktreeId: number | null,
     prompt: string,
     successMessage: string,
   ) => {
     await invoke('write_session_input', {
       input: {
         projectId,
+        worktreeId,
         data: flattenPromptForTerminal(prompt),
       },
     })
@@ -945,6 +1119,7 @@ function App() {
     try {
       await sendPromptToSession(
         selectedProject.id,
+        selectedTerminalWorktreeId,
         currentTerminalPrompt,
         `${currentTerminalPromptLabel} sent to the live terminal.`,
       )
@@ -956,18 +1131,26 @@ function App() {
   }
 
   const launchWorkspaceGuide = async () => {
+    const guideLabel =
+      selectedTerminalWorktreeId !== null && selectedWorktree
+        ? `Worktree guide · ${selectedWorktree.branchName}`
+        : 'Workspace guide'
+
     setTerminalPromptDraft({
-      label: 'Workspace guide',
+      label: guideLabel,
       prompt: agentStartupPrompt,
     })
 
-    const snapshot = await launchSession({ startupPrompt: agentStartupPrompt })
+    const snapshot = await launchSession({
+      startupPrompt: agentStartupPrompt,
+      worktreeId: selectedTerminalWorktreeId,
+    })
 
     if (!snapshot || !agentStartupPrompt) {
       return
     }
 
-    setAgentPromptMessage('Workspace guide launched with the fresh terminal.')
+    setAgentPromptMessage(`${guideLabel} launched with the fresh terminal.`)
   }
 
   const startWorkItemInTerminal = async (workItemId: number) => {
@@ -981,24 +1164,13 @@ function App() {
       return
     }
 
-    if (!sessionSnapshot?.isRunning && !selectedLaunchProfile) {
-      setSessionError('Select a launch profile before starting work in the terminal.')
-      setActiveView('terminal')
-      return
-    }
-
     setStartingWorkItemId(workItem.id)
     setWorkItemError(null)
     setSessionError(null)
     setActiveView('terminal')
 
     try {
-      const currentSessionSnapshot = await refreshSessionSnapshot(selectedProject.id)
       let targetWorkItem = workItem
-      const hasLiveSession = Boolean(
-        currentSessionSnapshot?.isRunning &&
-          currentSessionSnapshot.projectId === selectedProject.id,
-      )
 
       if (workItem.status !== 'in_progress' && workItem.status !== 'done') {
         try {
@@ -1029,28 +1201,59 @@ function App() {
         }
       }
 
+      const worktree = await invoke<WorktreeRecord>('ensure_worktree', {
+        input: {
+          projectId: selectedProject.id,
+          workItemId: targetWorkItem.id,
+        },
+      })
+
+      setWorktrees((current) => {
+        const next = current.filter((existing) => existing.id !== worktree.id)
+        return [worktree, ...next]
+      })
+      setSelectedTerminalWorktreeId(worktree.id)
+
+      const currentSessionSnapshot = await fetchSessionSnapshot(selectedProject.id, worktree.id)
+      const hasLiveSession = Boolean(
+        currentSessionSnapshot?.isRunning &&
+          currentSessionSnapshot.projectId === selectedProject.id &&
+          (currentSessionSnapshot.worktreeId ?? null) === worktree.id,
+      )
+
+      if (!hasLiveSession && !selectedLaunchProfile) {
+        setSessionError('Select a launch profile before starting work in a worktree terminal.')
+        return
+      }
+
       const prompt = buildFocusedWorkItemPrompt(
         selectedProject,
         targetWorkItem,
         documents.filter((document) => document.workItemId === targetWorkItem.id),
+        worktree,
       )
 
       setTerminalPromptDraft({
-        label: `Focused handoff for #${targetWorkItem.id}`,
+        label: `Focused handoff for #${targetWorkItem.id} · ${worktree.branchName}`,
         prompt,
       })
 
-      const activeSession =
-        hasLiveSession ? currentSessionSnapshot : await launchSession({ startupPrompt: prompt })
+      const activeSession = hasLiveSession
+        ? currentSessionSnapshot
+        : await launchSession({ startupPrompt: prompt, worktreeId: worktree.id })
 
       if (!activeSession) {
         return
       }
 
+      setSessionSnapshot(activeSession)
+      await refreshLiveSessions(selectedProject.id)
+
       if (hasLiveSession) {
         try {
           await sendPromptToSession(
             selectedProject.id,
+            worktree.id,
             prompt,
             `Focused handoff sent for work item #${targetWorkItem.id}.`,
           )
@@ -1060,7 +1263,9 @@ function App() {
           )
         }
       } else {
-        setAgentPromptMessage(`Focused handoff launched with work item #${targetWorkItem.id}.`)
+        setAgentPromptMessage(
+          `Focused handoff launched in worktree ${worktree.branchName} for work item #${targetWorkItem.id}.`,
+        )
       }
     } catch (error) {
       setSessionError(
@@ -1072,12 +1277,26 @@ function App() {
   }
 
   const liveSessions =
-    selectedProject && sessionSnapshot?.isRunning && sessionSnapshot.projectId === selectedProject.id
-      ? [{ project: selectedProject, snapshot: sessionSnapshot }]
+    selectedProject
+      ? liveSessionSnapshots
+          .filter(
+            (snapshot) => snapshot.projectId === selectedProject.id && snapshot.worktreeId == null,
+          )
+          .map((snapshot) => ({ project: selectedProject, snapshot }))
       : []
+
+  const worktreeSessions = worktrees.map((worktree) => ({
+    worktree,
+    snapshot:
+      liveSessionSnapshots.find((snapshot) => snapshot.worktreeId === worktree.id) ?? null,
+  }))
 
   const recentDocuments = documents.slice(0, 4)
   const selectedProjectLaunchLabel = selectedLaunchProfile?.label ?? 'No account selected'
+  const selectedTerminalLaunchLabel =
+    selectedWorktree !== null
+      ? `${selectedProjectLaunchLabel} · ${selectedWorktree.branchName}`
+      : selectedProjectLaunchLabel
   const hasSelectedProjectLiveSession = Boolean(isLiveSessionVisible && sessionSnapshot?.isRunning)
 
 
@@ -1090,9 +1309,12 @@ function App() {
         projects,
         selectedProject,
         selectedProjectId,
+        selectedWorktree,
+        selectedTerminalWorktreeId,
         selectedLaunchProfile,
         selectedLaunchProfileId,
         sessionSnapshot,
+        liveSessionSnapshots,
         sessionError,
         workItems,
         workItemError,
@@ -1107,9 +1329,12 @@ function App() {
         blockedWorkItemCount,
         recentDocuments,
         liveSessions,
+        worktreeSessions,
         hasSelectedProjectLiveSession,
         launchBlockedByMissingRoot,
         selectedProjectLaunchLabel,
+        selectedTerminalLaunchLabel,
+        worktrees,
         projectName,
         projectRootPath,
         projectError,
@@ -1162,6 +1387,8 @@ function App() {
         setIsSessionRailCollapsed,
         setTerminalPromptDraft,
         selectProject,
+        selectMainTerminal,
+        selectWorktreeTerminal,
         browseForProjectFolder,
         submitProject,
         submitProjectUpdate,

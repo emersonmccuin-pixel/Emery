@@ -16,6 +16,8 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
     projects,
     selectedProject,
     selectedProjectId,
+    selectedWorktree,
+    selectedTerminalWorktreeId,
     selectedLaunchProfile,
     selectedLaunchProfileId,
     sessionSnapshot,
@@ -33,9 +35,11 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
     blockedWorkItemCount,
     recentDocuments,
     liveSessions,
+    worktreeSessions,
     hasSelectedProjectLiveSession,
     launchBlockedByMissingRoot,
     selectedProjectLaunchLabel,
+    selectedTerminalLaunchLabel,
     projectName,
     projectRootPath,
     projectError,
@@ -89,6 +93,8 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
     setIsSessionRailCollapsed,
     setTerminalPromptDraft,
     selectProject,
+    selectMainTerminal,
+    selectWorktreeTerminal,
     browseForProjectFolder,
     submitProject,
     submitProjectUpdate,
@@ -275,19 +281,38 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                   <h2>{selectedProject.name}</h2>
                 </div>
                 <div className="center-stage__meta">
-                  <span className={`pill ${selectedProject.rootAvailable ? '' : 'pill--danger'}`}>
-                    {selectedProject.rootAvailable ? 'root ready' : 'root missing'}
+                  <span
+                    className={`pill ${
+                      selectedWorktree
+                        ? selectedWorktree.pathAvailable
+                          ? ''
+                          : 'pill--danger'
+                        : selectedProject.rootAvailable
+                          ? ''
+                          : 'pill--danger'
+                    }`}
+                  >
+                    {selectedWorktree
+                      ? selectedWorktree.pathAvailable
+                        ? 'worktree ready'
+                        : 'worktree missing'
+                      : selectedProject.rootAvailable
+                        ? 'root ready'
+                        : 'root missing'}
                   </span>
                   <span className={`pill ${hasSelectedProjectLiveSession ? 'pill--live' : ''}`}>
                     {hasSelectedProjectLiveSession ? 'live session' : 'idle'}
                   </span>
+                  <span className="pill">{selectedWorktree ? 'worktree' : 'project shell'}</span>
                 </div>
               </div>
 
               {sessionError ? <p className="form-error">{sessionError}</p> : null}
               {launchBlockedByMissingRoot ? (
                 <p className="form-error">
-                  This project&apos;s root is missing. Rebind it in Project Overview before the next launch.
+                  {selectedWorktree
+                    ? 'This worktree path is missing. Start the work item again to recreate it before the next launch.'
+                    : "This project's root is missing. Rebind it in Project Overview before the next launch."}
                 </p>
               ) : null}
 
@@ -324,12 +349,16 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                       <strong>
                         {hasSelectedProjectLiveSession
                           ? sessionSnapshot.profileLabel
-                          : selectedProjectLaunchLabel}
+                          : selectedTerminalLaunchLabel}
                       </strong>
                       <p>
-                        {hasSelectedProjectLiveSession
-                          ? 'Live Claude session attached to the selected project.'
-                          : 'Launch directly into the selected project root.'}
+                        {selectedWorktree
+                          ? hasSelectedProjectLiveSession
+                            ? `Live Claude session attached to worktree ${selectedWorktree.branchName}.`
+                            : `Launch directly into worktree ${selectedWorktree.branchName}.`
+                          : hasSelectedProjectLiveSession
+                            ? 'Live Claude session attached to the selected project.'
+                            : 'Launch directly into the selected project root.'}
                       </p>
                     </div>
 
@@ -459,19 +488,29 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                     <div className="terminal-launch-card">
                       <div className="terminal-launch-card__copy">
                         <p className="panel__eyebrow">
-                          {selectedProject.rootAvailable ? 'Ready to launch' : 'Root needs rebind'}
+                          {selectedWorktree
+                            ? selectedWorktree.pathAvailable
+                              ? 'Worktree ready'
+                              : 'Worktree needs repair'
+                            : selectedProject.rootAvailable
+                              ? 'Ready to launch'
+                              : 'Root needs rebind'}
                         </p>
-                        <h3>{selectedProject.name}</h3>
+                        <h3>{selectedWorktree ? selectedWorktree.branchName : selectedProject.name}</h3>
                         <p>
-                          {selectedProject.rootAvailable
-                            ? `Start Claude in ${selectedProject.rootPath} with the selected account.`
-                            : 'The registered root path no longer exists. Rebind the project in Project Overview.'}
+                          {selectedWorktree
+                            ? selectedWorktree.pathAvailable
+                              ? `Start Claude in ${selectedWorktree.worktreePath} for work item #${selectedWorktree.workItemId}.`
+                              : 'The stored worktree path is missing. Start the work item again to recreate it.'
+                            : selectedProject.rootAvailable
+                              ? `Start Claude in ${selectedProject.rootPath} with the selected account.`
+                              : 'The registered root path no longer exists. Rebind the project in Project Overview.'}
                         </p>
                       </div>
                       <div className="terminal-launch-card__meta">
                         <div className="terminal-launch-card__item">
                           <span>Account</span>
-                          <strong>{selectedProjectLaunchLabel}</strong>
+                          <strong>{selectedTerminalLaunchLabel}</strong>
                         </div>
                         <div className="terminal-launch-card__item">
                           <span>Open work</span>
@@ -501,6 +540,12 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                           <span>Root</span>
                           <code>{selectedProject.rootPath}</code>
                         </div>
+                        {selectedWorktree ? (
+                          <div className="overview-metric overview-metric--wide">
+                            <span>Selected worktree</span>
+                            <code>{selectedWorktree.worktreePath}</code>
+                          </div>
+                        ) : null}
                         <div className="overview-metric">
                           <span>Account</span>
                           <strong>{selectedProjectLaunchLabel}</strong>
@@ -821,10 +866,15 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                       <button
                         key={`${project.id}:${snapshot.startedAt}`}
                         className={`session-card ${
-                          project.id === selectedProjectId ? 'session-card--active' : ''
+                          project.id === selectedProjectId && selectedTerminalWorktreeId === null
+                            ? 'session-card--active'
+                            : ''
                         }`}
                         type="button"
-                        onClick={() => selectProject(project.id)}
+                        onClick={() => {
+                          selectProject(project.id)
+                          selectMainTerminal()
+                        }}
                       >
                         <div className="session-card__header">
                           <strong>{project.name}</strong>
@@ -841,11 +891,38 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
               <section className="rail-section">
                 <div className="rail-section__header">
                   <span>Worktree sessions</span>
-                  <span className="panel__count">0</span>
+                  <span className="panel__count">{worktreeSessions.length}</span>
                 </div>
-                <div className="empty-state empty-state--rail">
-                  Worktree sessions will appear here once the worktree slice lands.
-                </div>
+                {worktreeSessions.length === 0 ? (
+                  <div className="empty-state empty-state--rail">
+                    Start a work item in a worktree and it will appear here.
+                  </div>
+                ) : (
+                  <div className="session-card-list">
+                    {worktreeSessions.map(({ worktree, snapshot }: any) => (
+                      <button
+                        key={worktree.id}
+                        className={`session-card ${
+                          selectedTerminalWorktreeId === worktree.id ? 'session-card--active' : ''
+                        }`}
+                        type="button"
+                        onClick={() => selectWorktreeTerminal(worktree.id)}
+                      >
+                        <div className="session-card__header">
+                          <strong>{worktree.branchName}</strong>
+                          {snapshot ? <span className="session-dot" /> : null}
+                        </div>
+                        <p>{worktree.workItemTitle}</p>
+                        <div className="session-card__meta">
+                          <span className={`pill ${snapshot ? 'pill--live' : ''}`}>
+                            {snapshot ? 'running' : worktree.pathAvailable ? 'ready' : 'missing'}
+                          </span>
+                          <span>#{worktree.workItemId}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </section>
             </>
           )}

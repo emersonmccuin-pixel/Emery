@@ -1,6 +1,7 @@
 use crate::db::{AppState, AppendSessionEventInput, CreateSessionRecordInput, FinishSessionRecordInput};
 use crate::session_api::{
     LaunchSessionInput, ResizeSessionInput, SessionInput, SessionSnapshot, SupervisorRuntimeInfo,
+    ProjectSessionTarget,
 };
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
@@ -15,14 +16,22 @@ const MAX_OUTPUT_BUFFER_BYTES: usize = 200_000;
 
 #[derive(Clone)]
 pub struct SessionRegistry {
-    sessions: Arc<Mutex<HashMap<i64, Arc<HostedSession>>>>,
+    sessions: Arc<Mutex<HashMap<SessionTargetKey, Arc<HostedSession>>>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct SessionTargetKey {
+    project_id: i64,
+    worktree_id: Option<i64>,
 }
 
 struct HostedSession {
     session_record_id: i64,
     project_id: i64,
+    worktree_id: Option<i64>,
     launch_profile_id: i64,
     profile_label: String,
+    root_path: String,
     started_at: String,
     output_buffer: Mutex<String>,
     exit_state: Mutex<Option<ExitState>>,
@@ -46,18 +55,51 @@ impl Default for SessionRegistry {
     }
 }
 
+impl SessionTargetKey {
+    fn from_target(target: &ProjectSessionTarget) -> Self {
+        Self {
+            project_id: target.project_id,
+            worktree_id: target.worktree_id,
+        }
+    }
+
+    fn from_launch_input(input: &LaunchSessionInput) -> Self {
+        Self {
+            project_id: input.project_id,
+            worktree_id: input.worktree_id,
+        }
+    }
+}
+
 impl SessionRegistry {
-    pub fn snapshot(&self, project_id: i64) -> Result<Option<SessionSnapshot>, String> {
+    pub fn snapshot(&self, target: ProjectSessionTarget) -> Result<Option<SessionSnapshot>, String> {
         let session = {
             let sessions = self
                 .sessions
                 .lock()
                 .map_err(|_| "failed to access session registry".to_string())?;
 
-            sessions.get(&project_id).cloned()
+            sessions.get(&SessionTargetKey::from_target(&target)).cloned()
         };
 
         Ok(session.map(|session| session.snapshot()))
+    }
+
+    pub fn list_running_snapshots(&self, project_id: i64) -> Result<Vec<SessionSnapshot>, String> {
+        let sessions = self
+            .sessions
+            .lock()
+            .map_err(|_| "failed to access session registry".to_string())?;
+
+        let mut snapshots = sessions
+            .values()
+            .filter(|session| session.project_id == project_id && session.is_running())
+            .map(|session| session.snapshot())
+            .collect::<Vec<_>>();
+
+        snapshots.sort_by(|left, right| right.started_at.cmp(&left.started_at));
+
+        Ok(snapshots)
     }
 
     pub fn launch(
@@ -67,7 +109,9 @@ impl SessionRegistry {
         supervisor_runtime: &SupervisorRuntimeInfo,
         source: &str,
     ) -> Result<SessionSnapshot, String> {
-        if let Some(existing) = self.get_session(input.project_id)? {
+        let target_key = SessionTargetKey::from_launch_input(&input);
+
+        if let Some(existing) = self.get_session(&target_key)? {
             if existing.is_running() {
                 try_append_session_event(
                     app_state,
@@ -79,8 +123,10 @@ impl SessionRegistry {
                     source,
                     &json!({
                         "projectId": existing.project_id,
+                        "worktreeId": existing.worktree_id,
                         "launchProfileId": existing.launch_profile_id,
                         "profileLabel": existing.profile_label.clone(),
+                        "rootPath": existing.root_path.clone(),
                         "startedAt": existing.started_at.clone(),
                     }),
                 );
@@ -89,6 +135,21 @@ impl SessionRegistry {
         }
 
         let project = app_state.get_project(input.project_id)?;
+        let worktree = match input.worktree_id {
+            Some(worktree_id) => {
+                let worktree = app_state.get_worktree(worktree_id)?;
+
+                if worktree.project_id != input.project_id {
+                    return Err(format!(
+                        "worktree #{worktree_id} does not belong to project #{}",
+                        input.project_id
+                    ));
+                }
+
+                Some(worktree)
+            }
+            None => None,
+        };
         let profile = app_state.get_launch_profile(input.launch_profile_id)?;
         let started_at = now_timestamp_string();
         let startup_prompt = input
@@ -98,11 +159,20 @@ impl SessionRegistry {
             .filter(|prompt| !prompt.is_empty())
             .map(ToOwned::to_owned)
             .unwrap_or_default();
+        let launch_root_path = worktree
+            .as_ref()
+            .map(|record| record.worktree_path.clone())
+            .unwrap_or_else(|| project.root_path.clone());
 
-        if !Path::new(&project.root_path).is_dir() {
+        if !Path::new(&launch_root_path).is_dir() {
             return Err(
-                "selected project root folder no longer exists. Rebind the project before launching."
-                    .to_string(),
+                if worktree.is_some() {
+                    "selected worktree path no longer exists. Recreate the worktree before launching."
+                        .to_string()
+                } else {
+                    "selected project root folder no longer exists. Rebind the project before launching."
+                        .to_string()
+                },
             );
         }
 
@@ -119,9 +189,10 @@ impl SessionRegistry {
         let session_record = app_state.create_session_record(CreateSessionRecordInput {
             project_id: input.project_id,
             launch_profile_id: Some(input.launch_profile_id),
+            worktree_id: input.worktree_id,
             provider: profile.provider.clone(),
             profile_label: profile.label.clone(),
-            root_path: project.root_path.clone(),
+            root_path: launch_root_path.clone(),
             state: "running".to_string(),
             startup_prompt: startup_prompt.clone(),
             started_at: started_at.clone(),
@@ -129,6 +200,8 @@ impl SessionRegistry {
 
         let command = match build_launch_command(
             &project,
+            worktree.as_ref(),
+            &launch_root_path,
             &profile,
             &app_state.storage(),
             supervisor_runtime,
@@ -155,8 +228,10 @@ impl SessionRegistry {
                     "supervisor_runtime",
                     &json!({
                         "projectId": project.id,
+                        "worktreeId": input.worktree_id,
                         "launchProfileId": profile.id,
                         "profileLabel": profile.label,
+                        "rootPath": launch_root_path.clone(),
                         "endedAt": ended_at,
                         "error": error.clone(),
                         "requestedBy": source,
@@ -189,8 +264,10 @@ impl SessionRegistry {
                     "supervisor_runtime",
                     &json!({
                         "projectId": project.id,
+                        "worktreeId": input.worktree_id,
                         "launchProfileId": profile.id,
                         "profileLabel": profile.label,
+                        "rootPath": launch_root_path.clone(),
                         "endedAt": ended_at,
                         "error": error.to_string(),
                         "requestedBy": source,
@@ -213,8 +290,10 @@ impl SessionRegistry {
         let session = Arc::new(HostedSession {
             session_record_id: session_record.id,
             project_id: input.project_id,
+            worktree_id: input.worktree_id,
             launch_profile_id: input.launch_profile_id,
             profile_label: profile.label,
+            root_path: launch_root_path.clone(),
             started_at,
             output_buffer: Mutex::new(String::new()),
             exit_state: Mutex::new(None),
@@ -229,7 +308,7 @@ impl SessionRegistry {
                 .sessions
                 .lock()
                 .map_err(|_| "failed to register session".to_string())?;
-            sessions.insert(input.project_id, Arc::clone(&session));
+            sessions.insert(target_key, Arc::clone(&session));
         }
 
         try_append_session_event(
@@ -242,10 +321,11 @@ impl SessionRegistry {
             "supervisor_runtime",
             &json!({
                 "projectId": project.id,
+                "worktreeId": input.worktree_id,
                 "launchProfileId": profile.id,
                 "profileLabel": session.profile_label.clone(),
                 "provider": profile.provider,
-                "rootPath": project.root_path,
+                "rootPath": launch_root_path,
                 "startedAt": session.started_at.clone(),
                 "hasStartupPrompt": !session_record.startup_prompt.is_empty(),
                 "requestedBy": source,
@@ -259,7 +339,10 @@ impl SessionRegistry {
     }
 
     pub fn write_input(&self, input: SessionInput) -> Result<(), String> {
-        let session = self.get_running_session(input.project_id)?;
+        let session = self.get_running_session(&ProjectSessionTarget {
+            project_id: input.project_id,
+            worktree_id: input.worktree_id,
+        })?;
         let mut writer = session
             .writer
             .lock()
@@ -274,7 +357,10 @@ impl SessionRegistry {
     }
 
     pub fn resize(&self, input: ResizeSessionInput) -> Result<(), String> {
-        let session = self.get_running_session(input.project_id)?;
+        let session = self.get_running_session(&ProjectSessionTarget {
+            project_id: input.project_id,
+            worktree_id: input.worktree_id,
+        })?;
         let master = session
             .master
             .lock()
@@ -290,8 +376,13 @@ impl SessionRegistry {
             .map_err(|error| format!("failed to resize session: {error}"))
     }
 
-    pub fn terminate(&self, project_id: i64, app_state: &AppState, source: &str) -> Result<(), String> {
-        let session = self.get_running_session(project_id)?;
+    pub fn terminate(
+        &self,
+        target: ProjectSessionTarget,
+        app_state: &AppState,
+        source: &str,
+    ) -> Result<(), String> {
+        let session = self.get_running_session(&target)?;
         let mut killer = session
             .killer
             .lock()
@@ -307,8 +398,10 @@ impl SessionRegistry {
             source,
             &json!({
                 "projectId": session.project_id,
+                "worktreeId": session.worktree_id,
                 "launchProfileId": session.launch_profile_id,
                 "profileLabel": session.profile_label.clone(),
+                "rootPath": session.root_path.clone(),
                 "startedAt": session.started_at.clone(),
             }),
         );
@@ -335,7 +428,9 @@ impl SessionRegistry {
                     "supervisor_runtime",
                     &json!({
                         "projectId": session.project_id,
+                        "worktreeId": session.worktree_id,
                         "sessionRecordId": session.session_record_id,
+                        "rootPath": session.root_path.clone(),
                         "error": error.to_string(),
                         "requestedBy": source,
                     }),
@@ -358,24 +453,24 @@ impl SessionRegistry {
         Ok(())
     }
 
-    fn get_session(&self, project_id: i64) -> Result<Option<Arc<HostedSession>>, String> {
+    fn get_session(&self, target_key: &SessionTargetKey) -> Result<Option<Arc<HostedSession>>, String> {
         let sessions = self
             .sessions
             .lock()
             .map_err(|_| "failed to access session registry".to_string())?;
 
-        Ok(sessions.get(&project_id).cloned())
+        Ok(sessions.get(target_key).cloned())
     }
 
-    fn get_running_session(&self, project_id: i64) -> Result<Arc<HostedSession>, String> {
+    fn get_running_session(&self, target: &ProjectSessionTarget) -> Result<Arc<HostedSession>, String> {
         let session = self
-            .get_session(project_id)?
-            .ok_or_else(|| "no live session for that project".to_string())?;
+            .get_session(&SessionTargetKey::from_target(target))?
+            .ok_or_else(|| build_missing_session_message(target.worktree_id))?;
 
         if session.is_running() {
             Ok(session)
         } else {
-            Err("no live session for that project".to_string())
+            Err(build_missing_session_message(target.worktree_id))
         }
     }
 }
@@ -385,9 +480,12 @@ impl HostedSession {
         let exit_state = self.exit_state.lock().map(|state| *state).unwrap_or(None);
 
         SessionSnapshot {
+            session_id: self.session_record_id,
             project_id: self.project_id,
+            worktree_id: self.worktree_id,
             launch_profile_id: self.launch_profile_id,
             profile_label: self.profile_label.clone(),
+            root_path: self.root_path.clone(),
             is_running: exit_state.is_none(),
             started_at: self.started_at.clone(),
             output: self
@@ -457,8 +555,17 @@ impl HostedSession {
     }
 }
 
+fn build_missing_session_message(worktree_id: Option<i64>) -> String {
+    match worktree_id {
+        Some(worktree_id) => format!("no live session for worktree #{worktree_id}"),
+        None => "no live session for that project".to_string(),
+    }
+}
+
 fn build_launch_command(
     project: &crate::db::ProjectRecord,
+    worktree: Option<&crate::db::WorktreeRecord>,
+    launch_root_path: &str,
     profile: &crate::db::LaunchProfileRecord,
     storage: &crate::db::StorageInfo,
     supervisor_runtime: &SupervisorRuntimeInfo,
@@ -468,6 +575,8 @@ fn build_launch_command(
     if profile.provider == "claude_code" {
         return build_claude_launch_command(
             project,
+            worktree,
+            launch_root_path,
             profile,
             storage,
             supervisor_runtime,
@@ -478,6 +587,8 @@ fn build_launch_command(
 
     build_wrapped_launch_command(
         project,
+        worktree,
+        launch_root_path,
         profile,
         storage,
         supervisor_runtime,
@@ -488,6 +599,8 @@ fn build_launch_command(
 
 fn build_claude_launch_command(
     project: &crate::db::ProjectRecord,
+    worktree: Option<&crate::db::WorktreeRecord>,
+    launch_root_path: &str,
     profile: &crate::db::LaunchProfileRecord,
     storage: &crate::db::StorageInfo,
     supervisor_runtime: &SupervisorRuntimeInfo,
@@ -495,11 +608,13 @@ fn build_claude_launch_command(
     session_record_id: i64,
 ) -> Result<CommandBuilder, String> {
     let mut command = CommandBuilder::new(&profile.executable);
-    command.cwd(&project.root_path);
+    command.cwd(launch_root_path);
 
     apply_project_commander_env(
         &mut command,
         project,
+        worktree,
+        launch_root_path,
         storage,
         session_record_id,
         resolve_cli_directory(),
@@ -510,11 +625,20 @@ fn build_claude_launch_command(
     }
 
     let mcp_config_json =
-        build_project_commander_mcp_config_json(project, supervisor_runtime, session_record_id)?;
+        build_project_commander_mcp_config_json(
+            project,
+            worktree,
+            supervisor_runtime,
+            session_record_id,
+        )?;
     command.arg(format!("--mcp-config={mcp_config_json}"));
     command.arg("--strict-mcp-config");
     command.arg("--append-system-prompt");
-    command.arg(build_claude_bridge_system_prompt(project));
+    command.arg(build_claude_bridge_system_prompt(
+        project,
+        worktree,
+        launch_root_path,
+    ));
 
     if let Some(prompt) = startup_prompt {
         let normalized_prompt = normalize_prompt_for_launch(prompt);
@@ -529,6 +653,8 @@ fn build_claude_launch_command(
 
 fn build_wrapped_launch_command(
     project: &crate::db::ProjectRecord,
+    worktree: Option<&crate::db::WorktreeRecord>,
+    launch_root_path: &str,
     profile: &crate::db::LaunchProfileRecord,
     storage: &crate::db::StorageInfo,
     _supervisor_runtime: &SupervisorRuntimeInfo,
@@ -540,12 +666,14 @@ fn build_wrapped_launch_command(
     let mcp_config_json = None::<String>;
     let mut script = format!(
         "Set-Location -LiteralPath '{}'; ",
-        escape_ps(&project.root_path)
+        escape_ps(launch_root_path)
     );
 
     let cli_available = resolve_cli_directory();
     script.push_str(&build_project_commander_env_script(
         project,
+        worktree,
+        launch_root_path,
         storage,
         session_record_id,
         cli_available.as_deref(),
@@ -580,7 +708,11 @@ fn build_wrapped_launch_command(
         script.push_str(" --append-system-prompt ");
         script.push_str(&format!(
             "'{}'",
-            escape_ps(&build_claude_bridge_system_prompt(project))
+            escape_ps(&build_claude_bridge_system_prompt(
+                project,
+                worktree,
+                launch_root_path,
+            ))
         ));
     }
 
@@ -607,6 +739,8 @@ fn build_wrapped_launch_command(
 fn apply_project_commander_env(
     command: &mut CommandBuilder,
     project: &crate::db::ProjectRecord,
+    worktree: Option<&crate::db::WorktreeRecord>,
+    launch_root_path: &str,
     storage: &crate::db::StorageInfo,
     session_record_id: i64,
     cli_directory: Option<String>,
@@ -627,13 +761,28 @@ fn apply_project_commander_env(
     command.env("PROJECT_COMMANDER_DB_PATH", &storage.db_path);
     command.env("PROJECT_COMMANDER_PROJECT_ID", project.id.to_string());
     command.env("PROJECT_COMMANDER_PROJECT_NAME", &project.name);
-    command.env("PROJECT_COMMANDER_ROOT_PATH", &project.root_path);
+    command.env("PROJECT_COMMANDER_ROOT_PATH", launch_root_path);
     command.env("PROJECT_COMMANDER_SESSION_ID", session_record_id.to_string());
     command.env("PROJECT_COMMANDER_CLI", "project-commander-cli");
+
+    if let Some(worktree) = worktree {
+        command.env("PROJECT_COMMANDER_WORKTREE_ID", worktree.id.to_string());
+        command.env("PROJECT_COMMANDER_WORKTREE_BRANCH", &worktree.branch_name);
+        command.env(
+            "PROJECT_COMMANDER_WORKTREE_WORK_ITEM_ID",
+            worktree.work_item_id.to_string(),
+        );
+        command.env(
+            "PROJECT_COMMANDER_WORKTREE_WORK_ITEM_TITLE",
+            &worktree.work_item_title,
+        );
+    }
 }
 
 fn build_project_commander_env_script(
     project: &crate::db::ProjectRecord,
+    worktree: Option<&crate::db::WorktreeRecord>,
+    launch_root_path: &str,
     storage: &crate::db::StorageInfo,
     session_record_id: i64,
     cli_directory: Option<&str>,
@@ -661,13 +810,32 @@ fn build_project_commander_env_script(
     ));
     script.push_str(&format!(
         "$env:PROJECT_COMMANDER_ROOT_PATH = '{}'; ",
-        escape_ps(&project.root_path)
+        escape_ps(launch_root_path)
     ));
     script.push_str(&format!(
         "$env:PROJECT_COMMANDER_SESSION_ID = '{}'; ",
         session_record_id
     ));
     script.push_str("$env:PROJECT_COMMANDER_CLI = 'project-commander-cli'; ");
+
+    if let Some(worktree) = worktree {
+        script.push_str(&format!(
+            "$env:PROJECT_COMMANDER_WORKTREE_ID = '{}'; ",
+            worktree.id
+        ));
+        script.push_str(&format!(
+            "$env:PROJECT_COMMANDER_WORKTREE_BRANCH = '{}'; ",
+            escape_ps(&worktree.branch_name)
+        ));
+        script.push_str(&format!(
+            "$env:PROJECT_COMMANDER_WORKTREE_WORK_ITEM_ID = '{}'; ",
+            worktree.work_item_id
+        ));
+        script.push_str(&format!(
+            "$env:PROJECT_COMMANDER_WORKTREE_WORK_ITEM_TITLE = '{}'; ",
+            escape_ps(&worktree.work_item_title)
+        ));
+    }
 
     script
 }
@@ -728,12 +896,16 @@ fn parse_profile_args(raw: &str) -> Result<Vec<String>, String> {
     Ok(args)
 }
 
-fn build_claude_bridge_system_prompt(project: &crate::db::ProjectRecord) -> String {
-    format!(
+fn build_claude_bridge_system_prompt(
+    project: &crate::db::ProjectRecord,
+    worktree: Option<&crate::db::WorktreeRecord>,
+    launch_root_path: &str,
+) -> String {
+    let mut prompt = format!(
         concat!(
             "You are running inside Project Commander. ",
             "Project name: {}. ",
-            "Project root path: {}. ",
+            "Current session root path: {}. ",
             "Project Commander MCP tools are available in this session and are already bound to the active project. ",
             "Use the Project Commander MCP tools as the source of truth for project context, work items, and documents. ",
             "At the start of each session, call the session_brief tool. ",
@@ -743,8 +915,17 @@ fn build_claude_bridge_system_prompt(project: &crate::db::ProjectRecord) -> Stri
             "If the startup user prompt assigns a work item, treat it as the active task immediately. ",
             "Do not respond with acknowledgment only."
         ),
-        project.name, project.root_path
-    )
+        project.name, launch_root_path
+    );
+
+    if let Some(worktree) = worktree {
+        prompt.push_str(&format!(
+            " This session is attached to worktree #{} on branch {} for work item #{} ({}).",
+            worktree.id, worktree.branch_name, worktree.work_item_id, worktree.work_item_title
+        ));
+    }
+
+    prompt
 }
 
 fn escape_ps(value: &str) -> String {
@@ -777,6 +958,7 @@ pub fn resolve_helper_binary_path(binary_stem: &str) -> Option<PathBuf> {
 
 fn build_project_commander_mcp_config_json(
     project: &crate::db::ProjectRecord,
+    worktree: Option<&crate::db::WorktreeRecord>,
     supervisor_runtime: &SupervisorRuntimeInfo,
     session_record_id: i64,
 ) -> Result<String, String> {
@@ -786,21 +968,29 @@ fn build_project_commander_mcp_config_json(
                 .to_string()
         })?;
 
+    let mut args = vec![
+        "mcp-stdio".to_string(),
+        "--port".to_string(),
+        supervisor_runtime.port.to_string(),
+        "--token".to_string(),
+        supervisor_runtime.token.clone(),
+        "--project-id".to_string(),
+        project.id.to_string(),
+    ];
+
+    if let Some(worktree) = worktree {
+        args.push("--worktree-id".to_string());
+        args.push(worktree.id.to_string());
+    }
+
+    args.push("--session-id".to_string());
+    args.push(session_record_id.to_string());
+
     let config = serde_json::json!({
         "mcpServers": {
             "project-commander": {
                 "command": supervisor_binary.display().to_string(),
-                "args": [
-                    "mcp-stdio",
-                    "--port",
-                    supervisor_runtime.port.to_string(),
-                    "--token",
-                    supervisor_runtime.token.clone(),
-                    "--project-id",
-                    project.id.to_string(),
-                    "--session-id",
-                    session_record_id.to_string()
-                ]
+                "args": args
             }
         }
     });
@@ -976,8 +1166,10 @@ fn record_session_exit(
         "supervisor_runtime",
         &json!({
             "projectId": session.project_id,
+            "worktreeId": session.worktree_id,
             "launchProfileId": session.launch_profile_id,
             "profileLabel": session.profile_label.clone(),
+            "rootPath": session.root_path.clone(),
             "startedAt": session.started_at.clone(),
             "endedAt": ended_at,
             "exitCode": exit_code,

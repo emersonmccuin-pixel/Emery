@@ -345,8 +345,8 @@ function WorkItemsPanel({
                       onClick={() => void onStartInTerminal(selectedWorkItem.id)}
                     >
                       {startingWorkItemId === selectedWorkItem.id
-                        ? 'Sending to terminal...'
-                        : 'Start in terminal'}
+                        ? 'Starting worktree...'
+                        : 'Start in worktree'}
                     </button>
                     <button className="button button--primary" disabled={isSaving} type="submit">
                       {isSaving ? 'Saving...' : 'Save changes'}
