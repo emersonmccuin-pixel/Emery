@@ -36,6 +36,7 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
     recentDocuments,
     liveSessions,
     worktreeSessions,
+    sessionRailRevision,
     hasSelectedProjectLiveSession,
     launchBlockedByMissingRoot,
     selectedProjectLaunchLabel,
@@ -820,6 +821,7 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
           )}
         </section>
         <aside
+          key={`session-rail-${sessionRailRevision}`}
           className={`side-rail side-rail--sessions ${
             isSessionRailCollapsed ? 'side-rail--collapsed' : ''
           }`}
@@ -898,7 +900,10 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                     Start a work item in a worktree and it will appear here.
                   </div>
                 ) : (
-                  <div className="session-card-list">
+                  <div
+                    key={`worktree-session-list-${sessionRailRevision}`}
+                    className="session-card-list"
+                  >
                     {worktreeSessions.map(({ worktree, snapshot }: any) => (
                       <button
                         key={worktree.id}

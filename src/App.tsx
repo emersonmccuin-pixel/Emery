@@ -227,6 +227,7 @@ function App() {
   const [isLoadingDocuments, setIsLoadingDocuments] = useState(false)
   const [startingWorkItemId, setStartingWorkItemId] = useState<number | null>(null)
   const [contextRefreshKey, setContextRefreshKey] = useState(0)
+  const [sessionRailRevision, setSessionRailRevision] = useState(0)
   const worktreeRequestIdRef = useRef(0)
 
   useEffect(() => {
@@ -373,6 +374,7 @@ function App() {
     try {
       const snapshots = await invoke<SessionSnapshot[]>('list_live_sessions', { projectId })
       setLiveSessionSnapshots(snapshots)
+      setSessionRailRevision((current) => current + 1)
       return snapshots
     } catch (error) {
       setSessionError(
@@ -395,6 +397,7 @@ function App() {
       }
 
       setWorktrees(sortWorktrees(items))
+      setSessionRailRevision((current) => current + 1)
       return items
     } catch (error) {
       if (requestId === worktreeRequestIdRef.current) {
@@ -1257,6 +1260,7 @@ function App() {
         })
         setSelectedTerminalWorktreeId(worktree.id)
       })
+      setSessionRailRevision((current) => current + 1)
       setContextRefreshKey((current) => current + 1)
       await refreshWorktrees(selectedProject.id)
 
@@ -1376,6 +1380,7 @@ function App() {
         recentDocuments,
         liveSessions,
         worktreeSessions,
+        sessionRailRevision,
         hasSelectedProjectLiveSession,
         launchBlockedByMissingRoot,
         selectedProjectLaunchLabel,
