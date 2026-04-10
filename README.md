@@ -138,6 +138,7 @@ Use the selected-project edit form to rebind the project to its new folder. Laun
 - `src-tauri/`: Rust backend and Tauri configuration
 - `scripts/`: local helper scripts for development and release workflows
 - `Project Files/Docs/`: design notes and architecture docs
+- `docs/ui/frontend-overhaul-brief.md`: constrained redesign brief for a frontend-only UI overhaul
 
 ## Next Step
 

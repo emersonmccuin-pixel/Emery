@@ -640,9 +640,26 @@ function App() {
 
     try {
       await invoke('terminate_session', { projectId: selectedProject.id })
-      await refreshSessionSnapshot(selectedProject.id)
+      setSessionSnapshot((current) => {
+        if (!current || current.projectId !== selectedProject.id) {
+          return current
+        }
+
+        return {
+          ...current,
+          isRunning: false,
+          exitCode: current.exitCode ?? 127,
+          exitSuccess: current.exitSuccess ?? false,
+        }
+      })
     } catch (error) {
-      setSessionError(error instanceof Error ? error.message : 'Failed to stop the live session.')
+      const snapshot = await refreshSessionSnapshot(selectedProject.id)
+
+      if (!snapshot || !snapshot.isRunning) {
+        setSessionError(null)
+      } else {
+        setSessionError(error instanceof Error ? error.message : 'Failed to stop the live session.')
+      }
     } finally {
       setIsStoppingSession(false)
     }
