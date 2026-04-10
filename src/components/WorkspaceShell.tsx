@@ -1,4 +1,9 @@
-import { Suspense, type FormEvent } from 'react'
+import { useState, Suspense, type FormEvent } from 'react'
+import { Settings, Plus, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import DocumentsPanel from './DocumentsPanel'
 import LiveTerminal from './LiveTerminal'
 import WorkItemsPanel from './WorkItemsPanel'
@@ -10,8 +15,6 @@ type WorkspaceShellProps = {
 
 function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
   const {
-    runtimeStatus,
-    runtimeMessage,
     storageInfo,
     projects,
     selectedProject,
@@ -115,27 +118,28 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
     deleteDocument,
   } = actions
 
+  const [projectFilter, setProjectFilter] = useState('')
+
+  const filteredProjects = projectFilter
+    ? projects.filter((p: any) =>
+        p.name.toLowerCase().includes(projectFilter.toLowerCase())
+      )
+    : projects
+
+  // Derive dispatcher status from live sessions
+  const isDispatcherRunning = liveSessions.some(
+    ({ project, snapshot }: any) =>
+      project.id === selectedProjectId && snapshot.isRunning
+  )
+
   return (
     <main className="terminal-app">
-      <header className="terminal-app__header">
-        <div className="terminal-app__brand">
-          <span className={`runtime-dot runtime-dot--${runtimeStatus}`} />
-          <div>
-            <p className="terminal-app__kicker">Project Commander</p>
-            <h1>Supervisor-backed Claude workspace</h1>
-          </div>
-        </div>
-        <div className="terminal-app__status">
-          <span className={`status-badge status-badge--${runtimeStatus}`}>{runtimeStatus}</span>
-          <p>{runtimeMessage}</p>
-        </div>
-      </header>
-
       <section
         className={`terminal-layout ${
           isProjectRailCollapsed ? 'terminal-layout--left-collapsed' : ''
         } ${isSessionRailCollapsed ? 'terminal-layout--right-collapsed' : ''}`}
       >
+        {/* ── LEFT PANEL: Projects ── */}
         <aside
           className={`side-rail side-rail--projects ${
             isProjectRailCollapsed ? 'side-rail--collapsed' : ''
@@ -164,55 +168,71 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
           ) : (
             <>
               <div className="side-rail__header">
-                <div>
-                  <p className="panel__eyebrow">Projects</p>
-                  <h2>Registered</h2>
+                <span className="rail-label">PROJECTS</span>
+                <div className="rail-header-actions">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setIsProjectCreateOpen((c: boolean) => !c)}
+                    title="Add project"
+                  >
+                    <Plus size={14} />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setIsProjectRailCollapsed(true)}
+                    title="Collapse"
+                  >
+                    <ChevronLeft size={14} />
+                  </Button>
                 </div>
-                <button
-                  className="rail-toggle rail-toggle--icon"
-                  type="button"
-                  onClick={() => setIsProjectRailCollapsed(true)}
-                >
-                  &lsaquo;
-                </button>
               </div>
 
-              <div className="project-list project-list--minimal">
-                {projects.length === 0 ? (
+              <div className="rail-filter">
+                <Input
+                  value={projectFilter}
+                  onChange={(e) => setProjectFilter(e.target.value)}
+                  placeholder="Filter..."
+                />
+              </div>
+
+              <ScrollArea className="project-list project-list--minimal">
+                {filteredProjects.length === 0 ? (
                   <div className="empty-state empty-state--rail">
-                    No projects yet. Add one to start using the terminal flow.
+                    {projects.length === 0
+                      ? 'No projects yet.'
+                      : 'No matches.'}
                   </div>
                 ) : (
-                  projects.map((project: any) => (
+                  filteredProjects.map((project: any) => (
                     <button
                       key={project.id}
                       className={`project-card project-card--minimal ${
-                        project.id === selectedProjectId ? 'project-card--active' : ''
+                        project.id === selectedProjectId
+                          ? 'project-card--active'
+                          : ''
                       }`}
                       type="button"
                       onClick={() => selectProject(project.id)}
                     >
-                      <span className="project-card__name">{project.name}</span>
-                      <span
-                        className={`project-card__indicator ${
-                          project.rootAvailable
-                            ? 'project-card__indicator--ready'
-                            : 'project-card__indicator--missing'
-                        }`}
-                      />
+                      <span className="project-card__name">
+                        {project.name}
+                      </span>
                     </button>
                   ))
                 )}
-              </div>
+              </ScrollArea>
 
               {isProjectCreateOpen ? (
                 <form
                   className="stack-form stack-form--rail"
-                  onSubmit={(event) => void submitProject(event as FormEvent<HTMLFormElement>)}
+                  onSubmit={(event) =>
+                    void submitProject(event as FormEvent<HTMLFormElement>)
+                  }
                 >
                   <div className="stack-form__header">
                     <h3>Add project</h3>
-                    <p>Register a root folder and keep the list clean.</p>
                   </div>
 
                   <label className="field">
@@ -229,24 +249,37 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                     <div className="input-row">
                       <input
                         value={projectRootPath}
-                        onChange={(event) => setProjectRootPath(event.target.value)}
+                        onChange={(event) =>
+                          setProjectRootPath(event.target.value)
+                        }
                         placeholder="E:\\Projects\\Emery"
                       />
                       <button
                         className="button button--secondary"
                         type="button"
-                        onClick={() => browseForProjectFolder(setProjectRootPath, setProjectError)}
+                        onClick={() =>
+                          browseForProjectFolder(
+                            setProjectRootPath,
+                            setProjectError,
+                          )
+                        }
                       >
                         Browse
                       </button>
                     </div>
                   </label>
 
-                  {projectError ? <p className="form-error">{projectError}</p> : null}
+                  {projectError ? (
+                    <p className="form-error">{projectError}</p>
+                  ) : null}
 
                   <div className="action-row">
-                    <button className="button button--primary" disabled={isCreatingProject} type="submit">
-                      {isCreatingProject ? 'Saving...' : 'Create project'}
+                    <button
+                      className="button button--primary"
+                      disabled={isCreatingProject}
+                      type="submit"
+                    >
+                      {isCreatingProject ? 'Saving...' : 'Create'}
                     </button>
                     <button
                       className="button button--secondary"
@@ -259,16 +292,21 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                 </form>
               ) : null}
 
-              <button
-                className="button button--primary side-rail__footer-action"
-                type="button"
-                onClick={() => setIsProjectCreateOpen((current: boolean) => !current)}
-              >
-                {isProjectCreateOpen ? 'Hide add project' : 'Add project'}
-              </button>
+              <div className="side-rail__footer">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setActiveView('overview')}
+                  title="Settings"
+                >
+                  <Settings size={14} />
+                </Button>
+              </div>
             </>
           )}
         </aside>
+
+        {/* ── CENTER PANEL: Workspace ── */}
         <section className="center-stage">
           {!selectedProject ? (
             <div className="empty-state empty-state--center">
@@ -276,69 +314,49 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
             </div>
           ) : (
             <>
-              <div className="center-stage__header">
-                <div>
-                  <p className="panel__eyebrow">Workspace</p>
-                  <h2>{selectedProject.name}</h2>
-                </div>
-                <div className="center-stage__meta">
-                  <span
-                    className={`pill ${
-                      selectedWorktree
-                        ? selectedWorktree.pathAvailable
-                          ? ''
-                          : 'pill--danger'
-                        : selectedProject.rootAvailable
-                          ? ''
-                          : 'pill--danger'
-                    }`}
-                  >
-                    {selectedWorktree
-                      ? selectedWorktree.pathAvailable
-                        ? 'worktree ready'
-                        : 'worktree missing'
-                      : selectedProject.rootAvailable
-                        ? 'root ready'
-                        : 'root missing'}
-                  </span>
-                  <span className={`pill ${hasSelectedProjectLiveSession ? 'pill--live' : ''}`}>
-                    {hasSelectedProjectLiveSession ? 'live session' : 'idle'}
-                  </span>
-                  <span className="pill">{selectedWorktree ? 'worktree' : 'project shell'}</span>
-                </div>
-              </div>
-
-              {sessionError ? <p className="form-error">{sessionError}</p> : null}
+              {sessionError ? (
+                <p className="form-error">{sessionError}</p>
+              ) : null}
               {launchBlockedByMissingRoot ? (
                 <p className="form-error">
                   {selectedWorktree
-                    ? 'This worktree path is missing. Start the work item again to recreate it before the next launch.'
-                    : "This project's root is missing. Rebind it in Project Overview before the next launch."}
+                    ? 'Worktree path missing. Start the work item again to recreate.'
+                    : 'Root missing. Rebind in Overview before launching.'}
                 </p>
               ) : null}
 
               <nav className="workspace-tabs workspace-tabs--shell">
                 <button
-                  className={`workspace-tab ${activeView === 'terminal' ? 'workspace-tab--active' : ''}`}
+                  className={`workspace-tab ${
+                    activeView === 'terminal' ? 'workspace-tab--active' : ''
+                  }`}
                   type="button"
                   onClick={() => setActiveView('terminal')}
                 >
-                  <span>Terminal</span>
+                  TERMINAL
                 </button>
                 <button
-                  className={`workspace-tab ${activeView === 'overview' ? 'workspace-tab--active' : ''}`}
+                  className={`workspace-tab ${
+                    activeView === 'overview' ? 'workspace-tab--active' : ''
+                  }`}
                   type="button"
                   onClick={() => setActiveView('overview')}
                 >
-                  <span>Project Overview</span>
+                  OVERVIEW
                 </button>
                 <button
-                  className={`workspace-tab ${activeView === 'workItems' ? 'workspace-tab--active' : ''}`}
+                  className={`workspace-tab ${
+                    activeView === 'workItems' ? 'workspace-tab--active' : ''
+                  }`}
                   type="button"
                   onClick={() => setActiveView('workItems')}
                 >
-                  <span>Work Items</span>
-                  <span className="workspace-tab__count">{workItems.length}</span>
+                  WORK ITEMS
+                  {workItems.length > 0 ? (
+                    <span className="workspace-tab__count">
+                      {workItems.length}
+                    </span>
+                  ) : null}
                 </button>
               </nav>
 
@@ -355,11 +373,11 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                       <p>
                         {selectedWorktree
                           ? hasSelectedProjectLiveSession
-                            ? `Live Claude session attached to worktree ${selectedWorktree.branchName}.`
-                            : `Launch directly into worktree ${selectedWorktree.branchName}.`
+                            ? `Live session · ${selectedWorktree.branchName}`
+                            : `Launch into worktree ${selectedWorktree.branchName}`
                           : hasSelectedProjectLiveSession
-                            ? 'Live Claude session attached to the selected project.'
-                            : 'Launch directly into the selected project root.'}
+                            ? 'Live session · project root'
+                            : 'Launch into project root'}
                       </p>
                     </div>
 
@@ -368,10 +386,16 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                         <label className="field field--inline">
                           <span>Account</span>
                           <select
-                            value={selectedLaunchProfileId === null ? '' : String(selectedLaunchProfileId)}
+                            value={
+                              selectedLaunchProfileId === null
+                                ? ''
+                                : String(selectedLaunchProfileId)
+                            }
                             onChange={(event) =>
                               setSelectedLaunchProfileId(
-                                event.target.value === '' ? null : Number(event.target.value),
+                                event.target.value === ''
+                                  ? null
+                                  : Number(event.target.value),
                               )
                             }
                           >
@@ -388,7 +412,9 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                       <button
                         className="button button--secondary"
                         type="button"
-                        onClick={() => setIsAgentGuideOpen((current: boolean) => !current)}
+                        onClick={() =>
+                          setIsAgentGuideOpen((current: boolean) => !current)
+                        }
                       >
                         {isAgentGuideOpen ? 'Hide guide' : 'Show guide'}
                       </button>
@@ -415,14 +441,18 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                       ) : (
                         <button
                           className="button button--primary"
-                          disabled={!selectedLaunchProfile || isLaunchingSession || launchBlockedByMissingRoot}
+                          disabled={
+                            !selectedLaunchProfile ||
+                            isLaunchingSession ||
+                            launchBlockedByMissingRoot
+                          }
                           type="button"
                           onClick={() => void launchWorkspaceGuide()}
                         >
                           {isLaunchingSession
                             ? 'Launching...'
                             : launchBlockedByMissingRoot
-                              ? 'Rebind root to launch'
+                              ? 'Rebind root'
                               : 'Launch terminal'}
                         </button>
                       )}
@@ -438,15 +468,25 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                         </div>
                         <span
                           className={`status-badge ${
-                            bridgeReady ? 'status-badge--ready' : 'status-badge--stopped'
+                            bridgeReady
+                              ? 'status-badge--ready'
+                              : 'status-badge--stopped'
                           }`}
                         >
-                          {bridgeReady ? 'ready in terminal' : 'launch to activate'}
+                          {bridgeReady
+                            ? 'ready in terminal'
+                            : 'launch to activate'}
                         </span>
                       </div>
                       <div className="guide-panel__actions">
-                        <button className="button button--secondary" type="button" onClick={() => void copyAgentStartupPrompt()}>
-                          {hasFocusedPrompt ? 'Copy focus prompt' : 'Copy prompt'}
+                        <button
+                          className="button button--secondary"
+                          type="button"
+                          onClick={() => void copyAgentStartupPrompt()}
+                        >
+                          {hasFocusedPrompt
+                            ? 'Copy focus prompt'
+                            : 'Copy prompt'}
                         </button>
                         <button
                           className="button button--primary"
@@ -454,7 +494,9 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                           type="button"
                           onClick={() => void sendAgentStartupPrompt()}
                         >
-                          {hasFocusedPrompt ? 'Send focus prompt' : 'Send to terminal'}
+                          {hasFocusedPrompt
+                            ? 'Send focus prompt'
+                            : 'Send to terminal'}
                         </button>
                         {hasFocusedPrompt ? (
                           <button
@@ -466,7 +508,11 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                           </button>
                         ) : null}
                       </div>
-                      {agentPromptMessage ? <p className="stack-form__note">{agentPromptMessage}</p> : null}
+                      {agentPromptMessage ? (
+                        <p className="stack-form__note">
+                          {agentPromptMessage}
+                        </p>
+                      ) : null}
                       <textarea
                         className="guide-panel__prompt"
                         readOnly
@@ -482,8 +528,17 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                   ) : null}
 
                   {hasSelectedProjectLiveSession ? (
-                    <Suspense fallback={<div className="terminal-loading">Preparing terminal...</div>}>
-                      <LiveTerminal snapshot={sessionSnapshot} onSessionExit={handleSessionExit} />
+                    <Suspense
+                      fallback={
+                        <div className="terminal-loading">
+                          Preparing terminal...
+                        </div>
+                      }
+                    >
+                      <LiveTerminal
+                        snapshot={sessionSnapshot}
+                        onSessionExit={handleSessionExit}
+                      />
                     </Suspense>
                   ) : (
                     <div className="terminal-launch-card">
@@ -497,7 +552,11 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                               ? 'Ready to launch'
                               : 'Root needs rebind'}
                         </p>
-                        <h3>{selectedWorktree ? selectedWorktree.branchName : selectedProject.name}</h3>
+                        <h3>
+                          {selectedWorktree
+                            ? selectedWorktree.branchName
+                            : selectedProject.name}
+                        </h3>
                         <p>
                           {selectedWorktree
                             ? selectedWorktree.pathAvailable
@@ -505,7 +564,7 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                               : 'The stored worktree path is missing. Start the work item again to recreate it.'
                             : selectedProject.rootAvailable
                               ? `Start Claude in ${selectedProject.rootPath} with the selected account.`
-                              : 'The registered root path no longer exists. Rebind the project in Project Overview.'}
+                              : 'The registered root path no longer exists. Rebind the project in Overview.'}
                         </p>
                       </div>
                       <div className="terminal-launch-card__meta">
@@ -526,6 +585,7 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                   )}
                 </section>
               ) : null}
+
               {activeView === 'overview' ? (
                 <section className="overview-view">
                   <div className="overview-grid">
@@ -576,22 +636,42 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                       <div className="overview-card__header">
                         <div>
                           <p className="panel__eyebrow">Project settings</p>
-                          <strong>{selectedProject.rootAvailable ? 'Edit project' : 'Rebind root'}</strong>
+                          <strong>
+                            {selectedProject.rootAvailable
+                              ? 'Edit project'
+                              : 'Rebind root'}
+                          </strong>
                         </div>
                         <button
                           className="button button--secondary button--compact"
                           type="button"
-                          onClick={() => setIsProjectEditorOpen((current: boolean) => !current)}
+                          onClick={() =>
+                            setIsProjectEditorOpen(
+                              (current: boolean) => !current,
+                            )
+                          }
                         >
-                          {isProjectEditorOpen ? 'Hide' : selectedProject.rootAvailable ? 'Edit project' : 'Rebind root'}
+                          {isProjectEditorOpen
+                            ? 'Hide'
+                            : selectedProject.rootAvailable
+                              ? 'Edit project'
+                              : 'Rebind root'}
                         </button>
                       </div>
 
                       {isProjectEditorOpen ? (
-                        <form className="stack-form" onSubmit={(event) => void submitProjectUpdate(event as FormEvent<HTMLFormElement>)}>
+                        <form
+                          className="stack-form"
+                          onSubmit={(event) =>
+                            void submitProjectUpdate(
+                              event as FormEvent<HTMLFormElement>,
+                            )
+                          }
+                        >
                           {!selectedProject.rootAvailable ? (
                             <p className="form-error">
-                              The registered root is missing. Pick the new folder and save to repair launch.
+                              The registered root is missing. Pick the new
+                              folder and save to repair launch.
                             </p>
                           ) : null}
 
@@ -600,7 +680,9 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                               <span>Name</span>
                               <input
                                 value={editProjectName}
-                                onChange={(event) => setEditProjectName(event.target.value)}
+                                onChange={(event) =>
+                                  setEditProjectName(event.target.value)
+                                }
                                 placeholder="Emery"
                               />
                             </label>
@@ -610,7 +692,9 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                               <div className="input-row">
                                 <input
                                   value={editProjectRootPath}
-                                  onChange={(event) => setEditProjectRootPath(event.target.value)}
+                                  onChange={(event) =>
+                                    setEditProjectRootPath(event.target.value)
+                                  }
                                   placeholder="E:\\Projects\\Emery"
                                 />
                                 <button
@@ -629,10 +713,16 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                             </label>
                           </div>
 
-                          {projectUpdateError ? <p className="form-error">{projectUpdateError}</p> : null}
+                          {projectUpdateError ? (
+                            <p className="form-error">{projectUpdateError}</p>
+                          ) : null}
 
                           <div className="action-row">
-                            <button className="button button--primary" disabled={isUpdatingProject} type="submit">
+                            <button
+                              className="button button--primary"
+                              disabled={isUpdatingProject}
+                              type="submit"
+                            >
                               {isUpdatingProject
                                 ? 'Saving...'
                                 : selectedProject.rootAvailable
@@ -650,7 +740,8 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                         </form>
                       ) : (
                         <p className="stack-form__note">
-                          Keep the project name clean and rebind the root here if the folder moves.
+                          Keep the project name clean and rebind the root here
+                          if the folder moves.
                         </p>
                       )}
                     </article>
@@ -664,7 +755,11 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                         <button
                           className="button button--secondary button--compact"
                           type="button"
-                          onClick={() => setIsProfileFormOpen((current: boolean) => !current)}
+                          onClick={() =>
+                            setIsProfileFormOpen(
+                              (current: boolean) => !current,
+                            )
+                          }
                         >
                           {isProfileFormOpen ? 'Hide add form' : 'Add account'}
                         </button>
@@ -673,10 +768,16 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                       <label className="field">
                         <span>Selected account</span>
                         <select
-                          value={selectedLaunchProfileId === null ? '' : String(selectedLaunchProfileId)}
+                          value={
+                            selectedLaunchProfileId === null
+                              ? ''
+                              : String(selectedLaunchProfileId)
+                          }
                           onChange={(event) =>
                             setSelectedLaunchProfileId(
-                              event.target.value === '' ? null : Number(event.target.value),
+                              event.target.value === ''
+                                ? null
+                                : Number(event.target.value),
                             )
                           }
                         >
@@ -690,12 +791,21 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                       </label>
 
                       {isProfileFormOpen ? (
-                        <form className="stack-form" onSubmit={(event) => void submitLaunchProfile(event as FormEvent<HTMLFormElement>)}>
+                        <form
+                          className="stack-form"
+                          onSubmit={(event) =>
+                            void submitLaunchProfile(
+                              event as FormEvent<HTMLFormElement>,
+                            )
+                          }
+                        >
                           <label className="field">
                             <span>Label</span>
                             <input
                               value={profileLabel}
-                              onChange={(event) => setProfileLabel(event.target.value)}
+                              onChange={(event) =>
+                                setProfileLabel(event.target.value)
+                              }
                               placeholder="Claude Code / Work"
                             />
                           </label>
@@ -704,7 +814,9 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                             <span>Executable</span>
                             <input
                               value={profileExecutable}
-                              onChange={(event) => setProfileExecutable(event.target.value)}
+                              onChange={(event) =>
+                                setProfileExecutable(event.target.value)
+                              }
                               placeholder="claude"
                             />
                           </label>
@@ -713,7 +825,9 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                             <span>Args</span>
                             <input
                               value={profileArgs}
-                              onChange={(event) => setProfileArgs(event.target.value)}
+                              onChange={(event) =>
+                                setProfileArgs(event.target.value)
+                              }
                               placeholder="--dangerously-skip-permissions"
                             />
                           </label>
@@ -723,16 +837,26 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                             <textarea
                               rows={4}
                               value={profileEnvJson}
-                              onChange={(event) => setProfileEnvJson(event.target.value)}
+                              onChange={(event) =>
+                                setProfileEnvJson(event.target.value)
+                              }
                               placeholder='{"ANTHROPIC_API_KEY":"..."}'
                             />
                           </label>
 
-                          {profileError ? <p className="form-error">{profileError}</p> : null}
+                          {profileError ? (
+                            <p className="form-error">{profileError}</p>
+                          ) : null}
 
                           <div className="action-row">
-                            <button className="button button--primary" disabled={isCreatingProfile} type="submit">
-                              {isCreatingProfile ? 'Saving...' : 'Create profile'}
+                            <button
+                              className="button button--primary"
+                              disabled={isCreatingProfile}
+                              type="submit"
+                            >
+                              {isCreatingProfile
+                                ? 'Saving...'
+                                : 'Create profile'}
                             </button>
                             <button
                               className="button button--secondary"
@@ -746,7 +870,9 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                       ) : selectedLaunchProfile ? (
                         <div className="overview-inline-meta">
                           <code>{selectedLaunchProfile.executable}</code>
-                          <code>{selectedLaunchProfile.args || '(no args)'}</code>
+                          <code>
+                            {selectedLaunchProfile.args || '(no args)'}
+                          </code>
                         </div>
                       ) : (
                         <p className="stack-form__note">
@@ -759,14 +885,23 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                       <div className="overview-card__header">
                         <div>
                           <p className="panel__eyebrow">Context docs</p>
-                          <strong>{documents.length} documents attached to this project</strong>
+                          <strong>
+                            {documents.length} documents attached to this
+                            project
+                          </strong>
                         </div>
                         <button
                           className="button button--secondary button--compact"
                           type="button"
-                          onClick={() => setIsDocumentsManagerOpen((current: boolean) => !current)}
+                          onClick={() =>
+                            setIsDocumentsManagerOpen(
+                              (current: boolean) => !current,
+                            )
+                          }
                         >
-                          {isDocumentsManagerOpen ? 'Hide manager' : 'Manage docs'}
+                          {isDocumentsManagerOpen
+                            ? 'Hide manager'
+                            : 'Manage docs'}
                         </button>
                       </div>
 
@@ -784,7 +919,10 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                       ) : recentDocuments.length > 0 ? (
                         <div className="document-preview-list">
                           {recentDocuments.map((document: any) => (
-                            <article key={document.id} className="document-preview-card">
+                            <article
+                              key={document.id}
+                              className="document-preview-card"
+                            >
                               <strong>{document.title}</strong>
                               <p>
                                 {document.workItemId === null
@@ -820,6 +958,8 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
             </>
           )}
         </section>
+
+        {/* ── RIGHT PANEL: Dispatcher + Worktrees ── */}
         <aside
           key={`session-rail-${sessionRailRevision}`}
           className={`side-rail side-rail--sessions ${
@@ -833,99 +973,93 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                 type="button"
                 onClick={() => setIsSessionRailCollapsed(false)}
               >
-                Sessions
+                {selectedProject?.name ?? 'Sessions'}
               </button>
             </div>
           ) : (
             <>
               <div className="side-rail__header">
-                <div>
-                  <p className="panel__eyebrow">Sessions</p>
-                  <h2>Runtime</h2>
-                </div>
-                <button
-                  className="rail-toggle rail-toggle--icon"
-                  type="button"
+                <span className="rail-label">
+                  {selectedProject?.name?.toUpperCase() ?? 'NO PROJECT'}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon"
                   onClick={() => setIsSessionRailCollapsed(true)}
+                  title="Collapse"
                 >
-                  &rsaquo;
-                </button>
+                  <ChevronRight size={14} />
+                </Button>
               </div>
 
+              {/* Dispatcher */}
               <section className="rail-section">
-                <div className="rail-section__header">
-                  <span>Live sessions</span>
-                  <span className="panel__count">{liveSessions.length}</span>
-                </div>
-
-                {liveSessions.length === 0 ? (
-                  <div className="empty-state empty-state--rail">
-                    No live sessions right now.
+                <button
+                  className={`dispatcher-card ${
+                    selectedTerminalWorktreeId === null && hasSelectedProjectLiveSession
+                      ? 'dispatcher-card--active'
+                      : ''
+                  }`}
+                  type="button"
+                  onClick={() => selectMainTerminal()}
+                >
+                  <div className="dispatcher-card__row">
+                    <span className="rail-label">DISPATCHER</span>
+                    <Badge variant={isDispatcherRunning ? 'running' : 'offline'}>
+                      {isDispatcherRunning ? 'RUNNING' : 'OFFLINE'}
+                    </Badge>
                   </div>
-                ) : (
-                  <div className="session-card-list">
-                    {liveSessions.map(({ project, snapshot }: any) => (
-                      <button
-                        key={`${project.id}:${snapshot.startedAt}`}
-                        className={`session-card ${
-                          project.id === selectedProjectId && selectedTerminalWorktreeId === null
-                            ? 'session-card--active'
-                            : ''
-                        }`}
-                        type="button"
-                        onClick={() => {
-                          selectProject(project.id)
-                          selectMainTerminal()
-                        }}
-                      >
-                        <div className="session-card__header">
-                          <strong>{project.name}</strong>
-                          <span className="session-dot" />
-                        </div>
-                        <p>{snapshot.profileLabel}</p>
-                        <span className="pill pill--live">running</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
+                </button>
               </section>
 
+              {/* Worktrees */}
               <section className="rail-section">
                 <div className="rail-section__header">
-                  <span>Worktree sessions</span>
-                  <span className="panel__count">{worktreeSessions.length}</span>
+                  <span className="rail-label">WORKTREES</span>
+                  <span className="panel__count">
+                    ({worktreeSessions.length})
+                  </span>
                 </div>
+
                 {worktreeSessions.length === 0 ? (
                   <div className="empty-state empty-state--rail">
-                    Start a work item in a worktree and it will appear here.
+                    No worktrees yet.
                   </div>
                 ) : (
                   <div
                     key={`worktree-session-list-${sessionRailRevision}`}
                     className="session-card-list"
                   >
-                    {worktreeSessions.map(({ worktree, snapshot }: any) => (
-                      <button
-                        key={worktree.id}
-                        className={`session-card ${
-                          selectedTerminalWorktreeId === worktree.id ? 'session-card--active' : ''
-                        }`}
-                        type="button"
-                        onClick={() => selectWorktreeTerminal(worktree.id)}
-                      >
-                        <div className="session-card__header">
-                          <strong>{worktree.branchName}</strong>
-                          {snapshot ? <span className="session-dot" /> : null}
-                        </div>
-                        <p>{worktree.workItemTitle}</p>
-                        <div className="session-card__meta">
-                          <span className={`pill ${snapshot ? 'pill--live' : ''}`}>
-                            {snapshot ? 'running' : worktree.pathAvailable ? 'ready' : 'missing'}
-                          </span>
-                          <span>#{worktree.workItemId}</span>
-                        </div>
-                      </button>
-                    ))}
+                    {worktreeSessions.map(
+                      ({ worktree, snapshot }: any) => (
+                        <button
+                          key={worktree.id}
+                          className={`session-card ${
+                            selectedTerminalWorktreeId === worktree.id
+                              ? 'session-card--active'
+                              : ''
+                          }`}
+                          type="button"
+                          onClick={() =>
+                            selectWorktreeTerminal(worktree.id)
+                          }
+                        >
+                          <div className="session-card__header">
+                            <strong>{worktree.branchName}</strong>
+                            <Badge
+                              variant={
+                                snapshot?.isRunning ? 'running' : 'offline'
+                              }
+                            >
+                              {snapshot?.isRunning ? 'RUNNING' : 'OFFLINE'}
+                            </Badge>
+                          </div>
+                          <p className="session-card__subtitle">
+                            {worktree.workItemTitle}
+                          </p>
+                        </button>
+                      ),
+                    )}
                   </div>
                 )}
               </section>
