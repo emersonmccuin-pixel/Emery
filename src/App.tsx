@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { flushSync } from 'react-dom'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
@@ -1211,11 +1212,14 @@ function App() {
         },
       })
 
-      setWorktrees((current) => {
-        const next = current.filter((existing) => existing.id !== worktree.id)
-        return [worktree, ...next]
+      flushSync(() => {
+        setWorktrees((current) => {
+          const next = current.filter((existing) => existing.id !== worktree.id)
+          return [worktree, ...next]
+        })
+        setSelectedTerminalWorktreeId(worktree.id)
       })
-      setSelectedTerminalWorktreeId(worktree.id)
+      setContextRefreshKey((current) => current + 1)
       await refreshWorktrees(selectedProject.id)
 
       const currentSessionSnapshot = await fetchSessionSnapshot(selectedProject.id, worktree.id)
