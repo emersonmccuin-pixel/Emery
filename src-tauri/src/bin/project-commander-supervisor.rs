@@ -871,7 +871,7 @@ fn route_request(
         }
         (&Method::Post, "/worktree/remove") => {
             let input = read_json::<ProjectWorktreeTarget>(request)?;
-            let removed = remove_project_worktree(state, sessions, input.project_id, input.worktree_id)?;
+            let removed = remove_project_worktree(state, sessions, input.project_id, input.worktree_id, false)?;
             append_project_event(
                 state,
                 context,
@@ -1334,6 +1334,7 @@ fn remove_project_worktree(
     sessions: &SessionRegistry,
     project_id: i64,
     worktree_id: i64,
+    allow_interrupted: bool,
 ) -> Result<WorktreeRecord, RouteError> {
     let project = state
         .get_project(project_id)
@@ -1345,7 +1346,7 @@ fn remove_project_worktree(
         project_id,
         worktree_id,
         "removing the worktree",
-        false,
+        allow_interrupted,
     )?;
 
     let project_git_root = resolve_git_root(&project.root_path)?;
@@ -1381,7 +1382,7 @@ fn cleanup_project_worktree(
         )));
     }
 
-    remove_project_worktree(state, sessions, project_id, worktree_id)
+    remove_project_worktree(state, sessions, project_id, worktree_id, true)
 }
 
 fn pin_project_worktree(
