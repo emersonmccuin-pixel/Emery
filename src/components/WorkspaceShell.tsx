@@ -528,27 +528,29 @@ function WorkspaceShell() {
                         </div>
                       </div>
 
-                      <ScrollArea className="flex-1 hud-scrollarea bg-black/60">
-                        <div className="p-6 h-full">
-                          {hasSelectedProjectLiveSession && sessionSnapshot ? (
-                            <div className="h-full min-h-[500px] border border-hud-green/10 rounded-lg overflow-hidden bg-black shadow-2xl relative">
-                              <Suspense
-                                fallback={
-                                  <div className="flex flex-col items-center justify-center h-full text-hud-green font-mono text-xs animate-pulse">
-                                    <div className="mb-4">[ SYSTEM ] INITIATING SECURE LINK...</div>
-                                    <div className="w-48 h-1 bg-hud-cyan/10 rounded-full overflow-hidden">
-                                      <div className="h-full bg-hud-green animate-[progress_2s_ease-in-out_infinite]" style={{ width: '40%' }} />
-                                    </div>
+                      {hasSelectedProjectLiveSession && sessionSnapshot ? (
+                        <div className="flex-1 min-h-0 p-6 bg-black/60">
+                          <div className="h-full border border-hud-green/10 rounded-lg overflow-hidden bg-black shadow-2xl relative">
+                            <Suspense
+                              fallback={
+                                <div className="flex flex-col items-center justify-center h-full text-hud-green font-mono text-xs animate-pulse">
+                                  <div className="mb-4">[ SYSTEM ] INITIATING SECURE LINK...</div>
+                                  <div className="w-48 h-1 bg-hud-cyan/10 rounded-full overflow-hidden">
+                                    <div className="h-full bg-hud-green animate-[progress_2s_ease-in-out_infinite]" style={{ width: '40%' }} />
                                   </div>
-                                }
-                              >
-                                <LiveTerminal
-                                  snapshot={sessionSnapshot}
-                                  onSessionExit={handleSessionExit}
-                                />
-                              </Suspense>
-                            </div>
-                          ) : (
+                                </div>
+                              }
+                            >
+                              <LiveTerminal
+                                snapshot={sessionSnapshot}
+                                onSessionExit={handleSessionExit}
+                              />
+                            </Suspense>
+                          </div>
+                        </div>
+                      ) : (
+                        <ScrollArea className="flex-1 hud-scrollarea bg-black/60">
+                          <div className="p-6 h-full">
                             <div className="flex flex-col items-center justify-center h-full min-h-[400px] text-center max-w-lg mx-auto terminal-launch-card">
                               {selectedTargetHistoryRecord ? (
                                 <article className="w-full mb-8 rounded-lg border border-hud-magenta/50 bg-hud-magenta/5 p-5 text-left">
@@ -645,9 +647,9 @@ function WorkspaceShell() {
                                     : 'LAUNCH DISPATCHER'}
                               </Button>
                             </div>
-                          )}
-                        </div>
-                      </ScrollArea>
+                          </div>
+                        </ScrollArea>
+                      )}
                     </section>
                   ) : null}
 
