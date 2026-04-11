@@ -1,17 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Tabs, TabPanel, type TabDefinition } from '@/components/ui/tabs'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { useAppStore, useSelectedProject } from '../store'
 
 type ConfigurationTab = 'general' | 'agents' | 'claude' | 'agents_md'
-
-const TABS: ReadonlyArray<TabDefinition<ConfigurationTab>> = [
-  { value: 'general', label: 'General' },
-  { value: 'agents', label: 'Agents' },
-  { value: 'claude', label: 'CLAUDE.md' },
-  { value: 'agents_md', label: 'AGENTS.md' },
-]
 
 function ConfigurationPanel() {
   const selectedProject = useSelectedProject()
@@ -26,16 +19,27 @@ function ConfigurationPanel() {
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <Tabs tabs={TABS} value={activeTab} onChange={setActiveTab} className="shrink-0" />
+    <Tabs
+      value={activeTab}
+      onValueChange={(value) => setActiveTab(value as ConfigurationTab)}
+      className="h-full"
+    >
+      <nav className="workspace-tabs--shell flex items-center h-10 px-4 shrink-0">
+        <TabsList>
+          <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger value="agents">Agents</TabsTrigger>
+          <TabsTrigger value="claude">CLAUDE.md</TabsTrigger>
+          <TabsTrigger value="agents_md">AGENTS.md</TabsTrigger>
+        </TabsList>
+      </nav>
       <div className="flex-1 min-h-0 overflow-auto scrollbar-thin p-6">
-        <TabPanel when={activeTab === 'general'}>
+        <TabsContent value="general">
           <GeneralTab />
-        </TabPanel>
-        <TabPanel when={activeTab === 'agents'}>
+        </TabsContent>
+        <TabsContent value="agents">
           <AgentsTab />
-        </TabPanel>
-        <TabPanel when={activeTab === 'claude'}>
+        </TabsContent>
+        <TabsContent value="claude">
           <ProjectFileEditor
             key={`claude-${selectedProject.id}`}
             rootPath={selectedProject.rootPath}
@@ -43,8 +47,8 @@ function ConfigurationPanel() {
             eyebrow="Project CLAUDE.md"
             description="Claude Code reads this file at session start. Edit the instructions it follows for this project."
           />
-        </TabPanel>
-        <TabPanel when={activeTab === 'agents_md'}>
+        </TabsContent>
+        <TabsContent value="agents_md">
           <ProjectFileEditor
             key={`agents-${selectedProject.id}`}
             rootPath={selectedProject.rootPath}
@@ -52,9 +56,9 @@ function ConfigurationPanel() {
             eyebrow="Project AGENTS.md"
             description="Shared agent roster and conventions for this project."
           />
-        </TabPanel>
+        </TabsContent>
       </div>
-    </div>
+    </Tabs>
   )
 }
 

@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import DocumentsPanel from './DocumentsPanel'
 import HistoryPanel from './HistoryPanel'
 import LiveTerminal from './LiveTerminal'
@@ -413,80 +414,50 @@ function WorkspaceShell() {
             </div>
           ) : (
             <>
-              <nav className="workspace-tabs--shell flex items-center justify-between h-10 px-4 shrink-0">
-                <div className="flex gap-6 h-full items-center">
-                  <button
-                    className={`workspace-tab ${
-                      activeView === 'terminal' ? 'workspace-tab--active' : ''
-                    }`}
-                    type="button"
-                    onClick={() => setActiveView('terminal')}
-                  >
-                    CONSOLE
-                  </button>
-                  <button
-                    className={`workspace-tab ${
-                      activeView === 'overview' ? 'workspace-tab--active' : ''
-                    }`}
-                    type="button"
-                    onClick={() => setActiveView('overview')}
-                  >
-                    OVERVIEW
-                  </button>
-                  <button
-                    className={`workspace-tab ${
-                      activeView === 'workItems' ? 'workspace-tab--active' : ''
-                    }`}
-                    type="button"
-                    onClick={() => setActiveView('workItems')}
-                  >
-                    BACKLOG
-                    {openWorkItemCount > 0 ? (
-                      <span className="ml-2 px-1 rounded-sm bg-hud-green/10 text-[9px] text-hud-green font-bold border border-hud-green/40">
-                        {openWorkItemCount}
-                      </span>
-                    ) : null}
-                  </button>
-                  <button
-                    className={`workspace-tab ${
-                      activeView === 'history' ? 'workspace-tab--active' : ''
-                    }`}
-                    type="button"
-                    onClick={() => setActiveView('history')}
-                  >
-                    HISTORY
-                    {recoverableSessionCount > 0 ? (
-                      <span className="ml-2 px-1 rounded-sm bg-hud-magenta/10 text-[9px] text-hud-magenta font-bold border border-hud-magenta/40">
-                        {recoverableSessionCount}
-                      </span>
-                    ) : null}
-                  </button>
-                  <button
-                    className={`workspace-tab ${
-                      activeView === 'configuration' ? 'workspace-tab--active' : ''
-                    }`}
-                    type="button"
-                    onClick={() => setActiveView('configuration')}
-                  >
-                    CONFIGURATION
-                  </button>
-                </div>
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    className="h-6 w-6 inline-flex items-center justify-center rounded text-hud-cyan/60 hover:text-hud-cyan hover:bg-hud-cyan/10 transition-colors"
-                    title="App Settings"
-                    aria-label="Open App Settings"
-                    onClick={() => openAppSettings()}
-                  >
-                    <Settings size={13} />
-                  </button>
-                  <span className="text-[10px] font-black uppercase tracking-[0.15em] text-hud-cyan truncate max-w-[200px]">
-                    {selectedProject?.name}
-                  </span>
-                  <div className={`h-1.5 w-1.5 rounded-full ${bridgeReady ? 'bg-hud-green shadow-[0_0_8px_rgba(116,243,161,0.6)]' : 'bg-destructive'}`} />
-                </div>
-              </nav>
+              <Tabs
+                value={activeView}
+                onValueChange={(value) => setActiveView(value as typeof activeView)}
+                className="contents"
+              >
+                <nav className="workspace-tabs--shell flex items-center justify-between h-10 px-4 shrink-0">
+                  <TabsList>
+                    <TabsTrigger value="terminal">CONSOLE</TabsTrigger>
+                    <TabsTrigger value="overview">OVERVIEW</TabsTrigger>
+                    <TabsTrigger value="workItems">
+                      BACKLOG
+                      {openWorkItemCount > 0 ? (
+                        <span className="ml-2 px-1 rounded-sm bg-hud-green/10 text-[9px] text-hud-green font-bold border border-hud-green/40">
+                          {openWorkItemCount}
+                        </span>
+                      ) : null}
+                    </TabsTrigger>
+                    <TabsTrigger value="history">
+                      HISTORY
+                      {recoverableSessionCount > 0 ? (
+                        <span className="ml-2 px-1 rounded-sm bg-hud-magenta/10 text-[9px] text-hud-magenta font-bold border border-hud-magenta/40">
+                          {recoverableSessionCount}
+                        </span>
+                      ) : null}
+                    </TabsTrigger>
+                    <TabsTrigger value="configuration">CONFIGURATION</TabsTrigger>
+                  </TabsList>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      className="h-6 w-6 inline-flex items-center justify-center rounded text-hud-cyan/60 hover:text-hud-cyan hover:bg-hud-cyan/10 transition-colors"
+                      title="App Settings"
+                      aria-label="Open App Settings"
+                      onClick={() => openAppSettings()}
+                    >
+                      <Settings size={13} />
+                    </button>
+                    <span className="text-[10px] font-black uppercase tracking-[0.15em] text-hud-cyan truncate max-w-[200px]">
+                      {selectedProject?.name}
+                    </span>
+                    <div className={`h-1.5 w-1.5 rounded-full ${bridgeReady ? 'bg-hud-green shadow-[0_0_8px_rgba(116,243,161,0.6)]' : 'bg-destructive'}`} />
+                  </div>
+                </nav>
+              </Tabs>
 
               <div className="flex-1 min-height-0 overflow-hidden flex flex-col">
                 {sessionError ? (

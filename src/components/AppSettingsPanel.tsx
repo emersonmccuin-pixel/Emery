@@ -1,17 +1,10 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { Badge } from '@/components/ui/badge'
-import { Tabs, TabPanel, type TabDefinition } from '@/components/ui/tabs'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { useAppStore } from '../store'
 
 type AppSettingsTab = 'appearance' | 'accounts' | 'defaults' | 'diagnostics'
-
-const TABS: ReadonlyArray<TabDefinition<AppSettingsTab>> = [
-  { value: 'appearance', label: 'Appearance' },
-  { value: 'accounts', label: 'Accounts' },
-  { value: 'defaults', label: 'Defaults' },
-  { value: 'diagnostics', label: 'Diagnostics' },
-]
 
 type Props = {
   initialTab?: AppSettingsTab
@@ -21,24 +14,35 @@ function AppSettingsPanel({ initialTab = 'appearance' }: Props) {
   const [activeTab, setActiveTab] = useState<AppSettingsTab>(initialTab)
 
   return (
-    <div className="flex flex-col h-full">
-      <Tabs tabs={TABS} value={activeTab} onChange={setActiveTab} className="shrink-0" />
+    <Tabs
+      value={activeTab}
+      onValueChange={(value) => setActiveTab(value as AppSettingsTab)}
+      className="h-full"
+    >
+      <nav className="workspace-tabs--shell flex items-center h-10 px-4 shrink-0">
+        <TabsList>
+          <TabsTrigger value="appearance">Appearance</TabsTrigger>
+          <TabsTrigger value="accounts">Accounts</TabsTrigger>
+          <TabsTrigger value="defaults">Defaults</TabsTrigger>
+          <TabsTrigger value="diagnostics">Diagnostics</TabsTrigger>
+        </TabsList>
+      </nav>
       <div className="flex-1 min-h-0 overflow-auto scrollbar-thin p-6">
         <Banner />
-        <TabPanel when={activeTab === 'appearance'}>
+        <TabsContent value="appearance">
           <AppearanceTab />
-        </TabPanel>
-        <TabPanel when={activeTab === 'accounts'}>
+        </TabsContent>
+        <TabsContent value="accounts">
           <AccountsTab />
-        </TabPanel>
-        <TabPanel when={activeTab === 'defaults'}>
+        </TabsContent>
+        <TabsContent value="defaults">
           <DefaultsTab />
-        </TabPanel>
-        <TabPanel when={activeTab === 'diagnostics'}>
+        </TabsContent>
+        <TabsContent value="diagnostics">
           <DiagnosticsTab />
-        </TabPanel>
+        </TabsContent>
       </div>
-    </div>
+    </Tabs>
   )
 }
 
