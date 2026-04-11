@@ -1,7 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 use project_commander_lib::db::{
     AppState, CreateDocumentInput, CreateWorkItemInput, DocumentRecord, ProjectRecord,
-    UpdateDocumentInput, UpdateWorkItemInput, WorkItemRecord,
+    ReparentRequest, UpdateDocumentInput, UpdateWorkItemInput, WorkItemRecord,
 };
 use project_commander_lib::error::{AppError, AppResult};
 use serde::Serialize;
@@ -149,6 +149,10 @@ struct UpdateWorkItemArgs {
     item_type: Option<String>,
     #[arg(long, value_parser = ["backlog", "in_progress", "blocked", "done"])]
     status: Option<String>,
+    #[arg(long, conflicts_with = "clear_parent")]
+    parent_work_item_id: Option<i64>,
+    #[arg(long)]
+    clear_parent: bool,
     #[arg(long)]
     json: bool,
 }
@@ -434,15 +438,27 @@ fn update_work_item(state: &AppState, args: UpdateWorkItemArgs) -> AppResult<()>
         && args.body.is_none()
         && args.item_type.is_none()
         && args.status.is_none()
+        && args.parent_work_item_id.is_none()
+        && !args.clear_parent
     {
         return Err(AppError::invalid_input(
-            "no changes provided. Pass at least one of --title, --body, --type, or --status.",
+            "no changes provided. Pass at least one of --title, --body, --type, --status, --parent-work-item-id, or --clear-parent.",
         ));
     }
 
     let project = resolve_project(state, args.project)?;
     let existing = state.get_work_item(args.id)?;
     ensure_work_item_project(&existing, &project)?;
+
+    let reparent_request = if args.clear_parent {
+        Some(ReparentRequest::Detach)
+    } else {
+        args.parent_work_item_id.map(ReparentRequest::SetParent)
+    };
+    if let Some(request) = reparent_request {
+        state.reparent_work_item(existing.id, request)?;
+    }
+
     let item = state.update_work_item(UpdateWorkItemInput {
         id: existing.id,
         title: args.title.unwrap_or(existing.title),

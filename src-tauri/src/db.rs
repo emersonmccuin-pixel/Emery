@@ -212,6 +212,12 @@ pub struct UpdateWorkItemInput {
     pub status: String,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum ReparentRequest {
+    SetParent(i64),
+    Detach,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateDocumentInput {
@@ -659,6 +665,78 @@ impl AppState {
 
         touch_project(&connection, existing.project_id)?;
         Ok(load_work_item_by_id(&connection, input.id)?)
+    }
+
+    pub fn reparent_work_item(
+        &self,
+        id: i64,
+        request: ReparentRequest,
+    ) -> AppResult<WorkItemRecord> {
+        let connection = self.connect()?;
+        let existing = load_work_item_by_id(&connection, id)?;
+
+        let target_parent: Option<i64> = match request {
+            ReparentRequest::Detach => None,
+            ReparentRequest::SetParent(parent_id) => {
+                if parent_id == existing.id {
+                    return Err(AppError::invalid_input(
+                        "work item cannot be its own parent",
+                    ));
+                }
+                Some(parent_id)
+            }
+        };
+
+        if target_parent == existing.parent_work_item_id {
+            return Ok(existing);
+        }
+
+        if target_parent.is_some() {
+            let child_count = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM work_items WHERE parent_work_item_id = ?1",
+                    [existing.id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|error| format!("failed to inspect child work items: {error}"))?;
+            if child_count > 0 {
+                return Err(AppError::invalid_input(
+                    "cannot reparent a work item that has child work items",
+                ));
+            }
+        }
+
+        let project = self.get_project(existing.project_id)?;
+        let project_prefix =
+            ensure_project_work_item_prefix(&connection, project.id, &project.name)?;
+        let identifier = assign_next_work_item_identifier(
+            &connection,
+            existing.project_id,
+            &project_prefix,
+            target_parent,
+        )?;
+
+        connection
+            .execute(
+                "UPDATE work_items
+                 SET parent_work_item_id = ?1,
+                     sequence_number = ?2,
+                     child_number = ?3,
+                     call_sign = ?4,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?5",
+                params![
+                    identifier.parent_work_item_id,
+                    identifier.sequence_number,
+                    identifier.child_number,
+                    identifier.call_sign,
+                    existing.id,
+                ],
+            )
+            .map_err(|error| format!("failed to reparent work item: {error}"))?;
+
+        touch_project(&connection, existing.project_id)?;
+        Ok(load_work_item_by_id(&connection, existing.id)?)
     }
 
     pub fn delete_work_item(&self, id: i64) -> AppResult<()> {
@@ -3247,6 +3325,139 @@ mod tests {
                 .work_item_count,
             1
         );
+    }
+
+    #[test]
+    fn reparent_work_item_moves_between_parents_and_validates_invariants() {
+        let harness = TestHarness::new("work-item-reparent");
+        let project_root = harness.create_project_root("reparent");
+        let project = harness.create_project("Reparent Co", &project_root);
+        let prefix = derive_project_work_item_prefix(&project.name);
+
+        let parent_a = harness
+            .state
+            .create_work_item(CreateWorkItemInput {
+                project_id: project.id,
+                parent_work_item_id: None,
+                title: "Parent A".to_string(),
+                body: String::new(),
+                item_type: "task".to_string(),
+                status: "backlog".to_string(),
+            })
+            .expect("parent A should be created");
+
+        let parent_b = harness
+            .state
+            .create_work_item(CreateWorkItemInput {
+                project_id: project.id,
+                parent_work_item_id: None,
+                title: "Parent B".to_string(),
+                body: String::new(),
+                item_type: "task".to_string(),
+                status: "backlog".to_string(),
+            })
+            .expect("parent B should be created");
+
+        let orphan = harness
+            .state
+            .create_work_item(CreateWorkItemInput {
+                project_id: project.id,
+                parent_work_item_id: None,
+                title: "Orphan".to_string(),
+                body: String::new(),
+                item_type: "task".to_string(),
+                status: "backlog".to_string(),
+            })
+            .expect("orphan should be created");
+        assert_eq!(orphan.call_sign, format!("{prefix}-3"));
+
+        // Reparent top-level orphan under parent_a — gets a child slot.
+        let nested = harness
+            .state
+            .reparent_work_item(orphan.id, ReparentRequest::SetParent(parent_a.id))
+            .expect("orphan should reparent under parent_a");
+        assert_eq!(nested.parent_work_item_id, Some(parent_a.id));
+        assert_eq!(nested.child_number, Some(1));
+        assert_eq!(nested.sequence_number, parent_a.sequence_number);
+        assert_eq!(nested.call_sign, format!("{}.01", parent_a.call_sign));
+
+        // Move from parent_a to parent_b — fresh child_number under parent_b.
+        let moved = harness
+            .state
+            .reparent_work_item(nested.id, ReparentRequest::SetParent(parent_b.id))
+            .expect("child should move to parent_b");
+        assert_eq!(moved.parent_work_item_id, Some(parent_b.id));
+        assert_eq!(moved.child_number, Some(1));
+        assert_eq!(moved.sequence_number, parent_b.sequence_number);
+        assert_eq!(moved.call_sign, format!("{}.01", parent_b.call_sign));
+
+        // Detach back to top level — gets next sequence_number.
+        let detached = harness
+            .state
+            .reparent_work_item(moved.id, ReparentRequest::Detach)
+            .expect("child should detach to top level");
+        assert_eq!(detached.parent_work_item_id, None);
+        assert_eq!(detached.child_number, None);
+        assert!(detached.sequence_number > parent_b.sequence_number);
+        assert_eq!(
+            detached.call_sign,
+            format!("{prefix}-{}", detached.sequence_number)
+        );
+
+        // Self-parent rejected.
+        let self_err = harness
+            .state
+            .reparent_work_item(parent_a.id, ReparentRequest::SetParent(parent_a.id))
+            .err()
+            .expect("self parent should fail");
+        assert_eq!(self_err.code, AppErrorCode::InvalidInput);
+        assert_eq!(self_err.message, "work item cannot be its own parent");
+
+        // No-op detach on already-top-level item is allowed.
+        let still_top = harness
+            .state
+            .reparent_work_item(parent_a.id, ReparentRequest::Detach)
+            .expect("detach of top-level item should be a no-op");
+        assert_eq!(still_top.parent_work_item_id, None);
+
+        // Reparenting an item that has children is rejected (preserves 2-level rule).
+        let _ = harness
+            .state
+            .create_work_item(CreateWorkItemInput {
+                project_id: project.id,
+                parent_work_item_id: Some(parent_a.id),
+                title: "Sticky child".to_string(),
+                body: String::new(),
+                item_type: "task".to_string(),
+                status: "backlog".to_string(),
+            })
+            .expect("sticky child should be created");
+        let has_children_err = harness
+            .state
+            .reparent_work_item(parent_a.id, ReparentRequest::SetParent(parent_b.id))
+            .err()
+            .expect("parent with children should not be reparentable");
+        assert_eq!(has_children_err.code, AppErrorCode::InvalidInput);
+        assert_eq!(
+            has_children_err.message,
+            "cannot reparent a work item that has child work items"
+        );
+
+        // Reparenting under an item that is itself a child is rejected
+        // (preserves the 2-level rule via assign_next_work_item_identifier).
+        let sticky = harness
+            .state
+            .list_work_items(project.id)
+            .expect("list should succeed")
+            .into_iter()
+            .find(|item| item.title == "Sticky child")
+            .expect("sticky child should exist");
+        let nested_err = harness
+            .state
+            .reparent_work_item(parent_b.id, ReparentRequest::SetParent(sticky.id))
+            .err()
+            .expect("parenting under a child should fail");
+        assert_eq!(nested_err.code, AppErrorCode::InvalidInput);
     }
 
     #[test]

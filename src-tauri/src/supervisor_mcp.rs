@@ -178,6 +178,8 @@ impl SupervisorMcpClient {
         body: Option<String>,
         item_type: Option<String>,
         status: Option<String>,
+        parent_work_item_id: Option<i64>,
+        clear_parent: bool,
     ) -> AppResult<WorkItemRecord> {
         self.post(
             "work-item/update",
@@ -188,6 +190,8 @@ impl SupervisorMcpClient {
                 body,
                 item_type,
                 status,
+                parent_work_item_id,
+                clear_parent,
             },
         )
     }
@@ -484,6 +488,11 @@ fn call_tool(
             read_optional_string(&arguments, "body"),
             read_optional_string(&arguments, "itemType"),
             read_optional_string(&arguments, "status"),
+            read_optional_i64(&arguments, "parentWorkItemId"),
+            arguments
+                .get("clearParent")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         )?)
         .map_err(|error| AppError::internal(format!("failed to encode updated work item: {error}")))?),
         "close_work_item" => Ok(serde_json::to_value(
@@ -638,7 +647,7 @@ fn build_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "update_work_item",
-            "description": "Update a work item's title, body, type, or status.",
+            "description": "Update a work item's title, body, type, status, or parent (reparenting).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -663,6 +672,14 @@ fn build_tool_definitions() -> Vec<Value> {
                         "type": "string",
                         "enum": ["backlog", "in_progress", "blocked", "done"],
                         "description": "Optional new status."
+                    },
+                    "parentWorkItemId": {
+                        "type": "integer",
+                        "description": "Reparent the item under a new parent. Mutually exclusive with clearParent. The item must currently have no children (max 2 levels), and the new parent must be a top-level item in the same project."
+                    },
+                    "clearParent": {
+                        "type": "boolean",
+                        "description": "Detach the item from its current parent, making it top-level. Mutually exclusive with parentWorkItemId."
                     }
                 },
                 "required": ["id"],
