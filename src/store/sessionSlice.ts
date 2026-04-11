@@ -172,6 +172,12 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
       if (!snapshot || !snapshot.isRunning) {
         set((s) => ({
           sessionError: null,
+          sessionSnapshot:
+            s.sessionSnapshot &&
+            s.sessionSnapshot.projectId === selectedProject.id &&
+            (s.sessionSnapshot.worktreeId ?? null) === targetWorktreeId
+              ? { ...s.sessionSnapshot, isRunning: false }
+              : s.sessionSnapshot,
           liveSessionSnapshots: s.liveSessionSnapshots.filter(
             (snap) =>
               !(snap.projectId === selectedProject.id && (snap.worktreeId ?? null) === targetWorktreeId),

@@ -151,19 +151,24 @@ impl SupervisorClient {
     }
 
     pub fn terminate(&self, project_id: i64) -> AppResult<()> {
-        self.request_json::<_, serde_json::Value>(
+        self.request_json_with_timeout::<_, serde_json::Value>(
             "session/terminate",
             &ProjectSessionTarget {
                 project_id,
                 worktree_id: None,
             },
+            Duration::from_secs(12),
         )
         .map(|_| ())
     }
 
     pub fn terminate_target(&self, target: ProjectSessionTarget) -> AppResult<()> {
-        self.request_json::<_, serde_json::Value>("session/terminate", &target)
-            .map(|_| ())
+        self.request_json_with_timeout::<_, serde_json::Value>(
+            "session/terminate",
+            &target,
+            Duration::from_secs(12),
+        )
+        .map(|_| ())
     }
 
     pub fn list_live_sessions(&self, project_id: i64) -> AppResult<Vec<SessionSnapshot>> {
