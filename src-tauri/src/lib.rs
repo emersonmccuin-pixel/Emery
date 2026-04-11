@@ -321,6 +321,41 @@ fn repair_cleanup_candidates(
     state.repair_cleanup_candidates()
 }
 
+const PROJECT_FILE_WHITELIST: &[&str] = &["CLAUDE.md", "AGENTS.md"];
+
+fn resolve_project_file(root_path: &str, filename: &str) -> AppResult<std::path::PathBuf> {
+    if !PROJECT_FILE_WHITELIST.contains(&filename) {
+        return Err(format!("file '{filename}' is not a permitted project file").into());
+    }
+    let root = std::path::PathBuf::from(root_path);
+    if !root.is_absolute() {
+        return Err(format!("project root '{root_path}' must be an absolute path").into());
+    }
+    Ok(root.join(filename))
+}
+
+#[tauri::command]
+fn read_project_file(root_path: String, filename: String) -> AppResult<String> {
+    let path = resolve_project_file(&root_path, &filename)?;
+    match fs::read_to_string(&path) {
+        Ok(contents) => Ok(contents),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(error) => Err(format!("failed to read {}: {error}", path.display()).into()),
+    }
+}
+
+#[tauri::command]
+fn write_project_file(root_path: String, filename: String, contents: String) -> AppResult<()> {
+    let path = resolve_project_file(&root_path, &filename)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to prepare {}: {error}", parent.display()))?;
+    }
+    fs::write(&path, contents)
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -360,7 +395,9 @@ pub fn run() {
             terminate_orphaned_session,
             list_cleanup_candidates,
             remove_cleanup_candidate,
-            repair_cleanup_candidates
+            repair_cleanup_candidates,
+            read_project_file,
+            write_project_file
         ])
         .setup(|app| {
             let storage = ensure_storage_dirs(&app.handle())?;

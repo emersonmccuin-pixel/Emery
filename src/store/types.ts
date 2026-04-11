@@ -15,7 +15,7 @@ import type {
   WorktreeRecord,
 } from '../types'
 
-export type WorkspaceView = 'terminal' | 'overview' | 'history' | 'settings' | 'workItems'
+export type WorkspaceView = 'terminal' | 'overview' | 'history' | 'configuration' | 'workItems'
 
 export type TerminalPromptDraft = {
   label: string
@@ -238,17 +238,23 @@ export type HistorySlice = {
   repairCleanupCandidates: () => Promise<void>
 }
 
+export type AppSettingsTab = 'appearance' | 'accounts' | 'defaults' | 'diagnostics'
+
 export type UiSlice = {
   activeView: WorkspaceView
   isProjectRailCollapsed: boolean
   isSessionRailCollapsed: boolean
   isAgentGuideOpen: boolean
+  isAppSettingsOpen: boolean
+  appSettingsInitialTab: AppSettingsTab
   contextRefreshKey: number
 
   setActiveView: (value: WorkspaceView) => void
   setIsProjectRailCollapsed: (value: boolean) => void
   setIsSessionRailCollapsed: (value: boolean) => void
   setIsAgentGuideOpen: (value: boolean) => void
+  openAppSettings: (tab?: AppSettingsTab) => void
+  closeAppSettings: () => void
   invalidateProjectContext: () => void
 }
 
