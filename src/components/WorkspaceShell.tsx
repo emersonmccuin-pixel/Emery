@@ -986,8 +986,12 @@ function WorkspaceShell() {
                                     <div className="flex flex-wrap items-start justify-between gap-3">
                                       <div className="space-y-2">
                                         <div className="flex flex-wrap items-center gap-2">
-                                          <span className="text-[11px] font-black tracking-widest text-hud-magenta">
-                                            {worktree.shortBranchName}
+                                          <span className="text-[11px] font-black tracking-widest text-hud-green">
+                                            {worktree.workItemCallSign ??
+                                              (worktree.shortBranchName.length > 22
+                                                ? `${worktree.shortBranchName.slice(0, 22)}…`
+                                                : worktree.shortBranchName
+                                              ).toUpperCase()}
                                           </span>
                                           {selectedTerminalWorktreeId === worktree.id ? (
                                             <Badge
@@ -1032,12 +1036,11 @@ function WorkspaceShell() {
                                             </Badge>
                                           ) : null}
                                         </div>
-                                        <p className="text-[10px] uppercase tracking-[0.18em] text-white/65">
-                                          {worktree.workItemCallSign} // {worktree.workItemTitle}
-                                        </p>
-                                        <p className="text-[9px] uppercase tracking-[0.16em] text-white/45">
-                                          {worktree.sessionSummary}
-                                        </p>
+                                        {(worktree.workItemTitle || worktree.sessionSummary) ? (
+                                          <p className="text-[10px] text-white/65 leading-snug line-clamp-3">
+                                            {worktree.workItemTitle ?? worktree.sessionSummary}
+                                          </p>
+                                        ) : null}
                                         <p className="text-[9px] font-mono text-white/40 break-all">
                                           {worktree.worktreePath}
                                         </p>
@@ -1309,43 +1312,42 @@ function WorkspaceShell() {
                             onClick={() => selectWorktreeTerminal(worktree.id)}
                           >
                             <div className="flex items-center gap-1.5 mb-1">
-                              <span className="text-[10px] font-black tracking-widest truncate uppercase text-hud-magenta/90 min-w-0">
-                                {worktree.shortBranchName.length > 24
-                                  ? `${worktree.shortBranchName.slice(0, 24)}…`
-                                  : worktree.shortBranchName}
+                              <span className="text-[10px] font-black tracking-widest truncate uppercase text-hud-green min-w-0">
+                                {worktree.workItemCallSign ??
+                                  (worktree.shortBranchName.length > 24
+                                    ? `${worktree.shortBranchName.slice(0, 24)}…`
+                                    : worktree.shortBranchName
+                                  ).toUpperCase()}
                               </span>
                               <Badge
                                 variant={snapshot?.isRunning ? 'running' : 'offline'}
-                                className="h-3.5 text-[7px] tracking-widest px-1 bg-hud-magenta/10 border-hud-magenta/30 text-hud-magenta shrink-0"
+                                className="h-3.5 text-[7px] tracking-widest px-1 shrink-0"
                               >
                                 {snapshot?.isRunning ? 'LIVE' : 'OFF'}
                               </Badge>
                             </div>
-                            <div className="mb-1.5 flex flex-col gap-1">
-                              <div className="flex gap-1 flex-wrap">
-                                <Badge variant="offline" className="h-3.5 text-[7px] bg-hud-cyan/10 text-hud-cyan border-hud-cyan/30 px-1">
-                                  {worktree.workItemCallSign}
+                            <div className="mb-1.5 flex gap-1 flex-wrap">
+                              {worktree.hasUncommittedChanges ? (
+                                <Badge variant="destructive" className="h-3.5 text-[7px] px-1">
+                                  DIRTY
                                 </Badge>
-                                {worktree.hasUncommittedChanges ? (
-                                  <Badge variant="destructive" className="h-3.5 text-[7px] px-1">
-                                    DIRTY
-                                  </Badge>
-                                ) : null}
-                                {worktree.hasUnmergedCommits ? (
-                                  <Badge variant="offline" className="h-3.5 text-[7px] bg-hud-magenta/10 text-hud-magenta border-hud-magenta/30 px-1">
-                                    UNMERGED
-                                  </Badge>
-                                ) : null}
-                                {!worktree.pathAvailable ? (
-                                  <Badge variant="destructive" className="h-3.5 text-[7px] px-1">
-                                    MISSING
-                                  </Badge>
-                                ) : null}
-                              </div>
+                              ) : null}
+                              {worktree.hasUnmergedCommits ? (
+                                <Badge variant="offline" className="h-3.5 text-[7px] bg-hud-magenta/10 text-hud-magenta border-hud-magenta/30 px-1">
+                                  UNMERGED
+                                </Badge>
+                              ) : null}
+                              {!worktree.pathAvailable ? (
+                                <Badge variant="destructive" className="h-3.5 text-[7px] px-1">
+                                  MISSING
+                                </Badge>
+                              ) : null}
                             </div>
-                            <p className="text-[8px] uppercase tracking-widest opacity-70 truncate">
-                              {worktree.workItemTitle}
-                            </p>
+                            {worktree.workItemTitle ? (
+                              <p className="text-[8px] text-white/65 leading-snug line-clamp-2">
+                                {worktree.workItemTitle}
+                              </p>
+                            ) : null}
                           </button>
                         ))
                       )}
