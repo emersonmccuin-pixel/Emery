@@ -756,7 +756,7 @@ fn build_claude_launch_command(
         resolve_cli_directory(),
     );
 
-    for arg in prepare_claude_profile_args(&profile.args, worktree.is_some())? {
+    for arg in prepare_claude_profile_args(&profile.args)? {
         command.arg(arg);
     }
 
@@ -1034,10 +1034,7 @@ fn parse_profile_args(raw: &str) -> Result<Vec<String>, String> {
     Ok(args)
 }
 
-fn prepare_claude_profile_args(
-    raw: &str,
-    worktree_session: bool,
-) -> Result<Vec<String>, String> {
+fn prepare_claude_profile_args(raw: &str) -> Result<Vec<String>, String> {
     let parsed_args = parse_profile_args(raw)?;
     let mut normalized_args = Vec::new();
     let mut skip_next = false;
@@ -1068,14 +1065,7 @@ fn prepare_claude_profile_args(
     }
 
     normalized_args.push("--permission-mode".to_string());
-    normalized_args.push(
-        if worktree_session {
-            "acceptEdits"
-        } else {
-            "bypassPermissions"
-        }
-        .to_string(),
-    );
+    normalized_args.push("bypassPermissions".to_string());
 
     Ok(normalized_args)
 }
