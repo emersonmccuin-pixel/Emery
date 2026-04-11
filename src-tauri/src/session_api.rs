@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 pub const TERMINAL_OUTPUT_EVENT: &str = "terminal-output";
 pub const TERMINAL_EXIT_EVENT: &str = "terminal-exit";
+pub const SUPERVISOR_PROTOCOL_VERSION: u32 = 1;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -15,6 +16,7 @@ pub struct SessionSnapshot {
     pub is_running: bool,
     pub started_at: String,
     pub output: String,
+    pub output_cursor: usize,
     pub exit_code: Option<u32>,
     pub exit_success: Option<bool>,
 }
@@ -73,6 +75,26 @@ pub struct ProjectSessionTarget {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SessionPollInput {
+    pub project_id: i64,
+    pub worktree_id: Option<i64>,
+    pub offset: usize,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionPollOutput {
+    pub started_at: String,
+    pub data: String,
+    pub next_offset: usize,
+    pub reset: bool,
+    pub is_running: bool,
+    pub exit_code: Option<u32>,
+    pub exit_success: Option<bool>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SupervisorRuntimeInfo {
     pub port: u16,
     pub token: String,
@@ -86,4 +108,5 @@ pub struct SupervisorHealth {
     pub ok: bool,
     pub pid: u32,
     pub started_at: String,
+    pub protocol_version: u32,
 }

@@ -51,6 +51,7 @@ export type SessionSnapshot = {
   isRunning: boolean
   startedAt: string
   output: string
+  outputCursor?: number
   exitCode?: number | null
   exitSuccess?: boolean | null
 }
@@ -75,6 +76,10 @@ export type WorkItemType = 'bug' | 'task' | 'feature' | 'note'
 export type WorkItemRecord = {
   id: number
   projectId: number
+  parentWorkItemId: number | null
+  callSign: string
+  sequenceNumber: number
+  childNumber: number | null
   title: string
   body: string
   itemType: WorkItemType
@@ -97,10 +102,15 @@ export type WorktreeRecord = {
   id: number
   projectId: number
   workItemId: number
+  workItemCallSign: string
   workItemTitle: string
   branchName: string
+  shortBranchName: string
   worktreePath: string
   pathAvailable: boolean
+  hasUncommittedChanges: boolean
+  hasUnmergedCommits: boolean
+  sessionSummary: string
   createdAt: string
   updatedAt: string
 }
@@ -125,6 +135,23 @@ export type SessionRecord = {
   updatedAt: string
 }
 
+export type SessionEventRecord = {
+  id: number
+  projectId: number
+  sessionId?: number | null
+  eventType: string
+  entityType?: string | null
+  entityId?: number | null
+  source: string
+  payloadJson: string
+  createdAt: string
+}
+
+export type SessionHistoryOutput = {
+  sessions: SessionRecord[]
+  events: SessionEventRecord[]
+}
+
 export type CleanupCandidate = {
   kind: string
   path: string
@@ -141,4 +168,9 @@ export type CleanupActionOutput = {
 
 export type CleanupRepairOutput = {
   actions: CleanupActionOutput[]
+}
+
+export type WorktreeLaunchOutput = {
+  worktree: WorktreeRecord
+  session: SessionSnapshot
 }

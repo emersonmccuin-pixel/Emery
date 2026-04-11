@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
 import WorkspaceShell from './components/WorkspaceShell'
+import { getLatestSessionForTarget, isRecoverableSession } from './sessionHistory'
 import type {
   AppSettings,
   BootstrapData,
@@ -14,6 +15,8 @@ import type {
   LaunchProfileRecord,
   ProjectRecord,
   RuntimeStatus,
+  SessionEventRecord,
+  SessionHistoryOutput,
   SessionRecord,
   SessionSnapshot,
   StorageInfo,
@@ -21,10 +24,11 @@ import type {
   WorkItemRecord,
   WorkItemStatus,
   WorkItemType,
+  WorktreeLaunchOutput,
   WorktreeRecord,
 } from './types'
 import { findWorktreeTarget, mergeWorktreesForProject, sortWorktrees } from './worktrees'
-type WorkspaceView = 'terminal' | 'overview' | 'settings' | 'workItems'
+type WorkspaceView = 'terminal' | 'overview' | 'history' | 'settings' | 'workItems'
 type TerminalPromptDraft = {
   label: string
   prompt: string
@@ -32,6 +36,7 @@ type TerminalPromptDraft = {
 
 type LaunchSessionOptions = {
   startupPrompt?: string
+  launchProfileId?: number | null
   worktreeId?: number | null
   worktree?: WorktreeRecord | null
 }
@@ -45,11 +50,13 @@ const WORK_ITEM_STATUS_ORDER: Record<WorkItemStatus, number> = {
 
 const PROJECT_COMMANDER_TOOLS = [
   'session_brief()',
-  'list_work_items(status?)',
+  'list_work_items(status?, itemType?, parentOnly?, openOnly?)',
   'get_work_item(id)',
   'create_work_item(...)',
   'update_work_item(...)',
   'close_work_item(id)',
+  'list_worktrees()',
+  'launch_worktree_agent(workItemId, launchProfileId?)',
   'list_documents(workItemId?)',
   'create_document(...)',
   'update_document(...)',
@@ -59,12 +66,12 @@ const DEFAULT_APP_SETTINGS: AppSettings = {
   defaultLaunchProfileId: null,
   autoRepairSafeCleanupOnStartup: false,
 }
+const SESSION_EVENT_HISTORY_LIMIT = 120
 
 const DEFAULT_PROFILE_LABEL = 'Claude Code / YOLO'
 const DEFAULT_PROFILE_EXECUTABLE = 'claude'
 const DEFAULT_PROFILE_ARGS = '--dangerously-skip-permissions'
 const DEFAULT_PROFILE_ENV_JSON = '{}'
-
 function getErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message.trim()) {
     return error.message
@@ -119,6 +126,56 @@ function sortDocuments(documents: DocumentRecord[]) {
   return [...documents].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
 }
 
+function areSessionSnapshotListsEqual(left: SessionSnapshot[], right: SessionSnapshot[]) {
+  if (left.length !== right.length) {
+    return false
+  }
+
+  return left.every((snapshot, index) => {
+    const candidate = right[index]
+
+    return (
+      snapshot.sessionId === candidate.sessionId &&
+      snapshot.projectId === candidate.projectId &&
+      (snapshot.worktreeId ?? null) === (candidate.worktreeId ?? null) &&
+      snapshot.launchProfileId === candidate.launchProfileId &&
+      snapshot.profileLabel === candidate.profileLabel &&
+      snapshot.rootPath === candidate.rootPath &&
+      snapshot.isRunning === candidate.isRunning &&
+      snapshot.startedAt === candidate.startedAt &&
+      (snapshot.exitCode ?? null) === (candidate.exitCode ?? null) &&
+      (snapshot.exitSuccess ?? null) === (candidate.exitSuccess ?? null)
+    )
+  })
+}
+
+function areWorktreeListsEqual(left: WorktreeRecord[], right: WorktreeRecord[]) {
+  if (left.length !== right.length) {
+    return false
+  }
+
+  return left.every((worktree, index) => {
+    const candidate = right[index]
+
+    return (
+      worktree.id === candidate.id &&
+      worktree.projectId === candidate.projectId &&
+      worktree.workItemId === candidate.workItemId &&
+      worktree.workItemCallSign === candidate.workItemCallSign &&
+      worktree.workItemTitle === candidate.workItemTitle &&
+      worktree.branchName === candidate.branchName &&
+      worktree.shortBranchName === candidate.shortBranchName &&
+      worktree.worktreePath === candidate.worktreePath &&
+      worktree.pathAvailable === candidate.pathAvailable &&
+      worktree.hasUncommittedChanges === candidate.hasUncommittedChanges &&
+      worktree.hasUnmergedCommits === candidate.hasUnmergedCommits &&
+      worktree.sessionSummary === candidate.sessionSummary &&
+      worktree.createdAt === candidate.createdAt &&
+      worktree.updatedAt === candidate.updatedAt
+    )
+  })
+}
+
 function buildAgentStartupPrompt(
   project: ProjectRecord | null,
   workItems: WorkItemRecord[],
@@ -128,32 +185,46 @@ function buildAgentStartupPrompt(
     return ''
   }
 
+  const workItemCallSigns = new Map(workItems.map((item) => [item.id, item.callSign]))
   const workItemLines =
     workItems.length === 0
       ? ['- No work items yet. Create them with project-commander-cli when needed.']
-      : workItems.slice(0, 5).map((item) => `- #${item.id} [${item.status}/${item.itemType}] ${item.title}`)
+      : workItems
+          .slice(0, 5)
+          .map(
+            (item) =>
+              `- ${item.callSign} [${item.status}/${item.itemType}] ${item.title}`,
+          )
 
   const documentLines =
     documents.length === 0
       ? ['- No documents yet.']
       : documents.slice(0, 5).map((document) => {
+          const linkedCallSign =
+            document.workItemId === null ? null : workItemCallSigns.get(document.workItemId) ?? null
           const linkedLabel =
-            document.workItemId === null ? 'project-level' : `linked to work item #${document.workItemId}`
+            document.workItemId === null
+              ? 'project-level'
+              : `linked to ${linkedCallSign ?? `work item #${document.workItemId}`}`
 
           return `- #${document.id} [${linkedLabel}] ${document.title}`
         })
 
   return [
-    'Project Commander startup context.',
+    'Project Commander dispatcher startup context.',
     `Project: ${project.name}`,
     `Root path: ${project.rootPath}`,
     'Project Commander MCP tools are attached to this session.',
     'Required first action: call session_brief.',
-    'Use the Project Commander MCP tools as the source of truth for project context, work items, and documents.',
+    'You are the repository dispatcher for this project.',
+    'Use the Project Commander MCP tools as the source of truth for project context, work items, documents, and focused worktree launches.',
     'If MCP tools are unavailable, fall back to project-commander-cli.',
     'Key tools:',
     '- session_brief()',
-    '- list_work_items(status?)',
+    '- list_work_items(status?, itemType?, parentOnly?, openOnly?)',
+    '- list_worktrees()',
+    '- launch_worktree_agent(workItemId, launchProfileId?)',
+    '- create_work_item(...)',
     '- update_work_item(...)',
     '- close_work_item(id)',
     '- list_documents(workItemId?)',
@@ -161,52 +232,7 @@ function buildAgentStartupPrompt(
     ...workItemLines,
     'Current documents:',
     ...documentLines,
-    'After reading this context, ask what work item or task you should take next.',
-  ].join('\n')
-}
-
-function buildFocusedWorkItemPrompt(
-  project: ProjectRecord,
-  workItem: WorkItemRecord,
-  linkedDocuments: DocumentRecord[],
-  worktree?: WorktreeRecord | null,
-) {
-  const workItemBody = workItem.body.trim() || 'No extra body provided.'
-  const documentLines =
-    linkedDocuments.length === 0
-      ? ['- No linked documents yet. Use project-commander-cli document list --json if you need more project context.']
-      : linkedDocuments.map((document) => {
-          const body = document.body.trim() || 'No body provided.'
-          return `- #${document.id} ${document.title}\n  ${body}`
-        })
-
-  return [
-    'You are starting a focused Project Commander session.',
-    `Project: ${project.name}`,
-    `Root path: ${project.rootPath}`,
-    ...(worktree
-      ? [
-          `Worktree ID: ${worktree.id}`,
-          `Worktree branch: ${worktree.branchName}`,
-          `Worktree path: ${worktree.worktreePath}`,
-        ]
-      : []),
-    'Assigned work item:',
-    `- ID: ${workItem.id}`,
-    `- Type: ${workItem.itemType}`,
-    `- Status: ${workItem.status}`,
-    `- Title: ${workItem.title}`,
-    `- Body: ${workItemBody}`,
-    'Linked documents:',
-    ...documentLines,
-    'Rules:',
-    '- Use Project Commander MCP tools as the source of truth for all DB changes.',
-    '- First call session_brief.',
-    '- If MCP tools are unavailable, fall back to project-commander-cli.',
-    '- Do not answer with acknowledgment only.',
-    '- First tell me the exact work item ID and title you are taking.',
-    '- Then either begin the work or say exactly why you are blocked.',
-    '- If you change state, persist it with Project Commander MCP tools or the CLI fallback.',
+    'After reading this context, inspect open bugs/features or create the next work item, then coordinate focused worktree execution when appropriate.',
   ].join('\n')
 }
 
@@ -226,7 +252,11 @@ function App() {
   const [selectedTerminalWorktreeId, setSelectedTerminalWorktreeId] = useState<number | null>(null)
   const [sessionSnapshot, setSessionSnapshot] = useState<SessionSnapshot | null>(null)
   const [liveSessionSnapshots, setLiveSessionSnapshots] = useState<SessionSnapshot[]>([])
+  const [sessionRecords, setSessionRecords] = useState<SessionRecord[]>([])
+  const [sessionEvents, setSessionEvents] = useState<SessionEventRecord[]>([])
+  const [selectedHistorySessionId, setSelectedHistorySessionId] = useState<number | null>(null)
   const [sessionError, setSessionError] = useState<string | null>(null)
+  const [historyError, setHistoryError] = useState<string | null>(null)
   const [workItems, setWorkItems] = useState<WorkItemRecord[]>([])
   const [workItemError, setWorkItemError] = useState<string | null>(null)
   const [documents, setDocuments] = useState<DocumentRecord[]>([])
@@ -237,6 +267,8 @@ function App() {
   const [cleanupCandidates, setCleanupCandidates] = useState<CleanupCandidate[]>([])
   const [cleanupError, setCleanupError] = useState<string | null>(null)
   const [cleanupMessage, setCleanupMessage] = useState<string | null>(null)
+  const [worktreeError, setWorktreeError] = useState<string | null>(null)
+  const [worktreeMessage, setWorktreeMessage] = useState<string | null>(null)
   const [agentPromptMessage, setAgentPromptMessage] = useState<string | null>(null)
   const [terminalPromptDraft, setTerminalPromptDraft] = useState<TerminalPromptDraft | null>(null)
   const [projectName, setProjectName] = useState('')
@@ -274,15 +306,19 @@ function App() {
   )
   const [isLaunchingSession, setIsLaunchingSession] = useState(false)
   const [isStoppingSession, setIsStoppingSession] = useState(false)
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false)
   const [isLoadingWorkItems, setIsLoadingWorkItems] = useState(false)
   const [isLoadingDocuments, setIsLoadingDocuments] = useState(false)
   const [isLoadingCleanup, setIsLoadingCleanup] = useState(false)
   const [activeOrphanSessionId, setActiveOrphanSessionId] = useState<number | null>(null)
   const [activeCleanupPath, setActiveCleanupPath] = useState<string | null>(null)
+  const [activeWorktreeActionId, setActiveWorktreeActionId] = useState<number | null>(null)
+  const [activeWorktreeActionKind, setActiveWorktreeActionKind] = useState<
+    'remove' | 'recreate' | null
+  >(null)
   const [isRepairingCleanup, setIsRepairingCleanup] = useState(false)
   const [startingWorkItemId, setStartingWorkItemId] = useState<number | null>(null)
   const [contextRefreshKey, setContextRefreshKey] = useState(0)
-  const [sessionRailRevision, setSessionRailRevision] = useState(0)
   const worktreeRequestIdRef = useRef(0)
 
   useEffect(() => {
@@ -360,9 +396,10 @@ function App() {
   const bridgeReady = Boolean(selectedProject && sessionSnapshot?.isRunning && isSelectedSessionTarget)
   const agentStartupPrompt = buildAgentStartupPrompt(selectedProject, workItems, documents)
   const currentTerminalPrompt = terminalPromptDraft?.prompt ?? agentStartupPrompt
-  const currentTerminalPromptLabel = terminalPromptDraft?.label ?? 'Workspace guide'
+  const currentTerminalPromptLabel = terminalPromptDraft?.label ?? 'Dispatcher prompt'
   const openWorkItemCount = workItems.filter((item) => item.status !== 'done').length
   const blockedWorkItemCount = workItems.filter((item) => item.status === 'blocked').length
+  const shouldAutoRefreshProjectContext = activeView !== 'terminal' || isAgentGuideOpen
 
   useEffect(() => {
     if (!selectedProject && projects.length > 0) {
@@ -395,6 +432,13 @@ function App() {
   }, [selectedProject?.id])
 
   useEffect(() => {
+    setWorktreeError(null)
+    setWorktreeMessage(null)
+    setActiveWorktreeActionId(null)
+    setActiveWorktreeActionKind(null)
+  }, [selectedProject?.id])
+
+  useEffect(() => {
     if (!selectedLaunchProfile && launchProfiles.length > 0) {
       setSelectedLaunchProfileId(
         appSettings.defaultLaunchProfileId ?? launchProfiles[0].id,
@@ -423,6 +467,22 @@ function App() {
     )
   }, [stagedWorktrees.length, worktrees])
 
+  const resetProjectCreateForm = useCallback(() => {
+    setProjectName('')
+    setProjectRootPath('')
+    setProjectError(null)
+  }, [])
+
+  const startCreateProject = useCallback(() => {
+    resetProjectCreateForm()
+    setIsProjectCreateOpen(true)
+  }, [resetProjectCreateForm])
+
+  const cancelCreateProject = useCallback(() => {
+    resetProjectCreateForm()
+    setIsProjectCreateOpen(false)
+  }, [resetProjectCreateForm])
+
   const fetchSessionSnapshot = useCallback(
     async (projectId: number, worktreeId: number | null = null) => {
       try {
@@ -441,8 +501,9 @@ function App() {
   const refreshLiveSessions = useCallback(async (projectId: number) => {
     try {
       const snapshots = await invoke<SessionSnapshot[]>('list_live_sessions', { projectId })
-      setLiveSessionSnapshots(snapshots)
-      setSessionRailRevision((current) => current + 1)
+      setLiveSessionSnapshots((current) =>
+        areSessionSnapshotListsEqual(current, snapshots) ? current : snapshots,
+      )
       return snapshots
     } catch (error) {
       setSessionError(getErrorMessage(error, 'Failed to inspect live session directory.'))
@@ -462,8 +523,10 @@ function App() {
         return items
       }
 
-      setWorktrees(sortWorktrees(items))
-      setSessionRailRevision((current) => current + 1)
+      const nextWorktrees = sortWorktrees(items)
+      setWorktrees((current) =>
+        areWorktreeListsEqual(current, nextWorktrees) ? current : nextWorktrees,
+      )
       return items
     } catch (error) {
       if (requestId === worktreeRequestIdRef.current) {
@@ -496,6 +559,21 @@ function App() {
     }
   }, [])
 
+  const refreshSessionHistory = useCallback(async (projectId: number) => {
+    try {
+      const history = await invoke<SessionHistoryOutput>('get_session_history', {
+        projectId,
+        eventLimit: SESSION_EVENT_HISTORY_LIMIT,
+      })
+      setSessionRecords(history.sessions)
+      setSessionEvents(history.events)
+      return history
+    } catch (error) {
+      setHistoryError(getErrorMessage(error, 'Failed to load session history.'))
+      return null
+    }
+  }, [])
+
   const refreshSelectedSessionSnapshot = useCallback(async () => {
     if (!selectedProject) {
       setSessionSnapshot(null)
@@ -508,34 +586,17 @@ function App() {
   }, [fetchSessionSnapshot, selectedProject, selectedTerminalWorktreeId])
 
   useEffect(() => {
-    let cancelled = false
-
     const loadLiveSessions = async () => {
       if (!selectedProject) {
         setLiveSessionSnapshots([])
         return
       }
 
-      const snapshots = await refreshLiveSessions(selectedProject.id)
-
-      if (cancelled) {
-        return
-      }
-
-      const hasMainSession = snapshots.some((snapshot) => snapshot.worktreeId == null)
-      const mostRecentWorktreeSession = snapshots.find((snapshot) => snapshot.worktreeId != null)
-
-      if (!hasMainSession && selectedTerminalWorktreeId === null && mostRecentWorktreeSession?.worktreeId) {
-        setSelectedTerminalWorktreeId(mostRecentWorktreeSession.worktreeId)
-      }
+      await refreshLiveSessions(selectedProject.id)
     }
 
     void loadLiveSessions()
-
-    return () => {
-      cancelled = true
-    }
-  }, [refreshLiveSessions, selectedProject, selectedTerminalWorktreeId])
+  }, [refreshLiveSessions, selectedProject])
 
   useEffect(() => {
     let cancelled = false
@@ -558,18 +619,40 @@ function App() {
   }, [refreshSelectedSessionSnapshot])
 
   useEffect(() => {
-    if (!selectedProject || liveSessionSnapshots.length === 0) {
+    if (!selectedProject || liveSessionSnapshots.length === 0 || !shouldAutoRefreshProjectContext) {
       return
     }
 
     const intervalId = window.setInterval(() => {
       setContextRefreshKey((current) => current + 1)
-    }, 2500)
+    }, 5000)
 
     return () => {
       window.clearInterval(intervalId)
     }
-  }, [selectedProject?.id, liveSessionSnapshots.length])
+  }, [liveSessionSnapshots.length, selectedProject?.id, shouldAutoRefreshProjectContext])
+
+  useEffect(() => {
+    if (!selectedProject || liveSessionSnapshots.length === 0 || activeView === 'terminal') {
+      return
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshWorktrees(selectedProject.id)
+    }, 10000)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [activeView, liveSessionSnapshots.length, refreshWorktrees, selectedProject?.id])
+
+  useEffect(() => {
+    if (!selectedProject || !shouldAutoRefreshProjectContext) {
+      return
+    }
+
+    setContextRefreshKey((current) => current + 1)
+  }, [selectedProject?.id, shouldAutoRefreshProjectContext])
 
   useEffect(() => {
     let cancelled = false
@@ -712,6 +795,65 @@ function App() {
   useEffect(() => {
     let cancelled = false
 
+    const loadSessionHistory = async () => {
+      if (!selectedProject) {
+        setSessionRecords([])
+        setSessionEvents([])
+        setSelectedHistorySessionId(null)
+        return
+      }
+
+      setHistoryError(null)
+      setIsLoadingHistory(true)
+
+      try {
+        const history = await invoke<SessionHistoryOutput>('get_session_history', {
+          projectId: selectedProject.id,
+          eventLimit: SESSION_EVENT_HISTORY_LIMIT,
+        })
+
+        if (cancelled) {
+          return
+        }
+
+        setSessionRecords(history.sessions)
+        setSessionEvents(history.events)
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+
+        setHistoryError(getErrorMessage(error, 'Failed to load session history.'))
+      } finally {
+        if (!cancelled) {
+          setIsLoadingHistory(false)
+        }
+      }
+    }
+
+    void loadSessionHistory()
+
+    return () => {
+      cancelled = true
+    }
+  }, [contextRefreshKey, selectedProjectId])
+
+  useEffect(() => {
+    setSelectedHistorySessionId(null)
+  }, [selectedProject?.id])
+
+  useEffect(() => {
+    if (
+      selectedHistorySessionId !== null &&
+      !sessionRecords.some((record) => record.id === selectedHistorySessionId)
+    ) {
+      setSelectedHistorySessionId(null)
+    }
+  }, [selectedHistorySessionId, sessionRecords])
+
+  useEffect(() => {
+    let cancelled = false
+
     const loadWorkItems = async () => {
       if (!selectedProject) {
         setWorkItems([])
@@ -787,6 +929,57 @@ function App() {
     )
   }
 
+  const invalidateProjectContext = useCallback(() => {
+    setContextRefreshKey((current) => current + 1)
+  }, [])
+
+  const openHistoryForSession = useCallback((sessionId: number | null) => {
+    setSelectedHistorySessionId(sessionId)
+    setActiveView('history')
+  }, [])
+
+  const openSessionTarget = useCallback((record: SessionRecord) => {
+    if (record.launchProfileId !== null && record.launchProfileId !== undefined) {
+      setSelectedLaunchProfileId(record.launchProfileId)
+    }
+
+    setSelectedTerminalWorktreeId(record.worktreeId ?? null)
+    setActiveView('terminal')
+  }, [])
+
+  const upsertTrackedWorktree = useCallback((worktree: WorktreeRecord) => {
+    setWorktrees((current) => {
+      const next = current.filter((existing) => existing.id !== worktree.id)
+      return sortWorktrees([worktree, ...next])
+    })
+    setStagedWorktrees((current) => {
+      const next = current.filter((existing) => existing.id !== worktree.id)
+      return sortWorktrees([worktree, ...next])
+    })
+  }, [])
+
+  const dropTrackedWorktree = useCallback((worktreeId: number) => {
+    setWorktrees((current) => current.filter((existing) => existing.id !== worktreeId))
+    setStagedWorktrees((current) => current.filter((existing) => existing.id !== worktreeId))
+  }, [])
+
+  const syncWorktreeLifecycleState = useCallback(
+    async (projectId: number) => {
+      await Promise.all([
+        refreshWorktrees(projectId),
+        refreshSessionHistory(projectId),
+        refreshOrphanedSessions(projectId),
+        refreshCleanupCandidates(),
+      ])
+    },
+    [
+      refreshCleanupCandidates,
+      refreshOrphanedSessions,
+      refreshSessionHistory,
+      refreshWorktrees,
+    ],
+  )
+
   const browseForProjectFolder = async (
     applyPath: (path: string) => void,
     setError: (message: string | null) => void,
@@ -854,11 +1047,9 @@ function App() {
         },
       })
 
-      setProjects((current) => [project, ...current])
-      setSelectedProjectId(project.id)
-      setProjectName('')
-      setProjectRootPath('')
-      setIsProjectCreateOpen(false)
+      setProjects((current) => [project, ...current.filter((existing) => existing.id !== project.id)])
+      selectProject(project.id)
+      cancelCreateProject()
     } catch (error) {
       setProjectError(getErrorMessage(error, 'Failed to create project.'))
     } finally {
@@ -895,6 +1086,7 @@ function App() {
           ? null
           : current,
       )
+      invalidateProjectContext()
     } catch (error) {
       setProjectUpdateError(getErrorMessage(error, 'Failed to update project.'))
     } finally {
@@ -1029,11 +1221,19 @@ function App() {
   }
 
   const launchSession = async (options?: LaunchSessionOptions) => {
-    if (!selectedProject || !selectedLaunchProfile) {
+    if (!selectedProject) {
       return null
     }
 
     const targetWorktreeId = options?.worktreeId ?? selectedTerminalWorktreeId ?? null
+    const requestedLaunchProfileId = options?.launchProfileId ?? selectedLaunchProfileId
+    const targetLaunchProfile =
+      launchProfiles.find((profile) => profile.id === requestedLaunchProfileId) ??
+      selectedLaunchProfile ??
+      null
+    const shouldAttachSnapshot =
+      options?.worktreeId !== undefined ||
+      (selectedTerminalWorktreeId ?? null) === targetWorktreeId
     const targetWorktree = findWorktreeTarget(
       worktrees,
       stagedWorktrees,
@@ -1042,6 +1242,11 @@ function App() {
     )
     const targetRootAvailable =
       targetWorktreeId === null ? selectedProject.rootAvailable : Boolean(targetWorktree?.pathAvailable)
+
+    if (!targetLaunchProfile) {
+      setSessionError('Select a launch profile before launching a session.')
+      return null
+    }
 
     if (!targetRootAvailable) {
       setSessionError(
@@ -1057,31 +1262,23 @@ function App() {
     setActiveView('terminal')
 
     try {
-      const existingSnapshot = await fetchSessionSnapshot(selectedProject.id, targetWorktreeId)
-
-      if (existingSnapshot?.isRunning) {
-        if ((selectedTerminalWorktreeId ?? null) === targetWorktreeId) {
-          setSessionSnapshot(existingSnapshot)
-        }
-        await refreshLiveSessions(selectedProject.id)
-        return existingSnapshot
-      }
-
       const snapshot = await invoke<SessionSnapshot>('launch_project_session', {
         input: {
           projectId: selectedProject.id,
           worktreeId: targetWorktreeId,
-          launchProfileId: selectedLaunchProfile.id,
+          launchProfileId: targetLaunchProfile.id,
           cols: 120,
           rows: 32,
           startupPrompt: options?.startupPrompt,
         },
       })
 
-      if ((selectedTerminalWorktreeId ?? null) === targetWorktreeId) {
+      setSelectedLaunchProfileId(targetLaunchProfile.id)
+      if (shouldAttachSnapshot) {
         setSessionSnapshot(snapshot)
       }
       await refreshLiveSessions(selectedProject.id)
+      invalidateProjectContext()
       return snapshot
     } catch (error) {
       setSessionError(getErrorMessage(error, 'Failed to launch Claude Code.'))
@@ -1130,6 +1327,7 @@ function App() {
             ),
         ),
       )
+      invalidateProjectContext()
     } catch (error) {
       const snapshot = await fetchSessionSnapshot(selectedProject.id, targetWorktreeId)
 
@@ -1144,11 +1342,32 @@ function App() {
               ),
           ),
         )
+        invalidateProjectContext()
       } else {
         setSessionError(getErrorMessage(error, 'Failed to stop the live session.'))
       }
     } finally {
       setIsStoppingSession(false)
+    }
+  }
+
+  const resumeSessionRecord = async (record: SessionRecord) => {
+    if (!selectedProject || record.projectId !== selectedProject.id) {
+      return
+    }
+
+    openSessionTarget(record)
+    setTerminalPromptDraft(null)
+    setSelectedHistorySessionId(record.id)
+    setSessionError(null)
+
+    const snapshot = await launchSession({
+      launchProfileId: record.launchProfileId ?? selectedLaunchProfileId,
+      worktreeId: record.worktreeId ?? null,
+    })
+
+    if (snapshot) {
+      setAgentPromptMessage(`Session #${record.id} target reopened through the supervisor.`)
     }
   }
 
@@ -1170,8 +1389,9 @@ function App() {
       await Promise.all([
         refreshOrphanedSessions(selectedProject.id),
         refreshCleanupCandidates(),
+        refreshSessionHistory(selectedProject.id),
       ])
-      setContextRefreshKey((current) => current + 1)
+      invalidateProjectContext()
       setCleanupMessage(
         record.state === 'terminated'
           ? `Supervisor terminated orphaned session #${sessionId}.`
@@ -1179,6 +1399,54 @@ function App() {
       )
     } catch (error) {
       setCleanupError(getErrorMessage(error, 'Failed to clean up the orphaned session.'))
+    } finally {
+      setActiveOrphanSessionId(null)
+    }
+  }
+
+  const recoverOrphanedSession = async (record: SessionRecord) => {
+    if (!selectedProject || record.projectId !== selectedProject.id) {
+      return
+    }
+
+    setCleanupError(null)
+    setCleanupMessage(null)
+    setSessionError(null)
+    setActiveOrphanSessionId(record.id)
+
+    try {
+      const cleaned = await invoke<SessionRecord>('terminate_orphaned_session', {
+        projectId: selectedProject.id,
+        sessionId: record.id,
+      })
+
+      await Promise.all([
+        refreshOrphanedSessions(selectedProject.id),
+        refreshCleanupCandidates(),
+        refreshSessionHistory(selectedProject.id),
+      ])
+
+      openSessionTarget(record)
+      setTerminalPromptDraft(null)
+      setSelectedHistorySessionId(record.id)
+
+      const replacement = await launchSession({
+        launchProfileId: record.launchProfileId ?? selectedLaunchProfileId,
+        worktreeId: record.worktreeId ?? null,
+      })
+
+      invalidateProjectContext()
+      setCleanupMessage(
+        replacement
+          ? `Supervisor ${
+              cleaned.state === 'terminated' ? 'terminated' : 'reconciled'
+            } orphaned session #${record.id} and launched a replacement terminal.`
+          : cleaned.state === 'terminated'
+            ? `Supervisor terminated orphaned session #${record.id}.`
+            : `Supervisor reconciled orphaned session #${record.id}.`,
+      )
+    } catch (error) {
+      setCleanupError(getErrorMessage(error, 'Failed to recover the orphaned session.'))
     } finally {
       setActiveOrphanSessionId(null)
     }
@@ -1241,6 +1509,92 @@ function App() {
     }
   }
 
+  const removeWorktree = async (worktree: WorktreeRecord) => {
+    if (!selectedProject || worktree.projectId !== selectedProject.id) {
+      return
+    }
+
+    setWorktreeError(null)
+    setWorktreeMessage(null)
+    setActiveWorktreeActionId(worktree.id)
+    setActiveWorktreeActionKind('remove')
+
+    try {
+      const removed = await invoke<WorktreeRecord>('remove_worktree', {
+        input: {
+          projectId: selectedProject.id,
+          worktreeId: worktree.id,
+        },
+      })
+
+      if (selectedTerminalWorktreeId === worktree.id) {
+        setSelectedTerminalWorktreeId(null)
+      }
+
+      setSessionSnapshot((current) => {
+        if (
+          !current ||
+          current.projectId !== selectedProject.id ||
+          (current.worktreeId ?? null) !== worktree.id
+        ) {
+          return current
+        }
+
+        return null
+      })
+      setSessionError((current) =>
+        current === 'selected worktree path no longer exists. Recreate the worktree before launching.'
+          ? null
+          : current,
+      )
+      dropTrackedWorktree(worktree.id)
+      await syncWorktreeLifecycleState(selectedProject.id)
+      setWorktreeMessage(`Supervisor removed worktree ${removed.branchName}.`)
+    } catch (error) {
+      setWorktreeError(getErrorMessage(error, 'Failed to remove the worktree.'))
+    } finally {
+      setActiveWorktreeActionId(null)
+      setActiveWorktreeActionKind(null)
+    }
+  }
+
+  const recreateWorktree = async (worktree: WorktreeRecord) => {
+    if (!selectedProject || worktree.projectId !== selectedProject.id) {
+      return
+    }
+
+    setWorktreeError(null)
+    setWorktreeMessage(null)
+    setActiveWorktreeActionId(worktree.id)
+    setActiveWorktreeActionKind('recreate')
+
+    try {
+      const recreated = await invoke<WorktreeRecord>('recreate_worktree', {
+        input: {
+          projectId: selectedProject.id,
+          worktreeId: worktree.id,
+        },
+      })
+
+      upsertTrackedWorktree(recreated)
+      if (selectedTerminalWorktreeId === worktree.id || !worktree.pathAvailable) {
+        setSelectedTerminalWorktreeId(recreated.id)
+      }
+      setSessionError((current) =>
+        current === 'selected worktree path no longer exists. Recreate the worktree before launching.'
+          ? null
+          : current,
+      )
+      await syncWorktreeLifecycleState(selectedProject.id)
+      setWorktreeMessage(`Supervisor recreated worktree ${recreated.branchName}.`)
+    } catch (error) {
+      setWorktreeError(getErrorMessage(error, 'Failed to recreate the worktree.'))
+    } finally {
+      setActiveWorktreeActionId(null)
+      setActiveWorktreeActionKind(null)
+    }
+  }
+
   const handleSessionExit = useCallback((event: TerminalExitEvent) => {
     setSessionSnapshot((current) => {
       if (
@@ -1269,6 +1623,8 @@ function App() {
     if (!event.success) {
       setSessionError(`Session exited with code ${event.exitCode}.`)
     }
+
+    invalidateProjectContext()
   }, [])
 
   useEffect(() => {
@@ -1309,6 +1665,7 @@ function App() {
     body: string
     itemType: WorkItemType
     status: WorkItemStatus
+    parentWorkItemId: number | null
   }) => {
     if (!selectedProject) {
       return
@@ -1324,11 +1681,13 @@ function App() {
           body: input.body,
           itemType: input.itemType,
           status: input.status,
+          parentWorkItemId: input.parentWorkItemId,
         },
       })
 
       setWorkItems((current) => sortWorkItems([item, ...current]))
       adjustProjectWorkItemCount(selectedProject.id, 1)
+      invalidateProjectContext()
     } catch (error) {
       setWorkItemError(getErrorMessage(error, 'Failed to create work item.'))
       throw error
@@ -1363,6 +1722,7 @@ function App() {
       setWorkItems((current) =>
         sortWorkItems(current.map((existing) => (existing.id === item.id ? item : existing))),
       )
+      invalidateProjectContext()
     } catch (error) {
       setWorkItemError(getErrorMessage(error, 'Failed to update work item.'))
       throw error
@@ -1406,6 +1766,7 @@ function App() {
         ),
       )
       adjustProjectWorkItemCount(selectedProject.id, -1)
+      invalidateProjectContext()
     } catch (error) {
       setWorkItemError(getErrorMessage(error, 'Failed to delete work item.'))
       throw error
@@ -1435,6 +1796,7 @@ function App() {
 
       setDocuments((current) => sortDocuments([document, ...current]))
       adjustProjectDocumentCount(selectedProject.id, 1)
+      invalidateProjectContext()
     } catch (error) {
       setDocumentError(getErrorMessage(error, 'Failed to create document.'))
       throw error
@@ -1470,6 +1832,7 @@ function App() {
           current.map((existing) => (existing.id === document.id ? document : existing)),
         ),
       )
+      invalidateProjectContext()
     } catch (error) {
       setDocumentError(getErrorMessage(error, 'Failed to update document.'))
       throw error
@@ -1492,6 +1855,7 @@ function App() {
       })
       setDocuments((current) => current.filter((document) => document.id !== id))
       adjustProjectDocumentCount(selectedProject.id, -1)
+      invalidateProjectContext()
     } catch (error) {
       setDocumentError(getErrorMessage(error, 'Failed to delete document.'))
       throw error
@@ -1551,8 +1915,8 @@ function App() {
   const launchWorkspaceGuide = async () => {
     const guideLabel =
       selectedTerminalWorktreeId !== null && selectedWorktree
-        ? `Worktree guide · ${selectedWorktree.branchName}`
-        : 'Workspace guide'
+        ? `Worktree handoff · ${selectedWorktree.workItemCallSign}`
+        : 'Dispatcher prompt'
 
     setTerminalPromptDraft({
       label: guideLabel,
@@ -1585,7 +1949,6 @@ function App() {
     setStartingWorkItemId(workItem.id)
     setWorkItemError(null)
     setSessionError(null)
-    setActiveView('terminal')
 
     try {
       let targetWorkItem = workItem
@@ -1617,83 +1980,33 @@ function App() {
         }
       }
 
-      const worktree = await invoke<WorktreeRecord>('ensure_worktree', {
+      const launch = await invoke<WorktreeLaunchOutput>('launch_worktree_agent', {
         input: {
           projectId: selectedProject.id,
           workItemId: targetWorkItem.id,
+          launchProfileId: selectedLaunchProfile?.id ?? selectedLaunchProfileId ?? null,
         },
       })
+      const { worktree, session } = launch
 
       flushSync(() => {
-        setWorktrees((current) => {
-          const next = current.filter((existing) => existing.id !== worktree.id)
-          return sortWorktrees([worktree, ...next])
-        })
-        setStagedWorktrees((current) => {
-          const next = current.filter((existing) => existing.id !== worktree.id)
-          return sortWorktrees([worktree, ...next])
-        })
+        upsertTrackedWorktree(worktree)
         setSelectedTerminalWorktreeId(worktree.id)
+        setSessionSnapshot(session)
+        setTerminalPromptDraft(null)
+        setActiveView('terminal')
       })
-      setSessionRailRevision((current) => current + 1)
-      setContextRefreshKey((current) => current + 1)
       await refreshWorktrees(selectedProject.id)
-
-      const currentSessionSnapshot = await fetchSessionSnapshot(selectedProject.id, worktree.id)
-      const hasLiveSession = Boolean(
-        currentSessionSnapshot?.isRunning &&
-          currentSessionSnapshot.projectId === selectedProject.id &&
-          (currentSessionSnapshot.worktreeId ?? null) === worktree.id,
-      )
-
-      if (!hasLiveSession && !selectedLaunchProfile) {
-        setSessionError('Select a launch profile before starting work in a worktree terminal.')
-        return
-      }
-
-      const prompt = buildFocusedWorkItemPrompt(
-        selectedProject,
-        targetWorkItem,
-        documents.filter((document) => document.workItemId === targetWorkItem.id),
-        worktree,
-      )
-
-      setTerminalPromptDraft({
-        label: `Focused handoff for #${targetWorkItem.id} · ${worktree.branchName}`,
-        prompt,
-      })
-
-      const activeSession = hasLiveSession
-        ? currentSessionSnapshot
-        : await launchSession({
-            startupPrompt: prompt,
-            worktreeId: worktree.id,
-            worktree,
-          })
-
-      if (!activeSession) {
-        return
-      }
-
-      setSessionSnapshot(activeSession)
       await refreshLiveSessions(selectedProject.id)
-
-      if (hasLiveSession) {
-        try {
-          await sendPromptToSession(
-            selectedProject.id,
-            worktree.id,
-            prompt,
-            `Focused handoff sent for work item #${targetWorkItem.id}.`,
-          )
-        } catch (error) {
-          setSessionError(getErrorMessage(error, 'Failed to send focused handoff to the terminal.'))
-        }
-      } else {
-        setAgentPromptMessage(
-          `Focused handoff launched in worktree ${worktree.branchName} for work item #${targetWorkItem.id}.`,
-        )
-      }
+      await refreshSessionHistory(selectedProject.id)
+      flushSync(() => {
+        setSelectedTerminalWorktreeId(worktree.id)
+        setSessionSnapshot(session)
+        setActiveView('terminal')
+      })
+      setAgentPromptMessage(
+        `Focused worktree ${worktree.shortBranchName} opened for ${targetWorkItem.callSign}.`,
+      )
     } catch (error) {
       setSessionError(getErrorMessage(error, 'Failed to hand work item off to the terminal.'))
     } finally {
@@ -1715,6 +2028,11 @@ function App() {
     snapshot:
       liveSessionSnapshots.find((snapshot) => snapshot.worktreeId === worktree.id) ?? null,
   }))
+  const interruptedSessionRecords = sessionRecords.filter((record) => record.state === 'interrupted')
+  const selectedTargetHistoryRecord = getLatestSessionForTarget(
+    sessionRecords,
+    selectedTerminalWorktreeId,
+  )
   const runtimeCleanupCandidates = cleanupCandidates.filter(
     (candidate) => candidate.kind === 'runtime_artifact',
   )
@@ -1731,6 +2049,7 @@ function App() {
     runtimeCleanupCandidates.length +
     staleWorktreeCleanupCandidates.length +
     staleWorktreeRecordCandidates.length
+  const recoverableSessionCount = interruptedSessionRecords.length + orphanedSessions.length
 
   const recentDocuments = documents.slice(0, 4)
   const selectedProjectLaunchLabel = selectedLaunchProfile?.label ?? 'No account selected'
@@ -1757,7 +2076,11 @@ function App() {
         selectedLaunchProfileId,
         sessionSnapshot,
         liveSessionSnapshots,
+        sessionRecords,
+        sessionEvents,
+        selectedHistorySessionId,
         sessionError,
+        historyError,
         workItems,
         workItemError,
         documents,
@@ -1776,15 +2099,25 @@ function App() {
         runtimeCleanupCandidates,
         staleWorktreeCleanupCandidates,
         staleWorktreeRecordCandidates,
+        interruptedSessionRecords,
         recoveryActionCount,
+        recoverableSessionCount,
         cleanupError,
         cleanupMessage,
+        worktreeError,
+        worktreeMessage,
         isLoadingCleanup,
+        isLoadingHistory,
         activeOrphanSessionId,
         activeCleanupPath,
+        activeWorktreeActionId,
+        activeWorktreeActionKind,
         isRepairingCleanup,
-        sessionRailRevision,
         hasSelectedProjectLiveSession,
+        selectedTargetHistoryRecord:
+          selectedTargetHistoryRecord && isRecoverableSession(selectedTargetHistoryRecord)
+            ? selectedTargetHistoryRecord
+            : null,
         launchBlockedByMissingRoot,
         selectedProjectLaunchLabel,
         selectedTerminalLaunchLabel,
@@ -1835,6 +2168,8 @@ function App() {
         setProjectRootPath,
         setDefaultLaunchProfileSettingId,
         setAutoRepairSafeCleanupOnStartup,
+        startCreateProject,
+        cancelCreateProject,
         setIsProjectCreateOpen,
         setEditProjectName,
         setEditProjectRootPath,
@@ -1847,12 +2182,15 @@ function App() {
         setIsDocumentsManagerOpen,
         setIsAgentGuideOpen,
         setActiveView,
+        setSelectedHistorySessionId,
         setIsProjectRailCollapsed,
         setIsSessionRailCollapsed,
         setTerminalPromptDraft,
         selectProject,
         selectMainTerminal,
         selectWorktreeTerminal,
+        openHistoryForSession,
+        openSessionTarget,
         browseForProjectFolder,
         submitProject,
         submitProjectUpdate,
@@ -1864,9 +2202,13 @@ function App() {
         deleteLaunchProfile,
         launchWorkspaceGuide,
         stopSession,
+        resumeSessionRecord,
         terminateRecoveredSession,
+        recoverOrphanedSession,
         removeStaleArtifact,
         repairCleanupCandidates,
+        removeWorktree,
+        recreateWorktree,
         copyAgentStartupPrompt,
         sendAgentStartupPrompt,
         copyTerminalOutput,

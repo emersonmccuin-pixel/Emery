@@ -1,24 +1,26 @@
 use clap::{Args, Parser, Subcommand};
 use project_commander_lib::db::{
     AppState, AppendSessionEventInput, CreateDocumentInput, CreateLaunchProfileInput,
-    CreateProjectInput, CreateWorkItemInput, DocumentRecord, UpdateAppSettingsInput,
-    UpdateDocumentInput, UpdateLaunchProfileInput, UpdateProjectInput, UpdateWorkItemInput,
-    UpsertWorktreeRecordInput, WorkItemRecord, WorktreeRecord,
+    CreateProjectInput, CreateWorkItemInput, DocumentRecord, ProjectRecord,
+    UpdateAppSettingsInput, UpdateDocumentInput, UpdateLaunchProfileInput, UpdateProjectInput,
+    UpdateWorkItemInput, UpsertWorktreeRecordInput, WorkItemRecord, WorktreeRecord,
 };
 use project_commander_lib::session::build_supervisor_runtime_info;
 use project_commander_lib::session_api::{
-    LaunchSessionInput, ProjectSessionTarget, ResizeSessionInput, SessionInput, SupervisorHealth,
-    SupervisorRuntimeInfo,
+    LaunchSessionInput, ProjectSessionTarget, ResizeSessionInput, SessionInput, SessionPollInput,
+    SupervisorHealth, SupervisorRuntimeInfo, SUPERVISOR_PROTOCOL_VERSION,
 };
 use project_commander_lib::session_host::{now_timestamp_string, SessionRegistry};
 use project_commander_lib::supervisor_api::{
     CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget, CleanupRepairOutput,
     ClearProjectWorktreesInput, CreateProjectDocumentInput, CreateProjectWorkItemInput,
-    EnsureProjectWorktreeInput, LaunchProfileTarget, ListCleanupCandidatesInput,
+    EnsureProjectWorktreeInput, LaunchProfileTarget, LaunchProjectWorktreeAgentInput,
+    ListCleanupCandidatesInput,
     ListProjectDocumentsInput, ListProjectSessionEventsInput, ListProjectSessionsInput,
     ListProjectWorkItemsInput, ListProjectWorktreesInput, ProjectDocumentTarget,
-    ProjectSessionRecordTarget, ProjectWorkItemTarget, RepairCleanupInput, SessionBriefOutput,
-    UpdateProjectDocumentInput, UpdateProjectWorkItemInput, WorkItemDetailOutput,
+    ProjectSessionRecordTarget, ProjectWorkItemTarget, ProjectWorktreeTarget,
+    RepairCleanupInput, SessionBriefOutput, UpdateProjectDocumentInput,
+    UpdateProjectWorkItemInput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
 use project_commander_lib::supervisor_mcp::run_supervisor_mcp_stdio_with_session;
 use serde::de::DeserializeOwned;
@@ -26,6 +28,8 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::fs;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::time::{Duration, Instant};
@@ -34,6 +38,9 @@ use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 const CLEANUP_KIND_RUNTIME_ARTIFACT: &str = "runtime_artifact";
 const CLEANUP_KIND_STALE_MANAGED_WORKTREE_DIR: &str = "stale_managed_worktree_dir";
 const CLEANUP_KIND_STALE_WORKTREE_RECORD: &str = "stale_worktree_record";
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Parser)]
 struct Cli {
@@ -225,6 +232,7 @@ fn route_request(
             ok: true,
             pid: runtime.pid,
             started_at: runtime.started_at.clone(),
+            protocol_version: SUPERVISOR_PROTOCOL_VERSION,
         })
         .map_err(|error| {
             RouteError::internal(format!("failed to encode health response: {error}"))
@@ -247,6 +255,13 @@ fn route_request(
             serde_json::to_value(sessions.snapshot(input).map_err(RouteError::internal)?).map_err(
                 |error| RouteError::internal(format!("failed to encode session snapshot: {error}")),
             )
+        }
+        (&Method::Post, "/session/poll") => {
+            let input = read_json::<SessionPollInput>(request)?;
+            serde_json::to_value(sessions.poll_output(input).map_err(RouteError::internal)?)
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode session poll output: {error}"))
+                })
         }
         (&Method::Post, "/session/live-list") => {
             let input = read_json::<ProjectSessionTarget>(request)?;
@@ -436,6 +451,18 @@ fn route_request(
                 items.retain(|item| item.status == status);
             }
 
+            if input.open_only {
+                items.retain(|item| item.status != "done");
+            }
+
+            if let Some(item_type) = input.item_type.as_deref() {
+                items.retain(|item| item.item_type == item_type);
+            }
+
+            if input.parent_only {
+                items.retain(|item| item.parent_work_item_id.is_none());
+            }
+
             serde_json::to_value(items).map_err(|error| {
                 RouteError::internal(format!("failed to encode work items: {error}"))
             })
@@ -463,6 +490,7 @@ fn route_request(
             let work_item = state
                 .create_work_item(CreateWorkItemInput {
                     project_id: input.project_id,
+                    parent_work_item_id: input.parent_work_item_id,
                     title: input.title,
                     body: input.body.unwrap_or_default(),
                     item_type: input.item_type.unwrap_or_else(|| "task".to_string()),
@@ -712,6 +740,59 @@ fn route_request(
                 RouteError::internal(format!("failed to encode worktree: {error}"))
             })
         }
+        (&Method::Post, "/worktree/launch-agent") => {
+            let input = read_json::<LaunchProjectWorktreeAgentInput>(request)?;
+            let launched =
+                launch_worktree_agent(state, sessions, runtime, context, input)?;
+            append_project_event(
+                state,
+                context,
+                launched.worktree.project_id,
+                "worktree.agent_launched",
+                "worktree",
+                launched.worktree.id,
+                &launched,
+            );
+
+            serde_json::to_value(launched).map_err(|error| {
+                RouteError::internal(format!("failed to encode launched worktree agent: {error}"))
+            })
+        }
+        (&Method::Post, "/worktree/remove") => {
+            let input = read_json::<ProjectWorktreeTarget>(request)?;
+            let removed = remove_project_worktree(state, sessions, input.project_id, input.worktree_id)?;
+            append_project_event(
+                state,
+                context,
+                input.project_id,
+                "worktree.removed",
+                "worktree",
+                removed.id,
+                &removed,
+            );
+
+            serde_json::to_value(removed).map_err(|error| {
+                RouteError::internal(format!("failed to encode removed worktree: {error}"))
+            })
+        }
+        (&Method::Post, "/worktree/recreate") => {
+            let input = read_json::<ProjectWorktreeTarget>(request)?;
+            let worktree =
+                recreate_project_worktree(state, sessions, input.project_id, input.worktree_id)?;
+            append_project_event(
+                state,
+                context,
+                input.project_id,
+                "worktree.recreated",
+                "worktree",
+                worktree.id,
+                &worktree,
+            );
+
+            serde_json::to_value(worktree).map_err(|error| {
+                RouteError::internal(format!("failed to encode recreated worktree: {error}"))
+            })
+        }
         (&Method::Post, "/worktree/clear") => {
             let input = read_json::<ClearProjectWorktreesInput>(request)?;
             let cleared = clear_project_worktrees(state, input.project_id)?;
@@ -800,13 +881,13 @@ fn ensure_project_worktree(
         .as_ref()
         .map(|record| record.branch_name.clone())
         .unwrap_or_else(|| {
-            build_worktree_branch_name(&project.name, work_item.id, &work_item.title)
+            build_worktree_branch_name(&work_item.call_sign, &work_item.title)
         });
     let worktree_path = existing
         .as_ref()
         .map(|record| PathBuf::from(&record.worktree_path))
         .unwrap_or_else(|| {
-            build_worktree_path(state, &project.name, work_item.id, &work_item.title)
+            build_worktree_path(state, &project.name, &work_item.call_sign, &work_item.title)
         });
 
     if worktree_path.exists() {
@@ -818,6 +899,8 @@ fn ensure_project_worktree(
         }
     } else {
         let project_git_root = resolve_git_root(&project.root_path)?;
+        run_git_command(&project_git_root, &["worktree", "prune"])?;
+        ensure_git_repository_head(&project_git_root)?;
 
         if let Some(parent) = worktree_path.parent() {
             fs::create_dir_all(parent).map_err(|error| {
@@ -855,6 +938,306 @@ fn ensure_project_worktree(
             worktree_path: worktree_path.display().to_string(),
         })
         .map_err(RouteError::internal)
+}
+
+fn launch_worktree_agent(
+    state: &AppState,
+    sessions: &SessionRegistry,
+    runtime: &SupervisorRuntimeInfo,
+    context: &RequestContext,
+    input: LaunchProjectWorktreeAgentInput,
+) -> Result<WorktreeLaunchOutput, RouteError> {
+    let project = state
+        .get_project(input.project_id)
+        .map_err(RouteError::not_found)?;
+    let work_item = require_work_item_for_project(state, input.project_id, input.work_item_id)?;
+    let worktree = ensure_project_worktree(state, input.project_id, input.work_item_id)?;
+    let launch_profile_id = resolve_worktree_launch_profile_id(
+        state,
+        context.session_id,
+        input.launch_profile_id,
+    )?;
+    let startup_prompt = build_worktree_startup_prompt(state, &project, &work_item, &worktree)?;
+    let session = sessions
+        .launch(
+            LaunchSessionInput {
+                project_id: input.project_id,
+                worktree_id: Some(worktree.id),
+                launch_profile_id,
+                cols: 120,
+                rows: 32,
+                startup_prompt: Some(startup_prompt),
+            },
+            state,
+            runtime,
+            &context.source,
+        )
+        .map_err(RouteError::internal)?;
+
+    Ok(WorktreeLaunchOutput { worktree, session })
+}
+
+fn resolve_worktree_launch_profile_id(
+    state: &AppState,
+    source_session_id: Option<i64>,
+    requested_launch_profile_id: Option<i64>,
+) -> Result<i64, RouteError> {
+    if let Some(launch_profile_id) = requested_launch_profile_id {
+        state
+            .get_launch_profile(launch_profile_id)
+            .map_err(RouteError::not_found)?;
+        return Ok(launch_profile_id);
+    }
+
+    if let Some(source_session_id) = source_session_id {
+        let source_session = state
+            .get_session_record(source_session_id)
+            .map_err(RouteError::not_found)?;
+
+        if let Some(launch_profile_id) = source_session.launch_profile_id {
+            return Ok(launch_profile_id);
+        }
+    }
+
+    let bootstrap = state.bootstrap().map_err(RouteError::internal)?;
+
+    if let Some(launch_profile_id) = bootstrap.settings.default_launch_profile_id {
+        return Ok(launch_profile_id);
+    }
+
+    bootstrap
+        .launch_profiles
+        .first()
+        .map(|profile| profile.id)
+        .ok_or_else(|| RouteError::bad_request("no launch profile is available for worktree launch"))
+}
+
+fn build_worktree_startup_prompt(
+    state: &AppState,
+    project: &ProjectRecord,
+    work_item: &WorkItemRecord,
+    worktree: &WorktreeRecord,
+) -> Result<String, RouteError> {
+    let linked_documents = state
+        .list_documents(project.id)
+        .map_err(RouteError::internal)?
+        .into_iter()
+        .filter(|document| document.work_item_id == Some(work_item.id))
+        .collect::<Vec<_>>();
+    let document_lines = if linked_documents.is_empty() {
+        vec![
+            "- No linked documents yet. Use Project Commander tools if you need more project context."
+                .to_string(),
+        ]
+    } else {
+        linked_documents
+            .into_iter()
+            .map(|document| {
+                let body = document.body.trim();
+                if body.is_empty() {
+                    format!("- {} {}", document.id, document.title)
+                } else {
+                    format!("- {} {} :: {}", document.id, document.title, one_line(body))
+                }
+            })
+            .collect::<Vec<_>>()
+    };
+
+    Ok(
+        [
+            "You are the focused Project Commander worktree agent for this task.",
+            &format!("Project: {}", project.name),
+            &format!("Work item: {} {}", work_item.call_sign, work_item.title),
+            &format!("Status: {}", work_item.status),
+            &format!("Worktree branch: {}", worktree.branch_name),
+            &format!("Worktree path: {}", worktree.worktree_path),
+            "Rules:",
+            "- Operate only inside the attached worktree path.",
+            "- Use Project Commander MCP tools as the source of truth for work-item and document changes.",
+            "- First call session_brief.",
+            "- Then state the exact work item you are taking and either begin or say exactly why you are blocked.",
+            "Linked documents:",
+            &document_lines.join("\n"),
+            "If you change work-item state, persist it through Project Commander tools.",
+        ]
+        .join("\n"),
+    )
+}
+
+fn latest_session_record_for_worktree(
+    state: &AppState,
+    project_id: i64,
+    worktree_id: i64,
+) -> Result<Option<project_commander_lib::db::SessionRecord>, RouteError> {
+    Ok(state
+        .list_session_records(project_id)
+        .map_err(RouteError::internal)?
+        .into_iter()
+        .find(|record| record.worktree_id == Some(worktree_id)))
+}
+
+fn ensure_worktree_lifecycle_allowed(
+    state: &AppState,
+    sessions: &SessionRegistry,
+    project_id: i64,
+    worktree_id: i64,
+    action_label: &str,
+    allow_interrupted: bool,
+) -> Result<(), RouteError> {
+    if let Some(snapshot) = sessions
+        .snapshot(ProjectSessionTarget {
+            project_id,
+            worktree_id: Some(worktree_id),
+        })
+        .map_err(RouteError::internal)?
+    {
+        if snapshot.is_running {
+            return Err(RouteError::bad_request(format!(
+                "worktree has a live session attached; stop it before {action_label}"
+            )));
+        }
+    }
+
+    if let Some(record) = latest_session_record_for_worktree(state, project_id, worktree_id)? {
+        match record.state.as_str() {
+            "orphaned" => {
+                return Err(RouteError::bad_request(format!(
+                    "worktree has an orphaned session; recover or purge it before {action_label}"
+                )));
+            }
+            "interrupted" if !allow_interrupted => {
+                return Err(RouteError::bad_request(format!(
+                    "worktree has an interrupted session; resume or discard it before {action_label}"
+                )));
+            }
+            "running" => {
+                return Err(RouteError::bad_request(format!(
+                    "worktree still has a running session record; stop it before {action_label}"
+                )));
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+fn remove_worktree_path_artifacts(
+    project_git_root: &Path,
+    worktree_root: &Path,
+    worktree_path: &Path,
+) -> Result<bool, RouteError> {
+    if !worktree_path.exists() {
+        run_git_command(project_git_root, &["worktree", "prune"])?;
+        return Ok(false);
+    }
+
+    if is_git_worktree_path(worktree_path) {
+        run_git_command(
+            project_git_root,
+            &["worktree", "remove", "--force", &worktree_path.display().to_string()],
+        )?;
+    } else if path_is_within(worktree_root, worktree_path) {
+        let metadata = fs::metadata(worktree_path).map_err(|error| {
+            RouteError::internal(format!(
+                "failed to inspect worktree path {}: {error}",
+                worktree_path.display()
+            ))
+        })?;
+
+        if metadata.is_dir() {
+            fs::remove_dir_all(worktree_path).map_err(|error| {
+                RouteError::internal(format!(
+                    "failed to remove worktree directory {}: {error}",
+                    worktree_path.display()
+                ))
+            })?;
+        } else {
+            fs::remove_file(worktree_path).map_err(|error| {
+                RouteError::internal(format!(
+                    "failed to remove worktree artifact {}: {error}",
+                    worktree_path.display()
+                ))
+            })?;
+        }
+    } else {
+        return Err(RouteError::bad_request(format!(
+            "refusing to remove unexpected worktree path outside managed root: {}",
+            worktree_path.display()
+        )));
+    }
+
+    run_git_command(project_git_root, &["worktree", "prune"])?;
+
+    if let Some(parent) = worktree_path.parent() {
+        remove_empty_ancestor_dirs(worktree_root, parent)?;
+    }
+
+    Ok(true)
+}
+
+fn remove_project_worktree(
+    state: &AppState,
+    sessions: &SessionRegistry,
+    project_id: i64,
+    worktree_id: i64,
+) -> Result<WorktreeRecord, RouteError> {
+    let project = state
+        .get_project(project_id)
+        .map_err(RouteError::not_found)?;
+    let worktree = require_worktree_for_project(state, project_id, worktree_id)?;
+    ensure_worktree_lifecycle_allowed(
+        state,
+        sessions,
+        project_id,
+        worktree_id,
+        "removing the worktree",
+        false,
+    )?;
+
+    let project_git_root = resolve_git_root(&project.root_path)?;
+    let worktree_root = PathBuf::from(state.storage().app_data_dir).join("worktrees");
+    remove_worktree_path_artifacts(
+        &project_git_root,
+        &worktree_root,
+        Path::new(&worktree.worktree_path),
+    )?;
+
+    state
+        .delete_worktree(worktree.id)
+        .map_err(RouteError::internal)?;
+
+    Ok(worktree)
+}
+
+fn recreate_project_worktree(
+    state: &AppState,
+    sessions: &SessionRegistry,
+    project_id: i64,
+    worktree_id: i64,
+) -> Result<WorktreeRecord, RouteError> {
+    let project = state
+        .get_project(project_id)
+        .map_err(RouteError::not_found)?;
+    let worktree = require_worktree_for_project(state, project_id, worktree_id)?;
+    ensure_worktree_lifecycle_allowed(
+        state,
+        sessions,
+        project_id,
+        worktree_id,
+        "recreating the worktree",
+        true,
+    )?;
+
+    let project_git_root = resolve_git_root(&project.root_path)?;
+    let worktree_root = PathBuf::from(state.storage().app_data_dir).join("worktrees");
+    remove_worktree_path_artifacts(
+        &project_git_root,
+        &worktree_root,
+        Path::new(&worktree.worktree_path),
+    )?;
+
+    ensure_project_worktree(state, project_id, worktree.work_item_id)
 }
 
 fn clear_project_worktrees(state: &AppState, project_id: i64) -> Result<usize, RouteError> {
@@ -1014,6 +1397,8 @@ fn terminate_orphaned_session(
                             session.id
                         )));
                     }
+
+                    terminated_process = process_was_alive;
                 }
             }
         }
@@ -1504,30 +1889,27 @@ fn remove_empty_ancestor_dirs(root: &Path, start: &Path) -> Result<(), RouteErro
     Ok(())
 }
 
-fn build_worktree_branch_name(
-    project_name: &str,
-    work_item_id: i64,
-    work_item_title: &str,
-) -> String {
-    let project_slug = slugify_path_segment(project_name, 24);
+fn build_worktree_branch_name(work_item_call_sign: &str, work_item_title: &str) -> String {
+    let call_sign_slug = slugify_path_segment(work_item_call_sign, 24);
     let work_item_slug = slugify_path_segment(work_item_title, 40);
-    format!("pc/{project_slug}-{work_item_id}-{work_item_slug}")
+    format!("pc/{call_sign_slug}-{work_item_slug}")
 }
 
 fn build_worktree_path(
     state: &AppState,
     project_name: &str,
-    work_item_id: i64,
+    work_item_call_sign: &str,
     work_item_title: &str,
 ) -> PathBuf {
     let storage = state.storage();
     let project_slug = slugify_path_segment(project_name, 32);
+    let call_sign_slug = slugify_path_segment(work_item_call_sign, 24);
     let work_item_slug = slugify_path_segment(work_item_title, 40);
 
     PathBuf::from(storage.app_data_dir)
         .join("worktrees")
         .join(&project_slug)
-        .join(format!("{project_slug}-{work_item_id}-{work_item_slug}"))
+        .join(format!("{call_sign_slug}-{work_item_slug}"))
 }
 
 fn slugify_path_segment(value: &str, max_len: usize) -> String {
@@ -1567,8 +1949,12 @@ fn slugify_path_segment(value: &str, max_len: usize) -> String {
     }
 }
 
+fn one_line(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn resolve_git_root(project_root_path: &str) -> Result<PathBuf, RouteError> {
-    let output = ProcessCommand::new("git")
+    let output = git_command()
         .args(["-C", project_root_path, "rev-parse", "--show-toplevel"])
         .output()
         .map_err(|error| RouteError::internal(format!("failed to run git: {error}")))?;
@@ -1594,7 +1980,7 @@ fn resolve_git_root(project_root_path: &str) -> Result<PathBuf, RouteError> {
 }
 
 fn git_local_branch_exists(project_git_root: &Path, branch_name: &str) -> Result<bool, RouteError> {
-    let output = ProcessCommand::new("git")
+    let output = git_command()
         .arg("-C")
         .arg(project_git_root)
         .args([
@@ -1611,8 +1997,48 @@ fn git_local_branch_exists(project_git_root: &Path, branch_name: &str) -> Result
     Ok(output.status.success())
 }
 
+fn git_head_exists(project_git_root: &Path) -> Result<bool, RouteError> {
+    let output = git_command()
+        .arg("-C")
+        .arg(project_git_root)
+        .args(["rev-parse", "--verify", "--quiet", "HEAD"])
+        .output()
+        .map_err(|error| RouteError::internal(format!("failed to inspect git HEAD: {error}")))?;
+
+    Ok(output.status.success())
+}
+
+fn ensure_git_repository_head(project_git_root: &Path) -> Result<(), RouteError> {
+    if git_head_exists(project_git_root)? {
+        return Ok(());
+    }
+
+    run_git_command(project_git_root, &["add", "-A"])?;
+    run_git_command(
+        project_git_root,
+        &[
+            "-c",
+            "user.name=Project Commander",
+            "-c",
+            "user.email=project-commander@local.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "Project Commander bootstrap snapshot",
+        ],
+    )?;
+
+    if git_head_exists(project_git_root)? {
+        return Ok(());
+    }
+
+    Err(RouteError::internal(
+        "git repository still has no HEAD after bootstrap commit".to_string(),
+    ))
+}
+
 fn is_git_worktree_path(worktree_path: &Path) -> bool {
-    ProcessCommand::new("git")
+    git_command()
         .arg("-C")
         .arg(worktree_path)
         .args(["rev-parse", "--is-inside-work-tree"])
@@ -1622,7 +2048,7 @@ fn is_git_worktree_path(worktree_path: &Path) -> bool {
 }
 
 fn run_git_command(project_git_root: &Path, args: &[&str]) -> Result<(), RouteError> {
-    let output = ProcessCommand::new("git")
+    let output = git_command()
         .arg("-C")
         .arg(project_git_root)
         .args(args)
@@ -1644,6 +2070,17 @@ fn run_git_command(project_git_root: &Path, args: &[&str]) -> Result<(), RouteEr
     };
 
     Err(RouteError::bad_request(message))
+}
+
+fn git_command() -> ProcessCommand {
+    let mut command = ProcessCommand::new("git");
+
+    #[cfg(windows)]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    command
 }
 
 fn path_is_within(root: &Path, candidate: &Path) -> bool {
@@ -1909,6 +2346,7 @@ mod tests {
         CreateSessionRecordInput, CreateWorkItemInput, LaunchProfileRecord, ProjectRecord,
         SessionRecord, UpdateAppSettingsInput, UpdateLaunchProfileInput, UpdateProjectInput,
     };
+    use project_commander_lib::supervisor_api::ProjectWorktreeTarget;
     use reqwest::blocking::Client;
     use rusqlite::{params, Connection};
     use std::process::Child;
@@ -1971,6 +2409,7 @@ mod tests {
             self.state
                 .create_work_item(CreateWorkItemInput {
                     project_id,
+                    parent_work_item_id: None,
                     title: title.to_string(),
                     body: String::new(),
                     item_type: "task".to_string(),
@@ -2169,6 +2608,216 @@ mod tests {
         assert_eq!(stored.len(), 1);
         assert_eq!(stored[0].id, first.id);
         assert!(stored[0].branch_name.starts_with("pc/"));
+    }
+
+    #[test]
+    fn ensure_project_worktree_bootstraps_head_for_unborn_repo() {
+        let harness = TestHarness::new("ensure-worktree-unborn", false);
+        fs::write(harness.project_root.join("README.md"), "bootstrap me\n")
+            .expect("project file should be written");
+
+        let project = harness.create_project("Commander");
+        let work_item = harness.create_work_item(project.id, "Launch from backlog");
+        let worktree = ensure_project_worktree(&harness.state, project.id, work_item.id)
+            .expect("worktree should be created for unborn repo");
+
+        let head_output = git_command()
+            .arg("-C")
+            .arg(&harness.project_root)
+            .args(["rev-parse", "--verify", "--quiet", "HEAD"])
+            .output()
+            .expect("git head lookup should succeed");
+        let worktree_readme = Path::new(&worktree.worktree_path).join("README.md");
+
+        assert!(head_output.status.success());
+        assert_eq!(
+            fs::read_to_string(worktree_readme)
+                .expect("worktree README should exist")
+                .replace("\r\n", "\n"),
+            "bootstrap me\n"
+        );
+    }
+
+    #[test]
+    fn worktree_remove_route_deletes_worktree_and_record() {
+        let harness = TestHarness::new("remove-worktree-route", true);
+        let project = harness.create_project("Commander");
+        let work_item = harness.create_work_item(project.id, "Remove retired branch");
+        let worktree = ensure_project_worktree(&harness.state, project.id, work_item.id)
+            .expect("worktree should be created");
+        let worktree_path = PathBuf::from(&worktree.worktree_path);
+
+        let (runtime, handle) = spawn_route_server(harness.state.clone(), 1);
+        let removed = authorized_client(&runtime)
+            .post(supervisor_url(&runtime, "/worktree/remove"))
+            .header("x-project-commander-token", runtime.token.clone())
+            .header("x-project-commander-source", "desktop_ui")
+            .json(&ProjectWorktreeTarget {
+                project_id: project.id,
+                worktree_id: worktree.id,
+            })
+            .send()
+            .expect("worktree remove request should succeed")
+            .error_for_status()
+            .expect("worktree remove route should return success")
+            .json::<WorktreeRecord>()
+            .expect("worktree remove response should decode");
+
+        handle
+            .join()
+            .expect("worktree remove route server should stop cleanly");
+
+        let worktrees = harness
+            .state
+            .list_worktrees(project.id)
+            .expect("worktrees should load");
+        let event_types = harness
+            .state
+            .list_session_events(project.id, 20)
+            .expect("session events should load")
+            .into_iter()
+            .map(|event| event.event_type)
+            .collect::<Vec<_>>();
+
+        assert_eq!(removed.id, worktree.id);
+        assert!(worktrees.is_empty());
+        assert!(!worktree_path.exists());
+        assert!(event_types.contains(&"worktree.removed".to_string()));
+    }
+
+    #[test]
+    fn worktree_remove_route_rejects_interrupted_session_targets() {
+        let harness = TestHarness::new("remove-worktree-blocked", true);
+        let project = harness.create_project("Commander");
+        let work_item = harness.create_work_item(project.id, "Keep interrupted branch");
+        let worktree = ensure_project_worktree(&harness.state, project.id, work_item.id)
+            .expect("worktree should be created");
+
+        harness
+            .state
+            .create_session_record(CreateSessionRecordInput {
+                project_id: project.id,
+                launch_profile_id: None,
+                worktree_id: Some(worktree.id),
+                process_id: None,
+                supervisor_pid: None,
+                provider: "test_provider".to_string(),
+                profile_label: "Interrupted".to_string(),
+                root_path: worktree.worktree_path.clone(),
+                state: "interrupted".to_string(),
+                startup_prompt: String::new(),
+                started_at: "123456".to_string(),
+            })
+            .expect("interrupted session should be inserted");
+
+        let (runtime, handle) = spawn_route_server(harness.state.clone(), 1);
+        let response = authorized_client(&runtime)
+            .post(supervisor_url(&runtime, "/worktree/remove"))
+            .header("x-project-commander-token", runtime.token.clone())
+            .header("x-project-commander-source", "desktop_ui")
+            .json(&ProjectWorktreeTarget {
+                project_id: project.id,
+                worktree_id: worktree.id,
+            })
+            .send()
+            .expect("blocked worktree remove request should return a response");
+        let status = response.status();
+        let body = response
+            .text()
+            .expect("blocked worktree remove body should decode");
+
+        handle
+            .join()
+            .expect("blocked worktree remove route server should stop cleanly");
+
+        let worktrees = harness
+            .state
+            .list_worktrees(project.id)
+            .expect("worktrees should still load");
+
+        assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+        assert!(body.contains("interrupted session"));
+        assert_eq!(worktrees.len(), 1);
+        assert_eq!(worktrees[0].id, worktree.id);
+        assert!(Path::new(&worktree.worktree_path).is_dir());
+    }
+
+    #[test]
+    fn worktree_recreate_route_repairs_missing_path_for_interrupted_session() {
+        let harness = TestHarness::new("recreate-worktree-route", true);
+        let project = harness.create_project("Commander");
+        let work_item = harness.create_work_item(project.id, "Recreate missing branch");
+        let worktree = ensure_project_worktree(&harness.state, project.id, work_item.id)
+            .expect("worktree should be created");
+
+        run_command(
+            ProcessCommand::new("git").args([
+                "-C",
+                &harness.project_root.display().to_string(),
+                "worktree",
+                "remove",
+                "--force",
+                &worktree.worktree_path,
+            ]),
+            "git worktree remove",
+        );
+
+        assert!(!Path::new(&worktree.worktree_path).exists());
+
+        harness
+            .state
+            .create_session_record(CreateSessionRecordInput {
+                project_id: project.id,
+                launch_profile_id: None,
+                worktree_id: Some(worktree.id),
+                process_id: None,
+                supervisor_pid: None,
+                provider: "test_provider".to_string(),
+                profile_label: "Interrupted".to_string(),
+                root_path: worktree.worktree_path.clone(),
+                state: "interrupted".to_string(),
+                startup_prompt: String::new(),
+                started_at: "222222".to_string(),
+            })
+            .expect("interrupted session should be inserted");
+
+        let (runtime, handle) = spawn_route_server(harness.state.clone(), 1);
+        let recreated = authorized_client(&runtime)
+            .post(supervisor_url(&runtime, "/worktree/recreate"))
+            .header("x-project-commander-token", runtime.token.clone())
+            .header("x-project-commander-source", "desktop_ui")
+            .json(&ProjectWorktreeTarget {
+                project_id: project.id,
+                worktree_id: worktree.id,
+            })
+            .send()
+            .expect("worktree recreate request should succeed")
+            .error_for_status()
+            .expect("worktree recreate route should return success")
+            .json::<WorktreeRecord>()
+            .expect("worktree recreate response should decode");
+
+        handle
+            .join()
+            .expect("worktree recreate route server should stop cleanly");
+
+        let stored = harness
+            .state
+            .list_worktrees(project.id)
+            .expect("worktrees should load");
+        let event_types = harness
+            .state
+            .list_session_events(project.id, 20)
+            .expect("session events should load")
+            .into_iter()
+            .map(|event| event.event_type)
+            .collect::<Vec<_>>();
+
+        assert_eq!(recreated.id, worktree.id);
+        assert!(Path::new(&recreated.worktree_path).is_dir());
+        assert_eq!(stored.len(), 1);
+        assert!(stored[0].path_available);
+        assert!(event_types.contains(&"worktree.recreated".to_string()));
     }
 
     #[test]

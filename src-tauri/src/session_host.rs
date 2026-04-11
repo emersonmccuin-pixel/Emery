@@ -3,8 +3,8 @@ use crate::db::{
     UpdateSessionRuntimeMetadataInput,
 };
 use crate::session_api::{
-    LaunchSessionInput, ProjectSessionTarget, ResizeSessionInput, SessionInput, SessionSnapshot,
-    SupervisorRuntimeInfo,
+    LaunchSessionInput, ProjectSessionTarget, ResizeSessionInput, SessionInput, SessionPollInput,
+    SessionPollOutput, SessionSnapshot, SupervisorRuntimeInfo,
 };
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
@@ -36,12 +36,18 @@ struct HostedSession {
     profile_label: String,
     root_path: String,
     started_at: String,
-    output_buffer: Mutex<String>,
+    output_state: Mutex<OutputBufferState>,
     exit_state: Mutex<Option<ExitState>>,
     child: Mutex<Box<dyn portable_pty::Child + Send + Sync>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+}
+
+struct OutputBufferState {
+    buffer: String,
+    start_offset: usize,
+    end_offset: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -91,6 +97,27 @@ impl SessionRegistry {
         };
 
         Ok(session.map(|session| session.snapshot()))
+    }
+
+    pub fn poll_output(
+        &self,
+        input: SessionPollInput,
+    ) -> Result<Option<SessionPollOutput>, String> {
+        let session = {
+            let sessions = self
+                .sessions
+                .lock()
+                .map_err(|_| "failed to access session registry".to_string())?;
+
+            sessions
+                .get(&SessionTargetKey::from_target(&ProjectSessionTarget {
+                    project_id: input.project_id,
+                    worktree_id: input.worktree_id,
+                }))
+                .cloned()
+        };
+
+        Ok(session.map(|session| session.poll_output(input.offset)))
     }
 
     pub fn list_running_snapshots(&self, project_id: i64) -> Result<Vec<SessionSnapshot>, String> {
@@ -338,7 +365,11 @@ impl SessionRegistry {
             profile_label: profile.label,
             root_path: launch_root_path.clone(),
             started_at,
-            output_buffer: Mutex::new(String::new()),
+            output_state: Mutex::new(OutputBufferState {
+                buffer: String::new(),
+                start_offset: 0,
+                end_offset: 0,
+            }),
             exit_state: Mutex::new(None),
             child: Mutex::new(child),
             master: Mutex::new(pair.master),
@@ -536,6 +567,11 @@ impl SessionRegistry {
 impl HostedSession {
     fn snapshot(&self) -> SessionSnapshot {
         let exit_state = self.exit_state.lock().map(|state| *state).unwrap_or(None);
+        let (output, output_cursor) = self
+            .output_state
+            .lock()
+            .map(|state| (state.buffer.clone(), state.end_offset))
+            .unwrap_or_else(|_| (String::new(), 0));
 
         SessionSnapshot {
             session_id: self.session_record_id,
@@ -546,11 +582,41 @@ impl HostedSession {
             root_path: self.root_path.clone(),
             is_running: exit_state.is_none(),
             started_at: self.started_at.clone(),
-            output: self
-                .output_buffer
-                .lock()
-                .map(|buffer| buffer.clone())
-                .unwrap_or_default(),
+            output,
+            output_cursor,
+            exit_code: exit_state.map(|state| state.exit_code),
+            exit_success: exit_state.map(|state| state.success),
+        }
+    }
+
+    fn poll_output(&self, offset: usize) -> SessionPollOutput {
+        let exit_state = self.exit_state.lock().map(|state| *state).unwrap_or(None);
+        let (data, next_offset, reset) = self
+            .output_state
+            .lock()
+            .map(|state| {
+                if offset < state.start_offset
+                    || offset > state.end_offset
+                    || !state.buffer.is_char_boundary(offset.saturating_sub(state.start_offset))
+                {
+                    (state.buffer.clone(), state.end_offset, true)
+                } else {
+                    let relative_offset = offset - state.start_offset;
+                    (
+                        state.buffer[relative_offset..].to_string(),
+                        state.end_offset,
+                        false,
+                    )
+                }
+            })
+            .unwrap_or_else(|_| (String::new(), offset, false));
+
+        SessionPollOutput {
+            started_at: self.started_at.clone(),
+            data,
+            next_offset,
+            reset,
+            is_running: exit_state.is_none(),
             exit_code: exit_state.map(|state| state.exit_code),
             exit_success: exit_state.map(|state| state.success),
         }
@@ -679,7 +745,7 @@ fn build_claude_launch_command(
         resolve_cli_directory(),
     );
 
-    for arg in parse_profile_args(&profile.args)? {
+    for arg in prepare_claude_profile_args(&profile.args, worktree.is_some())? {
         command.arg(arg);
     }
 
@@ -957,6 +1023,52 @@ fn parse_profile_args(raw: &str) -> Result<Vec<String>, String> {
     Ok(args)
 }
 
+fn prepare_claude_profile_args(
+    raw: &str,
+    worktree_session: bool,
+) -> Result<Vec<String>, String> {
+    let parsed_args = parse_profile_args(raw)?;
+    let mut normalized_args = Vec::new();
+    let mut skip_next = false;
+
+    for (index, arg) in parsed_args.iter().enumerate() {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+
+        if arg == "--dangerously-skip-permissions" || arg == "--allow-dangerously-skip-permissions"
+        {
+            continue;
+        }
+
+        if arg == "--permission-mode" {
+            if parsed_args.get(index + 1).is_some() {
+                skip_next = true;
+            }
+            continue;
+        }
+
+        if arg.starts_with("--permission-mode=") {
+            continue;
+        }
+
+        normalized_args.push(arg.clone());
+    }
+
+    normalized_args.push("--permission-mode".to_string());
+    normalized_args.push(
+        if worktree_session {
+            "acceptEdits"
+        } else {
+            "bypassPermissions"
+        }
+        .to_string(),
+    );
+
+    Ok(normalized_args)
+}
+
 fn build_claude_bridge_system_prompt(
     project: &crate::db::ProjectRecord,
     worktree: Option<&crate::db::WorktreeRecord>,
@@ -981,9 +1093,16 @@ fn build_claude_bridge_system_prompt(
 
     if let Some(worktree) = worktree {
         prompt.push_str(&format!(
-            " This session is attached to worktree #{} on branch {} for work item #{} ({}).",
-            worktree.id, worktree.branch_name, worktree.work_item_id, worktree.work_item_title
+            " This session is attached to worktree #{} on branch {} for work item {} ({}). Treat the attached worktree path as the only writable project path and do not intentionally modify files outside it.",
+            worktree.id,
+            worktree.branch_name,
+            worktree.work_item_call_sign,
+            worktree.work_item_title
         ));
+    } else {
+        prompt.push_str(
+            " This is the project dispatcher session. Operate from the main repository root and coordinate focused worktree handoffs when needed.",
+        );
     }
 
     prompt
@@ -1074,18 +1193,20 @@ pub fn now_timestamp_string() -> String {
         .unwrap_or_else(|_| "0".to_string())
 }
 
-fn append_output(buffer: &Mutex<String>, chunk: &str) {
-    if let Ok(mut output) = buffer.lock() {
-        output.push_str(chunk);
+fn append_output(output_state: &Mutex<OutputBufferState>, chunk: &str) {
+    if let Ok(mut state) = output_state.lock() {
+        state.buffer.push_str(chunk);
+        state.end_offset = state.end_offset.saturating_add(chunk.len());
 
-        if output.len() > MAX_OUTPUT_BUFFER_BYTES {
-            let mut drain_to = output.len() - MAX_OUTPUT_BUFFER_BYTES;
-            while drain_to < output.len() && !output.is_char_boundary(drain_to) {
+        if state.buffer.len() > MAX_OUTPUT_BUFFER_BYTES {
+            let mut drain_to = state.buffer.len() - MAX_OUTPUT_BUFFER_BYTES;
+            while drain_to < state.buffer.len() && !state.buffer.is_char_boundary(drain_to) {
                 drain_to += 1;
             }
 
-            if drain_to > 0 && drain_to <= output.len() {
-                output.drain(..drain_to);
+            if drain_to > 0 && drain_to <= state.buffer.len() {
+                state.buffer.drain(..drain_to);
+                state.start_offset = state.start_offset.saturating_add(drain_to);
             }
         }
     }
@@ -1100,7 +1221,7 @@ fn spawn_output_thread(session: Arc<HostedSession>, mut reader: Box<dyn Read + S
                 Ok(0) => break,
                 Ok(bytes_read) => {
                     let chunk = String::from_utf8_lossy(&buffer[..bytes_read]).to_string();
-                    append_output(&session.output_buffer, &chunk);
+                    append_output(&session.output_state, &chunk);
                 }
                 Err(_) => break,
             }
@@ -1389,10 +1510,15 @@ mod tests {
             id: 22,
             project_id: project.id,
             work_item_id: 33,
+            work_item_call_sign: "COMMANDER-33".to_string(),
             work_item_title: "Fix MCP attach".to_string(),
             branch_name: "pc/commander-33-fix-mcp-attach".to_string(),
+            short_branch_name: "commander-33-fix-mcp-attach".to_string(),
             worktree_path: "E:\\worktrees\\commander-33".to_string(),
             path_available: true,
+            has_uncommitted_changes: false,
+            has_unmerged_commits: true,
+            session_summary: "Fix MCP attach".to_string(),
             created_at: "now".to_string(),
             updated_at: "now".to_string(),
         };
@@ -1455,10 +1581,15 @@ mod tests {
             id: 22,
             project_id: project.id,
             work_item_id: 33,
+            work_item_call_sign: "COMMANDER-33".to_string(),
             work_item_title: "Fix bridge".to_string(),
             branch_name: "pc/commander-33-fix-bridge".to_string(),
+            short_branch_name: "commander-33-fix-bridge".to_string(),
             worktree_path: "E:\\worktrees\\commander-33".to_string(),
             path_available: true,
+            has_uncommitted_changes: false,
+            has_unmerged_commits: true,
+            session_summary: "Fix bridge".to_string(),
             created_at: "now".to_string(),
             updated_at: "now".to_string(),
         };

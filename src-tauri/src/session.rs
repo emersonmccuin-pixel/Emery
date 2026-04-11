@@ -5,21 +5,25 @@ use crate::db::{
     WorktreeRecord,
 };
 use crate::session_api::{
-    LaunchSessionInput, ProjectSessionTarget, ResizeSessionInput, SessionInput, SessionSnapshot,
-    SupervisorHealth, SupervisorRuntimeInfo, TerminalExitEvent, TerminalOutputEvent,
+    LaunchSessionInput, ProjectSessionTarget, ResizeSessionInput, SessionInput, SessionPollInput,
+    SessionPollOutput, SessionSnapshot, SupervisorHealth, SupervisorRuntimeInfo, TerminalExitEvent,
+    TerminalOutputEvent,
+    SUPERVISOR_PROTOCOL_VERSION,
     TERMINAL_EXIT_EVENT, TERMINAL_OUTPUT_EVENT,
 };
 use crate::session_host::{now_timestamp_string, resolve_helper_binary_path};
 use crate::supervisor_api::{
     CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget, CleanupRepairOutput,
     CreateProjectDocumentInput, CreateProjectWorkItemInput, EnsureProjectWorktreeInput,
-    LaunchProfileTarget,
+    LaunchProfileTarget, LaunchProjectWorktreeAgentInput, WorktreeLaunchOutput,
     ListCleanupCandidatesInput, ListProjectDocumentsInput, ListProjectSessionEventsInput,
     ListProjectSessionsInput, ListProjectWorkItemsInput, ListProjectWorktreesInput,
-    ProjectDocumentTarget, ProjectSessionRecordTarget, ProjectWorkItemTarget, RepairCleanupInput,
-    UpdateProjectDocumentInput, UpdateProjectWorkItemInput,
+    ProjectDocumentTarget, ProjectSessionRecordTarget, ProjectWorkItemTarget,
+    ProjectWorktreeTarget, RepairCleanupInput, UpdateProjectDocumentInput,
+    UpdateProjectWorkItemInput,
 };
 use reqwest::blocking::Client;
+use reqwest::StatusCode;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -34,11 +38,11 @@ use tauri::{AppHandle, Emitter};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
-const SUPERVISOR_BOOT_TIMEOUT: Duration = Duration::from_secs(5);
+const SUPERVISOR_BOOT_TIMEOUT: Duration = Duration::from_secs(15);
 const SUPERVISOR_BOOT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const SUPERVISOR_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 const SUPERVISOR_LONG_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
-const SUPERVISOR_TERMINAL_POLL_INTERVAL: Duration = Duration::from_millis(200);
+const SUPERVISOR_TERMINAL_POLL_INTERVAL: Duration = Duration::from_millis(33);
 const SUPERVISOR_REQUEST_SOURCE: &str = "desktop_ui";
 
 #[cfg(windows)]
@@ -54,7 +58,10 @@ pub struct SupervisorClient {
 struct SupervisorClientInner {
     storage: StorageInfo,
     runtime_file: PathBuf,
+    runtime_lock: Mutex<()>,
+    runtime_info: Mutex<Option<SupervisorRuntimeInfo>>,
     pollers: Mutex<HashMap<String, PollerHandle>>,
+    http_client: Client,
 }
 
 struct PollerHandle {
@@ -71,6 +78,9 @@ impl SupervisorClient {
     pub fn new(storage: StorageInfo) -> Result<Self, String> {
         let runtime_dir = PathBuf::from(&storage.app_data_dir).join("runtime");
         let runtime_file = runtime_dir.join("supervisor.json");
+        let http_client = Client::builder()
+            .build()
+            .map_err(|error| format!("failed to build supervisor HTTP client: {error}"))?;
 
         fs::create_dir_all(&runtime_dir)
             .map_err(|error| format!("failed to create supervisor runtime directory: {error}"))?;
@@ -79,7 +89,10 @@ impl SupervisorClient {
             inner: Arc::new(SupervisorClientInner {
                 storage,
                 runtime_file,
+                runtime_lock: Mutex::new(()),
+                runtime_info: Mutex::new(None),
                 pollers: Mutex::new(HashMap::new()),
+                http_client,
             }),
         })
     }
@@ -162,6 +175,9 @@ impl SupervisorClient {
             &ListProjectWorkItemsInput {
                 project_id,
                 status: None,
+                item_type: None,
+                parent_only: false,
+                open_only: false,
             },
         )
     }
@@ -236,6 +252,46 @@ impl SupervisorClient {
                 work_item_id,
             },
         )
+    }
+
+    pub fn remove_worktree(&self, project_id: i64, worktree_id: i64) -> Result<WorktreeRecord, String> {
+        self.request_json_with_timeout(
+            "worktree/remove",
+            &ProjectWorktreeTarget {
+                project_id,
+                worktree_id,
+            },
+            SUPERVISOR_LONG_REQUEST_TIMEOUT,
+        )
+    }
+
+    pub fn recreate_worktree(
+        &self,
+        project_id: i64,
+        worktree_id: i64,
+    ) -> Result<WorktreeRecord, String> {
+        self.request_json_with_timeout(
+            "worktree/recreate",
+            &ProjectWorktreeTarget {
+                project_id,
+                worktree_id,
+            },
+            SUPERVISOR_LONG_REQUEST_TIMEOUT,
+        )
+    }
+
+    pub fn launch_worktree_agent(
+        &self,
+        input: LaunchProjectWorktreeAgentInput,
+        app_handle: &AppHandle,
+    ) -> Result<WorktreeLaunchOutput, String> {
+        let output: WorktreeLaunchOutput = self.request_json_with_timeout(
+            "worktree/launch-agent",
+            &input,
+            SUPERVISOR_LONG_REQUEST_TIMEOUT,
+        )?;
+        self.ensure_terminal_poller(&output.session, app_handle);
+        Ok(output)
     }
 
     pub fn list_session_records(&self, project_id: i64) -> Result<Vec<SessionRecord>, String> {
@@ -368,7 +424,7 @@ impl SupervisorClient {
         app_handle: AppHandle,
         stop: Arc<AtomicBool>,
     ) {
-        let mut previous_output = initial_snapshot.output.clone();
+        let mut previous_output_cursor = initial_snapshot.output_cursor;
         let project_id = initial_snapshot.project_id;
         let worktree_id = initial_snapshot.worktree_id;
         let started_at = initial_snapshot.started_at.clone();
@@ -380,46 +436,43 @@ impl SupervisorClient {
 
             std::thread::sleep(SUPERVISOR_TERMINAL_POLL_INTERVAL);
 
-            let snapshot = match self.fetch_snapshot(ProjectSessionTarget {
-                project_id,
-                worktree_id,
-            }) {
-                Ok(Some(snapshot)) => snapshot,
+            let poll = match self.poll_output(
+                ProjectSessionTarget {
+                    project_id,
+                    worktree_id,
+                },
+                previous_output_cursor,
+            ) {
+                Ok(Some(poll)) => poll,
                 Ok(None) => break,
                 Err(_) => continue,
             };
 
-            if snapshot.started_at != started_at {
+            if poll.started_at != started_at {
                 break;
             }
 
-            if snapshot.output.len() >= previous_output.len()
-                && snapshot.output.starts_with(&previous_output)
-            {
-                let chunk = &snapshot.output[previous_output.len()..];
-
-                if !chunk.is_empty() {
-                    let _ = app_handle.emit(
-                        TERMINAL_OUTPUT_EVENT,
-                        TerminalOutputEvent {
-                            project_id,
-                            worktree_id,
-                            data: chunk.to_string(),
-                        },
-                    );
-                }
+            if !poll.data.is_empty() && !poll.reset {
+                let _ = app_handle.emit(
+                    TERMINAL_OUTPUT_EVENT,
+                    TerminalOutputEvent {
+                        project_id,
+                        worktree_id,
+                        data: poll.data,
+                    },
+                );
             }
 
-            previous_output = snapshot.output.clone();
+            previous_output_cursor = poll.next_offset;
 
-            if !snapshot.is_running {
+            if !poll.is_running {
                 let _ = app_handle.emit(
                     TERMINAL_EXIT_EVENT,
                     TerminalExitEvent {
                         project_id,
                         worktree_id,
-                        exit_code: snapshot.exit_code.unwrap_or(1),
-                        success: snapshot.exit_success.unwrap_or(false),
+                        exit_code: poll.exit_code.unwrap_or(1),
+                        success: poll.exit_success.unwrap_or(false),
                     },
                 );
                 break;
@@ -443,11 +496,19 @@ impl SupervisorClient {
         }
     }
 
-    fn fetch_snapshot(
+    fn poll_output(
         &self,
         target: ProjectSessionTarget,
-    ) -> Result<Option<SessionSnapshot>, String> {
-        self.request_json("session/snapshot", &target)
+        offset: usize,
+    ) -> Result<Option<SessionPollOutput>, String> {
+        self.request_json(
+            "session/poll",
+            &SessionPollInput {
+                project_id: target.project_id,
+                worktree_id: target.worktree_id,
+                offset,
+            },
+        )
     }
 
     fn request_json<TRequest, TResponse>(
@@ -499,16 +560,12 @@ impl SupervisorClient {
         TRequest: Serialize,
         TResponse: DeserializeOwned,
     {
-        let client = Client::builder()
-            .timeout(timeout)
-            .build()
-            .map_err(|error| {
-                RequestFailure::Fatal(format!("failed to build supervisor client: {error}"))
-            })?;
-
         let url = format!("http://127.0.0.1:{}/{}", runtime.port, route);
-        let response = client
+        let response = self
+            .inner
+            .http_client
             .post(&url)
+            .timeout(timeout)
             .header("x-project-commander-token", &runtime.token)
             .header("x-project-commander-source", SUPERVISOR_REQUEST_SOURCE)
             .json(payload)
@@ -532,7 +589,13 @@ impl SupervisorClient {
                 .text()
                 .unwrap_or_else(|_| "Project Commander supervisor returned an error".to_string());
 
-            return Err(RequestFailure::Fatal(message));
+            return Err(
+                if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+                    RequestFailure::Retryable(message)
+                } else {
+                    RequestFailure::Fatal(message)
+                },
+            );
         }
 
         response.json::<TResponse>().map_err(|error| {
@@ -541,14 +604,34 @@ impl SupervisorClient {
     }
 
     fn ensure_runtime(&self) -> Result<SupervisorRuntimeInfo, String> {
+        let _runtime_guard = self
+            .inner
+            .runtime_lock
+            .lock()
+            .map_err(|_| "failed to access supervisor runtime lock".to_string())?;
+
+        if let Some(runtime) = self
+            .inner
+            .runtime_info
+            .lock()
+            .map_err(|_| "failed to access cached supervisor runtime info".to_string())?
+            .clone()
+        {
+            return Ok(runtime);
+        }
+
         if let Some(runtime) = self.load_runtime_info()? {
             if self.ping_runtime(&runtime).is_ok() {
+                self.cache_runtime(runtime.clone())?;
                 return Ok(runtime);
             }
         }
 
+        self.invalidate_runtime();
         self.spawn_supervisor()?;
-        self.wait_for_runtime()
+        let runtime = self.wait_for_runtime()?;
+        self.cache_runtime(runtime.clone())?;
+        Ok(runtime)
     }
 
     fn load_runtime_info(&self) -> Result<Option<SupervisorRuntimeInfo>, String> {
@@ -565,13 +648,12 @@ impl SupervisorClient {
     }
 
     fn ping_runtime(&self, runtime: &SupervisorRuntimeInfo) -> Result<SupervisorHealth, String> {
-        let client = Client::builder()
-            .timeout(SUPERVISOR_REQUEST_TIMEOUT)
-            .build()
-            .map_err(|error| format!("failed to build supervisor health client: {error}"))?;
         let url = format!("http://127.0.0.1:{}/health", runtime.port);
-        let response = client
+        let response = self
+            .inner
+            .http_client
             .get(&url)
+            .timeout(SUPERVISOR_REQUEST_TIMEOUT)
             .header("x-project-commander-token", &runtime.token)
             .send()
             .map_err(|error| format!("failed to reach Project Commander supervisor: {error}"))?;
@@ -583,9 +665,18 @@ impl SupervisorClient {
             ));
         }
 
-        response
+        let health = response
             .json::<SupervisorHealth>()
-            .map_err(|error| format!("failed to decode supervisor health response: {error}"))
+            .map_err(|error| format!("failed to decode supervisor health response: {error}"))?;
+
+        if health.protocol_version != SUPERVISOR_PROTOCOL_VERSION {
+            return Err(format!(
+                "Project Commander supervisor protocol mismatch: expected {}, got {}",
+                SUPERVISOR_PROTOCOL_VERSION, health.protocol_version
+            ));
+        }
+
+        Ok(health)
     }
 
     fn spawn_supervisor(&self) -> Result<(), String> {
@@ -642,7 +733,21 @@ impl SupervisorClient {
     }
 
     fn invalidate_runtime(&self) {
+        if let Ok(mut runtime_info) = self.inner.runtime_info.lock() {
+            *runtime_info = None;
+        }
+
         let _ = fs::remove_file(&self.inner.runtime_file);
+    }
+
+    fn cache_runtime(&self, runtime: SupervisorRuntimeInfo) -> Result<(), String> {
+        let mut runtime_info = self
+            .inner
+            .runtime_info
+            .lock()
+            .map_err(|_| "failed to cache supervisor runtime info".to_string())?;
+        *runtime_info = Some(runtime);
+        Ok(())
     }
 }
 

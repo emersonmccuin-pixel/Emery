@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { FitAddon } from '@xterm/addon-fit'
@@ -17,26 +17,10 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
   const fitAddonRef = useRef<FitAddon | null>(null)
   const onSessionExitRef = useRef(onSessionExit)
   const sessionKey = `${snapshot.projectId}:${snapshot.worktreeId ?? 'project'}:${snapshot.startedAt}`
-  const [selectionText, setSelectionText] = useState('')
-  const [clipboardMessage, setClipboardMessage] = useState<string | null>(null)
 
   useEffect(() => {
     onSessionExitRef.current = onSessionExit
   }, [onSessionExit])
-
-  useEffect(() => {
-    if (!clipboardMessage) {
-      return
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      setClipboardMessage(null)
-    }, 2200)
-
-    return () => {
-      window.clearTimeout(timeoutId)
-    }
-  }, [clipboardMessage])
 
   useEffect(() => {
     if (!hostRef.current) {
@@ -60,28 +44,6 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
 
     terminal.loadAddon(fitAddon)
     terminal.open(hostRef.current)
-    terminal.attachCustomKeyEventHandler((event) => {
-      const key = event.key.toLowerCase()
-      const hasPrimaryModifier = event.ctrlKey || event.metaKey
-
-      if (hasPrimaryModifier && event.shiftKey && key === 'c') {
-        void copySelection()
-        return false
-      }
-
-      if (hasPrimaryModifier && event.shiftKey && key === 'v') {
-        void pasteClipboard()
-        return false
-      }
-
-      if (event.shiftKey && key === 'insert') {
-        void pasteClipboard()
-        return false
-      }
-
-      return true
-    })
-
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
 
@@ -91,10 +53,21 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
       })
     }
 
+    let resizeTimeoutId: number | null = null
+    let lastCols = 0
+    let lastRows = 0
+
     const resizeTerminal = () => {
       fitAddon.fit()
 
-      if (terminal.cols > 0 && terminal.rows > 0) {
+      if (
+        terminal.cols > 0 &&
+        terminal.rows > 0 &&
+        (terminal.cols !== lastCols || terminal.rows !== lastRows)
+      ) {
+        lastCols = terminal.cols
+        lastRows = terminal.rows
+
         void invoke('resize_session', {
           input: {
             projectId: snapshot.projectId,
@@ -105,6 +78,44 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
         }).catch(() => undefined)
       }
     }
+
+    const scheduleResize = (delay = 40) => {
+      if (resizeTimeoutId !== null) {
+        window.clearTimeout(resizeTimeoutId)
+      }
+
+      resizeTimeoutId = window.setTimeout(() => {
+        resizeTimeoutId = null
+        resizeTerminal()
+      }, delay)
+    }
+
+    const copySelection = async () => {
+      const text = terminal.getSelection()
+      if (!text) return
+      try { await navigator.clipboard.writeText(text) } catch { /* ignore */ }
+    }
+
+    const pasteClipboard = async () => {
+      try {
+        const text = await navigator.clipboard.readText()
+        if (!text) return
+        await invoke('write_session_input', {
+          input: { projectId: snapshot.projectId, worktreeId: snapshot.worktreeId, data: text },
+        })
+        focusTerminal()
+      } catch { /* ignore */ }
+    }
+
+    terminal.attachCustomKeyEventHandler((event) => {
+      const key = event.key.toLowerCase()
+      const mod = event.ctrlKey || event.metaKey
+
+      if (mod && event.shiftKey && key === 'c') { void copySelection(); return false }
+      if (mod && event.shiftKey && key === 'v') { void pasteClipboard(); return false }
+      if (event.shiftKey && key === 'insert') { void pasteClipboard(); return false }
+      return true
+    })
 
     resizeTerminal()
     focusTerminal()
@@ -117,50 +128,6 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
       focusTerminal()
     }
     hostRef.current.addEventListener('pointerdown', handlePointerFocus)
-
-    const copySelection = async () => {
-      const text = terminal.getSelection()
-
-      if (!text) {
-        setClipboardMessage('No terminal selection to copy.')
-        return
-      }
-
-      try {
-        await navigator.clipboard.writeText(text)
-        setClipboardMessage('Terminal selection copied.')
-      } catch (error) {
-        setClipboardMessage(
-          error instanceof Error ? error.message : 'Failed to copy terminal selection.',
-        )
-      }
-    }
-
-    const pasteClipboard = async () => {
-      try {
-        const text = await navigator.clipboard.readText()
-
-        if (!text) {
-          setClipboardMessage('Clipboard is empty.')
-          return
-        }
-
-        await invoke('write_session_input', {
-          input: {
-            projectId: snapshot.projectId,
-            worktreeId: snapshot.worktreeId,
-            data: text,
-          },
-        })
-
-        focusTerminal()
-        setClipboardMessage('Clipboard pasted into terminal.')
-      } catch (error) {
-        setClipboardMessage(
-          error instanceof Error ? error.message : 'Failed to paste clipboard into terminal.',
-        )
-      }
-    }
 
     const bind = async () => {
       terminal.reset()
@@ -175,12 +142,7 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
       }
 
       terminal.write((latestSnapshot ?? snapshot).output)
-      setSelectionText(terminal.getSelection())
       focusTerminal()
-
-      terminal.onSelectionChange(() => {
-        setSelectionText(terminal.getSelection())
-      })
 
       outputUnlisten = await listen<TerminalOutputEvent>('terminal-output', (event) => {
         if (
@@ -205,7 +167,7 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
       })
 
       resizeObserver = new ResizeObserver(() => {
-        resizeTerminal()
+        scheduleResize()
       })
       resizeObserver.observe(hostRef.current!)
     }
@@ -216,6 +178,9 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
       disposed = true
       hostRef.current?.removeEventListener('pointerdown', handlePointerFocus)
       resizeObserver?.disconnect()
+      if (resizeTimeoutId !== null) {
+        window.clearTimeout(resizeTimeoutId)
+      }
       outputUnlisten?.()
       exitUnlisten?.()
       terminal.dispose()
@@ -233,7 +198,19 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
 
     terminal.focus()
 
-    const dataDisposable = terminal.onData((data) => {
+    let flushTimer: number | null = null
+    const pendingInputChunks: string[] = []
+
+    const flushPendingInput = () => {
+      flushTimer = null
+
+      if (pendingInputChunks.length === 0) {
+        return
+      }
+
+      const data = pendingInputChunks.join('')
+      pendingInputChunks.length = 0
+
       void invoke('write_session_input', {
         input: {
           projectId: snapshot.projectId,
@@ -241,122 +218,39 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
           data,
         },
       }).catch(() => undefined)
+    }
+
+    const dataDisposable = terminal.onData((data) => {
+      pendingInputChunks.push(data)
+
+      if (data.includes('\r') || data.includes('\u0003')) {
+        if (flushTimer !== null) {
+          window.clearTimeout(flushTimer)
+        }
+
+        flushPendingInput()
+        return
+      }
+
+      if (flushTimer === null) {
+        flushTimer = window.setTimeout(() => {
+          flushPendingInput()
+        }, 4)
+      }
     })
 
     return () => {
+      if (flushTimer !== null) {
+        window.clearTimeout(flushTimer)
+      }
+
+      flushPendingInput()
       dataDisposable.dispose()
     }
   }, [sessionKey, snapshot.isRunning, snapshot.projectId, snapshot.worktreeId])
 
-  const copySelection = async () => {
-    const terminal = terminalRef.current
-    const text = terminal?.getSelection() ?? ''
-
-    if (!text) {
-      setClipboardMessage('No terminal selection to copy.')
-      return
-    }
-
-    try {
-      await navigator.clipboard.writeText(text)
-      setClipboardMessage('Terminal selection copied.')
-    } catch (error) {
-      setClipboardMessage(
-        error instanceof Error ? error.message : 'Failed to copy terminal selection.',
-      )
-    }
-  }
-
-  const copyAllOutput = async () => {
-    const terminalOutput = snapshot.output.trim()
-
-    if (!terminalOutput) {
-      setClipboardMessage('No terminal output available to copy yet.')
-      return
-    }
-
-    try {
-      await navigator.clipboard.writeText(terminalOutput)
-      setClipboardMessage('Terminal output copied.')
-    } catch (error) {
-      setClipboardMessage(
-        error instanceof Error ? error.message : 'Failed to copy terminal output.',
-      )
-    }
-  }
-
-  const pasteClipboard = async () => {
-    try {
-      const text = await navigator.clipboard.readText()
-
-      if (!text) {
-        setClipboardMessage('Clipboard is empty.')
-        return
-      }
-
-      await invoke('write_session_input', {
-        input: {
-          projectId: snapshot.projectId,
-          worktreeId: snapshot.worktreeId,
-          data: text,
-        },
-      })
-
-      terminalRef.current?.focus()
-      setClipboardMessage('Clipboard pasted into terminal.')
-    } catch (error) {
-      setClipboardMessage(
-        error instanceof Error ? error.message : 'Failed to paste clipboard into terminal.',
-      )
-    }
-  }
-
-  const selectAll = () => {
-    terminalRef.current?.selectAll()
-    setSelectionText(terminalRef.current?.getSelection() ?? '')
-    terminalRef.current?.focus()
-  }
-
   return (
     <div className="terminal-shell">
-      <div className="terminal-toolbar">
-        <div className="terminal-toolbar__actions">
-          <button
-            className="button button--secondary button--compact"
-            disabled={!selectionText}
-            type="button"
-            onClick={() => void copySelection()}
-          >
-            Copy selection
-          </button>
-          <button
-            className="button button--secondary button--compact"
-            disabled={!snapshot.output}
-            type="button"
-            onClick={() => void copyAllOutput()}
-          >
-            Copy all
-          </button>
-          <button
-            className="button button--secondary button--compact"
-            type="button"
-            onClick={() => void pasteClipboard()}
-          >
-            Paste
-          </button>
-          <button
-            className="button button--secondary button--compact"
-            type="button"
-            onClick={selectAll}
-          >
-            Select all
-          </button>
-        </div>
-        <p className="terminal-toolbar__hint">
-          `Ctrl+Shift+C` copy, `Ctrl+Shift+V` paste
-        </p>
-      </div>
-      {clipboardMessage ? <p className="terminal-toolbar__message">{clipboardMessage}</p> : null}
       <div className="terminal-host" ref={hostRef} />
     </div>
   )
