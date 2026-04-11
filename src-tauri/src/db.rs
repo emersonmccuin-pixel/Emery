@@ -94,12 +94,15 @@ pub struct WorktreeRecord {
     pub work_item_id: i64,
     pub work_item_call_sign: String,
     pub work_item_title: String,
+    pub work_item_status: String,
     pub branch_name: String,
     pub short_branch_name: String,
     pub worktree_path: String,
     pub path_available: bool,
     pub has_uncommitted_changes: bool,
     pub has_unmerged_commits: bool,
+    pub pinned: bool,
+    pub is_cleanup_eligible: bool,
     pub session_summary: String,
     pub created_at: String,
     pub updated_at: String,
@@ -936,6 +939,21 @@ impl AppState {
         )?)
     }
 
+    pub fn set_worktree_pinned(&self, id: i64, pinned: bool) -> AppResult<WorktreeRecord> {
+        let connection = self.connect()?;
+        let existing = load_worktree_by_id(&connection, id)?;
+
+        connection
+            .execute(
+                "UPDATE worktrees SET pinned = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
+                params![pinned as i64, id],
+            )
+            .map_err(|error| format!("failed to update worktree pinned: {error}"))?;
+
+        touch_project(&connection, existing.project_id)?;
+        Ok(load_worktree_by_id(&connection, id)?)
+    }
+
     pub fn delete_worktree(&self, id: i64) -> AppResult<()> {
         let connection = self.connect()?;
         let existing = load_worktree_by_id(&connection, id)?;
@@ -1398,6 +1416,7 @@ fn migrate(connection: &Connection) -> Result<(), String> {
     ensure_column_exists(connection, "work_items", "call_sign", "TEXT")?;
     ensure_column_exists(connection, "sessions", "process_id", "INTEGER")?;
     ensure_column_exists(connection, "sessions", "supervisor_pid", "INTEGER")?;
+    ensure_column_exists(connection, "worktrees", "pinned", "INTEGER NOT NULL DEFAULT 0")?;
     connection
         .execute_batch(
             "
@@ -1833,7 +1852,9 @@ fn load_worktrees_by_project_id(
               wt.branch_name,
               wt.worktree_path,
               wt.created_at,
-              wt.updated_at
+              wt.updated_at,
+              wi.status,
+              wt.pinned
             FROM worktrees wt
             INNER JOIN work_items wi ON wi.id = wt.work_item_id
             WHERE wt.project_id = ?1
@@ -1866,7 +1887,9 @@ fn load_worktree_by_id(connection: &Connection, id: i64) -> Result<WorktreeRecor
               wt.branch_name,
               wt.worktree_path,
               wt.created_at,
-              wt.updated_at
+              wt.updated_at,
+              wi.status,
+              wt.pinned
             FROM worktrees wt
             INNER JOIN work_items wi ON wi.id = wt.work_item_id
             WHERE wt.id = ?1
@@ -1901,7 +1924,9 @@ fn load_worktree_by_project_and_work_item(
               wt.branch_name,
               wt.worktree_path,
               wt.created_at,
-              wt.updated_at
+              wt.updated_at,
+              wi.status,
+              wt.pinned
             FROM worktrees wt
             INNER JOIN work_items wi ON wi.id = wt.work_item_id
             WHERE wt.project_id = ?1 AND wt.work_item_id = ?2
@@ -2177,6 +2202,8 @@ fn map_work_item_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkItemRec
 fn map_worktree_record_base(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorktreeRecord> {
     let worktree_path: String = row.get(6)?;
     let branch_name: String = row.get(5)?;
+    let work_item_status: String = row.get(9)?;
+    let pinned: bool = row.get::<_, i64>(10)? != 0;
 
     Ok(WorktreeRecord {
         id: row.get(0)?,
@@ -2184,12 +2211,15 @@ fn map_worktree_record_base(row: &rusqlite::Row<'_>) -> rusqlite::Result<Worktre
         work_item_id: row.get(2)?,
         work_item_call_sign: row.get(3)?,
         work_item_title: row.get(4)?,
+        work_item_status: work_item_status.clone(),
         branch_name: branch_name.clone(),
         short_branch_name: short_branch_name(&branch_name),
         worktree_path: worktree_path.clone(),
         path_available: Path::new(&worktree_path).is_dir(),
         has_uncommitted_changes: false,
         has_unmerged_commits: false,
+        pinned,
+        is_cleanup_eligible: false,
         session_summary: short_summary_text(&row.get::<_, String>(4)?, 6),
         created_at: row.get(7)?,
         updated_at: row.get(8)?,
@@ -2208,6 +2238,9 @@ fn enrich_worktree_record(
     record.has_unmerged_commits =
         worktree_has_unmerged_commits(Path::new(&project.root_path), worktree_path);
     record.session_summary = worktree_session_summary(connection, &record)?;
+    record.is_cleanup_eligible = record.work_item_status == "done"
+        && !record.has_unmerged_commits
+        && !record.pinned;
 
     Ok(record)
 }

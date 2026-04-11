@@ -19,7 +19,7 @@ use crate::supervisor_api::{
     LaunchProfileTarget, LaunchProjectWorktreeAgentInput, WorktreeLaunchOutput,
     ListCleanupCandidatesInput, ListProjectDocumentsInput, ListProjectSessionEventsInput,
     ListProjectSessionsInput, ListProjectWorkItemsInput, ListProjectWorktreesInput,
-    ProjectDocumentTarget, ProjectSessionRecordTarget, ProjectWorkItemTarget,
+    PinWorktreeInput, ProjectDocumentTarget, ProjectSessionRecordTarget, ProjectWorkItemTarget,
     ProjectWorktreeTarget, RepairCleanupInput, UpdateProjectDocumentInput,
     UpdateProjectWorkItemInput,
 };
@@ -287,6 +287,34 @@ impl SupervisorClient {
             &ProjectWorktreeTarget {
                 project_id,
                 worktree_id,
+            },
+            SUPERVISOR_LONG_REQUEST_TIMEOUT,
+        )
+    }
+
+    pub fn cleanup_worktree(&self, project_id: i64, worktree_id: i64) -> AppResult<WorktreeRecord> {
+        self.request_json_with_timeout(
+            "worktree/cleanup",
+            &ProjectWorktreeTarget {
+                project_id,
+                worktree_id,
+            },
+            SUPERVISOR_LONG_REQUEST_TIMEOUT,
+        )
+    }
+
+    pub fn pin_worktree(
+        &self,
+        project_id: i64,
+        worktree_id: i64,
+        pinned: bool,
+    ) -> AppResult<WorktreeRecord> {
+        self.request_json_with_timeout(
+            "worktree/pin",
+            &PinWorktreeInput {
+                project_id,
+                worktree_id,
+                pinned,
             },
             SUPERVISOR_LONG_REQUEST_TIMEOUT,
         )

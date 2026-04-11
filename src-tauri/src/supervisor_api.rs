@@ -210,3 +210,11 @@ pub struct ProjectWorktreeTarget {
 pub struct ClearProjectWorktreesInput {
     pub project_id: i64,
 }
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PinWorktreeInput {
+    pub project_id: i64,
+    pub worktree_id: i64,
+    pub pinned: bool,
+}

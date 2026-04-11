@@ -20,7 +20,7 @@ use std::fs;
 use supervisor_api::{
     CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget, CleanupRepairOutput,
     CreateProjectDocumentInput, CreateProjectWorkItemInput, EnsureProjectWorktreeInput,
-    LaunchProjectWorktreeAgentInput, ProjectDocumentTarget, ProjectWorkItemTarget,
+    LaunchProjectWorktreeAgentInput, PinWorktreeInput, ProjectDocumentTarget, ProjectWorkItemTarget,
     ProjectWorktreeTarget, SessionHistoryOutput, UpdateProjectDocumentInput,
     UpdateProjectWorkItemInput, WorktreeLaunchOutput,
 };
@@ -271,6 +271,22 @@ fn recreate_worktree(
 }
 
 #[tauri::command]
+fn cleanup_worktree(
+    input: ProjectWorktreeTarget,
+    state: State<SupervisorClient>,
+) -> AppResult<WorktreeRecord> {
+    state.cleanup_worktree(input.project_id, input.worktree_id)
+}
+
+#[tauri::command]
+fn pin_worktree(
+    input: PinWorktreeInput,
+    state: State<SupervisorClient>,
+) -> AppResult<WorktreeRecord> {
+    state.pin_worktree(input.project_id, input.worktree_id, input.pinned)
+}
+
+#[tauri::command]
 fn get_session_history(
     project_id: i64,
     event_limit: Option<usize>,
@@ -390,6 +406,8 @@ pub fn run() {
             launch_worktree_agent,
             remove_worktree,
             recreate_worktree,
+            cleanup_worktree,
+            pin_worktree,
             get_session_history,
             list_orphaned_sessions,
             terminate_orphaned_session,

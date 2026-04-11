@@ -104,12 +104,15 @@ export type WorktreeRecord = {
   workItemId: number
   workItemCallSign: string
   workItemTitle: string
+  workItemStatus: string
   branchName: string
   shortBranchName: string
   worktreePath: string
   pathAvailable: boolean
   hasUncommittedChanges: boolean
   hasUnmergedCommits: boolean
+  pinned: boolean
+  isCleanupEligible: boolean
   sessionSummary: string
   createdAt: string
   updatedAt: string

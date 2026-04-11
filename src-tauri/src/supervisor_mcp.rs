@@ -4,7 +4,8 @@ use crate::session_api::ProjectSessionTarget;
 use crate::supervisor_api::{
     CreateProjectDocumentInput, CreateProjectWorkItemInput, ListProjectDocumentsInput,
     LaunchProjectWorktreeAgentInput, ListProjectWorkItemsInput, ListProjectWorktreesInput,
-    ProjectDocumentTarget, ProjectWorkItemTarget, SessionBriefOutput, UpdateProjectDocumentInput,
+    PinWorktreeInput, ProjectDocumentTarget, ProjectWorktreeTarget, ProjectWorkItemTarget,
+    SessionBriefOutput, UpdateProjectDocumentInput,
     UpdateProjectWorkItemInput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
 use reqwest::blocking::Client;
@@ -288,6 +289,27 @@ impl SupervisorMcpClient {
         )
     }
 
+    fn cleanup_worktree(&self, worktree_id: i64) -> AppResult<WorktreeRecord> {
+        self.post(
+            "worktree/cleanup",
+            &ProjectWorktreeTarget {
+                project_id: self.project_id,
+                worktree_id,
+            },
+        )
+    }
+
+    fn pin_worktree(&self, worktree_id: i64, pinned: bool) -> AppResult<WorktreeRecord> {
+        self.post(
+            "worktree/pin",
+            &PinWorktreeInput {
+                project_id: self.project_id,
+                worktree_id,
+                pinned,
+            },
+        )
+    }
+
     fn post<TRequest, TResponse>(
         &self,
         route: &str,
@@ -530,6 +552,18 @@ fn call_tool(
             read_optional_i64(&arguments, "launchProfileId"),
         )?)
         .map_err(|error| AppError::internal(format!("failed to encode launched worktree agent: {error}")))?),
+        "cleanup_worktree" => Ok(serde_json::to_value(client.cleanup_worktree(
+            read_required_i64(&arguments, "worktreeId")?,
+        )?)
+        .map_err(|error| AppError::internal(format!("failed to encode cleaned-up worktree: {error}")))?),
+        "pin_worktree" => Ok(serde_json::to_value(client.pin_worktree(
+            read_required_i64(&arguments, "worktreeId")?,
+            arguments
+                .get("pinned")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true),
+        )?)
+        .map_err(|error| AppError::internal(format!("failed to encode pinned worktree: {error}")))?),
         _ => Err(AppError::invalid_input(format!("unknown tool: {tool_name}"))),
     }
 }
@@ -814,6 +848,40 @@ fn build_tool_definitions() -> Vec<Value> {
                     }
                 },
                 "required": ["workItemId"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "cleanup_worktree",
+            "description": "Clean up a completed worktree: remove the git worktree, delete the branch (best-effort), and drop the DB record. Only succeeds if the work item is done, the branch is fully merged, and the worktree is not pinned (is_cleanup_eligible = true).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "worktreeId": {
+                        "type": "integer",
+                        "description": "Worktree id to clean up."
+                    }
+                },
+                "required": ["worktreeId"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "pin_worktree",
+            "description": "Pin or unpin a worktree. A pinned worktree is excluded from cleanup eligibility even when its work item is done and its branch is merged.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "worktreeId": {
+                        "type": "integer",
+                        "description": "Worktree id to pin or unpin."
+                    },
+                    "pinned": {
+                        "type": "boolean",
+                        "description": "true to pin (keep), false to unpin (allow cleanup). Defaults to true."
+                    }
+                },
+                "required": ["worktreeId"],
                 "additionalProperties": false
             }
         }),

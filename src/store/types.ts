@@ -199,7 +199,7 @@ export type WorktreeSlice = {
   worktreeError: string | null
   worktreeMessage: string | null
   activeWorktreeActionId: number | null
-  activeWorktreeActionKind: 'remove' | 'recreate' | null
+  activeWorktreeActionKind: 'remove' | 'recreate' | 'cleanup' | 'pin' | null
   worktreeRequestId: number
 
   refreshWorktrees: (projectId: number) => Promise<WorktreeRecord[]>
@@ -207,6 +207,8 @@ export type WorktreeSlice = {
   dropTrackedWorktree: (worktreeId: number) => void
   removeWorktree: (worktree: WorktreeRecord) => Promise<void>
   recreateWorktree: (worktree: WorktreeRecord) => Promise<void>
+  cleanupWorktree: (worktree: WorktreeRecord) => Promise<void>
+  pinWorktree: (worktree: WorktreeRecord, pinned: boolean) => Promise<void>
   syncWorktreeLifecycleState: (projectId: number) => Promise<void>
 }
 
