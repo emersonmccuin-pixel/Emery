@@ -89,6 +89,10 @@ pub struct UpdateProjectWorkItemInput {
     pub body: Option<String>,
     pub item_type: Option<String>,
     pub status: Option<String>,
+    #[serde(default)]
+    pub parent_work_item_id: Option<i64>,
+    #[serde(default)]
+    pub clear_parent: bool,
 }
 
 #[derive(Serialize, Deserialize)]

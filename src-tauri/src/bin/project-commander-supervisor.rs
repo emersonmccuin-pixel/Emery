@@ -2,8 +2,9 @@ use clap::{Args, Parser, Subcommand};
 use project_commander_lib::db::{
     AppState, AppendSessionEventInput, CreateDocumentInput, CreateLaunchProfileInput,
     CreateProjectInput, CreateWorkItemInput, DocumentRecord, ProjectRecord,
-    UpdateAppSettingsInput, UpdateDocumentInput, UpdateLaunchProfileInput, UpdateProjectInput,
-    UpdateWorkItemInput, UpsertWorktreeRecordInput, WorkItemRecord, WorktreeRecord,
+    ReparentRequest, UpdateAppSettingsInput, UpdateDocumentInput, UpdateLaunchProfileInput,
+    UpdateProjectInput, UpdateWorkItemInput, UpsertWorktreeRecordInput, WorkItemRecord,
+    WorktreeRecord,
 };
 use project_commander_lib::error::{AppError, AppErrorCode};
 use project_commander_lib::session::build_supervisor_runtime_info;
@@ -588,6 +589,24 @@ fn route_request(
         (&Method::Post, "/work-item/update") => {
             let input = read_json::<UpdateProjectWorkItemInput>(request)?;
             let existing = require_work_item_for_project(state, input.project_id, input.id)?;
+
+            let reparent_request = match (input.clear_parent, input.parent_work_item_id) {
+                (true, Some(_)) => {
+                    return Err(RouteError::from(AppError::invalid_input(
+                        "clearParent and parentWorkItemId are mutually exclusive",
+                    )));
+                }
+                (true, None) => Some(ReparentRequest::Detach),
+                (false, Some(parent_id)) => Some(ReparentRequest::SetParent(parent_id)),
+                (false, None) => None,
+            };
+
+            if let Some(request) = reparent_request {
+                state
+                    .reparent_work_item(input.id, request)
+                    .map_err(RouteError::from)?;
+            }
+
             let work_item = state
                 .update_work_item(UpdateWorkItemInput {
                     id: input.id,
