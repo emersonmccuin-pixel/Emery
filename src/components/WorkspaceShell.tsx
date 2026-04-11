@@ -23,9 +23,6 @@ import {
   useSelectedWorktree,
   useVisibleWorktrees,
   useBridgeReady,
-  useCurrentTerminalPrompt,
-  useCurrentTerminalPromptLabel,
-  useHasFocusedPrompt,
   useLiveSessions,
   useWorktreeSessions,
   useOpenWorkItemCount,
@@ -39,7 +36,6 @@ import {
   useHasSelectedProjectLiveSession,
   useLaunchBlockedByMissingRoot,
   useSelectedProjectLaunchLabel,
-  PROJECT_COMMANDER_TOOLS,
 } from '../store'
 
 function WorkspaceShell() {
@@ -48,9 +44,6 @@ function WorkspaceShell() {
   const selectedWorktree = useSelectedWorktree()
   const worktrees = useVisibleWorktrees()
   const bridgeReady = useBridgeReady()
-  const currentTerminalPrompt = useCurrentTerminalPrompt()
-  const currentTerminalPromptLabel = useCurrentTerminalPromptLabel()
-  const hasFocusedPrompt = useHasFocusedPrompt()
   const liveSessions = useLiveSessions()
   const worktreeSessions = useWorktreeSessions()
   const openWorkItemCount = useOpenWorkItemCount()
@@ -80,7 +73,6 @@ function WorkspaceShell() {
   const workItemError = useAppStore((s) => s.workItemError)
   const documents = useAppStore((s) => s.documents)
   const documentError = useAppStore((s) => s.documentError)
-  const agentPromptMessage = useAppStore((s) => s.agentPromptMessage)
   const orphanedSessions = useAppStore((s) => s.orphanedSessions)
   const activeOrphanSessionId = useAppStore((s) => s.activeOrphanSessionId)
   const activeCleanupPath = useAppStore((s) => s.activeCleanupPath)
@@ -95,7 +87,6 @@ function WorkspaceShell() {
   const projectError = useAppStore((s) => s.projectError)
   const isProjectCreateOpen = useAppStore((s) => s.isProjectCreateOpen)
   const isDocumentsManagerOpen = useAppStore((s) => s.isDocumentsManagerOpen)
-  const isAgentGuideOpen = useAppStore((s) => s.isAgentGuideOpen)
   const activeView = useAppStore((s) => s.activeView)
   const isProjectRailCollapsed = useAppStore((s) => s.isProjectRailCollapsed)
   const isSessionRailCollapsed = useAppStore((s) => s.isSessionRailCollapsed)
@@ -116,12 +107,10 @@ function WorkspaceShell() {
     startCreateProject,
     cancelCreateProject,
     setIsDocumentsManagerOpen,
-    setIsAgentGuideOpen,
     setActiveView,
     setSelectedHistorySessionId,
     setIsProjectRailCollapsed,
     setIsSessionRailCollapsed,
-    setTerminalPromptDraft,
     selectProject,
     selectMainTerminal,
     selectWorktreeTerminal,
@@ -138,8 +127,6 @@ function WorkspaceShell() {
     repairCleanupCandidates,
     removeWorktree,
     recreateWorktree,
-    copyAgentStartupPrompt,
-    sendAgentStartupPrompt,
     copyTerminalOutput,
     handleSessionExit,
     createWorkItem,
@@ -498,42 +485,6 @@ function WorkspaceShell() {
                     <section className="terminal-view flex flex-col h-full">
                       <div className="terminal-view__toolbar h-10 shrink-0">
                         <div className="flex items-center gap-3">
-                          {!hasSelectedProjectLiveSession ? (
-                            <select
-                              className="h-7 text-[10px] bg-black border border-hud-green/35 rounded px-2 min-w-[140px] uppercase tracking-widest font-bold text-hud-cyan focus:border-hud-cyan outline-none"
-                              value={
-                                selectedLaunchProfileId === null
-                                  ? ''
-                                  : String(selectedLaunchProfileId)
-                              }
-                              onChange={(event) =>
-                                setSelectedLaunchProfileId(
-                                  event.target.value === ''
-                                    ? null
-                                    : Number(event.target.value),
-                                )
-                              }
-                            >
-                              <option value="">CHOOSE PROFILE</option>
-                              {launchProfiles.map((profile) => (
-                                <option key={profile.id} value={profile.id}>
-                                  {profile.label.toUpperCase()}
-                                </option>
-                              ))}
-                            </select>
-                          ) : null}
-
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-7 text-[9px] uppercase tracking-widest font-bold hud-button--cyan shadow-[0_0_10px_rgba(58,240,224,0.25)]"
-                            onClick={() =>
-                              setIsAgentGuideOpen(!isAgentGuideOpen)
-                            }
-                          >
-                            {isAgentGuideOpen ? 'CLOSE GUIDE' : 'BOOT GUIDE'}
-                          </Button>
-
                           {hasSelectedProjectLiveSession ? (
                             <>
                               <Button
@@ -557,9 +508,9 @@ function WorkspaceShell() {
                             </>
                           ) : (
                             <Button
-                              variant="default"
+                              variant="outline"
                               size="sm"
-                              className="h-7 px-4 text-[9px] font-black uppercase tracking-[0.2em] bg-hud-cyan text-black hover:bg-hud-cyan/90 shadow-[0_0_15px_rgba(58,240,224,0.4)]"
+                              className="h-7 px-4 text-[9px] font-black uppercase tracking-[0.2em] border-hud-cyan text-hud-cyan hover:bg-hud-cyan/10 shadow-[0_0_15px_rgba(58,240,224,0.3)]"
                               disabled={
                                 !selectedLaunchProfile ||
                                 isLaunchingSession ||
@@ -579,70 +530,6 @@ function WorkspaceShell() {
 
                       <ScrollArea className="flex-1 hud-scrollarea bg-black/60">
                         <div className="p-6 h-full">
-                          {isAgentGuideOpen ? (
-                            <article className="guide-panel mb-6">
-                              <div className="flex justify-between items-start mb-4">
-                                <div>
-                                  <p className="text-[9px] uppercase text-hud-green/60 tracking-widest mb-1">Asset Intelligence</p>
-                                  <h4 className="text-sm font-black tracking-widest">{currentTerminalPromptLabel.toUpperCase()}</h4>
-                                </div>
-                                <Badge variant={bridgeReady ? 'running' : 'offline'} className="text-[8px] tracking-[0.2em]">
-                                  {bridgeReady ? 'ATTACHED' : 'DETACHED'}
-                                </Badge>
-                              </div>
-                              
-                              <div className="flex gap-2 mb-4">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-8 text-[9px] flex-1 font-bold tracking-widest hud-button--cyan"
-                                  onClick={() => void copyAgentStartupPrompt()}
-                                >
-                                  COPY PROMPT
-                                </Button>
-                                <Button
-                                  variant="default"
-                                  size="sm"
-                                  className="h-8 text-[9px] flex-1 font-bold tracking-widest bg-hud-green text-black hover:bg-hud-green/90"
-                                  disabled={!bridgeReady}
-                                  onClick={() => void sendAgentStartupPrompt()}
-                                >
-                                  DEPLOY TO CONSOLE
-                                </Button>
-                                {hasFocusedPrompt ? (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-8 text-[9px] font-black uppercase tracking-widest text-hud-magenta hover:bg-hud-magenta/10"
-                                    onClick={() => setTerminalPromptDraft(null)}
-                                  >
-                                    RESET
-                                  </Button>
-                                ) : null}
-                              </div>
-
-                              <textarea
-                                className="w-full bg-black/60 border border-hud-green/40 rounded p-4 font-mono text-[11px] leading-relaxed mb-4 focus:border-hud-green/40 outline-none text-hud-green/80"
-                                readOnly
-                                rows={8}
-                                value={currentTerminalPrompt}
-                              />
-
-                              <div className="flex flex-wrap gap-2 mt-2 opacity-60">
-                                {PROJECT_COMMANDER_TOOLS.map((toolName: string) => (
-                                  <code key={toolName} className="text-[8px] uppercase tracking-widest border border-hud-green/35 px-1.5 py-0.5 rounded">
-                                    {toolName}
-                                  </code>
-                                ))}
-                              </div>
-                              {agentPromptMessage ? (
-                                <p className="mt-4 text-[9px] font-bold uppercase tracking-widest text-hud-green">
-                                  {agentPromptMessage}
-                                </p>
-                              ) : null}
-                            </article>
-                          ) : null}
-
                           {hasSelectedProjectLiveSession && sessionSnapshot ? (
                             <div className="h-full min-h-[500px] border border-hud-green/10 rounded-lg overflow-hidden bg-black shadow-2xl relative">
                               <Suspense
@@ -664,61 +551,55 @@ function WorkspaceShell() {
                           ) : (
                             <div className="flex flex-col items-center justify-center h-full min-h-[400px] text-center max-w-lg mx-auto terminal-launch-card">
                               {selectedTargetHistoryRecord ? (
-                                <article className="w-full mb-8 rounded-lg border border-hud-magenta/50 bg-hud-magenta/8 p-4 text-left">
+                                <article className="w-full mb-8 rounded-lg border border-hud-magenta/50 bg-hud-magenta/5 p-5 text-left">
                                   <div className="flex flex-wrap items-start justify-between gap-3">
                                     <div>
-                                      <p className="text-[9px] uppercase tracking-[0.2em] text-hud-magenta/60 mb-1">
-                                        Recovery path available
-                                      </p>
-                                      <h4 className="text-sm font-black tracking-widest">
+                                      <h4 className="text-sm font-black tracking-widest text-hud-magenta mb-2">
                                         {selectedTargetHistoryRecord.state === 'orphaned'
-                                          ? 'ORPHANED SESSION DETECTED'
-                                          : 'PREVIOUS SESSION INTERRUPTED'}
+                                          ? 'PREVIOUS SESSION STILL RUNNING'
+                                          : 'PREVIOUS SESSION CRASHED'}
                                       </h4>
-                                      <p className="mt-2 text-[10px] uppercase tracking-[0.18em] text-white/60 leading-relaxed">
-                                        Session #{selectedTargetHistoryRecord.id} using{' '}
-                                        {selectedTargetHistoryRecord.profileLabel} last touched this
-                                        target at {formatTimestamp(selectedTargetHistoryRecord.startedAt)}.
+                                      <p className="text-[11px] text-white/70 leading-relaxed">
+                                        {selectedTargetHistoryRecord.state === 'orphaned'
+                                          ? 'A Claude Code session was left running from a previous app launch. You can clean it up and start fresh, or view its history.'
+                                          : 'The last Claude Code session on this target exited unexpectedly. You can relaunch on the same target, or view what happened.'}
+                                      </p>
+                                      <p className="mt-2 text-[9px] uppercase tracking-widest text-white/40">
+                                        Session #{selectedTargetHistoryRecord.id} // {formatTimestamp(selectedTargetHistoryRecord.startedAt)}
                                       </p>
                                     </div>
-                                    <Badge
-                                      variant="destructive"
-                                      className="text-[8px] tracking-[0.2em]"
-                                    >
-                                      {formatSessionState(selectedTargetHistoryRecord.state)}
-                                    </Badge>
                                   </div>
 
                                   <div className="mt-4 flex flex-wrap gap-2">
                                     {selectedTargetHistoryRecord.state === 'orphaned' ? (
                                       <Button
-                                        variant="default"
+                                        variant="outline"
                                         size="sm"
-                                        className="h-8 text-[9px] font-black uppercase tracking-[0.2em] bg-hud-magenta text-black hover:bg-hud-magenta/90"
+                                        className="h-8 text-[9px] font-black uppercase tracking-[0.2em] border-hud-magenta/50 text-hud-magenta hover:bg-hud-magenta/20"
                                         disabled={activeOrphanSessionId === selectedTargetHistoryRecord.id}
                                         onClick={() => void recoverOrphanedSession(selectedTargetHistoryRecord)}
                                       >
                                         {activeOrphanSessionId === selectedTargetHistoryRecord.id
                                           ? 'RECOVERING...'
-                                          : 'RECOVER & RELAUNCH'}
+                                          : 'CLEAN UP & RELAUNCH'}
                                       </Button>
                                     ) : (
                                       <Button
-                                        variant="default"
+                                        variant="outline"
                                         size="sm"
-                                        className="h-8 text-[9px] font-black uppercase tracking-[0.2em] bg-hud-magenta text-black hover:bg-hud-magenta/90"
+                                        className="h-8 text-[9px] font-black uppercase tracking-[0.2em] border-hud-magenta/50 text-hud-magenta hover:bg-hud-magenta/20"
                                         onClick={() => void resumeSessionRecord(selectedTargetHistoryRecord)}
                                       >
-                                        RESUME TARGET
+                                        RELAUNCH
                                       </Button>
                                     )}
                                     <Button
                                       variant="outline"
                                       size="sm"
-                                      className="h-8 text-[9px] font-black uppercase tracking-[0.2em] hud-button--magenta"
+                                      className="h-8 text-[9px] font-black uppercase tracking-[0.2em] border-white/20 text-white/60 hover:text-white hover:border-white/40"
                                       onClick={() => openHistoryForSession(selectedTargetHistoryRecord.id)}
                                     >
-                                      OPEN HISTORY
+                                      VIEW HISTORY
                                     </Button>
                                   </div>
                                 </article>
@@ -751,9 +632,9 @@ function WorkspaceShell() {
                               </div>
 
                               <Button
-                                variant="default"
+                                variant="outline"
                                 size="lg"
-                                className="w-full h-14 text-xs font-black uppercase tracking-[0.4em] bg-hud-cyan text-black hover:bg-hud-cyan/90 shadow-[0_0_35px_rgba(58,240,224,0.5),0_0_60px_rgba(58,240,224,0.2)]"
+                                className="w-full h-14 text-xs font-black uppercase tracking-[0.4em] border-hud-cyan text-hud-cyan hover:bg-hud-cyan/10 shadow-[0_0_35px_rgba(58,240,224,0.3)]"
                                 disabled={!selectedLaunchProfile || isLaunchingSession || launchBlockedByMissingRoot}
                                 onClick={() => void launchWorkspaceGuide()}
                               >
@@ -1435,7 +1316,7 @@ function WorkspaceShell() {
                         worktreeSessions.map(({ worktree, snapshot }) => (
                           <button
                             key={worktree.id}
-                            className={`session-card w-full text-left p-3 border-l-2 ${
+                            className={`session-card w-full text-left p-2.5 border-l-2 overflow-hidden ${
                               selectedTerminalWorktreeId === worktree.id
                                 ? 'session-card--active border-hud-magenta'
                                 : 'border-transparent'
@@ -1443,42 +1324,43 @@ function WorkspaceShell() {
                             type="button"
                             onClick={() => selectWorktreeTerminal(worktree.id)}
                           >
-                            <div className="flex items-center justify-between mb-1">
-                              <span className="text-[11px] font-black tracking-widest truncate flex-1 uppercase text-hud-magenta/90">
-                                {worktree.shortBranchName}
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <span className="text-[10px] font-black tracking-widest truncate uppercase text-hud-magenta/90 min-w-0">
+                                {worktree.shortBranchName.length > 24
+                                  ? `${worktree.shortBranchName.slice(0, 24)}…`
+                                  : worktree.shortBranchName}
                               </span>
                               <Badge
                                 variant={snapshot?.isRunning ? 'running' : 'offline'}
-                                className="h-3.5 text-[7px] tracking-widest px-1 bg-hud-magenta/10 border-hud-magenta/30 text-hud-magenta"
+                                className="h-3.5 text-[7px] tracking-widest px-1 bg-hud-magenta/10 border-hud-magenta/30 text-hud-magenta shrink-0"
                               >
-                                {snapshot?.isRunning ? 'LIVE' : 'OFFLINE'}
+                                {snapshot?.isRunning ? 'LIVE' : 'OFF'}
                               </Badge>
                             </div>
-                            <div className="mb-2 flex flex-wrap gap-1">
-                              <Badge variant="offline" className="h-4 text-[8px] bg-hud-cyan/10 text-hud-cyan border-hud-cyan/30">
-                                {worktree.workItemCallSign}
-                              </Badge>
-                              {worktree.hasUncommittedChanges ? (
-                                <Badge variant="destructive" className="h-4 text-[8px]">
-                                  DIRTY
+                            <div className="mb-1.5 flex flex-col gap-1">
+                              <div className="flex gap-1 flex-wrap">
+                                <Badge variant="offline" className="h-3.5 text-[7px] bg-hud-cyan/10 text-hud-cyan border-hud-cyan/30 px-1">
+                                  {worktree.workItemCallSign}
                                 </Badge>
-                              ) : null}
-                              {worktree.hasUnmergedCommits ? (
-                                <Badge variant="offline" className="h-4 text-[8px] bg-hud-magenta/10 text-hud-magenta border-hud-magenta/30">
-                                  UNMERGED
-                                </Badge>
-                              ) : null}
-                              {!worktree.pathAvailable ? (
-                                <Badge variant="destructive" className="h-4 text-[8px]">
-                                  PATH MISSING
-                                </Badge>
-                              ) : null}
+                                {worktree.hasUncommittedChanges ? (
+                                  <Badge variant="destructive" className="h-3.5 text-[7px] px-1">
+                                    DIRTY
+                                  </Badge>
+                                ) : null}
+                                {worktree.hasUnmergedCommits ? (
+                                  <Badge variant="offline" className="h-3.5 text-[7px] bg-hud-magenta/10 text-hud-magenta border-hud-magenta/30 px-1">
+                                    UNMERGED
+                                  </Badge>
+                                ) : null}
+                                {!worktree.pathAvailable ? (
+                                  <Badge variant="destructive" className="h-3.5 text-[7px] px-1">
+                                    MISSING
+                                  </Badge>
+                                ) : null}
+                              </div>
                             </div>
-                            <p className="text-[9px] uppercase tracking-widest opacity-80 truncate">
+                            <p className="text-[8px] uppercase tracking-widest opacity-70 truncate">
                               {worktree.workItemTitle}
-                            </p>
-                            <p className="mt-1 text-[9px] uppercase tracking-[0.16em] opacity-55 truncate">
-                              {worktree.sessionSummary}
                             </p>
                           </button>
                         ))
