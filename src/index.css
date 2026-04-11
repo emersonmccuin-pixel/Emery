@@ -665,7 +665,13 @@
   min-height: 0;
 }
 
-.terminal-host,
+.terminal-host {
+  min-height: 0;
+  height: 100%;
+  border-radius: var(--panel-radius);
+  overflow: hidden;
+}
+
 .terminal-loading {
   min-height: 520px;
   border-radius: var(--panel-radius);
