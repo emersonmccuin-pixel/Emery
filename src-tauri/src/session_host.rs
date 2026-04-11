@@ -1135,13 +1135,25 @@ pub fn resolve_helper_binary_path(binary_stem: &str) -> Option<PathBuf> {
 
     std::env::current_exe().ok().and_then(|path| {
         let parent = path.parent()?;
-        let candidate = parent.join(binary_name);
 
+        // Check exact name first (dev builds / same-dir layout)
+        let candidate = parent.join(&binary_name);
         if candidate.is_file() {
-            Some(candidate)
-        } else {
-            None
+            return Some(candidate);
         }
+
+        // Check Tauri externalBin sidecar name: <stem>-<target-triple>[.exe]
+        let sidecar_name = if cfg!(windows) {
+            format!("{binary_stem}-{}.exe", env!("TAURI_ENV_TARGET_TRIPLE"))
+        } else {
+            format!("{binary_stem}-{}", env!("TAURI_ENV_TARGET_TRIPLE"))
+        };
+        let sidecar = parent.join(sidecar_name);
+        if sidecar.is_file() {
+            return Some(sidecar);
+        }
+
+        None
     })
 }
 

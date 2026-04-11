@@ -29,6 +29,18 @@ if (-not (Test-Path $tauriCmd)) {
 Push-Location $repoRoot
 
 try {
+  $triple = "x86_64-pc-windows-msvc"
+  $binDir = Join-Path $repoRoot "src-tauri\binaries"
+  if (-not (Test-Path $binDir)) { New-Item -ItemType Directory -Path $binDir | Out-Null }
+
+  # Ensure placeholder files exist so tauri-build validation passes during cargo build
+  foreach ($bin in @("project-commander-supervisor", "project-commander-cli")) {
+    $dest = Join-Path $binDir "$bin-$triple.exe"
+    if (-not (Test-Path $dest)) {
+      [System.IO.File]::Create($dest).Close()
+    }
+  }
+
   $cargoArgs = @(
     "build"
     "--manifest-path"
@@ -50,6 +62,14 @@ try {
 
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
+  }
+
+  # Copy real helper binaries over placeholders for Tauri externalBin bundling
+  $buildProfile = if ($Mode -eq "build") { "release" } else { "debug" }
+  $targetDir = Join-Path $repoRoot "src-tauri\target\$buildProfile"
+
+  foreach ($bin in @("project-commander-supervisor", "project-commander-cli")) {
+    Copy-Item (Join-Path $targetDir "$bin.exe") (Join-Path $binDir "$bin-$triple.exe") -Force
   }
 
   & $tauriCmd $Mode
