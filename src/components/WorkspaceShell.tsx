@@ -1,5 +1,5 @@
-import { Suspense, type FormEvent } from 'react'
-import { Settings, Plus, ChevronLeft, ChevronRight, X } from 'lucide-react'
+import { Suspense, useState, type FormEvent } from 'react'
+import { Settings, Plus, ChevronLeft, ChevronRight, X, Pin, PinOff } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -129,6 +129,8 @@ function WorkspaceShell() {
     repairCleanupCandidates,
     removeWorktree,
     recreateWorktree,
+    cleanupWorktree,
+    pinWorktree,
     copyTerminalOutput,
     handleSessionExit,
     createWorkItem,
@@ -144,6 +146,8 @@ function WorkspaceShell() {
 
   const isAppSettingsOpen = useAppStore((s) => s.isAppSettingsOpen)
   const appSettingsInitialTab = useAppStore((s) => s.appSettingsInitialTab)
+
+  const [cleanupConfirmId, setCleanupConfirmId] = useState<number | null>(null)
 
   // Derive dispatcher status from live sessions
   const isDispatcherRunning = liveSessions.some(
@@ -970,6 +974,10 @@ function WorkspaceShell() {
                                   isBusy && activeWorktreeActionKind === 'remove'
                                 const isRecreating =
                                   isBusy && activeWorktreeActionKind === 'recreate'
+                                const isCleaningUp =
+                                  isBusy && activeWorktreeActionKind === 'cleanup'
+                                const isPinning =
+                                  isBusy && activeWorktreeActionKind === 'pin'
                                 const removeBlocked = Boolean(
                                   liveSnapshot?.isRunning || recoverableSession,
                                 )
@@ -977,6 +985,7 @@ function WorkspaceShell() {
                                   liveSnapshot?.isRunning ||
                                     recoverableSession?.state === 'orphaned',
                                 )
+                                const isConfirmingCleanup = cleanupConfirmId === worktree.id
 
                                 return (
                                   <div
@@ -1021,6 +1030,22 @@ function WorkspaceShell() {
                                           {!worktree.pathAvailable ? (
                                             <Badge variant="destructive" className="text-[8px] h-4">
                                               PATH MISSING
+                                            </Badge>
+                                          ) : null}
+                                          {worktree.pinned ? (
+                                            <Badge
+                                              variant="offline"
+                                              className="text-[8px] h-4 bg-hud-cyan/10 text-hud-cyan border-hud-cyan/30"
+                                            >
+                                              PINNED
+                                            </Badge>
+                                          ) : null}
+                                          {worktree.isCleanupEligible ? (
+                                            <Badge
+                                              variant="offline"
+                                              className="text-[8px] h-4 bg-hud-green/10 text-hud-green border-hud-green/30"
+                                            >
+                                              READY TO CLEAN
                                             </Badge>
                                           ) : null}
                                           {recoverableSession ? (
@@ -1068,6 +1093,27 @@ function WorkspaceShell() {
                                         >
                                           {isRecreating ? 'RECREATING...' : 'RECREATE'}
                                         </Button>
+                                        {worktree.isCleanupEligible && !isConfirmingCleanup ? (
+                                          <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-8 text-[9px] font-black uppercase tracking-widest text-hud-green border-hud-green/40 hover:bg-hud-green/10"
+                                            onClick={() => setCleanupConfirmId(worktree.id)}
+                                            disabled={isBusy || removeBlocked}
+                                          >
+                                            {isCleaningUp ? 'CLEANING...' : 'CLEANUP'}
+                                          </Button>
+                                        ) : null}
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="h-8 px-2 text-white/40 hover:text-white/70 hover:bg-white/5"
+                                          title={worktree.pinned ? 'Unpin worktree' : 'Pin worktree (exclude from auto-cleanup)'}
+                                          onClick={() => void pinWorktree(worktree, !worktree.pinned)}
+                                          disabled={isBusy}
+                                        >
+                                          {isPinning ? '...' : worktree.pinned ? <PinOff size={12} /> : <Pin size={12} />}
+                                        </Button>
                                         <Button
                                           variant="ghost"
                                           size="sm"
@@ -1080,7 +1126,36 @@ function WorkspaceShell() {
                                       </div>
                                     </div>
 
-                                    {liveSnapshot?.isRunning ? (
+                                    {isConfirmingCleanup ? (
+                                      <div className="mt-3 flex flex-wrap items-center gap-2 rounded border border-hud-green/40 bg-hud-green/5 px-3 py-2">
+                                        <p className="flex-1 text-[9px] uppercase tracking-[0.16em] text-hud-green/80">
+                                          Remove worktree, delete branch, and drop DB record. This cannot be undone.
+                                        </p>
+                                        <div className="flex gap-2">
+                                          <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-7 text-[9px] font-black uppercase tracking-widest text-hud-green border-hud-green/40 hover:bg-hud-green/15"
+                                            onClick={() => {
+                                              setCleanupConfirmId(null)
+                                              void cleanupWorktree(worktree)
+                                            }}
+                                            disabled={isBusy}
+                                          >
+                                            CONFIRM
+                                          </Button>
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-7 text-[9px] font-black uppercase tracking-widest text-white/50 hover:text-white/80"
+                                            onClick={() => setCleanupConfirmId(null)}
+                                            disabled={isBusy}
+                                          >
+                                            CANCEL
+                                          </Button>
+                                        </div>
+                                      </div>
+                                    ) : liveSnapshot?.isRunning ? (
                                       <p className="mt-3 text-[9px] uppercase tracking-[0.16em] text-white/45">
                                         Stop the live worktree terminal before changing lifecycle state.
                                       </p>

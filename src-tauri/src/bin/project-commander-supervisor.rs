@@ -21,7 +21,7 @@ use project_commander_lib::supervisor_api::{
     ListProjectDocumentsInput, ListProjectSessionEventsInput, ListProjectSessionsInput,
     ListProjectWorkItemsInput, ListProjectWorktreesInput, ProjectDocumentTarget,
     ProjectSessionRecordTarget, ProjectWorkItemTarget, ProjectWorktreeTarget,
-    RepairCleanupInput, SessionBriefOutput, UpdateProjectDocumentInput,
+    PinWorktreeInput, RepairCleanupInput, SessionBriefOutput, UpdateProjectDocumentInput,
     UpdateProjectWorkItemInput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
 use project_commander_lib::supervisor_mcp::run_supervisor_mcp_stdio_with_session;
@@ -922,6 +922,44 @@ fn route_request(
             );
             Ok(json!({ "ok": true, "data": { "count": cleared } }))
         }
+        (&Method::Post, "/worktree/cleanup") => {
+            let input = read_json::<ProjectWorktreeTarget>(request)?;
+            let removed = cleanup_project_worktree(state, sessions, input.project_id, input.worktree_id)?;
+            append_project_event(
+                state,
+                context,
+                input.project_id,
+                "worktree.removed",
+                "worktree",
+                removed.id,
+                &removed,
+            );
+
+            serde_json::to_value(removed)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode cleaned-up worktree: {error}"))
+                })
+        }
+        (&Method::Post, "/worktree/pin") => {
+            let input = read_json::<PinWorktreeInput>(request)?;
+            let worktree = pin_project_worktree(state, input.project_id, input.worktree_id, input.pinned)?;
+            append_project_event(
+                state,
+                context,
+                input.project_id,
+                "worktree.updated",
+                "worktree",
+                worktree.id,
+                &worktree,
+            );
+
+            serde_json::to_value(worktree)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode pinned worktree: {error}"))
+                })
+        }
         _ => Err(RouteError::not_found("route not found")),
     }
 }
@@ -1318,11 +1356,44 @@ fn remove_project_worktree(
         Path::new(&worktree.worktree_path),
     )?;
 
+    // Best-effort branch deletion: use -d (not -D) so unmerged branches are refused, not force-deleted.
+    let _ = run_git_command(&project_git_root, &["branch", "-d", &worktree.branch_name]);
+
     state
         .delete_worktree(worktree.id)
         .map_err(RouteError::from)?;
 
     Ok(worktree)
+}
+
+fn cleanup_project_worktree(
+    state: &AppState,
+    sessions: &SessionRegistry,
+    project_id: i64,
+    worktree_id: i64,
+) -> Result<WorktreeRecord, RouteError> {
+    let worktree = require_worktree_for_project(state, project_id, worktree_id)?;
+
+    if !worktree.is_cleanup_eligible {
+        return Err(RouteError::bad_request(format!(
+            "worktree #{worktree_id} is not eligible for cleanup: \
+             work item must be done, branch must be fully merged, and worktree must not be pinned"
+        )));
+    }
+
+    remove_project_worktree(state, sessions, project_id, worktree_id)
+}
+
+fn pin_project_worktree(
+    state: &AppState,
+    project_id: i64,
+    worktree_id: i64,
+    pinned: bool,
+) -> Result<WorktreeRecord, RouteError> {
+    require_worktree_for_project(state, project_id, worktree_id)?;
+    state
+        .set_worktree_pinned(worktree_id, pinned)
+        .map_err(RouteError::from)
 }
 
 fn recreate_project_worktree(

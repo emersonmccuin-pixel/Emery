@@ -141,6 +141,75 @@ export const createWorktreeSlice: StateCreator<AppStore, [], [], WorktreeSlice> 
     }
   },
 
+  cleanupWorktree: async (worktree) => {
+    const state = get()
+    const selectedProject = state.projects.find((p) => p.id === state.selectedProjectId) ?? null
+
+    if (!selectedProject || worktree.projectId !== selectedProject.id) {
+      return
+    }
+
+    set({
+      worktreeError: null,
+      worktreeMessage: null,
+      activeWorktreeActionId: worktree.id,
+      activeWorktreeActionKind: 'cleanup',
+    })
+
+    try {
+      const removed = await invoke<WorktreeRecord>('cleanup_worktree', {
+        input: { projectId: selectedProject.id, worktreeId: worktree.id },
+      })
+
+      set((s) => ({
+        selectedTerminalWorktreeId:
+          s.selectedTerminalWorktreeId === worktree.id ? null : s.selectedTerminalWorktreeId,
+        sessionSnapshot:
+          s.sessionSnapshot &&
+          s.sessionSnapshot.projectId === selectedProject.id &&
+          (s.sessionSnapshot.worktreeId ?? null) === worktree.id
+            ? null
+            : s.sessionSnapshot,
+      }))
+      get().dropTrackedWorktree(worktree.id)
+      await get().syncWorktreeLifecycleState(selectedProject.id)
+      set({ worktreeMessage: `Cleaned up worktree ${removed.branchName}.` })
+    } catch (error) {
+      set({ worktreeError: getErrorMessage(error, 'Failed to clean up the worktree.') })
+    } finally {
+      set({ activeWorktreeActionId: null, activeWorktreeActionKind: null })
+    }
+  },
+
+  pinWorktree: async (worktree, pinned) => {
+    const state = get()
+    const selectedProject = state.projects.find((p) => p.id === state.selectedProjectId) ?? null
+
+    if (!selectedProject || worktree.projectId !== selectedProject.id) {
+      return
+    }
+
+    set({
+      worktreeError: null,
+      worktreeMessage: null,
+      activeWorktreeActionId: worktree.id,
+      activeWorktreeActionKind: 'pin',
+    })
+
+    try {
+      const updated = await invoke<WorktreeRecord>('pin_worktree', {
+        input: { projectId: selectedProject.id, worktreeId: worktree.id, pinned },
+      })
+
+      get().upsertTrackedWorktree(updated)
+      set({ worktreeMessage: pinned ? `Worktree pinned.` : `Worktree unpinned.` })
+    } catch (error) {
+      set({ worktreeError: getErrorMessage(error, 'Failed to update worktree pin.') })
+    } finally {
+      set({ activeWorktreeActionId: null, activeWorktreeActionKind: null })
+    }
+  },
+
   syncWorktreeLifecycleState: async (projectId) => {
     await Promise.all([
       get().refreshWorktrees(projectId),
