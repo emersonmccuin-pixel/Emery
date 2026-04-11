@@ -1,9 +1,19 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+use crate::error::{AppError, AppResult};
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,6 +62,10 @@ pub struct LaunchProfileRecord {
 pub struct WorkItemRecord {
     pub id: i64,
     pub project_id: i64,
+    pub parent_work_item_id: Option<i64>,
+    pub call_sign: String,
+    pub sequence_number: i64,
+    pub child_number: Option<i64>,
     pub title: String,
     pub body: String,
     pub item_type: String,
@@ -78,10 +92,15 @@ pub struct WorktreeRecord {
     pub id: i64,
     pub project_id: i64,
     pub work_item_id: i64,
+    pub work_item_call_sign: String,
     pub work_item_title: String,
     pub branch_name: String,
+    pub short_branch_name: String,
     pub worktree_path: String,
     pub path_available: bool,
+    pub has_uncommitted_changes: bool,
+    pub has_unmerged_commits: bool,
+    pub session_summary: String,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -176,6 +195,7 @@ pub struct UpdateAppSettingsInput {
 #[serde(rename_all = "camelCase")]
 pub struct CreateWorkItemInput {
     pub project_id: i64,
+    pub parent_work_item_id: Option<i64>,
     pub title: String,
     pub body: String,
     pub item_type: String,
@@ -260,6 +280,17 @@ pub struct AppendSessionEventInput {
     pub payload_json: String,
 }
 
+struct ProjectRegistrationResult {
+    project: ProjectRecord,
+}
+
+struct AssignedWorkItemIdentifier {
+    parent_work_item_id: Option<i64>,
+    sequence_number: i64,
+    child_number: Option<i64>,
+    call_sign: String,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     storage: StorageInfo,
@@ -267,7 +298,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(storage: StorageInfo) -> Result<Self, String> {
+    pub fn new(storage: StorageInfo) -> AppResult<Self> {
         let database_path = PathBuf::from(&storage.db_path);
 
         if let Some(parent) = database_path.parent() {
@@ -285,10 +316,10 @@ impl AppState {
         })
     }
 
-    pub fn from_database_path(database_path: PathBuf) -> Result<Self, String> {
+    pub fn from_database_path(database_path: PathBuf) -> AppResult<Self> {
         let db_dir = database_path
             .parent()
-            .ok_or_else(|| "database path must include a parent directory".to_string())?;
+            .ok_or_else(|| AppError::invalid_input("database path must include a parent directory"))?;
         let app_data_dir = db_dir.parent().unwrap_or(db_dir);
 
         Self::new(StorageInfo {
@@ -302,7 +333,7 @@ impl AppState {
         self.storage.clone()
     }
 
-    pub fn bootstrap(&self) -> Result<BootstrapData, String> {
+    pub fn bootstrap(&self) -> AppResult<BootstrapData> {
         let connection = self.connect()?;
 
         Ok(BootstrapData {
@@ -313,12 +344,12 @@ impl AppState {
         })
     }
 
-    pub fn get_app_settings(&self) -> Result<AppSettings, String> {
+    pub fn get_app_settings(&self) -> AppResult<AppSettings> {
         let connection = self.connect()?;
-        load_app_settings(&connection)
+        Ok(load_app_settings(&connection)?)
     }
 
-    pub fn update_app_settings(&self, input: UpdateAppSettingsInput) -> Result<AppSettings, String> {
+    pub fn update_app_settings(&self, input: UpdateAppSettingsInput) -> AppResult<AppSettings> {
         let connection = self.connect()?;
 
         if let Some(default_launch_profile_id) = input.default_launch_profile_id {
@@ -345,84 +376,45 @@ impl AppState {
             )?;
         }
 
-        load_app_settings(&connection)
+        Ok(load_app_settings(&connection)?)
     }
 
-    pub fn list_projects(&self) -> Result<Vec<ProjectRecord>, String> {
+    pub fn list_projects(&self) -> AppResult<Vec<ProjectRecord>> {
         let connection = self.connect()?;
-        load_projects(&connection)
+        Ok(load_projects(&connection)?)
     }
 
-    pub fn create_project(&self, input: CreateProjectInput) -> Result<ProjectRecord, String> {
+    pub fn create_project(&self, input: CreateProjectInput) -> AppResult<ProjectRecord> {
+        let connection = self.connect()?;
+        let result = ensure_project_registration(&connection, &input.name, &input.root_path)?;
+
+        Ok(result.project)
+    }
+
+    pub fn update_project(&self, input: UpdateProjectInput) -> AppResult<ProjectRecord> {
         let name = input.name.trim();
-        let root_path = input.root_path.trim();
 
         if name.is_empty() {
-            return Err("project name is required".to_string());
-        }
-
-        if root_path.is_empty() {
-            return Err("project root folder is required".to_string());
-        }
-
-        if !Path::new(root_path).is_dir() {
-            return Err("project root folder must exist".to_string());
+            return Err(AppError::invalid_input("project name is required"));
         }
 
         let connection = self.connect()?;
-        let existing = connection
-            .query_row(
-                "SELECT id FROM projects WHERE root_path = ?1",
-                [root_path],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()
-            .map_err(|error| format!("failed to check existing project: {error}"))?;
+        let existing_project = load_project_by_id(&connection, input.id)?;
+        let (resolved_root_path, _) = resolve_project_registration_root(&input.root_path)?;
+        let duplicate = load_projects(&connection)?
+            .into_iter()
+            .find(|project| {
+                project.id != input.id
+                    && project_paths_match(
+                        Path::new(&project.root_path),
+                        Path::new(&resolved_root_path),
+                    )
+            });
 
-        if existing.is_some() {
-            return Err("a project with that root folder already exists".to_string());
-        }
-
-        connection
-            .execute(
-                "INSERT INTO projects (name, root_path) VALUES (?1, ?2)",
-                params![name, root_path],
-            )
-            .map_err(|error| format!("failed to create project: {error}"))?;
-
-        load_project_by_id(&connection, connection.last_insert_rowid())
-    }
-
-    pub fn update_project(&self, input: UpdateProjectInput) -> Result<ProjectRecord, String> {
-        let name = input.name.trim();
-        let root_path = input.root_path.trim();
-
-        if name.is_empty() {
-            return Err("project name is required".to_string());
-        }
-
-        if root_path.is_empty() {
-            return Err("project root folder is required".to_string());
-        }
-
-        if !Path::new(root_path).is_dir() {
-            return Err("project root folder must exist".to_string());
-        }
-
-        let connection = self.connect()?;
-        load_project_by_id(&connection, input.id)?;
-
-        let existing = connection
-            .query_row(
-                "SELECT id FROM projects WHERE root_path = ?1 AND id <> ?2",
-                params![root_path, input.id],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()
-            .map_err(|error| format!("failed to check existing project: {error}"))?;
-
-        if existing.is_some() {
-            return Err("a project with that root folder already exists".to_string());
+        if duplicate.is_some() {
+            return Err(AppError::conflict(
+                "a project with that root folder already exists",
+            ));
         }
 
         connection
@@ -432,28 +424,33 @@ impl AppState {
                      root_path = ?2,
                      updated_at = CURRENT_TIMESTAMP
                  WHERE id = ?3",
-                params![name, root_path, input.id],
+                params![name, resolved_root_path, input.id],
             )
             .map_err(|error| format!("failed to update project: {error}"))?;
 
-        load_project_by_id(&connection, input.id)
+        ensure_project_work_item_prefix(&connection, existing_project.id, name)?;
+        Ok(load_project_by_id(&connection, input.id)?)
     }
 
     pub fn create_launch_profile(
         &self,
         input: CreateLaunchProfileInput,
-    ) -> Result<LaunchProfileRecord, String> {
+    ) -> AppResult<LaunchProfileRecord> {
         let label = input.label.trim();
         let executable = input.executable.trim();
         let args = input.args.trim();
         let env_json = normalize_env_json(&input.env_json)?;
 
         if label.is_empty() {
-            return Err("launch profile label is required".to_string());
+            return Err(AppError::invalid_input(
+                "launch profile label is required",
+            ));
         }
 
         if executable.is_empty() {
-            return Err("launch profile executable is required".to_string());
+            return Err(AppError::invalid_input(
+                "launch profile executable is required",
+            ));
         }
 
         let connection = self.connect()?;
@@ -467,7 +464,9 @@ impl AppState {
             .map_err(|error| format!("failed to check existing launch profile: {error}"))?;
 
         if existing.is_some() {
-            return Err("a launch profile with that label already exists".to_string());
+            return Err(AppError::conflict(
+                "a launch profile with that label already exists",
+            ));
         }
 
         connection
@@ -477,24 +476,31 @@ impl AppState {
             )
             .map_err(|error| format!("failed to create launch profile: {error}"))?;
 
-        load_launch_profile_by_id(&connection, connection.last_insert_rowid())
+        Ok(load_launch_profile_by_id(
+            &connection,
+            connection.last_insert_rowid(),
+        )?)
     }
 
     pub fn update_launch_profile(
         &self,
         input: UpdateLaunchProfileInput,
-    ) -> Result<LaunchProfileRecord, String> {
+    ) -> AppResult<LaunchProfileRecord> {
         let label = input.label.trim();
         let executable = input.executable.trim();
         let args = input.args.trim();
         let env_json = normalize_env_json(&input.env_json)?;
 
         if label.is_empty() {
-            return Err("launch profile label is required".to_string());
+            return Err(AppError::invalid_input(
+                "launch profile label is required",
+            ));
         }
 
         if executable.is_empty() {
-            return Err("launch profile executable is required".to_string());
+            return Err(AppError::invalid_input(
+                "launch profile executable is required",
+            ));
         }
 
         let connection = self.connect()?;
@@ -510,7 +516,9 @@ impl AppState {
             .map_err(|error| format!("failed to check existing launch profile: {error}"))?;
 
         if existing.is_some() {
-            return Err("a launch profile with that label already exists".to_string());
+            return Err(AppError::conflict(
+                "a launch profile with that label already exists",
+            ));
         }
 
         connection
@@ -526,10 +534,10 @@ impl AppState {
             )
             .map_err(|error| format!("failed to update launch profile: {error}"))?;
 
-        load_launch_profile_by_id(&connection, input.id)
+        Ok(load_launch_profile_by_id(&connection, input.id)?)
     }
 
-    pub fn delete_launch_profile(&self, id: i64) -> Result<(), String> {
+    pub fn delete_launch_profile(&self, id: i64) -> AppResult<()> {
         let connection = self.connect()?;
         load_launch_profile_by_id(&connection, id)?;
 
@@ -544,63 +552,93 @@ impl AppState {
         Ok(())
     }
 
-    pub fn get_project(&self, id: i64) -> Result<ProjectRecord, String> {
+    pub fn get_project(&self, id: i64) -> AppResult<ProjectRecord> {
         let connection = self.connect()?;
-        load_project_by_id(&connection, id)
+        Ok(load_project_by_id(&connection, id)?)
     }
 
-    pub fn get_launch_profile(&self, id: i64) -> Result<LaunchProfileRecord, String> {
+    pub fn get_launch_profile(&self, id: i64) -> AppResult<LaunchProfileRecord> {
         let connection = self.connect()?;
-        load_launch_profile_by_id(&connection, id)
+        Ok(load_launch_profile_by_id(&connection, id)?)
     }
 
-    pub fn find_project_by_path(&self, path: &Path) -> Result<Option<ProjectRecord>, String> {
+    pub fn find_project_by_path(&self, path: &Path) -> AppResult<Option<ProjectRecord>> {
         let connection = self.connect()?;
-        find_project_by_path(&connection, path)
+        Ok(find_project_by_path(&connection, path)?)
     }
 
-    pub fn list_work_items(&self, project_id: i64) -> Result<Vec<WorkItemRecord>, String> {
+    pub fn list_work_items(&self, project_id: i64) -> AppResult<Vec<WorkItemRecord>> {
         let connection = self.connect()?;
-        load_work_items_by_project_id(&connection, project_id)
+        Ok(load_work_items_by_project_id(&connection, project_id)?)
     }
 
-    pub fn get_work_item(&self, id: i64) -> Result<WorkItemRecord, String> {
+    pub fn get_work_item(&self, id: i64) -> AppResult<WorkItemRecord> {
         let connection = self.connect()?;
-        load_work_item_by_id(&connection, id)
+        Ok(load_work_item_by_id(&connection, id)?)
     }
 
-    pub fn create_work_item(&self, input: CreateWorkItemInput) -> Result<WorkItemRecord, String> {
+    pub fn create_work_item(&self, input: CreateWorkItemInput) -> AppResult<WorkItemRecord> {
         let title = input.title.trim();
         let body = input.body.trim();
         let item_type = normalize_work_item_type(&input.item_type)?;
         let status = normalize_work_item_status(&input.status)?;
 
         if title.is_empty() {
-            return Err("work item title is required".to_string());
+            return Err(AppError::invalid_input("work item title is required"));
         }
 
         let connection = self.connect()?;
-        self.get_project(input.project_id)?;
+        let project = self.get_project(input.project_id)?;
+        let project_prefix = ensure_project_work_item_prefix(&connection, project.id, &project.name)?;
+        let identifier = assign_next_work_item_identifier(
+            &connection,
+            input.project_id,
+            &project_prefix,
+            input.parent_work_item_id,
+        )?;
 
         connection
             .execute(
-                "INSERT INTO work_items (project_id, title, body, item_type, status) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![input.project_id, title, body, item_type, status],
+                "INSERT INTO work_items (
+                    project_id,
+                    parent_work_item_id,
+                    sequence_number,
+                    child_number,
+                    call_sign,
+                    title,
+                    body,
+                    item_type,
+                    status
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    input.project_id,
+                    identifier.parent_work_item_id,
+                    identifier.sequence_number,
+                    identifier.child_number,
+                    identifier.call_sign,
+                    title,
+                    body,
+                    item_type,
+                    status
+                ],
             )
             .map_err(|error| format!("failed to create work item: {error}"))?;
 
         touch_project(&connection, input.project_id)?;
-        load_work_item_by_id(&connection, connection.last_insert_rowid())
+        Ok(load_work_item_by_id(
+            &connection,
+            connection.last_insert_rowid(),
+        )?)
     }
 
-    pub fn update_work_item(&self, input: UpdateWorkItemInput) -> Result<WorkItemRecord, String> {
+    pub fn update_work_item(&self, input: UpdateWorkItemInput) -> AppResult<WorkItemRecord> {
         let title = input.title.trim();
         let body = input.body.trim();
         let item_type = normalize_work_item_type(&input.item_type)?;
         let status = normalize_work_item_status(&input.status)?;
 
         if title.is_empty() {
-            return Err("work item title is required".to_string());
+            return Err(AppError::invalid_input("work item title is required"));
         }
 
         let connection = self.connect()?;
@@ -620,31 +658,45 @@ impl AppState {
             .map_err(|error| format!("failed to update work item: {error}"))?;
 
         touch_project(&connection, existing.project_id)?;
-        load_work_item_by_id(&connection, input.id)
+        Ok(load_work_item_by_id(&connection, input.id)?)
     }
 
-    pub fn delete_work_item(&self, id: i64) -> Result<(), String> {
+    pub fn delete_work_item(&self, id: i64) -> AppResult<()> {
         let connection = self.connect()?;
         let existing = load_work_item_by_id(&connection, id)?;
+        let child_count = connection
+            .query_row(
+                "SELECT COUNT(*) FROM work_items WHERE parent_work_item_id = ?1",
+                [id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|error| format!("failed to inspect child work items: {error}"))?;
+
+        if child_count > 0 {
+            return Err(AppError::invalid_input(
+                "cannot delete a parent work item while child work items still exist",
+            ));
+        }
 
         connection
             .execute("DELETE FROM work_items WHERE id = ?1", [id])
             .map_err(|error| format!("failed to delete work item: {error}"))?;
 
-        touch_project(&connection, existing.project_id)
+        touch_project(&connection, existing.project_id)?;
+        Ok(())
     }
 
-    pub fn list_documents(&self, project_id: i64) -> Result<Vec<DocumentRecord>, String> {
+    pub fn list_documents(&self, project_id: i64) -> AppResult<Vec<DocumentRecord>> {
         let connection = self.connect()?;
-        load_documents_by_project_id(&connection, project_id)
+        Ok(load_documents_by_project_id(&connection, project_id)?)
     }
 
-    pub fn create_document(&self, input: CreateDocumentInput) -> Result<DocumentRecord, String> {
+    pub fn create_document(&self, input: CreateDocumentInput) -> AppResult<DocumentRecord> {
         let title = input.title.trim();
         let body = input.body.trim();
 
         if title.is_empty() {
-            return Err("document title is required".to_string());
+            return Err(AppError::invalid_input("document title is required"));
         }
 
         let connection = self.connect()?;
@@ -660,15 +712,18 @@ impl AppState {
             .map_err(|error| format!("failed to create document: {error}"))?;
 
         touch_project(&connection, input.project_id)?;
-        load_document_by_id(&connection, connection.last_insert_rowid())
+        Ok(load_document_by_id(
+            &connection,
+            connection.last_insert_rowid(),
+        )?)
     }
 
-    pub fn update_document(&self, input: UpdateDocumentInput) -> Result<DocumentRecord, String> {
+    pub fn update_document(&self, input: UpdateDocumentInput) -> AppResult<DocumentRecord> {
         let title = input.title.trim();
         let body = input.body.trim();
 
         if title.is_empty() {
-            return Err("document title is required".to_string());
+            return Err(AppError::invalid_input("document title is required"));
         }
 
         let connection = self.connect()?;
@@ -689,10 +744,10 @@ impl AppState {
             .map_err(|error| format!("failed to update document: {error}"))?;
 
         touch_project(&connection, existing.project_id)?;
-        load_document_by_id(&connection, input.id)
+        Ok(load_document_by_id(&connection, input.id)?)
     }
 
-    pub fn delete_document(&self, id: i64) -> Result<(), String> {
+    pub fn delete_document(&self, id: i64) -> AppResult<()> {
         let connection = self.connect()?;
         let existing = load_document_by_id(&connection, id)?;
 
@@ -700,30 +755,33 @@ impl AppState {
             .execute("DELETE FROM documents WHERE id = ?1", [id])
             .map_err(|error| format!("failed to delete document: {error}"))?;
 
-        touch_project(&connection, existing.project_id)
+        touch_project(&connection, existing.project_id)?;
+        Ok(())
     }
 
     pub fn upsert_worktree_record(
         &self,
         input: UpsertWorktreeRecordInput,
-    ) -> Result<WorktreeRecord, String> {
+    ) -> AppResult<WorktreeRecord> {
         let connection = self.connect()?;
         self.get_project(input.project_id)?;
         let work_item = load_work_item_by_id(&connection, input.work_item_id)?;
 
         if work_item.project_id != input.project_id {
-            return Err("worktree work item must belong to the selected project".to_string());
+            return Err(AppError::invalid_input(
+                "worktree work item must belong to the selected project",
+            ));
         }
 
         let branch_name = input.branch_name.trim();
         let worktree_path = input.worktree_path.trim();
 
         if branch_name.is_empty() {
-            return Err("worktree branch name is required".to_string());
+            return Err(AppError::invalid_input("worktree branch name is required"));
         }
 
         if worktree_path.is_empty() {
-            return Err("worktree path is required".to_string());
+            return Err(AppError::invalid_input("worktree path is required"));
         }
 
         let existing = connection
@@ -748,7 +806,7 @@ impl AppState {
                 .map_err(|error| format!("failed to update worktree record: {error}"))?;
 
             touch_project(&connection, input.project_id)?;
-            return load_worktree_by_id(&connection, id);
+            return Ok(load_worktree_by_id(&connection, id)?);
         }
 
         connection
@@ -769,31 +827,38 @@ impl AppState {
             .map_err(|error| format!("failed to create worktree record: {error}"))?;
 
         touch_project(&connection, input.project_id)?;
-        load_worktree_by_id(&connection, connection.last_insert_rowid())
+        Ok(load_worktree_by_id(
+            &connection,
+            connection.last_insert_rowid(),
+        )?)
     }
 
-    pub fn list_worktrees(&self, project_id: i64) -> Result<Vec<WorktreeRecord>, String> {
+    pub fn list_worktrees(&self, project_id: i64) -> AppResult<Vec<WorktreeRecord>> {
         let connection = self.connect()?;
         self.get_project(project_id)?;
-        load_worktrees_by_project_id(&connection, project_id)
+        Ok(load_worktrees_by_project_id(&connection, project_id)?)
     }
 
-    pub fn get_worktree(&self, id: i64) -> Result<WorktreeRecord, String> {
+    pub fn get_worktree(&self, id: i64) -> AppResult<WorktreeRecord> {
         let connection = self.connect()?;
-        load_worktree_by_id(&connection, id)
+        Ok(load_worktree_by_id(&connection, id)?)
     }
 
     pub fn get_worktree_for_project_and_work_item(
         &self,
         project_id: i64,
         work_item_id: i64,
-    ) -> Result<Option<WorktreeRecord>, String> {
+    ) -> AppResult<Option<WorktreeRecord>> {
         let connection = self.connect()?;
         self.get_project(project_id)?;
-        load_worktree_by_project_and_work_item(&connection, project_id, work_item_id)
+        Ok(load_worktree_by_project_and_work_item(
+            &connection,
+            project_id,
+            work_item_id,
+        )?)
     }
 
-    pub fn delete_worktree(&self, id: i64) -> Result<(), String> {
+    pub fn delete_worktree(&self, id: i64) -> AppResult<()> {
         let connection = self.connect()?;
         let existing = load_worktree_by_id(&connection, id)?;
 
@@ -801,10 +866,11 @@ impl AppState {
             .execute("DELETE FROM worktrees WHERE id = ?1", [id])
             .map_err(|error| format!("failed to delete worktree record: {error}"))?;
 
-        touch_project(&connection, existing.project_id)
+        touch_project(&connection, existing.project_id)?;
+        Ok(())
     }
 
-    pub fn clear_worktrees(&self, project_id: i64) -> Result<(), String> {
+    pub fn clear_worktrees(&self, project_id: i64) -> AppResult<()> {
         let connection = self.connect()?;
         self.get_project(project_id)?;
 
@@ -812,13 +878,14 @@ impl AppState {
             .execute("DELETE FROM worktrees WHERE project_id = ?1", [project_id])
             .map_err(|error| format!("failed to clear worktree records: {error}"))?;
 
-        touch_project(&connection, project_id)
+        touch_project(&connection, project_id)?;
+        Ok(())
     }
 
     pub fn create_session_record(
         &self,
         input: CreateSessionRecordInput,
-    ) -> Result<SessionRecord, String> {
+    ) -> AppResult<SessionRecord> {
         let connection = self.connect()?;
         self.get_project(input.project_id)?;
 
@@ -826,10 +893,10 @@ impl AppState {
             let worktree = load_worktree_by_id(&connection, worktree_id)?;
 
             if worktree.project_id != input.project_id {
-                return Err(format!(
+                return Err(AppError::invalid_input(format!(
                     "worktree #{worktree_id} does not belong to project #{}",
                     input.project_id
-                ));
+                )));
             }
         }
 
@@ -865,13 +932,16 @@ impl AppState {
             .map_err(|error| format!("failed to create session record: {error}"))?;
 
         touch_project(&connection, input.project_id)?;
-        load_session_record_by_id(&connection, connection.last_insert_rowid())
+        Ok(load_session_record_by_id(
+            &connection,
+            connection.last_insert_rowid(),
+        )?)
     }
 
     pub fn update_session_runtime_metadata(
         &self,
         input: UpdateSessionRuntimeMetadataInput,
-    ) -> Result<SessionRecord, String> {
+    ) -> AppResult<SessionRecord> {
         let connection = self.connect()?;
         let existing = load_session_record_by_id(&connection, input.id)?;
 
@@ -887,13 +957,13 @@ impl AppState {
             .map_err(|error| format!("failed to update session runtime metadata: {error}"))?;
 
         touch_project(&connection, existing.project_id)?;
-        load_session_record_by_id(&connection, input.id)
+        Ok(load_session_record_by_id(&connection, input.id)?)
     }
 
     pub fn finish_session_record(
         &self,
         input: FinishSessionRecordInput,
-    ) -> Result<SessionRecord, String> {
+    ) -> AppResult<SessionRecord> {
         let connection = self.connect()?;
         let existing = load_session_record_by_id(&connection, input.id)?;
 
@@ -917,13 +987,13 @@ impl AppState {
             .map_err(|error| format!("failed to finish session record: {error}"))?;
 
         touch_project(&connection, existing.project_id)?;
-        load_session_record_by_id(&connection, input.id)
+        Ok(load_session_record_by_id(&connection, input.id)?)
     }
 
     pub fn append_session_event(
         &self,
         input: AppendSessionEventInput,
-    ) -> Result<SessionEventRecord, String> {
+    ) -> AppResult<SessionEventRecord> {
         let connection = self.connect()?;
         self.get_project(input.project_id)?;
         let event_type = input.event_type.trim();
@@ -931,21 +1001,21 @@ impl AppState {
         let payload_json = normalize_json_payload(&input.payload_json)?;
 
         if event_type.is_empty() {
-            return Err("session event type is required".to_string());
+            return Err(AppError::invalid_input("session event type is required"));
         }
 
         if source.is_empty() {
-            return Err("session event source is required".to_string());
+            return Err(AppError::invalid_input("session event source is required"));
         }
 
         if let Some(session_id) = input.session_id {
             let session = load_session_record_by_id(&connection, session_id)?;
 
             if session.project_id != input.project_id {
-                return Err(format!(
+                return Err(AppError::invalid_input(format!(
                     "session #{session_id} does not belong to project #{}",
                     input.project_id
-                ));
+                )));
             }
         }
 
@@ -972,40 +1042,46 @@ impl AppState {
             )
             .map_err(|error| format!("failed to append session event: {error}"))?;
 
-        load_session_event_by_id(&connection, connection.last_insert_rowid())
+        Ok(load_session_event_by_id(
+            &connection,
+            connection.last_insert_rowid(),
+        )?)
     }
 
-    pub fn list_session_records(&self, project_id: i64) -> Result<Vec<SessionRecord>, String> {
+    pub fn list_session_records(&self, project_id: i64) -> AppResult<Vec<SessionRecord>> {
         let connection = self.connect()?;
         self.get_project(project_id)?;
-        load_session_records_by_project_id(&connection, project_id)
+        Ok(load_session_records_by_project_id(&connection, project_id)?)
     }
 
     pub fn list_orphaned_session_records(
         &self,
         project_id: i64,
-    ) -> Result<Vec<SessionRecord>, String> {
+    ) -> AppResult<Vec<SessionRecord>> {
         let connection = self.connect()?;
         self.get_project(project_id)?;
-        load_orphaned_session_records_by_project_id(&connection, project_id)
+        Ok(load_orphaned_session_records_by_project_id(
+            &connection,
+            project_id,
+        )?)
     }
 
-    pub fn get_session_record(&self, id: i64) -> Result<SessionRecord, String> {
+    pub fn get_session_record(&self, id: i64) -> AppResult<SessionRecord> {
         let connection = self.connect()?;
-        load_session_record_by_id(&connection, id)
+        Ok(load_session_record_by_id(&connection, id)?)
     }
 
     pub fn list_session_events(
         &self,
         project_id: i64,
         limit: usize,
-    ) -> Result<Vec<SessionEventRecord>, String> {
+    ) -> AppResult<Vec<SessionEventRecord>> {
         let connection = self.connect()?;
         self.get_project(project_id)?;
-        load_session_events_by_project_id(&connection, project_id, limit)
+        Ok(load_session_events_by_project_id(&connection, project_id, limit)?)
     }
 
-    pub fn reconcile_orphaned_running_sessions(&self) -> Result<Vec<SessionRecord>, String> {
+    pub fn reconcile_orphaned_running_sessions(&self) -> AppResult<Vec<SessionRecord>> {
         let connection = self.connect()?;
         let running_sessions = load_running_session_records(&connection)?;
         drop(connection);
@@ -1108,6 +1184,7 @@ fn migrate(connection: &Connection) -> Result<(), String> {
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               name TEXT NOT NULL,
               root_path TEXT NOT NULL UNIQUE,
+              work_item_prefix TEXT,
               created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -1126,6 +1203,10 @@ fn migrate(connection: &Connection) -> Result<(), String> {
             CREATE TABLE IF NOT EXISTS work_items (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              parent_work_item_id INTEGER REFERENCES work_items(id) ON DELETE RESTRICT,
+              sequence_number INTEGER,
+              child_number INTEGER,
+              call_sign TEXT,
               title TEXT NOT NULL,
               body TEXT NOT NULL DEFAULT '',
               item_type TEXT NOT NULL,
@@ -1227,8 +1308,31 @@ fn migrate(connection: &Connection) -> Result<(), String> {
         "worktree_id",
         "INTEGER REFERENCES worktrees(id) ON DELETE SET NULL",
     )?;
+    ensure_column_exists(connection, "projects", "work_item_prefix", "TEXT")?;
+    ensure_column_exists(
+        connection,
+        "work_items",
+        "parent_work_item_id",
+        "INTEGER REFERENCES work_items(id) ON DELETE RESTRICT",
+    )?;
+    ensure_column_exists(connection, "work_items", "sequence_number", "INTEGER")?;
+    ensure_column_exists(connection, "work_items", "child_number", "INTEGER")?;
+    ensure_column_exists(connection, "work_items", "call_sign", "TEXT")?;
     ensure_column_exists(connection, "sessions", "process_id", "INTEGER")?;
     ensure_column_exists(connection, "sessions", "supervisor_pid", "INTEGER")?;
+    connection
+        .execute_batch(
+            "
+            CREATE INDEX IF NOT EXISTS idx_work_items_parent_work_item_id
+              ON work_items(parent_work_item_id);
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_work_items_call_sign
+              ON work_items(call_sign);
+            ",
+        )
+        .map_err(|error| format!("failed to finalize work item indexes: {error}"))?;
+    backfill_project_work_item_prefixes(connection)?;
+    reconcile_work_item_identifiers(connection)?;
 
     Ok(())
 }
@@ -1501,10 +1605,14 @@ fn load_work_items_by_project_id(
             SELECT
               id,
               project_id,
+              parent_work_item_id,
+              call_sign,
               title,
               body,
               item_type,
               status,
+              sequence_number,
+              child_number,
               created_at,
               updated_at
             FROM work_items
@@ -1517,6 +1625,9 @@ fn load_work_items_by_project_id(
                 WHEN 'done' THEN 3
                 ELSE 4
               END,
+              sequence_number ASC,
+              CASE WHEN child_number IS NULL THEN 0 ELSE 1 END ASC,
+              child_number ASC,
               updated_at DESC,
               id DESC
             ",
@@ -1524,18 +1635,7 @@ fn load_work_items_by_project_id(
         .map_err(|error| format!("failed to prepare work item query: {error}"))?;
 
     let rows = statement
-        .query_map([project_id], |row| {
-            Ok(WorkItemRecord {
-                id: row.get(0)?,
-                project_id: row.get(1)?,
-                title: row.get(2)?,
-                body: row.get(3)?,
-                item_type: row.get(4)?,
-                status: row.get(5)?,
-                created_at: row.get(6)?,
-                updated_at: row.get(7)?,
-            })
-        })
+        .query_map([project_id], map_work_item_record)
         .map_err(|error| format!("failed to load work items: {error}"))?;
 
     rows.collect::<Result<Vec<_>, _>>()
@@ -1549,28 +1649,21 @@ fn load_work_item_by_id(connection: &Connection, id: i64) -> Result<WorkItemReco
             SELECT
               id,
               project_id,
+              parent_work_item_id,
+              call_sign,
               title,
               body,
               item_type,
               status,
+              sequence_number,
+              child_number,
               created_at,
               updated_at
             FROM work_items
             WHERE id = ?1
             ",
             [id],
-            |row| {
-                Ok(WorkItemRecord {
-                    id: row.get(0)?,
-                    project_id: row.get(1)?,
-                    title: row.get(2)?,
-                    body: row.get(3)?,
-                    item_type: row.get(4)?,
-                    status: row.get(5)?,
-                    created_at: row.get(6)?,
-                    updated_at: row.get(7)?,
-                })
-            },
+            map_work_item_record,
         )
         .map_err(|error| format!("failed to load work item: {error}"))
 }
@@ -1657,6 +1750,7 @@ fn load_worktrees_by_project_id(
               wt.id,
               wt.project_id,
               wt.work_item_id,
+              wi.call_sign,
               wi.title,
               wt.branch_name,
               wt.worktree_path,
@@ -1665,17 +1759,20 @@ fn load_worktrees_by_project_id(
             FROM worktrees wt
             INNER JOIN work_items wi ON wi.id = wt.work_item_id
             WHERE wt.project_id = ?1
-            ORDER BY wt.updated_at DESC, wt.id DESC
+            ORDER BY wi.sequence_number ASC, wi.child_number ASC, wt.updated_at DESC, wt.id DESC
             ",
         )
         .map_err(|error| format!("failed to prepare worktree query: {error}"))?;
 
     let rows = statement
-        .query_map([project_id], |row| map_worktree_record(row))
+        .query_map([project_id], map_worktree_record_base)
         .map_err(|error| format!("failed to load worktrees: {error}"))?;
 
     rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("failed to map worktrees: {error}"))
+        .map_err(|error| format!("failed to map worktrees: {error}"))?
+        .into_iter()
+        .map(|record| enrich_worktree_record(connection, record))
+        .collect()
 }
 
 fn load_worktree_by_id(connection: &Connection, id: i64) -> Result<WorktreeRecord, String> {
@@ -1686,6 +1783,7 @@ fn load_worktree_by_id(connection: &Connection, id: i64) -> Result<WorktreeRecor
               wt.id,
               wt.project_id,
               wt.work_item_id,
+              wi.call_sign,
               wi.title,
               wt.branch_name,
               wt.worktree_path,
@@ -1696,8 +1794,15 @@ fn load_worktree_by_id(connection: &Connection, id: i64) -> Result<WorktreeRecor
             WHERE wt.id = ?1
             ",
             [id],
-            map_worktree_record,
+            map_worktree_record_base,
         )
+        .and_then(|record| enrich_worktree_record(connection, record).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(std::io::Error::new(std::io::ErrorKind::Other, error)),
+            )
+        }))
         .map_err(|error| format!("failed to load worktree: {error}"))
 }
 
@@ -1706,13 +1811,14 @@ fn load_worktree_by_project_and_work_item(
     project_id: i64,
     work_item_id: i64,
 ) -> Result<Option<WorktreeRecord>, String> {
-    connection
+    let record = connection
         .query_row(
             "
             SELECT
               wt.id,
               wt.project_id,
               wt.work_item_id,
+              wi.call_sign,
               wi.title,
               wt.branch_name,
               wt.worktree_path,
@@ -1723,10 +1829,14 @@ fn load_worktree_by_project_and_work_item(
             WHERE wt.project_id = ?1 AND wt.work_item_id = ?2
             ",
             params![project_id, work_item_id],
-            map_worktree_record,
+            map_worktree_record_base,
         )
         .optional()
-        .map_err(|error| format!("failed to load worktree for work item: {error}"))
+        .map_err(|error| format!("failed to load worktree for work item: {error}"))?;
+
+    record
+        .map(|worktree| enrich_worktree_record(connection, worktree))
+        .transpose()
 }
 
 fn load_session_records_by_project_id(
@@ -1969,20 +2079,59 @@ fn map_session_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRecord
     })
 }
 
-fn map_worktree_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorktreeRecord> {
-    let worktree_path: String = row.get(5)?;
+fn map_work_item_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkItemRecord> {
+    Ok(WorkItemRecord {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        parent_work_item_id: row.get(2)?,
+        call_sign: row.get(3)?,
+        sequence_number: row.get(8)?,
+        child_number: row.get(9)?,
+        title: row.get(4)?,
+        body: row.get(5)?,
+        item_type: row.get(6)?,
+        status: row.get(7)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
+    })
+}
+
+fn map_worktree_record_base(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorktreeRecord> {
+    let worktree_path: String = row.get(6)?;
+    let branch_name: String = row.get(5)?;
 
     Ok(WorktreeRecord {
         id: row.get(0)?,
         project_id: row.get(1)?,
         work_item_id: row.get(2)?,
-        work_item_title: row.get(3)?,
-        branch_name: row.get(4)?,
+        work_item_call_sign: row.get(3)?,
+        work_item_title: row.get(4)?,
+        branch_name: branch_name.clone(),
+        short_branch_name: short_branch_name(&branch_name),
         worktree_path: worktree_path.clone(),
         path_available: Path::new(&worktree_path).is_dir(),
-        created_at: row.get(6)?,
-        updated_at: row.get(7)?,
+        has_uncommitted_changes: false,
+        has_unmerged_commits: false,
+        session_summary: short_summary_text(&row.get::<_, String>(4)?, 6),
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
     })
+}
+
+fn enrich_worktree_record(
+    connection: &Connection,
+    mut record: WorktreeRecord,
+) -> Result<WorktreeRecord, String> {
+    let project = load_project_by_id(connection, record.project_id)?;
+    let worktree_path = Path::new(&record.worktree_path);
+
+    record.path_available = worktree_path.is_dir();
+    record.has_uncommitted_changes = worktree_has_uncommitted_changes(worktree_path);
+    record.has_unmerged_commits =
+        worktree_has_unmerged_commits(Path::new(&project.root_path), worktree_path);
+    record.session_summary = worktree_session_summary(connection, &record)?;
+
+    Ok(record)
 }
 
 fn map_session_event_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionEventRecord> {
@@ -2025,6 +2174,517 @@ fn find_project_by_path(
     }
 
     Ok(matched_project.map(|(project, _)| project))
+}
+
+fn ensure_project_registration(
+    connection: &Connection,
+    name: &str,
+    root_path: &str,
+) -> Result<ProjectRegistrationResult, String> {
+    let trimmed_name = name.trim();
+
+    if trimmed_name.is_empty() {
+        return Err("project name is required".to_string());
+    }
+
+    let (resolved_root_path, _git_initialized) = resolve_project_registration_root(root_path)?;
+
+    if let Some(existing) = load_projects(connection)?
+        .into_iter()
+        .find(|project| {
+            project_paths_match(Path::new(&project.root_path), Path::new(&resolved_root_path))
+        })
+    {
+        return Ok(ProjectRegistrationResult {
+            project: existing,
+        });
+    }
+
+    let prefix = generate_project_work_item_prefix(connection, trimmed_name, None)?;
+
+    connection
+        .execute(
+            "INSERT INTO projects (name, root_path, work_item_prefix) VALUES (?1, ?2, ?3)",
+            params![trimmed_name, resolved_root_path, prefix],
+        )
+        .map_err(|error| format!("failed to create project: {error}"))?;
+
+    Ok(ProjectRegistrationResult {
+        project: load_project_by_id(connection, connection.last_insert_rowid())?,
+    })
+}
+
+fn resolve_project_registration_root(root_path: &str) -> Result<(String, bool), String> {
+    let trimmed_root_path = root_path.trim();
+
+    if trimmed_root_path.is_empty() {
+        return Err("project root folder is required".to_string());
+    }
+
+    let project_root = Path::new(trimmed_root_path);
+
+    if !project_root.is_dir() {
+        return Err("project root folder must exist".to_string());
+    }
+
+    if let Some(git_root) = try_resolve_git_root(project_root)? {
+        return Ok((git_root.display().to_string(), false));
+    }
+
+    initialize_git_repo(project_root)?;
+    let git_root = try_resolve_git_root(project_root)?
+        .ok_or_else(|| "project root did not resolve to a git repository after git init".to_string())?;
+
+    Ok((git_root.display().to_string(), true))
+}
+
+fn try_resolve_git_root(path: &Path) -> Result<Option<PathBuf>, String> {
+    let output = git_command()
+        .arg("-C")
+        .arg(path)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .map_err(|error| format!("failed to run git: {error}"))?;
+
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let git_root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    if git_root.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(normalize_path_for_matching(Path::new(&git_root))?))
+}
+
+fn initialize_git_repo(path: &Path) -> Result<(), String> {
+    let output = git_command()
+        .arg("init")
+        .arg(path)
+        .output()
+        .map_err(|error| format!("failed to run git init: {error}"))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let message = if !stderr.is_empty() {
+        stderr
+    } else if !stdout.is_empty() {
+        stdout
+    } else {
+        "git init failed".to_string()
+    };
+
+    Err(format!("failed to initialize git repository: {message}"))
+}
+
+fn ensure_project_work_item_prefix(
+    connection: &Connection,
+    project_id: i64,
+    project_name: &str,
+) -> Result<String, String> {
+    let current_prefix = connection
+        .query_row(
+            "SELECT work_item_prefix FROM projects WHERE id = ?1",
+            [project_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .map_err(|error| format!("failed to load project work item prefix: {error}"))?
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+
+    if !current_prefix.is_empty() {
+        return Ok(current_prefix);
+    }
+
+    let prefix = generate_project_work_item_prefix(connection, project_name, Some(project_id))?;
+
+    connection
+        .execute(
+            "UPDATE projects
+             SET work_item_prefix = ?1,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?2",
+            params![prefix, project_id],
+        )
+        .map_err(|error| format!("failed to store project work item prefix: {error}"))?;
+
+    Ok(prefix)
+}
+
+fn backfill_project_work_item_prefixes(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT id, name, COALESCE(work_item_prefix, '')
+            FROM projects
+            ORDER BY id ASC
+            ",
+        )
+        .map_err(|error| format!("failed to prepare project prefix backfill query: {error}"))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|error| format!("failed to load project prefix backfill rows: {error}"))?;
+    let mut seen = HashSet::new();
+
+    for row in rows {
+        let (project_id, project_name, current_prefix) =
+            row.map_err(|error| format!("failed to decode project prefix backfill row: {error}"))?;
+        let normalized_prefix = current_prefix.trim().to_uppercase();
+
+        if !normalized_prefix.is_empty() && !seen.contains(&normalized_prefix) {
+            seen.insert(normalized_prefix);
+            continue;
+        }
+
+        let prefix = generate_project_work_item_prefix(connection, &project_name, Some(project_id))?;
+        connection
+            .execute(
+                "UPDATE projects SET work_item_prefix = ?1 WHERE id = ?2",
+                params![prefix, project_id],
+            )
+            .map_err(|error| format!("failed to backfill project work item prefix: {error}"))?;
+        seen.insert(prefix);
+    }
+
+    Ok(())
+}
+
+fn generate_project_work_item_prefix(
+    connection: &Connection,
+    project_name: &str,
+    exclude_project_id: Option<i64>,
+) -> Result<String, String> {
+    let base = derive_project_work_item_prefix(project_name);
+    let mut candidate = base.clone();
+    let mut suffix = 2_i64;
+
+    while project_prefix_in_use(connection, &candidate, exclude_project_id)? {
+        let suffix_text = suffix.to_string();
+        let max_base_len = 12_usize.saturating_sub(suffix_text.len());
+        let trimmed_base = base.chars().take(max_base_len.max(1)).collect::<String>();
+        candidate = format!("{trimmed_base}{suffix_text}");
+        suffix += 1;
+    }
+
+    Ok(candidate)
+}
+
+fn project_prefix_in_use(
+    connection: &Connection,
+    prefix: &str,
+    exclude_project_id: Option<i64>,
+) -> Result<bool, String> {
+    connection
+        .query_row(
+            "
+            SELECT id
+            FROM projects
+            WHERE UPPER(COALESCE(work_item_prefix, '')) = UPPER(?1)
+              AND (?2 IS NULL OR id <> ?2)
+            LIMIT 1
+            ",
+            params![prefix, exclude_project_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map(|value| value.is_some())
+        .map_err(|error| format!("failed to inspect project prefix usage: {error}"))
+}
+
+fn derive_project_work_item_prefix(project_name: &str) -> String {
+    let candidate = project_name
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .take(12)
+        .collect::<String>()
+        .to_uppercase();
+
+    if candidate.is_empty() {
+        "PROJECT".to_string()
+    } else {
+        candidate
+    }
+}
+
+fn assign_next_work_item_identifier(
+    connection: &Connection,
+    project_id: i64,
+    project_prefix: &str,
+    parent_work_item_id: Option<i64>,
+) -> Result<AssignedWorkItemIdentifier, String> {
+    let Some(parent_work_item_id) = parent_work_item_id else {
+        let sequence_number = connection
+            .query_row(
+                "
+                SELECT COALESCE(MAX(sequence_number), 0) + 1
+                FROM work_items
+                WHERE project_id = ?1 AND parent_work_item_id IS NULL
+                ",
+                [project_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|error| format!("failed to assign work item call sign: {error}"))?;
+
+        return Ok(AssignedWorkItemIdentifier {
+            parent_work_item_id: None,
+            sequence_number,
+            child_number: None,
+            call_sign: format!("{project_prefix}-{sequence_number}"),
+        });
+    };
+
+    let parent = load_work_item_by_id(connection, parent_work_item_id)?;
+
+    if parent.project_id != project_id {
+        return Err("parent work item must belong to the same project".to_string());
+    }
+
+    if parent.parent_work_item_id.is_some() {
+        return Err("child work items cannot own child work items".to_string());
+    }
+
+    let child_number = connection
+        .query_row(
+            "
+            SELECT COALESCE(MAX(child_number), 0) + 1
+            FROM work_items
+            WHERE parent_work_item_id = ?1
+            ",
+            [parent_work_item_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| format!("failed to assign child work item call sign: {error}"))?;
+
+    Ok(AssignedWorkItemIdentifier {
+        parent_work_item_id: Some(parent_work_item_id),
+        sequence_number: parent.sequence_number,
+        child_number: Some(child_number),
+        call_sign: format!("{}.{child_number:02}", parent.call_sign),
+    })
+}
+
+fn reconcile_work_item_identifiers(connection: &Connection) -> Result<(), String> {
+    let mut project_statement = connection
+        .prepare(
+            "
+            SELECT id, name, COALESCE(work_item_prefix, '')
+            FROM projects
+            ORDER BY id ASC
+            ",
+        )
+        .map_err(|error| format!("failed to prepare project work item reconcile query: {error}"))?;
+    let projects = project_statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|error| format!("failed to load project work item reconcile rows: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to decode project work item reconcile rows: {error}"))?;
+
+    for (project_id, project_name, current_prefix) in projects {
+        let project_prefix = if current_prefix.trim().is_empty() {
+            ensure_project_work_item_prefix(connection, project_id, &project_name)?
+        } else {
+            current_prefix
+        };
+        let mut statement = connection
+            .prepare(
+                "
+                SELECT id, parent_work_item_id
+                FROM work_items
+                WHERE project_id = ?1
+                ORDER BY sequence_number ASC, child_number ASC, id ASC
+                ",
+            )
+            .map_err(|error| format!("failed to prepare work item reconcile query: {error}"))?;
+        let rows = statement
+            .query_map([project_id], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?))
+            })
+            .map_err(|error| format!("failed to load work item reconcile rows: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to decode work item reconcile rows: {error}"))?;
+
+        let mut parent_sequence_number = 0_i64;
+
+        for (work_item_id, _) in rows.iter().copied().filter(|(_, parent)| parent.is_none()) {
+            parent_sequence_number += 1;
+            let call_sign = format!("{project_prefix}-{parent_sequence_number}");
+            connection
+                .execute(
+                    "
+                    UPDATE work_items
+                    SET sequence_number = ?1,
+                        child_number = NULL,
+                        call_sign = ?2
+                    WHERE id = ?3
+                    ",
+                    params![parent_sequence_number, call_sign, work_item_id],
+                )
+                .map_err(|error| format!("failed to reconcile top-level work item identifiers: {error}"))?;
+
+            let mut child_statement = connection
+                .prepare(
+                    "
+                    SELECT id
+                    FROM work_items
+                    WHERE parent_work_item_id = ?1
+                    ORDER BY child_number ASC, id ASC
+                    ",
+                )
+                .map_err(|error| format!("failed to prepare child work item reconcile query: {error}"))?;
+            let child_ids = child_statement
+                .query_map([work_item_id], |row| row.get::<_, i64>(0))
+                .map_err(|error| format!("failed to load child work item reconcile rows: {error}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("failed to decode child work item reconcile rows: {error}"))?;
+
+            for (index, child_id) in child_ids.into_iter().enumerate() {
+                let child_number = i64::try_from(index + 1)
+                    .map_err(|_| "child work item numbering overflowed".to_string())?;
+                let child_call_sign = format!("{call_sign}.{child_number:02}");
+                connection
+                    .execute(
+                        "
+                        UPDATE work_items
+                        SET sequence_number = ?1,
+                            child_number = ?2,
+                            call_sign = ?3
+                        WHERE id = ?4
+                        ",
+                        params![parent_sequence_number, child_number, child_call_sign, child_id],
+                    )
+                    .map_err(|error| format!("failed to reconcile child work item identifiers: {error}"))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn project_paths_match(left: &Path, right: &Path) -> bool {
+    match (
+        normalize_path_for_matching(left),
+        normalize_path_for_matching(right),
+    ) {
+        (Ok(left), Ok(right)) => normalized_path_match_key(&left) == normalized_path_match_key(&right),
+        _ => false,
+    }
+}
+
+fn normalized_path_match_key(path: &Path) -> String {
+    let value = path.display().to_string().replace('\\', "/");
+
+    #[cfg(windows)]
+    {
+        value.trim_end_matches('/').to_ascii_lowercase()
+    }
+
+    #[cfg(not(windows))]
+    {
+        value.trim_end_matches('/').to_string()
+    }
+}
+
+fn short_branch_name(branch_name: &str) -> String {
+    branch_name
+        .rsplit('/')
+        .next()
+        .map(ToOwned::to_owned)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| branch_name.to_string())
+}
+
+fn short_summary_text(value: &str, max_words: usize) -> String {
+    let words = value
+        .split_whitespace()
+        .take(max_words.max(1))
+        .collect::<Vec<_>>();
+
+    if words.is_empty() {
+        "No active summary".to_string()
+    } else {
+        words.join(" ")
+    }
+}
+
+fn worktree_has_uncommitted_changes(worktree_path: &Path) -> bool {
+    if !worktree_path.is_dir() {
+        return false;
+    }
+
+    git_command()
+        .arg("-C")
+        .arg(worktree_path)
+        .args(["status", "--porcelain"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| !String::from_utf8_lossy(&output.stdout).trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn worktree_has_unmerged_commits(project_root: &Path, worktree_path: &Path) -> bool {
+    if !project_root.is_dir() || !worktree_path.is_dir() {
+        return false;
+    }
+
+    let project_head = match git_rev_parse(project_root, "HEAD") {
+        Some(value) => value,
+        None => return false,
+    };
+    let worktree_head = match git_rev_parse(worktree_path, "HEAD") {
+        Some(value) => value,
+        None => return false,
+    };
+
+    if project_head == worktree_head {
+        return false;
+    }
+
+    git_command()
+        .arg("-C")
+        .arg(project_root)
+        .args(["merge-base", "--is-ancestor", &worktree_head, &project_head])
+        .status()
+        .map(|status| !status.success())
+        .unwrap_or(false)
+}
+
+fn git_rev_parse(path: &Path, revision: &str) -> Option<String> {
+    git_command()
+        .arg("-C")
+        .arg(path)
+        .args(["rev-parse", revision])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn worktree_session_summary(
+    _connection: &Connection,
+    worktree: &WorktreeRecord,
+) -> Result<String, String> {
+    Ok(short_summary_text(&worktree.work_item_title, 6))
 }
 
 fn normalize_work_item_type(value: &str) -> Result<String, String> {
@@ -2218,5 +2878,486 @@ fn process_is_alive(process_id: u32) -> bool {
             .status()
             .map(|status| status.success())
             .unwrap_or(false);
+    }
+}
+
+fn git_command() -> Command {
+    let mut command = Command::new("git");
+
+    #[cfg(windows)]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    command
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::AppErrorCode;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TestHarness {
+        root_dir: PathBuf,
+        state: AppState,
+    }
+
+    impl TestHarness {
+        fn new(name: &str) -> Self {
+            let root_dir = unique_temp_dir(name);
+            fs::create_dir_all(&root_dir).expect("test root directory should be created");
+
+            let database_path = root_dir
+                .join("app-data")
+                .join("db")
+                .join("project-commander.sqlite3");
+            let state = AppState::from_database_path(database_path)
+                .expect("test database should initialize");
+
+            Self { root_dir, state }
+        }
+
+        fn create_project_root(&self, name: &str) -> PathBuf {
+            let path = self.root_dir.join("projects").join(name);
+            fs::create_dir_all(&path).expect("project root should be created");
+            path
+        }
+
+        fn create_project(&self, name: &str, root_path: &Path) -> ProjectRecord {
+            self.state
+                .create_project(CreateProjectInput {
+                    name: name.to_string(),
+                    root_path: root_path.display().to_string(),
+                })
+                .expect("project should be created")
+        }
+    }
+
+    impl Drop for TestHarness {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root_dir);
+        }
+    }
+
+    fn unique_temp_db_path(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("project-commander-{name}-{nanos}.sqlite3"))
+    }
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("project-commander-{name}-{nanos}"))
+    }
+
+    #[test]
+    fn migrate_adds_work_item_hierarchy_columns_before_dependent_indexes() {
+        let database_path = unique_temp_db_path("legacy-work-items");
+        let connection = Connection::open(&database_path).expect("legacy db should open");
+
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE projects (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  name TEXT NOT NULL,
+                  root_path TEXT NOT NULL UNIQUE,
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE work_items (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                  title TEXT NOT NULL,
+                  body TEXT NOT NULL DEFAULT '',
+                  item_type TEXT NOT NULL,
+                  status TEXT NOT NULL DEFAULT 'backlog',
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                ",
+            )
+            .expect("legacy schema should be created");
+
+        migrate(&connection).expect("migration should succeed for a legacy work_items table");
+
+        let columns: Vec<String> = {
+            let mut statement = connection
+                .prepare("PRAGMA table_info(work_items)")
+                .expect("work_items pragma should prepare");
+            statement
+                .query_map([], |row| row.get::<_, String>(1))
+                .expect("work_items pragma should query")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("work_items pragma rows should decode")
+        };
+
+        assert!(columns.iter().any(|column| column == "parent_work_item_id"));
+        assert!(columns.iter().any(|column| column == "sequence_number"));
+        assert!(columns.iter().any(|column| column == "child_number"));
+        assert!(columns.iter().any(|column| column == "call_sign"));
+
+        let indexes: Vec<String> = {
+            let mut statement = connection
+                .prepare("PRAGMA index_list(work_items)")
+                .expect("work_items index pragma should prepare");
+            statement
+                .query_map([], |row| row.get::<_, String>(1))
+                .expect("work_items index pragma should query")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("work_items index rows should decode")
+        };
+
+        assert!(
+            indexes
+                .iter()
+                .any(|index_name| index_name == "idx_work_items_parent_work_item_id")
+        );
+        assert!(
+            indexes
+                .iter()
+                .any(|index_name| index_name == "idx_work_items_call_sign")
+        );
+
+        drop(connection);
+        let _ = fs::remove_file(database_path);
+    }
+
+    #[test]
+    fn bootstrap_seeds_default_profile_and_settings_round_trip() {
+        let harness = TestHarness::new("bootstrap-settings");
+
+        let bootstrap = harness.state.bootstrap().expect("bootstrap should load");
+        assert_eq!(bootstrap.launch_profiles.len(), 1);
+        assert_eq!(bootstrap.launch_profiles[0].label, "Claude Code / YOLO");
+        assert_eq!(bootstrap.settings.default_launch_profile_id, None);
+        assert!(!bootstrap.settings.auto_repair_safe_cleanup_on_startup);
+
+        let created = harness
+            .state
+            .create_launch_profile(CreateLaunchProfileInput {
+                label: "Claude Code / Work".to_string(),
+                executable: "claude".to_string(),
+                args: "--print".to_string(),
+                env_json: r#"{"OPENAI_API_KEY":"test-key"}"#.to_string(),
+            })
+            .expect("launch profile should be created");
+
+        let settings = harness
+            .state
+            .update_app_settings(UpdateAppSettingsInput {
+                default_launch_profile_id: Some(created.id),
+                auto_repair_safe_cleanup_on_startup: true,
+            })
+            .expect("app settings should update");
+        assert_eq!(settings.default_launch_profile_id, Some(created.id));
+        assert!(settings.auto_repair_safe_cleanup_on_startup);
+
+        harness
+            .state
+            .delete_launch_profile(created.id)
+            .expect("launch profile should delete cleanly");
+
+        let updated = harness
+            .state
+            .get_app_settings()
+            .expect("updated app settings should load");
+        assert_eq!(updated.default_launch_profile_id, None);
+        assert!(updated.auto_repair_safe_cleanup_on_startup);
+    }
+
+    #[test]
+    fn project_registration_deduplicates_roots_and_blocks_duplicate_rebinds() {
+        let harness = TestHarness::new("project-registration");
+        let alpha_root = harness.create_project_root("alpha");
+        let beta_root = harness.create_project_root("beta");
+
+        let alpha = harness.create_project("Alpha Node", &alpha_root);
+        assert!(alpha_root.join(".git").is_dir());
+        assert!(alpha.root_available);
+
+        let duplicate = harness.create_project("Alpha Duplicate", &alpha_root);
+        assert_eq!(duplicate.id, alpha.id);
+        assert_eq!(
+            harness
+                .state
+                .list_projects()
+                .expect("projects should list after duplicate create")
+                .len(),
+            1
+        );
+
+        let beta = harness.create_project("Beta Node", &beta_root);
+        let duplicate_root_error = harness
+            .state
+            .update_project(UpdateProjectInput {
+                id: beta.id,
+                name: "Beta Node".to_string(),
+                root_path: alpha_root.display().to_string(),
+            })
+            .err()
+            .expect("rebind to an existing project root should fail");
+        assert_eq!(duplicate_root_error.code, AppErrorCode::Conflict);
+        assert_eq!(
+            duplicate_root_error.message,
+            "a project with that root folder already exists"
+        );
+
+        let renamed = harness
+            .state
+            .update_project(UpdateProjectInput {
+                id: alpha.id,
+                name: "Alpha Control".to_string(),
+                root_path: alpha_root.display().to_string(),
+            })
+            .expect("project rename should succeed");
+        assert_eq!(renamed.name, "Alpha Control");
+    }
+
+    #[test]
+    fn work_item_crud_assigns_identifiers_and_enforces_hierarchy_rules() {
+        let harness = TestHarness::new("work-item-crud");
+        let project_root = harness.create_project_root("work-items");
+        let project = harness.create_project("Alpha Node", &project_root);
+        let prefix = derive_project_work_item_prefix(&project.name);
+
+        let parent = harness
+            .state
+            .create_work_item(CreateWorkItemInput {
+                project_id: project.id,
+                parent_work_item_id: None,
+                title: "Plan migration".to_string(),
+                body: "Outline the work".to_string(),
+                item_type: "TASK".to_string(),
+                status: "BACKLOG".to_string(),
+            })
+            .expect("parent work item should be created");
+        assert_eq!(parent.call_sign, format!("{prefix}-1"));
+        assert_eq!(parent.sequence_number, 1);
+        assert_eq!(parent.child_number, None);
+        assert_eq!(parent.item_type, "task");
+        assert_eq!(parent.status, "backlog");
+
+        let child = harness
+            .state
+            .create_work_item(CreateWorkItemInput {
+                project_id: project.id,
+                parent_work_item_id: Some(parent.id),
+                title: "Write migration tests".to_string(),
+                body: "Cover the edge cases".to_string(),
+                item_type: "feature".to_string(),
+                status: "in_progress".to_string(),
+            })
+            .expect("child work item should be created");
+        assert_eq!(child.call_sign, format!("{}.01", parent.call_sign));
+        assert_eq!(child.sequence_number, parent.sequence_number);
+        assert_eq!(child.child_number, Some(1));
+
+        let sibling_parent = harness
+            .state
+            .create_work_item(CreateWorkItemInput {
+                project_id: project.id,
+                parent_work_item_id: None,
+                title: "Ship migration".to_string(),
+                body: "Finalize the rollout".to_string(),
+                item_type: "task".to_string(),
+                status: "blocked".to_string(),
+            })
+            .expect("second parent work item should be created");
+        assert_eq!(sibling_parent.call_sign, format!("{prefix}-2"));
+
+        let updated_child = harness
+            .state
+            .update_work_item(UpdateWorkItemInput {
+                id: child.id,
+                title: "Write db mutation tests".to_string(),
+                body: "Cover parent/child invariants".to_string(),
+                item_type: "bug".to_string(),
+                status: "done".to_string(),
+            })
+            .expect("child work item should update");
+        assert_eq!(updated_child.title, "Write db mutation tests");
+        assert_eq!(updated_child.item_type, "bug");
+        assert_eq!(updated_child.status, "done");
+
+        let grandchild_error = harness
+            .state
+            .create_work_item(CreateWorkItemInput {
+                project_id: project.id,
+                parent_work_item_id: Some(child.id),
+                title: "Nested child".to_string(),
+                body: String::new(),
+                item_type: "task".to_string(),
+                status: "backlog".to_string(),
+            })
+            .err()
+            .expect("grandchild work items should be rejected");
+        assert_eq!(grandchild_error.code, AppErrorCode::InvalidInput);
+        assert_eq!(
+            grandchild_error.message,
+            "child work items cannot own child work items"
+        );
+
+        let parent_delete_error = harness
+            .state
+            .delete_work_item(parent.id)
+            .expect_err("parent work item delete should fail while children exist");
+        assert_eq!(parent_delete_error.code, AppErrorCode::InvalidInput);
+        assert_eq!(
+            parent_delete_error.message,
+            "cannot delete a parent work item while child work items still exist"
+        );
+
+        assert_eq!(
+            harness
+                .state
+                .get_project(project.id)
+                .expect("project should load after work item creation")
+                .work_item_count,
+            3
+        );
+
+        harness
+            .state
+            .delete_work_item(child.id)
+            .expect("child work item should delete");
+        harness
+            .state
+            .delete_work_item(parent.id)
+            .expect("parent work item should delete once children are removed");
+
+        let remaining = harness
+            .state
+            .list_work_items(project.id)
+            .expect("remaining work items should list");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, sibling_parent.id);
+        assert_eq!(
+            harness
+                .state
+                .get_project(project.id)
+                .expect("project should load after deletions")
+                .work_item_count,
+            1
+        );
+    }
+
+    #[test]
+    fn document_crud_validates_cross_project_links_and_updates_counts() {
+        let harness = TestHarness::new("document-crud");
+        let alpha_root = harness.create_project_root("alpha-docs");
+        let beta_root = harness.create_project_root("beta-docs");
+        let alpha = harness.create_project("Alpha Docs", &alpha_root);
+        let beta = harness.create_project("Beta Docs", &beta_root);
+
+        let alpha_item = harness
+            .state
+            .create_work_item(CreateWorkItemInput {
+                project_id: alpha.id,
+                parent_work_item_id: None,
+                title: "Alpha item".to_string(),
+                body: String::new(),
+                item_type: "task".to_string(),
+                status: "backlog".to_string(),
+            })
+            .expect("alpha work item should be created");
+        let beta_item = harness
+            .state
+            .create_work_item(CreateWorkItemInput {
+                project_id: beta.id,
+                parent_work_item_id: None,
+                title: "Beta item".to_string(),
+                body: String::new(),
+                item_type: "task".to_string(),
+                status: "backlog".to_string(),
+            })
+            .expect("beta work item should be created");
+
+        let document = harness
+            .state
+            .create_document(CreateDocumentInput {
+                project_id: alpha.id,
+                work_item_id: Some(alpha_item.id),
+                title: "Design Notes".to_string(),
+                body: "Initial draft".to_string(),
+            })
+            .expect("linked document should be created");
+        assert_eq!(document.work_item_id, Some(alpha_item.id));
+        assert_eq!(
+            harness
+                .state
+                .get_project(alpha.id)
+                .expect("project should load after document creation")
+                .document_count,
+            1
+        );
+
+        let cross_project_error = harness
+            .state
+            .update_document(UpdateDocumentInput {
+                id: document.id,
+                work_item_id: Some(beta_item.id),
+                title: "Design Notes".to_string(),
+                body: "Initial draft".to_string(),
+            })
+            .err()
+            .expect("cross-project document links should fail");
+        assert_eq!(cross_project_error.code, AppErrorCode::InvalidInput);
+        assert_eq!(
+            cross_project_error.message,
+            "linked work item must belong to the same project"
+        );
+
+        let updated = harness
+            .state
+            .update_document(UpdateDocumentInput {
+                id: document.id,
+                work_item_id: None,
+                title: "Revised Design Notes".to_string(),
+                body: "Expanded draft".to_string(),
+            })
+            .expect("document should update and clear its work item link");
+        assert_eq!(updated.work_item_id, None);
+        assert_eq!(updated.title, "Revised Design Notes");
+
+        let empty_title_error = harness
+            .state
+            .create_document(CreateDocumentInput {
+                project_id: alpha.id,
+                work_item_id: None,
+                title: "   ".to_string(),
+                body: String::new(),
+            })
+            .err()
+            .expect("empty document titles should be rejected");
+        assert_eq!(empty_title_error.code, AppErrorCode::InvalidInput);
+        assert_eq!(empty_title_error.message, "document title is required");
+
+        harness
+            .state
+            .delete_document(document.id)
+            .expect("document should delete");
+        assert!(
+            harness
+                .state
+                .list_documents(alpha.id)
+                .expect("documents should list after delete")
+                .is_empty()
+        );
+        assert_eq!(
+            harness
+                .state
+                .get_project(alpha.id)
+                .expect("project should load after document deletion")
+                .document_count,
+            0
+        );
     }
 }

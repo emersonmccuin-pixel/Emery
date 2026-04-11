@@ -4,6 +4,7 @@ use crate::db::{
     UpdateAppSettingsInput, UpdateLaunchProfileInput, UpdateProjectInput, WorkItemRecord,
     WorktreeRecord,
 };
+use crate::error::{AppError, AppErrorCode, AppResult};
 use crate::session_api::{
     LaunchSessionInput, ProjectSessionTarget, ResizeSessionInput, SessionInput, SessionPollInput,
     SessionPollOutput, SessionSnapshot, SupervisorHealth, SupervisorRuntimeInfo, TerminalExitEvent,
@@ -25,7 +26,7 @@ use crate::supervisor_api::{
 use reqwest::blocking::Client;
 use reqwest::StatusCode;
 use serde::de::DeserializeOwned;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -70,12 +71,18 @@ struct PollerHandle {
 }
 
 enum RequestFailure {
-    Retryable(String),
-    Fatal(String),
+    Retryable(AppError),
+    Fatal(AppError),
+}
+
+#[derive(Deserialize)]
+struct ErrorResponse {
+    error: String,
+    code: Option<AppErrorCode>,
 }
 
 impl SupervisorClient {
-    pub fn new(storage: StorageInfo) -> Result<Self, String> {
+    pub fn new(storage: StorageInfo) -> AppResult<Self> {
         let runtime_dir = PathBuf::from(&storage.app_data_dir).join("runtime");
         let runtime_file = runtime_dir.join("supervisor.json");
         let http_client = Client::builder()
@@ -101,7 +108,7 @@ impl SupervisorClient {
         &self,
         target: ProjectSessionTarget,
         app_handle: &AppHandle,
-    ) -> Result<Option<SessionSnapshot>, String> {
+    ) -> AppResult<Option<SessionSnapshot>> {
         let snapshot = self.request_json("session/snapshot", &target)?;
 
         if let Some(snapshot) = &snapshot {
@@ -115,11 +122,11 @@ impl SupervisorClient {
         self.inner.storage.clone()
     }
 
-    pub fn bootstrap(&self) -> Result<BootstrapData, String> {
+    pub fn bootstrap(&self) -> AppResult<BootstrapData> {
         self.request_json::<_, BootstrapData>("bootstrap", &serde_json::json!({}))
     }
 
-    pub fn update_app_settings(&self, input: UpdateAppSettingsInput) -> Result<AppSettings, String> {
+    pub fn update_app_settings(&self, input: UpdateAppSettingsInput) -> AppResult<AppSettings> {
         self.request_json("settings/update", &input)
     }
 
@@ -127,23 +134,23 @@ impl SupervisorClient {
         &self,
         input: LaunchSessionInput,
         app_handle: &AppHandle,
-    ) -> Result<SessionSnapshot, String> {
+    ) -> AppResult<SessionSnapshot> {
         let snapshot = self.request_json("session/launch", &input)?;
         self.ensure_terminal_poller(&snapshot, app_handle);
         Ok(snapshot)
     }
 
-    pub fn write_input(&self, input: SessionInput) -> Result<(), String> {
+    pub fn write_input(&self, input: SessionInput) -> AppResult<()> {
         self.request_json::<_, serde_json::Value>("session/input", &input)
             .map(|_| ())
     }
 
-    pub fn resize(&self, input: ResizeSessionInput) -> Result<(), String> {
+    pub fn resize(&self, input: ResizeSessionInput) -> AppResult<()> {
         self.request_json::<_, serde_json::Value>("session/resize", &input)
             .map(|_| ())
     }
 
-    pub fn terminate(&self, project_id: i64) -> Result<(), String> {
+    pub fn terminate(&self, project_id: i64) -> AppResult<()> {
         self.request_json::<_, serde_json::Value>(
             "session/terminate",
             &ProjectSessionTarget {
@@ -154,12 +161,12 @@ impl SupervisorClient {
         .map(|_| ())
     }
 
-    pub fn terminate_target(&self, target: ProjectSessionTarget) -> Result<(), String> {
+    pub fn terminate_target(&self, target: ProjectSessionTarget) -> AppResult<()> {
         self.request_json::<_, serde_json::Value>("session/terminate", &target)
             .map(|_| ())
     }
 
-    pub fn list_live_sessions(&self, project_id: i64) -> Result<Vec<SessionSnapshot>, String> {
+    pub fn list_live_sessions(&self, project_id: i64) -> AppResult<Vec<SessionSnapshot>> {
         self.request_json(
             "session/live-list",
             &ProjectSessionTarget {
@@ -169,7 +176,7 @@ impl SupervisorClient {
         )
     }
 
-    pub fn list_work_items(&self, project_id: i64) -> Result<Vec<WorkItemRecord>, String> {
+    pub fn list_work_items(&self, project_id: i64) -> AppResult<Vec<WorkItemRecord>> {
         self.request_json(
             "work-item/list",
             &ListProjectWorkItemsInput {
@@ -185,18 +192,18 @@ impl SupervisorClient {
     pub fn create_work_item(
         &self,
         input: CreateProjectWorkItemInput,
-    ) -> Result<WorkItemRecord, String> {
+    ) -> AppResult<WorkItemRecord> {
         self.request_json("work-item/create", &input)
     }
 
     pub fn update_work_item(
         &self,
         input: UpdateProjectWorkItemInput,
-    ) -> Result<WorkItemRecord, String> {
+    ) -> AppResult<WorkItemRecord> {
         self.request_json("work-item/update", &input)
     }
 
-    pub fn delete_work_item(&self, project_id: i64, id: i64) -> Result<(), String> {
+    pub fn delete_work_item(&self, project_id: i64, id: i64) -> AppResult<()> {
         self.request_json::<_, serde_json::Value>(
             "work-item/delete",
             &ProjectWorkItemTarget { project_id, id },
@@ -204,7 +211,7 @@ impl SupervisorClient {
         .map(|_| ())
     }
 
-    pub fn list_documents(&self, project_id: i64) -> Result<Vec<DocumentRecord>, String> {
+    pub fn list_documents(&self, project_id: i64) -> AppResult<Vec<DocumentRecord>> {
         self.request_json(
             "document/list",
             &ListProjectDocumentsInput {
@@ -217,18 +224,18 @@ impl SupervisorClient {
     pub fn create_document(
         &self,
         input: CreateProjectDocumentInput,
-    ) -> Result<DocumentRecord, String> {
+    ) -> AppResult<DocumentRecord> {
         self.request_json("document/create", &input)
     }
 
     pub fn update_document(
         &self,
         input: UpdateProjectDocumentInput,
-    ) -> Result<DocumentRecord, String> {
+    ) -> AppResult<DocumentRecord> {
         self.request_json("document/update", &input)
     }
 
-    pub fn delete_document(&self, project_id: i64, id: i64) -> Result<(), String> {
+    pub fn delete_document(&self, project_id: i64, id: i64) -> AppResult<()> {
         self.request_json::<_, serde_json::Value>(
             "document/delete",
             &ProjectDocumentTarget { project_id, id },
@@ -236,7 +243,7 @@ impl SupervisorClient {
         .map(|_| ())
     }
 
-    pub fn list_worktrees(&self, project_id: i64) -> Result<Vec<WorktreeRecord>, String> {
+    pub fn list_worktrees(&self, project_id: i64) -> AppResult<Vec<WorktreeRecord>> {
         self.request_json("worktree/list", &ListProjectWorktreesInput { project_id })
     }
 
@@ -244,7 +251,7 @@ impl SupervisorClient {
         &self,
         project_id: i64,
         work_item_id: i64,
-    ) -> Result<WorktreeRecord, String> {
+    ) -> AppResult<WorktreeRecord> {
         self.request_json(
             "worktree/ensure",
             &EnsureProjectWorktreeInput {
@@ -254,7 +261,7 @@ impl SupervisorClient {
         )
     }
 
-    pub fn remove_worktree(&self, project_id: i64, worktree_id: i64) -> Result<WorktreeRecord, String> {
+    pub fn remove_worktree(&self, project_id: i64, worktree_id: i64) -> AppResult<WorktreeRecord> {
         self.request_json_with_timeout(
             "worktree/remove",
             &ProjectWorktreeTarget {
@@ -269,7 +276,7 @@ impl SupervisorClient {
         &self,
         project_id: i64,
         worktree_id: i64,
-    ) -> Result<WorktreeRecord, String> {
+    ) -> AppResult<WorktreeRecord> {
         self.request_json_with_timeout(
             "worktree/recreate",
             &ProjectWorktreeTarget {
@@ -284,7 +291,7 @@ impl SupervisorClient {
         &self,
         input: LaunchProjectWorktreeAgentInput,
         app_handle: &AppHandle,
-    ) -> Result<WorktreeLaunchOutput, String> {
+    ) -> AppResult<WorktreeLaunchOutput> {
         let output: WorktreeLaunchOutput = self.request_json_with_timeout(
             "worktree/launch-agent",
             &input,
@@ -294,11 +301,11 @@ impl SupervisorClient {
         Ok(output)
     }
 
-    pub fn list_session_records(&self, project_id: i64) -> Result<Vec<SessionRecord>, String> {
+    pub fn list_session_records(&self, project_id: i64) -> AppResult<Vec<SessionRecord>> {
         self.request_json("session/list", &ListProjectSessionsInput { project_id })
     }
 
-    pub fn list_orphaned_sessions(&self, project_id: i64) -> Result<Vec<SessionRecord>, String> {
+    pub fn list_orphaned_sessions(&self, project_id: i64) -> AppResult<Vec<SessionRecord>> {
         self.request_json(
             "session/orphaned-list",
             &ListProjectSessionsInput { project_id },
@@ -309,7 +316,7 @@ impl SupervisorClient {
         &self,
         project_id: i64,
         session_id: i64,
-    ) -> Result<SessionRecord, String> {
+    ) -> AppResult<SessionRecord> {
         self.request_json_with_timeout(
             "session/orphaned-terminate",
             &ProjectSessionRecordTarget {
@@ -320,18 +327,18 @@ impl SupervisorClient {
         )
     }
 
-    pub fn list_cleanup_candidates(&self) -> Result<Vec<CleanupCandidate>, String> {
+    pub fn list_cleanup_candidates(&self) -> AppResult<Vec<CleanupCandidate>> {
         self.request_json("cleanup/list", &ListCleanupCandidatesInput {})
     }
 
     pub fn remove_cleanup_candidate(
         &self,
         input: CleanupCandidateTarget,
-    ) -> Result<CleanupActionOutput, String> {
+    ) -> AppResult<CleanupActionOutput> {
         self.request_json_with_timeout("cleanup/remove", &input, SUPERVISOR_LONG_REQUEST_TIMEOUT)
     }
 
-    pub fn repair_cleanup_candidates(&self) -> Result<CleanupRepairOutput, String> {
+    pub fn repair_cleanup_candidates(&self) -> AppResult<CleanupRepairOutput> {
         self.request_json_with_timeout(
             "cleanup/repair-all",
             &RepairCleanupInput {},
@@ -339,29 +346,29 @@ impl SupervisorClient {
         )
     }
 
-    pub fn create_project(&self, input: CreateProjectInput) -> Result<ProjectRecord, String> {
+    pub fn create_project(&self, input: CreateProjectInput) -> AppResult<ProjectRecord> {
         self.request_json("project/create", &input)
     }
 
-    pub fn update_project(&self, input: UpdateProjectInput) -> Result<ProjectRecord, String> {
+    pub fn update_project(&self, input: UpdateProjectInput) -> AppResult<ProjectRecord> {
         self.request_json("project/update", &input)
     }
 
     pub fn create_launch_profile(
         &self,
         input: CreateLaunchProfileInput,
-    ) -> Result<LaunchProfileRecord, String> {
+    ) -> AppResult<LaunchProfileRecord> {
         self.request_json("launch-profile/create", &input)
     }
 
     pub fn update_launch_profile(
         &self,
         input: UpdateLaunchProfileInput,
-    ) -> Result<LaunchProfileRecord, String> {
+    ) -> AppResult<LaunchProfileRecord> {
         self.request_json("launch-profile/update", &input)
     }
 
-    pub fn delete_launch_profile(&self, id: i64) -> Result<(), String> {
+    pub fn delete_launch_profile(&self, id: i64) -> AppResult<()> {
         self.request_json::<_, serde_json::Value>("launch-profile/delete", &LaunchProfileTarget { id })
             .map(|_| ())
     }
@@ -370,7 +377,7 @@ impl SupervisorClient {
         &self,
         project_id: i64,
         limit: usize,
-    ) -> Result<Vec<SessionEventRecord>, String> {
+    ) -> AppResult<Vec<SessionEventRecord>> {
         self.request_json(
             "event/list",
             &ListProjectSessionEventsInput {
@@ -500,7 +507,7 @@ impl SupervisorClient {
         &self,
         target: ProjectSessionTarget,
         offset: usize,
-    ) -> Result<Option<SessionPollOutput>, String> {
+    ) -> AppResult<Option<SessionPollOutput>> {
         self.request_json(
             "session/poll",
             &SessionPollInput {
@@ -515,7 +522,7 @@ impl SupervisorClient {
         &self,
         route: &str,
         payload: &TRequest,
-    ) -> Result<TResponse, String>
+    ) -> AppResult<TResponse>
     where
         TRequest: Serialize,
         TResponse: DeserializeOwned,
@@ -528,7 +535,7 @@ impl SupervisorClient {
         route: &str,
         payload: &TRequest,
         timeout: Duration,
-    ) -> Result<TResponse, String>
+    ) -> AppResult<TResponse>
     where
         TRequest: Serialize,
         TResponse: DeserializeOwned,
@@ -546,7 +553,7 @@ impl SupervisorClient {
             }
         }
 
-        Err("supervisor request failed".to_string())
+        Err(AppError::supervisor("supervisor request failed"))
     }
 
     fn send_json<TRequest, TResponse>(
@@ -572,38 +579,53 @@ impl SupervisorClient {
             .send()
             .map_err(|error| {
                 if error.is_connect() || error.is_timeout() {
-                    RequestFailure::Retryable(format!(
+                    RequestFailure::Retryable(AppError::supervisor(format!(
                         "failed to reach Project Commander supervisor: {error}"
-                    ))
+                    )))
                 } else {
-                    RequestFailure::Fatal(format!(
+                    RequestFailure::Fatal(AppError::supervisor(format!(
                         "Project Commander supervisor request failed: {error}"
-                    ))
+                    )))
                 }
             })?;
 
         let status = response.status();
 
         if !status.is_success() {
-            let message = response
+            let raw_message = response
                 .text()
                 .unwrap_or_else(|_| "Project Commander supervisor returned an error".to_string());
+            let app_error = serde_json::from_str::<ErrorResponse>(&raw_message)
+                .map(|payload| match payload.code {
+                    Some(code) => AppError::new(code, payload.error),
+                    None => AppError::from_status(status.as_u16(), payload.error),
+                })
+                .unwrap_or_else(|_| AppError::from_status(status.as_u16(), raw_message));
 
             return Err(
                 if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
-                    RequestFailure::Retryable(message)
+                    RequestFailure::Retryable(app_error)
                 } else {
-                    RequestFailure::Fatal(message)
+                    RequestFailure::Fatal(app_error)
                 },
             );
         }
 
-        response.json::<TResponse>().map_err(|error| {
-            RequestFailure::Retryable(format!("failed to decode supervisor response: {error}"))
+        let envelope: serde_json::Value = response.json().map_err(|error| {
+            RequestFailure::Retryable(AppError::supervisor(format!(
+                "failed to decode supervisor response: {error}"
+            )))
+        })?;
+
+        let data = envelope.get("data").cloned().unwrap_or(serde_json::Value::Null);
+        serde_json::from_value::<TResponse>(data).map_err(|error| {
+            RequestFailure::Retryable(AppError::supervisor(format!(
+                "failed to decode supervisor response data: {error}"
+            )))
         })
     }
 
-    fn ensure_runtime(&self) -> Result<SupervisorRuntimeInfo, String> {
+    fn ensure_runtime(&self) -> AppResult<SupervisorRuntimeInfo> {
         let _runtime_guard = self
             .inner
             .runtime_lock
@@ -634,7 +656,7 @@ impl SupervisorClient {
         Ok(runtime)
     }
 
-    fn load_runtime_info(&self) -> Result<Option<SupervisorRuntimeInfo>, String> {
+    fn load_runtime_info(&self) -> AppResult<Option<SupervisorRuntimeInfo>> {
         if !self.inner.runtime_file.is_file() {
             return Ok(None);
         }
@@ -647,7 +669,7 @@ impl SupervisorClient {
         Ok(Some(runtime))
     }
 
-    fn ping_runtime(&self, runtime: &SupervisorRuntimeInfo) -> Result<SupervisorHealth, String> {
+    fn ping_runtime(&self, runtime: &SupervisorRuntimeInfo) -> AppResult<SupervisorHealth> {
         let url = format!("http://127.0.0.1:{}/health", runtime.port);
         let response = self
             .inner
@@ -659,31 +681,35 @@ impl SupervisorClient {
             .map_err(|error| format!("failed to reach Project Commander supervisor: {error}"))?;
 
         if !response.status().is_success() {
-            return Err(format!(
+            return Err(AppError::supervisor(format!(
                 "Project Commander supervisor health check failed with status {}",
                 response.status()
-            ));
+            )));
         }
 
-        let health = response
-            .json::<SupervisorHealth>()
+        let envelope: serde_json::Value = response
+            .json()
             .map_err(|error| format!("failed to decode supervisor health response: {error}"))?;
+        let data = envelope.get("data").cloned().unwrap_or(serde_json::Value::Null);
+        let health: SupervisorHealth = serde_json::from_value(data)
+            .map_err(|error| format!("failed to decode supervisor health data: {error}"))?;
 
         if health.protocol_version != SUPERVISOR_PROTOCOL_VERSION {
-            return Err(format!(
+            return Err(AppError::supervisor(format!(
                 "Project Commander supervisor protocol mismatch: expected {}, got {}",
                 SUPERVISOR_PROTOCOL_VERSION, health.protocol_version
-            ));
+            )));
         }
 
         Ok(health)
     }
 
-    fn spawn_supervisor(&self) -> Result<(), String> {
+    fn spawn_supervisor(&self) -> AppResult<()> {
         let supervisor_binary = resolve_helper_binary_path("project-commander-supervisor")
             .ok_or_else(|| {
-                "project-commander-supervisor helper was not found. Rebuild Project Commander helpers before launching sessions."
-                    .to_string()
+                AppError::supervisor(
+                    "project-commander-supervisor helper was not found. Rebuild Project Commander helpers before launching sessions.",
+                )
             })?;
 
         if let Some(parent) = self.inner.runtime_file.parent() {
@@ -716,7 +742,7 @@ impl SupervisorClient {
         Ok(())
     }
 
-    fn wait_for_runtime(&self) -> Result<SupervisorRuntimeInfo, String> {
+    fn wait_for_runtime(&self) -> AppResult<SupervisorRuntimeInfo> {
         let started_at = std::time::Instant::now();
 
         while started_at.elapsed() < SUPERVISOR_BOOT_TIMEOUT {
@@ -729,7 +755,9 @@ impl SupervisorClient {
             std::thread::sleep(SUPERVISOR_BOOT_POLL_INTERVAL);
         }
 
-        Err("Project Commander supervisor did not become ready in time.".to_string())
+        Err(AppError::supervisor(
+            "Project Commander supervisor did not become ready in time.",
+        ))
     }
 
     fn invalidate_runtime(&self) {
@@ -740,7 +768,7 @@ impl SupervisorClient {
         let _ = fs::remove_file(&self.inner.runtime_file);
     }
 
-    fn cache_runtime(&self, runtime: SupervisorRuntimeInfo) -> Result<(), String> {
+    fn cache_runtime(&self, runtime: SupervisorRuntimeInfo) -> AppResult<()> {
         let mut runtime_info = self
             .inner
             .runtime_info

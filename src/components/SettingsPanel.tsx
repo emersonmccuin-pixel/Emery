@@ -1,38 +1,33 @@
 import type { FormEvent } from 'react'
 import { Badge } from '@/components/ui/badge'
+import { useAppStore, useSelectedProject } from '../store'
 
-type SettingsPanelProps = {
-  state: any
-  actions: any
-}
+function SettingsPanel() {
+  const selectedProject = useSelectedProject()
 
-function SettingsPanel({ state, actions }: SettingsPanelProps) {
-  const {
-    storageInfo,
-    appSettings,
-    selectedProject,
-    selectedLaunchProfileId,
-    launchProfiles,
-    settingsError,
-    settingsMessage,
-    defaultLaunchProfileSettingId,
-    autoRepairSafeCleanupOnStartup,
-    editProjectName,
-    editProjectRootPath,
-    projectUpdateError,
-    isProjectEditorOpen,
-    profileLabel,
-    profileExecutable,
-    profileArgs,
-    profileEnvJson,
-    profileError,
-    isProfileFormOpen,
-    editingLaunchProfileId,
-    isSavingAppSettings,
-    isUpdatingProject,
-    isCreatingProfile,
-    activeDeleteLaunchProfileId,
-  } = state
+  const storageInfo = useAppStore((s) => s.storageInfo)
+  const appSettings = useAppStore((s) => s.appSettings)
+  const selectedLaunchProfileId = useAppStore((s) => s.selectedLaunchProfileId)
+  const launchProfiles = useAppStore((s) => s.launchProfiles)
+  const settingsError = useAppStore((s) => s.settingsError)
+  const settingsMessage = useAppStore((s) => s.settingsMessage)
+  const defaultLaunchProfileSettingId = useAppStore((s) => s.defaultLaunchProfileSettingId)
+  const autoRepairSafeCleanupOnStartup = useAppStore((s) => s.autoRepairSafeCleanupOnStartup)
+  const editProjectName = useAppStore((s) => s.editProjectName)
+  const editProjectRootPath = useAppStore((s) => s.editProjectRootPath)
+  const projectUpdateError = useAppStore((s) => s.projectUpdateError)
+  const isProjectEditorOpen = useAppStore((s) => s.isProjectEditorOpen)
+  const profileLabel = useAppStore((s) => s.profileLabel)
+  const profileExecutable = useAppStore((s) => s.profileExecutable)
+  const profileArgs = useAppStore((s) => s.profileArgs)
+  const profileEnvJson = useAppStore((s) => s.profileEnvJson)
+  const profileError = useAppStore((s) => s.profileError)
+  const isProfileFormOpen = useAppStore((s) => s.isProfileFormOpen)
+  const editingLaunchProfileId = useAppStore((s) => s.editingLaunchProfileId)
+  const isSavingAppSettings = useAppStore((s) => s.isSavingAppSettings)
+  const isUpdatingProject = useAppStore((s) => s.isUpdatingProject)
+  const isCreatingProfile = useAppStore((s) => s.isCreatingProfile)
+  const activeDeleteLaunchProfileId = useAppStore((s) => s.activeDeleteLaunchProfileId)
 
   const {
     setSelectedLaunchProfileId,
@@ -45,6 +40,7 @@ function SettingsPanel({ state, actions }: SettingsPanelProps) {
     setProfileExecutable,
     setProfileArgs,
     setProfileEnvJson,
+    setProjectUpdateError,
     browseForProjectFolder,
     submitProjectUpdate,
     submitAppSettings,
@@ -53,7 +49,7 @@ function SettingsPanel({ state, actions }: SettingsPanelProps) {
     startEditLaunchProfile,
     cancelLaunchProfileEditor,
     deleteLaunchProfile,
-  } = actions
+  } = useAppStore.getState()
 
   if (!selectedProject) {
     return null
@@ -105,7 +101,7 @@ function SettingsPanel({ state, actions }: SettingsPanelProps) {
                 }
               >
                 <option value="">Use first available profile</option>
-                {launchProfiles.map((profile: any) => (
+                {launchProfiles.map((profile) => (
                   <option key={profile.id} value={profile.id}>
                     {profile.label}
                   </option>
@@ -155,7 +151,7 @@ function SettingsPanel({ state, actions }: SettingsPanelProps) {
               className="button button--secondary button--compact"
               type="button"
               onClick={() =>
-                setIsProjectEditorOpen((current: boolean) => !current)
+                setIsProjectEditorOpen(!isProjectEditorOpen)
               }
             >
               {isProjectEditorOpen
@@ -206,7 +202,7 @@ function SettingsPanel({ state, actions }: SettingsPanelProps) {
                       onClick={() =>
                         browseForProjectFolder(
                           setEditProjectRootPath,
-                          actions.setProjectUpdateError,
+                          setProjectUpdateError,
                         )
                       }
                     >
@@ -265,7 +261,7 @@ function SettingsPanel({ state, actions }: SettingsPanelProps) {
                 No launch profiles yet.
               </div>
             ) : (
-              launchProfiles.map((profile: any) => (
+              launchProfiles.map((profile) => (
                 <article
                   key={profile.id}
                   className="settings-profile-card"

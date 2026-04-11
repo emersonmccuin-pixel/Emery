@@ -152,7 +152,7 @@ function DocumentsPanel({
         <Button
           variant="outline"
           size="sm"
-          className="h-6 text-[9px] uppercase tracking-wider"
+          className="h-6 text-[9px] uppercase tracking-wider border-hud-green/40 hover:border-hud-green/70"
           onClick={() => setIsCreateOpen(!isCreateOpen)}
         >
           {isCreateOpen ? 'CLOSE' : 'ADD DOCUMENT'}
@@ -194,7 +194,7 @@ function DocumentsPanel({
                       <option value="">Project-level context</option>
                       {workItems.map((item) => (
                         <option key={item.id} value={item.id}>
-                          #{item.id} {item.title}
+                          {item.callSign} {item.title}
                         </option>
                       ))}
                     </select>
@@ -203,7 +203,7 @@ function DocumentsPanel({
                   <label className="field">
                     <span className="text-[9px] uppercase text-muted-foreground">Content</span>
                     <textarea
-                      className="w-full bg-background border border-border rounded p-3 font-mono text-xs leading-relaxed focus:ring-1 focus:ring-primary/30 outline-none min-h-[150px]"
+                      className="w-full bg-background border border-hud-cyan/25 rounded p-3 font-mono text-xs leading-relaxed focus:ring-1 focus:ring-hud-cyan/40 outline-none min-h-[150px]"
                       value={createBody}
                       onChange={(event) => setCreateBody(event.target.value)}
                       placeholder="Architecture notes, reference material, etc..."
@@ -217,7 +217,7 @@ function DocumentsPanel({
                   </Button>
                   <Button
                     variant="outline"
-                    className="h-8 text-[10px] font-bold uppercase tracking-widest"
+                    className="h-8 text-[10px] font-bold uppercase tracking-widest border-hud-cyan/30 hover:border-hud-cyan/60"
                     type="button"
                     onClick={() => setIsCreateOpen(false)}
                   >
@@ -230,7 +230,7 @@ function DocumentsPanel({
         ) : (
           <div className="flex h-full">
             {/* List Pane */}
-            <div className="w-1/3 border-r border-border bg-black/10">
+            <div className="w-1/3 border-r border-hud-cyan/20 bg-black/30">
               <ScrollArea className="h-full">
                 <div className="p-1.5 space-y-0.5">
                   {documents.length === 0 ? (
@@ -254,9 +254,12 @@ function DocumentsPanel({
                             {doc.title}
                           </span>
                         </div>
-                        <div className="flex items-center justify-between text-[8px] opacity-60">
+                        <div className="flex items-center justify-between text-[8px] opacity-80">
                           <span className="uppercase tracking-wider">
-                            {doc.workItemId ? `#${doc.workItemId}` : 'PROJECT'}
+                            {doc.workItemId
+                              ? workItems.find((item) => item.id === doc.workItemId)?.callSign ??
+                                `#${doc.workItemId}`
+                              : 'PROJECT'}
                           </span>
                         </div>
                       </button>
@@ -267,7 +270,7 @@ function DocumentsPanel({
             </div>
 
             {/* Detail Pane */}
-            <div className="flex-1 bg-black/5">
+            <div className="flex-1 bg-hud-cyan/10">
               {selectedDocument ? (
                 <ScrollArea className="h-full">
                   <div className="p-4">
@@ -298,7 +301,7 @@ function DocumentsPanel({
                             <option value="">Project-level context</option>
                             {workItems.map((item) => (
                               <option key={item.id} value={item.id}>
-                                #{item.id} {item.title}
+                                {item.callSign} {item.title}
                               </option>
                             ))}
                           </select>
@@ -306,7 +309,7 @@ function DocumentsPanel({
 
                         <div className="flex flex-col">
                           <span className="text-[9px] uppercase text-muted-foreground mb-1">Last Updated</span>
-                          <span className="text-[10px] opacity-60 font-mono py-1">{selectedDocument.updatedAt}</span>
+                          <span className="text-[10px] opacity-80 font-mono py-1">{selectedDocument.updatedAt}</span>
                         </div>
                       </div>
 
@@ -314,7 +317,7 @@ function DocumentsPanel({
                         <span className="text-[9px] uppercase text-muted-foreground">Content</span>
                         <textarea 
                           rows={12} 
-                          className="w-full bg-black/20 border border-border/50 rounded p-3 font-mono text-xs leading-relaxed focus:ring-1 focus:ring-primary/20 outline-none min-h-[250px]"
+                          className="w-full bg-black/50 border border-hud-green/20 rounded p-3 font-mono text-xs leading-relaxed focus:ring-1 focus:ring-hud-cyan/30 outline-none min-h-[250px]"
                           value={editBody} 
                           onChange={(event) => setEditBody(event.target.value)} 
                         />
@@ -333,7 +336,7 @@ function DocumentsPanel({
                           DELETE DOCUMENT
                         </Button>
                         
-                        <Button variant="outline" size="sm" className="h-7 text-[9px] font-bold uppercase tracking-widest px-6" disabled={isSaving} type="submit">
+                        <Button variant="outline" size="sm" className="h-7 text-[9px] font-bold uppercase tracking-widest px-6 border-hud-green/40 hover:border-hud-green/70" disabled={isSaving} type="submit">
                           {isSaving ? 'SAVING...' : 'SAVE CHANGES'}
                         </Button>
                       </div>

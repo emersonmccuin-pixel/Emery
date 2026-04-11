@@ -1,4 +1,5 @@
 pub mod db;
+pub mod error;
 pub mod session;
 pub mod session_api;
 pub mod session_host;
@@ -10,6 +11,7 @@ use db::{
     LaunchProfileRecord, ProjectRecord, SessionRecord, StorageInfo, UpdateAppSettingsInput,
     UpdateLaunchProfileInput, UpdateProjectInput, WorkItemRecord, WorktreeRecord,
 };
+use error::AppResult;
 use session::SupervisorClient;
 use session_api::{
     LaunchSessionInput, ProjectSessionTarget, ResizeSessionInput, SessionInput, SessionSnapshot,
@@ -18,12 +20,13 @@ use std::fs;
 use supervisor_api::{
     CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget, CleanupRepairOutput,
     CreateProjectDocumentInput, CreateProjectWorkItemInput, EnsureProjectWorktreeInput,
-    ProjectDocumentTarget, ProjectWorkItemTarget, UpdateProjectDocumentInput,
-    UpdateProjectWorkItemInput,
+    LaunchProjectWorktreeAgentInput, ProjectDocumentTarget, ProjectWorkItemTarget,
+    ProjectWorktreeTarget, SessionHistoryOutput, UpdateProjectDocumentInput,
+    UpdateProjectWorkItemInput, WorktreeLaunchOutput,
 };
 use tauri::{AppHandle, Manager, State};
 
-fn ensure_storage_dirs(app: &AppHandle) -> Result<StorageInfo, String> {
+fn ensure_storage_dirs(app: &AppHandle) -> AppResult<StorageInfo> {
     let app_data_dir = app
         .path()
         .app_data_dir()
@@ -53,7 +56,7 @@ fn get_storage_info(state: State<SupervisorClient>) -> StorageInfo {
 }
 
 #[tauri::command]
-fn bootstrap_app_state(state: State<SupervisorClient>) -> Result<BootstrapData, String> {
+fn bootstrap_app_state(state: State<SupervisorClient>) -> AppResult<BootstrapData> {
     state.bootstrap()
 }
 
@@ -61,7 +64,7 @@ fn bootstrap_app_state(state: State<SupervisorClient>) -> Result<BootstrapData, 
 fn update_app_settings(
     input: UpdateAppSettingsInput,
     state: State<SupervisorClient>,
-) -> Result<AppSettings, String> {
+) -> AppResult<AppSettings> {
     state.update_app_settings(input)
 }
 
@@ -69,7 +72,7 @@ fn update_app_settings(
 fn create_project(
     input: CreateProjectInput,
     state: State<SupervisorClient>,
-) -> Result<ProjectRecord, String> {
+) -> AppResult<ProjectRecord> {
     state.create_project(input)
 }
 
@@ -77,7 +80,7 @@ fn create_project(
 fn update_project(
     input: UpdateProjectInput,
     state: State<SupervisorClient>,
-) -> Result<ProjectRecord, String> {
+) -> AppResult<ProjectRecord> {
     state.update_project(input)
 }
 
@@ -85,7 +88,7 @@ fn update_project(
 fn create_launch_profile(
     input: CreateLaunchProfileInput,
     state: State<SupervisorClient>,
-) -> Result<LaunchProfileRecord, String> {
+) -> AppResult<LaunchProfileRecord> {
     state.create_launch_profile(input)
 }
 
@@ -93,12 +96,12 @@ fn create_launch_profile(
 fn update_launch_profile(
     input: UpdateLaunchProfileInput,
     state: State<SupervisorClient>,
-) -> Result<LaunchProfileRecord, String> {
+) -> AppResult<LaunchProfileRecord> {
     state.update_launch_profile(input)
 }
 
 #[tauri::command]
-fn delete_launch_profile(id: i64, state: State<SupervisorClient>) -> Result<(), String> {
+fn delete_launch_profile(id: i64, state: State<SupervisorClient>) -> AppResult<()> {
     state.delete_launch_profile(id)
 }
 
@@ -108,7 +111,7 @@ fn get_session_snapshot(
     worktree_id: Option<i64>,
     state: State<SupervisorClient>,
     app_handle: AppHandle,
-) -> Result<Option<SessionSnapshot>, String> {
+) -> AppResult<Option<SessionSnapshot>> {
     state.snapshot(
         ProjectSessionTarget {
             project_id,
@@ -123,22 +126,22 @@ fn launch_project_session(
     input: LaunchSessionInput,
     session_state: State<SupervisorClient>,
     app_handle: AppHandle,
-) -> Result<SessionSnapshot, String> {
+) -> AppResult<SessionSnapshot> {
     session_state.launch(input, &app_handle)
 }
 
 #[tauri::command]
-fn write_session_input(input: SessionInput, state: State<SupervisorClient>) -> Result<(), String> {
+fn write_session_input(input: SessionInput, state: State<SupervisorClient>) -> AppResult<()> {
     state.write_input(input)
 }
 
 #[tauri::command]
-fn resize_session(input: ResizeSessionInput, state: State<SupervisorClient>) -> Result<(), String> {
+fn resize_session(input: ResizeSessionInput, state: State<SupervisorClient>) -> AppResult<()> {
     state.resize(input)
 }
 
 #[tauri::command]
-fn terminate_session(project_id: i64, state: State<SupervisorClient>) -> Result<(), String> {
+fn terminate_session(project_id: i64, state: State<SupervisorClient>) -> AppResult<()> {
     state.terminate(project_id)
 }
 
@@ -147,7 +150,7 @@ fn terminate_session_target(
     project_id: i64,
     worktree_id: Option<i64>,
     state: State<SupervisorClient>,
-) -> Result<(), String> {
+) -> AppResult<()> {
     state.terminate_target(ProjectSessionTarget {
         project_id,
         worktree_id,
@@ -158,7 +161,7 @@ fn terminate_session_target(
 fn list_live_sessions(
     project_id: i64,
     state: State<SupervisorClient>,
-) -> Result<Vec<SessionSnapshot>, String> {
+) -> AppResult<Vec<SessionSnapshot>> {
     state.list_live_sessions(project_id)
 }
 
@@ -166,7 +169,7 @@ fn list_live_sessions(
 fn list_work_items(
     project_id: i64,
     state: State<SupervisorClient>,
-) -> Result<Vec<WorkItemRecord>, String> {
+) -> AppResult<Vec<WorkItemRecord>> {
     state.list_work_items(project_id)
 }
 
@@ -174,7 +177,7 @@ fn list_work_items(
 fn create_work_item(
     input: CreateProjectWorkItemInput,
     state: State<SupervisorClient>,
-) -> Result<WorkItemRecord, String> {
+) -> AppResult<WorkItemRecord> {
     state.create_work_item(input)
 }
 
@@ -182,7 +185,7 @@ fn create_work_item(
 fn update_work_item(
     input: UpdateProjectWorkItemInput,
     state: State<SupervisorClient>,
-) -> Result<WorkItemRecord, String> {
+) -> AppResult<WorkItemRecord> {
     state.update_work_item(input)
 }
 
@@ -190,7 +193,7 @@ fn update_work_item(
 fn delete_work_item(
     input: ProjectWorkItemTarget,
     state: State<SupervisorClient>,
-) -> Result<(), String> {
+) -> AppResult<()> {
     state.delete_work_item(input.project_id, input.id)
 }
 
@@ -198,7 +201,7 @@ fn delete_work_item(
 fn list_documents(
     project_id: i64,
     state: State<SupervisorClient>,
-) -> Result<Vec<DocumentRecord>, String> {
+) -> AppResult<Vec<DocumentRecord>> {
     state.list_documents(project_id)
 }
 
@@ -206,7 +209,7 @@ fn list_documents(
 fn create_document(
     input: CreateProjectDocumentInput,
     state: State<SupervisorClient>,
-) -> Result<DocumentRecord, String> {
+) -> AppResult<DocumentRecord> {
     state.create_document(input)
 }
 
@@ -214,7 +217,7 @@ fn create_document(
 fn update_document(
     input: UpdateProjectDocumentInput,
     state: State<SupervisorClient>,
-) -> Result<DocumentRecord, String> {
+) -> AppResult<DocumentRecord> {
     state.update_document(input)
 }
 
@@ -222,7 +225,7 @@ fn update_document(
 fn delete_document(
     input: ProjectDocumentTarget,
     state: State<SupervisorClient>,
-) -> Result<(), String> {
+) -> AppResult<()> {
     state.delete_document(input.project_id, input.id)
 }
 
@@ -230,7 +233,7 @@ fn delete_document(
 fn list_worktrees(
     project_id: i64,
     state: State<SupervisorClient>,
-) -> Result<Vec<WorktreeRecord>, String> {
+) -> AppResult<Vec<WorktreeRecord>> {
     state.list_worktrees(project_id)
 }
 
@@ -238,15 +241,52 @@ fn list_worktrees(
 fn ensure_worktree(
     input: EnsureProjectWorktreeInput,
     state: State<SupervisorClient>,
-) -> Result<WorktreeRecord, String> {
+) -> AppResult<WorktreeRecord> {
     state.ensure_worktree(input.project_id, input.work_item_id)
+}
+
+#[tauri::command]
+fn launch_worktree_agent(
+    input: LaunchProjectWorktreeAgentInput,
+    state: State<SupervisorClient>,
+    app_handle: tauri::AppHandle,
+) -> AppResult<WorktreeLaunchOutput> {
+    state.launch_worktree_agent(input, &app_handle)
+}
+
+#[tauri::command]
+fn remove_worktree(
+    input: ProjectWorktreeTarget,
+    state: State<SupervisorClient>,
+) -> AppResult<WorktreeRecord> {
+    state.remove_worktree(input.project_id, input.worktree_id)
+}
+
+#[tauri::command]
+fn recreate_worktree(
+    input: ProjectWorktreeTarget,
+    state: State<SupervisorClient>,
+) -> AppResult<WorktreeRecord> {
+    state.recreate_worktree(input.project_id, input.worktree_id)
+}
+
+#[tauri::command]
+fn get_session_history(
+    project_id: i64,
+    event_limit: Option<usize>,
+    state: State<SupervisorClient>,
+) -> AppResult<SessionHistoryOutput> {
+    Ok(SessionHistoryOutput {
+        sessions: state.list_session_records(project_id)?,
+        events: state.list_session_events(project_id, event_limit.unwrap_or(120))?,
+    })
 }
 
 #[tauri::command]
 fn list_orphaned_sessions(
     project_id: i64,
     state: State<SupervisorClient>,
-) -> Result<Vec<SessionRecord>, String> {
+) -> AppResult<Vec<SessionRecord>> {
     state.list_orphaned_sessions(project_id)
 }
 
@@ -255,14 +295,14 @@ fn terminate_orphaned_session(
     project_id: i64,
     session_id: i64,
     state: State<SupervisorClient>,
-) -> Result<SessionRecord, String> {
+) -> AppResult<SessionRecord> {
     state.terminate_orphaned_session(project_id, session_id)
 }
 
 #[tauri::command]
 fn list_cleanup_candidates(
     state: State<SupervisorClient>,
-) -> Result<Vec<CleanupCandidate>, String> {
+) -> AppResult<Vec<CleanupCandidate>> {
     state.list_cleanup_candidates()
 }
 
@@ -270,14 +310,14 @@ fn list_cleanup_candidates(
 fn remove_cleanup_candidate(
     input: CleanupCandidateTarget,
     state: State<SupervisorClient>,
-) -> Result<CleanupActionOutput, String> {
+) -> AppResult<CleanupActionOutput> {
     state.remove_cleanup_candidate(input)
 }
 
 #[tauri::command]
 fn repair_cleanup_candidates(
     state: State<SupervisorClient>,
-) -> Result<CleanupRepairOutput, String> {
+) -> AppResult<CleanupRepairOutput> {
     state.repair_cleanup_candidates()
 }
 
@@ -312,6 +352,10 @@ pub fn run() {
             delete_document,
             list_worktrees,
             ensure_worktree,
+            launch_worktree_agent,
+            remove_worktree,
+            recreate_worktree,
+            get_session_history,
             list_orphaned_sessions,
             terminate_orphaned_session,
             list_cleanup_candidates,

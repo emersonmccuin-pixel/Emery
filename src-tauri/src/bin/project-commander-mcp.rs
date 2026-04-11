@@ -2,6 +2,7 @@ use project_commander_lib::db::{
     AppState, CreateDocumentInput, CreateWorkItemInput, DocumentRecord, ProjectRecord,
     UpdateDocumentInput, UpdateWorkItemInput, WorkItemRecord,
 };
+use project_commander_lib::error::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::env;
@@ -19,10 +20,11 @@ fn main() {
     }
 }
 
-fn run() -> Result<(), String> {
+fn run() -> AppResult<()> {
     let db_path = env::var_os("PROJECT_COMMANDER_DB_PATH").ok_or_else(|| {
-        "PROJECT_COMMANDER_DB_PATH is required to start the Project Commander MCP server."
-            .to_string()
+        AppError::invalid_input(
+            "PROJECT_COMMANDER_DB_PATH is required to start the Project Commander MCP server.",
+        )
     })?;
     let state = AppState::from_database_path(PathBuf::from(db_path))?;
 
@@ -44,7 +46,7 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-fn handle_message(state: &AppState, message: Value) -> Result<Option<Value>, String> {
+fn handle_message(state: &AppState, message: Value) -> AppResult<Option<Value>> {
     let Some(method) = message.get("method").and_then(Value::as_str) else {
         return Ok(None);
     };
@@ -89,7 +91,7 @@ fn handle_message(state: &AppState, message: Value) -> Result<Option<Value>, Str
             }
         }))),
         "tools/call" => {
-            let response_id = id.ok_or_else(|| "tools/call request missing id".to_string())?;
+            let response_id = id.ok_or_else(|| AppError::invalid_input("tools/call request missing id"))?;
             let result = handle_tool_call(state, params);
 
             match result {
@@ -160,6 +162,18 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
                 work_items.retain(|item| item.status == status);
             }
 
+            if let Some(item_type) = args.item_type {
+                work_items.retain(|item| item.item_type == item_type);
+            }
+
+            if args.open_only.unwrap_or(false) {
+                work_items.retain(|item| item.status != "done");
+            }
+
+            if args.parent_only.unwrap_or(false) {
+                work_items.retain(|item| item.parent_work_item_id.is_none());
+            }
+
             Ok(serde_json::to_value(work_items).expect("work items should serialize"))
         }),
         "get_work_item" => execute_tool(|| {
@@ -184,6 +198,7 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
             let project = resolve_project(state)?;
             let work_item = state.create_work_item(CreateWorkItemInput {
                 project_id: project.id,
+                parent_work_item_id: args.parent_work_item_id,
                 title: args.title,
                 body: args.body.unwrap_or_default(),
                 item_type: args.item_type.unwrap_or_else(|| "task".to_string()),
@@ -203,7 +218,7 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
                 && args.item_type.is_none()
                 && args.status.is_none()
             {
-                return Err("no changes provided for work item update".to_string());
+                return Err(AppError::invalid_input("no changes provided for work item update"));
             }
 
             let work_item = state.update_work_item(UpdateWorkItemInput {
@@ -262,10 +277,10 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
                 .into_iter()
                 .find(|document| document.id == args.id)
                 .ok_or_else(|| {
-                    format!(
+                    AppError::invalid_input(format!(
                         "document #{} does not belong to the active project",
                         args.id
-                    )
+                    ))
                 })?;
 
             if args.title.is_none()
@@ -273,7 +288,7 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
                 && args.work_item_id.is_none()
                 && !args.clear_work_item
             {
-                return Err("no changes provided for document update".to_string());
+                return Err(AppError::invalid_input("no changes provided for document update"));
             }
 
             let work_item_id = if args.clear_work_item {
@@ -299,10 +314,10 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
                 .into_iter()
                 .find(|document| document.id == args.id)
                 .ok_or_else(|| {
-                    format!(
+                    AppError::invalid_input(format!(
                         "document #{} does not belong to the active project",
                         args.id
-                    )
+                    ))
                 })?;
 
             state.delete_document(existing.id)?;
@@ -321,7 +336,7 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
 
 fn execute_tool<F>(action: F) -> Result<Value, McpError>
 where
-    F: FnOnce() -> Result<Value, String>,
+    F: FnOnce() -> AppResult<Value>,
 {
     match action() {
         Ok(value) => Ok(json!({
@@ -335,11 +350,11 @@ where
             "structuredContent": value,
             "isError": false
         })),
-        Err(message) => Ok(json!({
+        Err(error) => Ok(json!({
             "content": [
                 {
                     "type": "text",
-                    "text": message
+                    "text": error.message
                 }
             ],
             "isError": true
@@ -577,14 +592,15 @@ fn json_schema_object(properties: Value, required: Vec<&str>) -> Value {
     })
 }
 
-fn decode_args<T>(arguments: Value) -> Result<T, String>
+fn decode_args<T>(arguments: Value) -> AppResult<T>
 where
     T: for<'de> Deserialize<'de>,
 {
-    serde_json::from_value(arguments).map_err(|error| format!("invalid tool arguments: {error}"))
+    serde_json::from_value(arguments)
+        .map_err(|error| AppError::invalid_input(format!("invalid tool arguments: {error}")))
 }
 
-fn resolve_project(state: &AppState) -> Result<ProjectRecord, String> {
+fn resolve_project(state: &AppState) -> AppResult<ProjectRecord> {
     if let Ok(project_id) = env::var("PROJECT_COMMANDER_PROJECT_ID") {
         if let Ok(parsed_project_id) = project_id.parse::<i64>() {
             return state.get_project(parsed_project_id);
@@ -603,31 +619,30 @@ fn resolve_project(state: &AppState) -> Result<ProjectRecord, String> {
         }
     }
 
-    Err(
-        "no active project found. Launch the session from Project Commander before using the MCP server."
-            .to_string(),
-    )
+    Err(AppError::not_found(
+        "no active project found. Launch the session from Project Commander before using the MCP server.",
+    ))
 }
 
-fn ensure_work_item_project(item: &WorkItemRecord, project: &ProjectRecord) -> Result<(), String> {
+fn ensure_work_item_project(item: &WorkItemRecord, project: &ProjectRecord) -> AppResult<()> {
     if item.project_id != project.id {
-        return Err(format!(
+        return Err(AppError::invalid_input(format!(
             "work item #{} belongs to project #{} instead of the active project #{}",
             item.id, item.project_id, project.id
-        ));
+        )));
     }
 
     Ok(())
 }
 
-fn read_message(reader: &mut impl BufRead) -> Result<Option<Value>, String> {
+fn read_message(reader: &mut impl BufRead) -> AppResult<Option<Value>> {
     let mut content_length = None;
 
     loop {
         let mut line = String::new();
         let bytes_read = reader
             .read_line(&mut line)
-            .map_err(|error| format!("failed to read MCP header: {error}"))?;
+            .map_err(|error| AppError::io(format!("failed to read MCP header: {error}")))?;
 
         if bytes_read == 0 {
             return Ok(None);
@@ -644,33 +659,33 @@ fn read_message(reader: &mut impl BufRead) -> Result<Option<Value>, String> {
                 value
                     .trim()
                     .parse::<usize>()
-                    .map_err(|error| format!("invalid Content-Length header: {error}"))?,
+                    .map_err(|error| AppError::io(format!("invalid Content-Length header: {error}")))?,
             );
         }
     }
 
     let content_length =
-        content_length.ok_or_else(|| "missing Content-Length header".to_string())?;
+        content_length.ok_or_else(|| AppError::io("missing Content-Length header"))?;
     let mut payload = vec![0_u8; content_length];
     reader
         .read_exact(&mut payload)
-        .map_err(|error| format!("failed to read MCP payload: {error}"))?;
+        .map_err(|error| AppError::io(format!("failed to read MCP payload: {error}")))?;
 
     serde_json::from_slice(&payload)
         .map(Some)
-        .map_err(|error| format!("failed to decode MCP JSON payload: {error}"))
+        .map_err(|error| AppError::internal(format!("failed to decode MCP JSON payload: {error}")))
 }
 
-fn write_message(writer: &mut impl Write, message: &Value) -> Result<(), String> {
+fn write_message(writer: &mut impl Write, message: &Value) -> AppResult<()> {
     let payload = serde_json::to_vec(message)
-        .map_err(|error| format!("failed to encode MCP response: {error}"))?;
+        .map_err(|error| AppError::internal(format!("failed to encode MCP response: {error}")))?;
     let header = format!("Content-Length: {}\r\n\r\n", payload.len());
 
     writer
         .write_all(header.as_bytes())
         .and_then(|_| writer.write_all(&payload))
         .and_then(|_| writer.flush())
-        .map_err(|error| format!("failed to write MCP response: {error}"))
+        .map_err(|error| AppError::io(format!("failed to write MCP response: {error}")))
 }
 
 #[derive(Debug)]
@@ -714,6 +729,9 @@ struct WorkItemDetailOutput {
 #[serde(rename_all = "camelCase")]
 struct ListWorkItemsArgs {
     status: Option<String>,
+    item_type: Option<String>,
+    parent_only: Option<bool>,
+    open_only: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -728,6 +746,7 @@ struct CreateWorkItemArgs {
     body: Option<String>,
     item_type: Option<String>,
     status: Option<String>,
+    parent_work_item_id: Option<i64>,
 }
 
 #[derive(Deserialize)]

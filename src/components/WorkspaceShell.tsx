@@ -16,81 +16,98 @@ import {
   getSessionTargetLabel,
   isRecoverableSession,
 } from '../sessionHistory'
+import {
+  useAppStore,
+  useSelectedProject,
+  useSelectedLaunchProfile,
+  useSelectedWorktree,
+  useVisibleWorktrees,
+  useBridgeReady,
+  useCurrentTerminalPrompt,
+  useCurrentTerminalPromptLabel,
+  useHasFocusedPrompt,
+  useLiveSessions,
+  useWorktreeSessions,
+  useOpenWorkItemCount,
+  useBlockedWorkItemCount,
+  useRecentDocuments,
+  useInterruptedSessionRecords,
+  useCleanupCategories,
+  useRecoveryActionCount,
+  useRecoverableSessionCount,
+  useSelectedTargetHistoryRecord,
+  useHasSelectedProjectLiveSession,
+  useLaunchBlockedByMissingRoot,
+  useSelectedProjectLaunchLabel,
+  PROJECT_COMMANDER_TOOLS,
+} from '../store'
 
-type WorkspaceShellProps = {
-  state: any
-  actions: any
-}
+function WorkspaceShell() {
+  const selectedProject = useSelectedProject()
+  const selectedLaunchProfile = useSelectedLaunchProfile()
+  const selectedWorktree = useSelectedWorktree()
+  const worktrees = useVisibleWorktrees()
+  const bridgeReady = useBridgeReady()
+  const currentTerminalPrompt = useCurrentTerminalPrompt()
+  const currentTerminalPromptLabel = useCurrentTerminalPromptLabel()
+  const hasFocusedPrompt = useHasFocusedPrompt()
+  const liveSessions = useLiveSessions()
+  const worktreeSessions = useWorktreeSessions()
+  const openWorkItemCount = useOpenWorkItemCount()
+  const blockedWorkItemCount = useBlockedWorkItemCount()
+  const recentDocuments = useRecentDocuments()
+  const interruptedSessionRecords = useInterruptedSessionRecords()
+  const { runtimeCleanupCandidates, staleWorktreeCleanupCandidates, staleWorktreeRecordCandidates } =
+    useCleanupCategories()
+  const recoveryActionCount = useRecoveryActionCount()
+  const recoverableSessionCount = useRecoverableSessionCount()
+  const selectedTargetHistoryRecord = useSelectedTargetHistoryRecord()
+  const hasSelectedProjectLiveSession = useHasSelectedProjectLiveSession()
+  const launchBlockedByMissingRoot = useLaunchBlockedByMissingRoot()
+  const selectedProjectLaunchLabel = useSelectedProjectLaunchLabel()
 
-function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
-  const {
-    projects,
-    selectedProject,
-    selectedProjectId,
-    selectedWorktree,
-    selectedTerminalWorktreeId,
-    selectedLaunchProfile,
-    selectedLaunchProfileId,
-    sessionSnapshot,
-    sessionRecords,
-    sessionEvents,
-    selectedHistorySessionId,
-    sessionError,
-    historyError,
-    workItems,
-    workItemError,
-    documents,
-    documentError,
-    agentPromptMessage,
-    currentTerminalPrompt,
-    currentTerminalPromptLabel,
-    hasFocusedPrompt,
-    bridgeReady,
-    openWorkItemCount,
-    blockedWorkItemCount,
-    recentDocuments,
-    liveSessions,
-    worktreeSessions,
-    orphanedSessions,
-    runtimeCleanupCandidates,
-    staleWorktreeCleanupCandidates,
-    staleWorktreeRecordCandidates,
-    interruptedSessionRecords,
-    recoveryActionCount,
-    recoverableSessionCount,
-    activeOrphanSessionId,
-    activeCleanupPath,
-    activeWorktreeActionId,
-    activeWorktreeActionKind,
-    isRepairingCleanup,
-    hasSelectedProjectLiveSession,
-    isLoadingHistory,
-    selectedTargetHistoryRecord,
-    launchBlockedByMissingRoot,
-    selectedProjectLaunchLabel,
-    selectedTerminalLaunchLabel: _selectedTerminalLaunchLabel,
-    worktrees,
-    projectName,
-    projectRootPath,
-    projectError,
-    worktreeError,
-    worktreeMessage,
-    isProjectCreateOpen,
-    isDocumentsManagerOpen,
-    isAgentGuideOpen,
-    activeView,
-    isProjectRailCollapsed,
-    isSessionRailCollapsed,
-    isCreatingProject,
-    isLaunchingSession,
-    isStoppingSession,
-    isLoadingWorkItems,
-    isLoadingDocuments,
-    startingWorkItemId,
-    launchProfiles,
-    projectCommanderTools,
-  } = state
+  const projects = useAppStore((s) => s.projects)
+  const selectedProjectId = useAppStore((s) => s.selectedProjectId)
+  const selectedTerminalWorktreeId = useAppStore((s) => s.selectedTerminalWorktreeId)
+  const selectedLaunchProfileId = useAppStore((s) => s.selectedLaunchProfileId)
+  const sessionSnapshot = useAppStore((s) => s.sessionSnapshot)
+  const sessionRecords = useAppStore((s) => s.sessionRecords)
+  const sessionEvents = useAppStore((s) => s.sessionEvents)
+  const selectedHistorySessionId = useAppStore((s) => s.selectedHistorySessionId)
+  const sessionError = useAppStore((s) => s.sessionError)
+  const historyError = useAppStore((s) => s.historyError)
+  const workItems = useAppStore((s) => s.workItems)
+  const workItemError = useAppStore((s) => s.workItemError)
+  const documents = useAppStore((s) => s.documents)
+  const documentError = useAppStore((s) => s.documentError)
+  const agentPromptMessage = useAppStore((s) => s.agentPromptMessage)
+  const orphanedSessions = useAppStore((s) => s.orphanedSessions)
+  const activeOrphanSessionId = useAppStore((s) => s.activeOrphanSessionId)
+  const activeCleanupPath = useAppStore((s) => s.activeCleanupPath)
+  const activeWorktreeActionId = useAppStore((s) => s.activeWorktreeActionId)
+  const activeWorktreeActionKind = useAppStore((s) => s.activeWorktreeActionKind)
+  const isRepairingCleanup = useAppStore((s) => s.isRepairingCleanup)
+  const isLoadingHistory = useAppStore((s) => s.isLoadingHistory)
+  const worktreeError = useAppStore((s) => s.worktreeError)
+  const worktreeMessage = useAppStore((s) => s.worktreeMessage)
+  const projectName = useAppStore((s) => s.projectName)
+  const projectRootPath = useAppStore((s) => s.projectRootPath)
+  const projectError = useAppStore((s) => s.projectError)
+  const isProjectCreateOpen = useAppStore((s) => s.isProjectCreateOpen)
+  const isDocumentsManagerOpen = useAppStore((s) => s.isDocumentsManagerOpen)
+  const isAgentGuideOpen = useAppStore((s) => s.isAgentGuideOpen)
+  const activeView = useAppStore((s) => s.activeView)
+  const isProjectRailCollapsed = useAppStore((s) => s.isProjectRailCollapsed)
+  const isSessionRailCollapsed = useAppStore((s) => s.isSessionRailCollapsed)
+  const isCreatingProject = useAppStore((s) => s.isCreatingProject)
+  const isLaunchingSession = useAppStore((s) => s.isLaunchingSession)
+  const isStoppingSession = useAppStore((s) => s.isStoppingSession)
+  const isLoadingWorkItems = useAppStore((s) => s.isLoadingWorkItems)
+  const isLoadingDocuments = useAppStore((s) => s.isLoadingDocuments)
+  const startingWorkItemId = useAppStore((s) => s.startingWorkItemId)
+  const launchProfiles = useAppStore((s) => s.launchProfiles)
 
+  // Actions (stable references — never cause re-renders)
   const {
     setProjectError,
     setSelectedLaunchProfileId,
@@ -132,15 +149,14 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
     createDocument,
     updateDocument,
     deleteDocument,
-  } = actions
+  } = useAppStore.getState()
 
   // Derive dispatcher status from live sessions
   const isDispatcherRunning = liveSessions.some(
-    ({ project, snapshot }: any) =>
-      project.id === selectedProjectId && snapshot.isRunning
+    ({ project, snapshot }) => project.id === selectedProjectId && snapshot.isRunning,
   )
   const worktreeSnapshotById = new Map(
-    worktreeSessions.map(({ worktree, snapshot }: any) => [worktree.id, snapshot ?? null]),
+    worktreeSessions.map(({ worktree, snapshot }) => [worktree.id, snapshot ?? null]),
   )
 
   return (
@@ -202,7 +218,7 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                       No Data.
                     </div>
                   ) : (
-                    projects.map((project: any) => (
+                    projects.map((project) => (
                       <button
                         key={project.id}
                         className={`project-card--minimal w-full text-left truncate flex items-center justify-between group ${
@@ -499,7 +515,7 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                               }
                             >
                               <option value="">CHOOSE PROFILE</option>
-                              {launchProfiles.map((profile: any) => (
+                              {launchProfiles.map((profile) => (
                                 <option key={profile.id} value={profile.id}>
                                   {profile.label.toUpperCase()}
                                 </option>
@@ -512,7 +528,7 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                             size="sm"
                             className="h-7 text-[9px] uppercase tracking-widest font-bold hud-button--cyan shadow-[0_0_10px_rgba(58,240,224,0.25)]"
                             onClick={() =>
-                              setIsAgentGuideOpen((current: boolean) => !current)
+                              setIsAgentGuideOpen(!isAgentGuideOpen)
                             }
                           >
                             {isAgentGuideOpen ? 'CLOSE GUIDE' : 'BOOT GUIDE'}
@@ -613,7 +629,7 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                               />
 
                               <div className="flex flex-wrap gap-2 mt-2 opacity-60">
-                                {projectCommanderTools.map((toolName: string) => (
+                                {PROJECT_COMMANDER_TOOLS.map((toolName: string) => (
                                   <code key={toolName} className="text-[8px] uppercase tracking-widest border border-hud-green/35 px-1.5 py-0.5 rounded">
                                     {toolName}
                                   </code>
@@ -627,7 +643,7 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                             </article>
                           ) : null}
 
-                          {hasSelectedProjectLiveSession ? (
+                          {hasSelectedProjectLiveSession && sessionSnapshot ? (
                             <div className="h-full min-h-[500px] border border-hud-green/10 rounded-lg overflow-hidden bg-black shadow-2xl relative">
                               <Suspense
                                 fallback={
@@ -827,7 +843,7 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                                 }
                               >
                                 <option value="">SELECT PROFILE</option>
-                                {launchProfiles.map((profile: any) => (
+                                {launchProfiles.map((profile) => (
                                   <option key={profile.id} value={profile.id}>
                                     {profile.label.toUpperCase()}
                                   </option>
@@ -900,7 +916,7 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                                 <div className="space-y-3">
                                   <span className="text-[9px] font-black uppercase tracking-[0.3em] text-hud-magenta/60">Interrupted Sessions</span>
                                   <div className="grid grid-cols-1 gap-3">
-                                    {interruptedSessionRecords.slice(0, 4).map((session: any) => (
+                                    {interruptedSessionRecords.slice(0, 4).map((session) => (
                                       <div key={session.id} className="flex flex-wrap items-center justify-between gap-3 p-3 bg-black/60 border border-hud-magenta/40 rounded">
                                         <div className="space-y-1">
                                           <div className="flex flex-wrap items-center gap-2">
@@ -946,7 +962,7 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                                 <div className="space-y-3">
                                   <span className="text-[9px] font-black uppercase tracking-[0.3em] text-hud-magenta/60">Ghost Sessions Detected</span>
                                   <div className="grid grid-cols-1 gap-3">
-                                    {orphanedSessions.map((session: any) => (
+                                    {orphanedSessions.map((session) => (
                                       <div key={session.id} className="flex flex-wrap items-center justify-between gap-3 p-3 bg-black/60 border border-hud-magenta/40 rounded">
                                         <div className="space-y-1">
                                           <div className="flex flex-wrap items-center gap-2">
@@ -990,7 +1006,7 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                                 <div className="space-y-3">
                                   <span className="text-[9px] font-black uppercase tracking-[0.3em] text-hud-magenta/60">Artifact Drift</span>
                                   <div className="grid grid-cols-1 gap-2">
-                                    {[...runtimeCleanupCandidates, ...staleWorktreeCleanupCandidates, ...staleWorktreeRecordCandidates].map((candidate: any) => (
+                                    {[...runtimeCleanupCandidates, ...staleWorktreeCleanupCandidates, ...staleWorktreeRecordCandidates].map((candidate) => (
                                       <div key={`${candidate.kind}:${candidate.path}`} className="flex flex-wrap items-center justify-between gap-3 p-3 bg-black/60 border border-hud-magenta/40 rounded">
                                         <div className="space-y-1">
                                           <span className="text-[11px] font-black tracking-widest text-hud-magenta">
@@ -1038,10 +1054,10 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                               >
                                 {worktrees.length} WORKTREES
                               </Badge>
-                              {worktrees.some((worktree: any) => !worktree.pathAvailable) ? (
+                              {worktrees.some((worktree) => !worktree.pathAvailable) ? (
                                 <Badge variant="destructive" className="text-[9px] h-4">
                                   {
-                                    worktrees.filter((worktree: any) => !worktree.pathAvailable)
+                                    worktrees.filter((worktree) => !worktree.pathAvailable)
                                       .length
                                   }{' '}
                                   MISSING
@@ -1070,8 +1086,8 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                             </div>
                           ) : (
                             <div className="grid grid-cols-1 gap-3">
-                              {worktrees.map((worktree: any) => {
-                                const liveSnapshot: any = worktreeSnapshotById.get(worktree.id)
+                              {worktrees.map((worktree) => {
+                                const liveSnapshot = worktreeSnapshotById.get(worktree.id)
                                 const latestSession = getLatestSessionForTarget(
                                   sessionRecords,
                                   worktree.id,
@@ -1237,7 +1253,7 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                                 size="sm"
                                 className="h-8 text-[9px] font-black uppercase tracking-widest hud-button--cyan"
                                 onClick={() =>
-                                  setIsDocumentsManagerOpen((current: boolean) => !current)
+                                  setIsDocumentsManagerOpen(!isDocumentsManagerOpen)
                                 }
                               >
                                 {isDocumentsManagerOpen ? 'HIDE MANAGER' : 'MANAGE DOCS'}
@@ -1258,7 +1274,7 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                             />
                           ) : recentDocuments.length > 0 ? (
                             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-                              {recentDocuments.map((document: any) => (
+                              {recentDocuments.map((document) => (
                                 <button
                                   key={document.id}
                                   type="button"
@@ -1316,7 +1332,7 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                   {activeView === 'settings' ? (
                     <ScrollArea className="flex-1 hud-scrollarea">
                       <div className="p-6">
-                        <SettingsPanel state={state} actions={actions} />
+                        <SettingsPanel />
                       </div>
                     </ScrollArea>
                   ) : null}
@@ -1416,7 +1432,7 @@ function WorkspaceShell({ state, actions }: WorkspaceShellProps) {
                           No Active Nodes.
                         </div>
                       ) : (
-                        worktreeSessions.map(({ worktree, snapshot }: any) => (
+                        worktreeSessions.map(({ worktree, snapshot }) => (
                           <button
                             key={worktree.id}
                             className={`session-card w-full text-left p-3 border-l-2 ${

@@ -60,19 +60,33 @@ The current working baseline includes:
 - a dedicated local supervisor process that owns live runtime behavior
 - registered projects with root folders
 - project edit/rebind flow when a registered root moves or is renamed
+- project registration that resolves around the repository root, reconnecting duplicate folder selections to the existing project when they point at the same repo
+- automatic `git init` for newly registered folders that are not already Git repositories
+- a supervisor bootstrap commit for unborn repositories when the first managed worktree needs a real `HEAD`
+- no user-visible manual initial commit step before the first focused worktree launch
 - Claude Code launch profiles stored in the DB
+- supervisor-backed app settings stored in the DB
 - a PTY-backed terminal slice driven through the supervisor for project-rooted Claude sessions
+- a dispatcher-first terminal flow with one live Dispatcher session per project and reconnect instead of duplicate launch
 - a supervisor-attached Project Commander MCP server for launched Claude Code sessions
 - the companion CLI bridge as a fallback when MCP is unavailable
 - project-scoped work-item CRUD for bugs, tasks, features, and notes routed through the supervisor
 - project-scoped documents with optional work-item links routed through the supervisor
 - durable session records owned by the supervisor
 - an append-only supervisor event log for session lifecycle plus work-item/document mutations
-- worktree records and supervisor-owned git worktree creation/reuse per work item
+- worktree records and supervisor-owned git worktree create/recreate/remove flows per work item
+- project-scoped work-item call signs with flat parent IDs and dotted child IDs
+- dispatcher-backed and backlog-backed focused worktree agent launch through supervisor-owned worktree/session flows
+- supervisor-owned recovery and cleanup for orphaned sessions, stale runtime artifacts, stale managed worktree directories, and stale worktree records
 - a terminal-first three-panel UI shell with:
   - projects on the left
-  - tabbed center pane for `Terminal`, `Project Overview`, and `Work Items`
-  - runtime rail on the right for live sessions and worktree sessions
+  - tabbed center pane for `Terminal`, `Project Overview`, `History`, `Settings`, and `Backlog`
+  - runtime rail on the right for the live Dispatcher and project worktrees
+- session history and event history surfaced in the UI
+- reconnect and recovery actions for interrupted/orphaned sessions
+- worktree registry controls for open, recreate, and remove
+- worktree runtime visibility for live/offline, dirty/unmerged, short branch, call sign, and short summary state
+- a dedicated settings screen for project configuration, launch-profile management, app defaults, and storage diagnostics
 
 ## Agent Bridge
 
@@ -92,16 +106,19 @@ boundary. The attached tools expose:
 
 - current project context
 - session brief
-- work-item list/get/create/update/close
+- work-item list/get/create/update/close with open/type/parent filtering
 - document list/create/update/delete
+- worktree list and focused worktree-agent launch
 
 Example commands inside a launched Claude Code session:
 
 ```powershell
 project-commander-cli session brief --json
+project-commander-cli work-item list --open-only --item-type bug --json
 project-commander-cli work-item create --type bug --title "Log a bug in Emery" --body "Describe the issue." --json
 project-commander-cli work-item update --id 12 --status in_progress --body "Started work." --json
 project-commander-cli work-item close --id 12 --json
+project-commander-cli worktree list --json
 project-commander-cli document list --json
 ```
 
@@ -132,11 +149,18 @@ authority boundary.
 Worktree creation and worktree-backed session launch now also go through the
 supervisor.
 
+Project, launch-profile, and app-settings writes now also go through the
+supervisor, so the app is operating on a single durable writer for the current
+MVP domain.
+
 ## Project Roots
 
 Launches are blocked when a registered project root no longer exists.
 
-Use the selected-project edit form to rebind the project to its new folder. Launched sessions stay bound to the registered project they were opened for, even if the shell later changes directories, and any root change applies on the next launch.
+Use the selected-project edit form to rebind the project to its new folder.
+Launched sessions stay bound to the registered project they were opened for,
+even if the shell later changes directories, and any root change applies on the
+next launch.
 
 ## Structure
 
@@ -146,32 +170,43 @@ Use the selected-project edit form to rebind the project to its new folder. Laun
 - `Project Files/Docs/`: design notes and architecture docs
 - `docs/ui/frontend-overhaul-brief.md`: constrained redesign brief for a frontend-only UI overhaul
 - `docs/status/current-state.md`: current implementation checkpoint, gaps, and next steps
+- `docs/status/core-workflow-loop.md`: working definition of the product loop currently being hardened
+- `docs/status/core-workflow-closeout-plan.md`: explicit end-to-end closeout plan for the current product workflow
+- `docs/status/next-session-handoff.md`: focused handoff note for the next coding session
 
 ## Known Gaps
 
 These are the main known issues or intentionally deferred areas at this
 checkpoint:
 
-- newly created worktrees do not always appear in the right runtime rail until the frontend is refreshed
-- supervisor integration tests are still thin; most validation so far has been manual drive-through testing
-- project and launch-profile management still need to be moved behind the supervisor for full single-writer discipline
+- the merge queue is still only an architectural intent; there is not yet a fully implemented dispatcher-managed merge-queue surface
+- the worktree session summary shown in the UI is currently a short supervisor-derived label from work-item context, not a live generated summary
+- session and event history are surfaced, but richer summaries/search are not implemented yet
+- reconnect and recovery UX now covers interrupted/orphaned sessions, but broader automation policy is still thin
+- final manual end-to-end proof of the tightened core loop in both dev and packaged runs is still required before scope reopens
 - planning entities for quarter, sprint, week, and day are not implemented yet
 - workflow templates and workflow runs are not implemented yet
 - agent claims, locking, and agent-to-agent coordination are not implemented yet
-- worktree cleanup, merge/rebase flows, and richer worktree lifecycle operations are not implemented yet
 - session summaries, semantic search, graph relations, and knowledge indexing are intentionally out of the current MVP baseline
 
-## Next Step
+## Current Priority
 
-The next hardening and product work should happen in this order:
+The current priority is not widening the feature surface. It is closing out the
+existing supervisor-backed core workflow end-to-end and proving it in both dev
+and packaged runs.
 
-1. Fix the remaining worktree-runtime-rail refresh bug.
-2. Add supervisor integration tests for launch, MCP attach, worktree flows, stop, and reopen/reattach.
-3. Move remaining project/profile/settings authority behind the supervisor.
-4. Define the planning and workflow data model before building planning dashboards.
-5. Add worktree lifecycle cleanup and richer worktree session controls.
+No new feature wedge should start until the closeout plan in
+`docs/status/core-workflow-closeout-plan.md` is green.
+
+The current order is:
+
+1. Execute the core workflow closeout plan across project setup, session launch, work items/documents, focused worktrees, reconnect/recovery, and history/cleanup.
+2. Fix issues found in that pass without introducing new authority paths or new product scope.
+3. Only after the closeout gate is green, resume richer worktree lifecycle work, then planning/workflow schema and UI.
 
 Architecture checkpoint:
 
 - `docs/architecture/supervisor-planning-architecture.md`
 - `docs/status/current-state.md`
+- `docs/status/core-workflow-loop.md`
+- `docs/status/core-workflow-closeout-plan.md`

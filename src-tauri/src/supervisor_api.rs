@@ -2,6 +2,7 @@ use crate::db::{
     DocumentRecord, ProjectRecord, SessionEventRecord, SessionRecord, WorkItemRecord,
     WorktreeRecord,
 };
+use crate::session_api::SessionSnapshot;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -56,6 +57,9 @@ pub struct CleanupRepairOutput {
 pub struct ListProjectWorkItemsInput {
     pub project_id: i64,
     pub status: Option<String>,
+    pub item_type: Option<String>,
+    pub parent_only: bool,
+    pub open_only: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -73,6 +77,7 @@ pub struct CreateProjectWorkItemInput {
     pub body: Option<String>,
     pub item_type: Option<String>,
     pub status: Option<String>,
+    pub parent_work_item_id: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -168,10 +173,32 @@ pub struct EnsureProjectWorktreeInput {
     pub work_item_id: i64,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchProjectWorktreeAgentInput {
+    pub project_id: i64,
+    pub work_item_id: i64,
+    pub launch_profile_id: Option<i64>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeLaunchOutput {
+    pub worktree: WorktreeRecord,
+    pub session: SessionSnapshot,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListProjectWorktreesInput {
     pub project_id: i64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectWorktreeTarget {
+    pub project_id: i64,
+    pub worktree_id: i64,
 }
 
 #[derive(Serialize, Deserialize)]

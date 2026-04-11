@@ -4,8 +4,10 @@ use project_commander_lib::db::{
 };
 use project_commander_lib::session::SupervisorClient;
 use project_commander_lib::session_api::SupervisorRuntimeInfo;
-use project_commander_lib::supervisor_api::CleanupCandidateTarget;
+use project_commander_lib::supervisor_api::{CleanupCandidateTarget, CreateProjectWorkItemInput};
 use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Child;
 use std::sync::OnceLock;
@@ -181,6 +183,71 @@ fn supervisor_client_bootstrap_starts_real_supervisor_runtime() {
 }
 
 #[test]
+fn supervisor_client_restarts_incompatible_runtime_before_requesting_routes() {
+    let harness = TestHarness::new("compat-restart");
+    let listener =
+        TcpListener::bind("127.0.0.1:0").expect("legacy supervisor stub should bind a port");
+    let port = listener
+        .local_addr()
+        .expect("legacy supervisor stub should resolve local addr")
+        .port();
+    let token = "legacy-token".to_string();
+
+    let stub = std::thread::spawn({
+        let token = token.clone();
+        move || {
+            let (mut stream, _) = listener
+                .accept()
+                .expect("legacy supervisor stub should accept a health request");
+            let mut buffer = [0_u8; 4096];
+            let bytes_read = stream
+                .read(&mut buffer)
+                .expect("legacy supervisor stub should read the request");
+            let request = String::from_utf8_lossy(&buffer[..bytes_read]);
+
+            assert!(request.starts_with("GET /health HTTP/1.1"));
+            assert!(request.contains(&format!("x-project-commander-token: {token}")));
+
+            let body = r#"{"ok":true,"pid":424242,"startedAt":"legacy"}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("legacy supervisor stub should write the response");
+        }
+    });
+
+    fs::create_dir_all(harness.runtime_dir()).expect("runtime directory should exist");
+    fs::write(
+        harness.runtime_file(),
+        serde_json::to_string(&SupervisorRuntimeInfo {
+            port,
+            token,
+            pid: 424242,
+            started_at: "legacy".to_string(),
+        })
+        .expect("legacy runtime info should encode"),
+    )
+    .expect("legacy runtime file should be written");
+
+    let bootstrap = harness
+        .client
+        .bootstrap()
+        .expect("client should replace incompatible supervisor before bootstrapping");
+    let runtime = harness.runtime_info();
+
+    stub.join()
+        .expect("legacy supervisor stub should complete cleanly");
+
+    assert!(!bootstrap.launch_profiles.is_empty());
+    assert_ne!(runtime.port, port);
+    assert_ne!(runtime.pid, 424242);
+}
+
+#[test]
 fn supervisor_startup_removes_stale_runtime_artifacts_before_serving_requests() {
     let harness = TestHarness::new("startup-runtime-cleanup");
     let runtime_dir = harness.runtime_dir();
@@ -226,6 +293,91 @@ fn supervisor_client_recovers_after_supervisor_process_is_killed() {
     assert_eq!(project.name, "Recovered Project");
     assert_ne!(first_runtime.pid, second_runtime.pid);
     assert!(second_runtime.pid > 0);
+}
+
+#[test]
+fn project_create_initializes_git_and_reuses_existing_repo_root_identity() {
+    let harness = TestHarness::new("project-create-identity");
+
+    let created = harness
+        .client
+        .create_project(CreateProjectInput {
+            name: "Identity Project".to_string(),
+            root_path: harness.project_root.display().to_string(),
+        })
+        .expect("project should be created");
+    let nested_folder = harness.project_root.join("src").join("nested");
+    fs::create_dir_all(&nested_folder).expect("nested folder should be created");
+    let reused = harness
+        .client
+        .create_project(CreateProjectInput {
+            name: "Identity Project Duplicate".to_string(),
+            root_path: nested_folder.display().to_string(),
+        })
+        .expect("existing project should be returned for the same repository root");
+    let normalize_path = |value: String| value.replace("\\\\?\\", "").to_ascii_lowercase();
+
+    assert_eq!(created.id, reused.id);
+    assert!(harness.project_root.join(".git").is_dir());
+    assert_eq!(
+        normalize_path(created.root_path.clone()),
+        normalize_path(harness.project_root.display().to_string())
+    );
+    assert_eq!(
+        normalize_path(reused.root_path.clone()),
+        normalize_path(created.root_path.clone())
+    );
+}
+
+#[test]
+fn supervisor_client_assigns_flat_and_dotted_work_item_call_signs() {
+    let harness = TestHarness::new("work-item-call-signs");
+    let project = harness
+        .client
+        .create_project(CreateProjectInput {
+            name: "Steve".to_string(),
+            root_path: harness.project_root.display().to_string(),
+        })
+        .expect("project should be created");
+
+    let parent = harness
+        .client
+        .create_work_item(CreateProjectWorkItemInput {
+            project_id: project.id,
+            title: "Parent task".to_string(),
+            body: Some(String::new()),
+            item_type: Some("task".to_string()),
+            status: Some("backlog".to_string()),
+            parent_work_item_id: None,
+        })
+        .expect("parent work item should be created");
+    let child = harness
+        .client
+        .create_work_item(CreateProjectWorkItemInput {
+            project_id: project.id,
+            title: "Child task".to_string(),
+            body: Some(String::new()),
+            item_type: Some("task".to_string()),
+            status: Some("backlog".to_string()),
+            parent_work_item_id: Some(parent.id),
+        })
+        .expect("child work item should be created");
+    let second_parent = harness
+        .client
+        .create_work_item(CreateProjectWorkItemInput {
+            project_id: project.id,
+            title: "Second parent task".to_string(),
+            body: Some(String::new()),
+            item_type: Some("task".to_string()),
+            status: Some("backlog".to_string()),
+            parent_work_item_id: None,
+        })
+        .expect("second parent work item should be created");
+
+    assert_eq!(parent.call_sign, "STEVE-1");
+    assert_eq!(child.call_sign, "STEVE-1.01");
+    assert_eq!(child.parent_work_item_id, Some(parent.id));
+    assert_eq!(second_parent.call_sign, "STEVE-2");
 }
 
 #[test]
@@ -451,6 +603,7 @@ fn supervisor_client_repairs_all_safe_cleanup_items() {
     let work_item = app_state
         .create_work_item(CreateWorkItemInput {
             project_id: project.id,
+            parent_work_item_id: None,
             title: "Repair stale record".to_string(),
             body: String::new(),
             item_type: "task".to_string(),
@@ -534,6 +687,7 @@ fn supervisor_startup_auto_repairs_safe_cleanup_items_when_enabled() {
     let work_item = app_state
         .create_work_item(CreateWorkItemInput {
             project_id: project.id,
+            parent_work_item_id: None,
             title: "Startup repair stale record".to_string(),
             body: String::new(),
             item_type: "task".to_string(),

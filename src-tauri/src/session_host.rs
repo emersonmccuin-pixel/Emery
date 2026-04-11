@@ -2,6 +2,7 @@ use crate::db::{
     AppState, AppendSessionEventInput, CreateSessionRecordInput, FinishSessionRecordInput,
     UpdateSessionRuntimeMetadataInput,
 };
+use crate::error::{AppError, AppResult};
 use crate::session_api::{
     LaunchSessionInput, ProjectSessionTarget, ResizeSessionInput, SessionInput, SessionPollInput,
     SessionPollOutput, SessionSnapshot, SupervisorRuntimeInfo,
@@ -84,7 +85,7 @@ impl SessionRegistry {
     pub fn snapshot(
         &self,
         target: ProjectSessionTarget,
-    ) -> Result<Option<SessionSnapshot>, String> {
+    ) -> AppResult<Option<SessionSnapshot>> {
         let session = {
             let sessions = self
                 .sessions
@@ -102,7 +103,7 @@ impl SessionRegistry {
     pub fn poll_output(
         &self,
         input: SessionPollInput,
-    ) -> Result<Option<SessionPollOutput>, String> {
+    ) -> AppResult<Option<SessionPollOutput>> {
         let session = {
             let sessions = self
                 .sessions
@@ -120,7 +121,7 @@ impl SessionRegistry {
         Ok(session.map(|session| session.poll_output(input.offset)))
     }
 
-    pub fn list_running_snapshots(&self, project_id: i64) -> Result<Vec<SessionSnapshot>, String> {
+    pub fn list_running_snapshots(&self, project_id: i64) -> AppResult<Vec<SessionSnapshot>> {
         let sessions = self
             .sessions
             .lock()
@@ -143,7 +144,7 @@ impl SessionRegistry {
         app_state: &AppState,
         supervisor_runtime: &SupervisorRuntimeInfo,
         source: &str,
-    ) -> Result<SessionSnapshot, String> {
+    ) -> AppResult<SessionSnapshot> {
         let target_key = SessionTargetKey::from_launch_input(&input);
 
         if let Some(existing) = self.get_session(&target_key)? {
@@ -175,10 +176,10 @@ impl SessionRegistry {
                 let worktree = app_state.get_worktree(worktree_id)?;
 
                 if worktree.project_id != input.project_id {
-                    return Err(format!(
+                    return Err(AppError::invalid_input(format!(
                         "worktree #{worktree_id} does not belong to project #{}",
                         input.project_id
-                    ));
+                    )));
                 }
 
                 Some(worktree)
@@ -201,11 +202,13 @@ impl SessionRegistry {
 
         if !Path::new(&launch_root_path).is_dir() {
             return Err(if worktree.is_some() {
-                "selected worktree path no longer exists. Recreate the worktree before launching."
-                    .to_string()
+                AppError::not_found(
+                    "selected worktree path no longer exists. Recreate the worktree before launching.",
+                )
             } else {
-                "selected project root folder no longer exists. Rebind the project before launching."
-                        .to_string()
+                AppError::not_found(
+                    "selected project root folder no longer exists. Rebind the project before launching.",
+                )
             });
         }
 
@@ -272,7 +275,7 @@ impl SessionRegistry {
                         "requestedBy": source,
                     }),
                 );
-                return Err(error);
+                return Err(error.into());
             }
         };
         let child = match pair.slave.spawn_command(command) {
@@ -305,7 +308,9 @@ impl SessionRegistry {
                         "requestedBy": source,
                     }),
                 );
-                return Err(format!("failed to launch session: {error}"));
+                return Err(AppError::supervisor(format!(
+                    "failed to launch session: {error}"
+                )));
             }
         };
 
@@ -354,7 +359,9 @@ impl SessionRegistry {
                     "requestedBy": source,
                 }),
             );
-            return Err("failed to persist session runtime metadata".to_string());
+            return Err(AppError::database(format!(
+                "failed to persist session runtime metadata: {error}"
+            )));
         }
 
         let session = Arc::new(HostedSession {
@@ -414,7 +421,7 @@ impl SessionRegistry {
         Ok(session.snapshot())
     }
 
-    pub fn write_input(&self, input: SessionInput) -> Result<(), String> {
+    pub fn write_input(&self, input: SessionInput) -> AppResult<()> {
         let session = self.get_running_session(&ProjectSessionTarget {
             project_id: input.project_id,
             worktree_id: input.worktree_id,
@@ -426,13 +433,15 @@ impl SessionRegistry {
 
         writer
             .write_all(input.data.as_bytes())
-            .map_err(|error| format!("failed to write to session: {error}"))?;
+            .map_err(|error| AppError::supervisor(format!("failed to write to session: {error}")))?;
         writer
             .flush()
-            .map_err(|error| format!("failed to flush session input: {error}"))
+            .map_err(|error| {
+                AppError::supervisor(format!("failed to flush session input: {error}"))
+            })
     }
 
-    pub fn resize(&self, input: ResizeSessionInput) -> Result<(), String> {
+    pub fn resize(&self, input: ResizeSessionInput) -> AppResult<()> {
         let session = self.get_running_session(&ProjectSessionTarget {
             project_id: input.project_id,
             worktree_id: input.worktree_id,
@@ -449,7 +458,7 @@ impl SessionRegistry {
                 pixel_width: 0,
                 pixel_height: 0,
             })
-            .map_err(|error| format!("failed to resize session: {error}"))
+            .map_err(|error| AppError::supervisor(format!("failed to resize session: {error}")))
     }
 
     pub fn terminate(
@@ -457,7 +466,7 @@ impl SessionRegistry {
         target: ProjectSessionTarget,
         app_state: &AppState,
         source: &str,
-    ) -> Result<(), String> {
+    ) -> AppResult<()> {
         let session = self.get_running_session(&target)?;
         let mut killer = session
             .killer
@@ -517,7 +526,7 @@ impl SessionRegistry {
 
                 Err(error)
             })
-            .map_err(|error| format!("failed to terminate session: {error}"))?;
+            .map_err(|error| AppError::supervisor(format!("failed to terminate session: {error}")))?;
 
         let exit_state = session.current_exit_state().unwrap_or(ExitState {
             exit_code: 127,
@@ -539,7 +548,7 @@ impl SessionRegistry {
     fn get_session(
         &self,
         target_key: &SessionTargetKey,
-    ) -> Result<Option<Arc<HostedSession>>, String> {
+    ) -> AppResult<Option<Arc<HostedSession>>> {
         let sessions = self
             .sessions
             .lock()
@@ -551,15 +560,17 @@ impl SessionRegistry {
     fn get_running_session(
         &self,
         target: &ProjectSessionTarget,
-    ) -> Result<Arc<HostedSession>, String> {
+    ) -> AppResult<Arc<HostedSession>> {
         let session = self
             .get_session(&SessionTargetKey::from_target(target))?
-            .ok_or_else(|| build_missing_session_message(target.worktree_id))?;
+            .ok_or_else(|| AppError::not_found(build_missing_session_message(target.worktree_id)))?;
 
         if session.is_running() {
             Ok(session)
         } else {
-            Err(build_missing_session_message(target.worktree_id))
+            Err(AppError::not_found(build_missing_session_message(
+                target.worktree_id,
+            )))
         }
     }
 }
@@ -643,7 +654,7 @@ impl HostedSession {
         }
     }
 
-    fn try_update_exit_from_child(&self, app_state: &AppState) -> Result<bool, String> {
+    fn try_update_exit_from_child(&self, app_state: &AppState) -> AppResult<bool> {
         let status = {
             let mut child = self
                 .child
@@ -1434,12 +1445,32 @@ fn persist_session_exit(
 #[cfg(windows)]
 fn try_taskkill(pid: Option<u32>) -> Result<(), String> {
     let pid = pid.ok_or_else(|| "missing session process id".to_string())?;
-    let status = std::process::Command::new("taskkill")
+    let mut child = std::process::Command::new("taskkill")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .args(["/PID", &pid.to_string(), "/T", "/F"])
-        .status()
+        .spawn()
         .map_err(|error| format!("failed to run taskkill: {error}"))?;
+
+    let timeout = std::time::Duration::from_secs(5);
+    let poll_interval = std::time::Duration::from_millis(50);
+    let deadline = std::time::Instant::now() + timeout;
+
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("taskkill timed out after {}s", timeout.as_secs()));
+                }
+
+                std::thread::sleep(poll_interval);
+            }
+            Err(error) => return Err(format!("failed to wait for taskkill: {error}")),
+        }
+    };
 
     if status.success() {
         Ok(())

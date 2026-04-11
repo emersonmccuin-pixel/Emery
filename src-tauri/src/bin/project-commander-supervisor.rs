@@ -5,6 +5,7 @@ use project_commander_lib::db::{
     UpdateAppSettingsInput, UpdateDocumentInput, UpdateLaunchProfileInput, UpdateProjectInput,
     UpdateWorkItemInput, UpsertWorktreeRecordInput, WorkItemRecord, WorktreeRecord,
 };
+use project_commander_lib::error::{AppError, AppErrorCode};
 use project_commander_lib::session::build_supervisor_runtime_info;
 use project_commander_lib::session_api::{
     LaunchSessionInput, ProjectSessionTarget, ResizeSessionInput, SessionInput, SessionPollInput,
@@ -75,6 +76,7 @@ struct McpStdioArgs {
 struct RouteError {
     status: u16,
     message: String,
+    code: Option<AppErrorCode>,
 }
 
 #[derive(Clone)]
@@ -88,6 +90,7 @@ impl RouteError {
         Self {
             status: 400,
             message: message.into(),
+            code: Some(AppErrorCode::InvalidInput),
         }
     }
 
@@ -95,6 +98,7 @@ impl RouteError {
         Self {
             status: 404,
             message: message.into(),
+            code: Some(AppErrorCode::NotFound),
         }
     }
 
@@ -102,7 +106,38 @@ impl RouteError {
         Self {
             status: 500,
             message: message.into(),
+            code: Some(AppErrorCode::Internal),
         }
+    }
+}
+
+impl From<AppError> for RouteError {
+    fn from(error: AppError) -> Self {
+        let status = match error.code {
+            AppErrorCode::InvalidInput => 400,
+            AppErrorCode::NotFound => 404,
+            AppErrorCode::Conflict => 409,
+            AppErrorCode::Supervisor => 503,
+            AppErrorCode::Database | AppErrorCode::Io | AppErrorCode::Internal => 500,
+        };
+
+        Self {
+            status,
+            message: error.message,
+            code: Some(error.code),
+        }
+    }
+}
+
+impl From<String> for RouteError {
+    fn from(message: String) -> Self {
+        Self::from(AppError::from(message))
+    }
+}
+
+impl From<&str> for RouteError {
+    fn from(message: &str) -> Self {
+        Self::from(message.to_string())
     }
 }
 
@@ -123,7 +158,8 @@ fn run() -> Result<(), String> {
             args.project_id,
             args.worktree_id,
             args.session_id,
-        ),
+        )
+        .map_err(|e| e.message),
         None => {
             let db_path = cli
                 .db_path
@@ -139,9 +175,13 @@ fn run() -> Result<(), String> {
 
 fn run_server(db_path: PathBuf, runtime_file: PathBuf) -> Result<(), String> {
     let removed_runtime_artifacts = cleanup_stale_runtime_artifacts(&runtime_file)?;
-    let state = AppState::from_database_path(db_path)?;
-    let reconciled = state.reconcile_orphaned_running_sessions()?;
-    let startup_settings = state.get_app_settings()?;
+    let state = AppState::from_database_path(db_path).map_err(|error| error.to_string())?;
+    let reconciled = state
+        .reconcile_orphaned_running_sessions()
+        .map_err(|error| error.to_string())?;
+    let startup_settings = state
+        .get_app_settings()
+        .map_err(|error| error.to_string())?;
     let repaired_cleanup = if startup_settings.auto_repair_safe_cleanup_on_startup {
         Some(repair_cleanup_candidates(
             &state,
@@ -206,7 +246,7 @@ fn handle_request(
         return respond_json(
             request,
             401,
-            &json!({ "error": "unauthorized supervisor request" }),
+            &json!({ "ok": false, "error": "unauthorized supervisor request", "code": "unauthorized" }),
         );
     }
 
@@ -214,7 +254,15 @@ fn handle_request(
 
     match route_request(&mut request, runtime, state, sessions, &context) {
         Ok(payload) => respond_json(request, 200, &payload),
-        Err(error) => respond_json(request, error.status, &json!({ "error": error.message })),
+        Err(error) => respond_json(
+            request,
+            error.status,
+            &json!({
+                "ok": false,
+                "error": error.message,
+                "code": error.code,
+            }),
+        ),
     }
 }
 
@@ -234,31 +282,35 @@ fn route_request(
             started_at: runtime.started_at.clone(),
             protocol_version: SUPERVISOR_PROTOCOL_VERSION,
         })
+        .map(|data| json!({ "ok": true, "data": data }))
         .map_err(|error| {
             RouteError::internal(format!("failed to encode health response: {error}"))
         }),
         (&Method::Post, "/bootstrap") => serde_json::to_value(
-            state.bootstrap().map_err(RouteError::internal)?,
+            state.bootstrap().map_err(RouteError::from)?,
         )
+        .map(|data| json!({ "ok": true, "data": data }))
         .map_err(|error| {
             RouteError::internal(format!("failed to encode bootstrap response: {error}"))
         }),
         (&Method::Post, "/settings/update") => {
             let input = read_json::<UpdateAppSettingsInput>(request)?;
-            serde_json::to_value(state.update_app_settings(input).map_err(RouteError::internal)?)
+            serde_json::to_value(state.update_app_settings(input).map_err(RouteError::from)?)
+                .map(|data| json!({ "ok": true, "data": data }))
                 .map_err(|error| {
                     RouteError::internal(format!("failed to encode updated app settings: {error}"))
                 })
         }
         (&Method::Post, "/session/snapshot") => {
             let input = read_json::<ProjectSessionTarget>(request)?;
-            serde_json::to_value(sessions.snapshot(input).map_err(RouteError::internal)?).map_err(
-                |error| RouteError::internal(format!("failed to encode session snapshot: {error}")),
-            )
+            serde_json::to_value(sessions.snapshot(input).map_err(RouteError::from)?)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| RouteError::internal(format!("failed to encode session snapshot: {error}")))
         }
         (&Method::Post, "/session/poll") => {
             let input = read_json::<SessionPollInput>(request)?;
-            serde_json::to_value(sessions.poll_output(input).map_err(RouteError::internal)?)
+            serde_json::to_value(sessions.poll_output(input).map_err(RouteError::from)?)
+                .map(|data| json!({ "ok": true, "data": data }))
                 .map_err(|error| {
                     RouteError::internal(format!("failed to encode session poll output: {error}"))
                 })
@@ -267,116 +319,128 @@ fn route_request(
             let input = read_json::<ProjectSessionTarget>(request)?;
             let snapshots = sessions
                 .list_running_snapshots(input.project_id)
-                .map_err(RouteError::internal)?;
+                .map_err(RouteError::from)?;
 
-            serde_json::to_value(snapshots).map_err(|error| {
-                RouteError::internal(format!("failed to encode live sessions: {error}"))
-            })
+            serde_json::to_value(snapshots)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode live sessions: {error}"))
+                })
         }
         (&Method::Post, "/session/list") => {
             let input = read_json::<ListProjectSessionsInput>(request)?;
             let sessions = state
                 .list_session_records(input.project_id)
-                .map_err(RouteError::internal)?;
+                .map_err(RouteError::from)?;
 
-            serde_json::to_value(sessions).map_err(|error| {
-                RouteError::internal(format!("failed to encode session records: {error}"))
-            })
+            serde_json::to_value(sessions)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode session records: {error}"))
+                })
         }
         (&Method::Post, "/session/orphaned-list") => {
             let input = read_json::<ListProjectSessionsInput>(request)?;
             let sessions = state
                 .list_orphaned_session_records(input.project_id)
-                .map_err(RouteError::internal)?;
+                .map_err(RouteError::from)?;
 
-            serde_json::to_value(sessions).map_err(|error| {
-                RouteError::internal(format!(
-                    "failed to encode orphaned session records: {error}"
-                ))
-            })
+            serde_json::to_value(sessions)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!(
+                        "failed to encode orphaned session records: {error}"
+                    ))
+                })
         }
         (&Method::Post, "/session/launch") => {
             let input = read_json::<LaunchSessionInput>(request)?;
             serde_json::to_value(
                 sessions
                     .launch(input, state, runtime, &context.source)
-                    .map_err(RouteError::internal)?,
+                    .map_err(RouteError::from)?,
             )
+            .map(|data| json!({ "ok": true, "data": data }))
             .map_err(|error| {
                 RouteError::internal(format!("failed to encode launched session: {error}"))
             })
         }
         (&Method::Post, "/session/input") => {
             let input = read_json::<SessionInput>(request)?;
-            sessions.write_input(input).map_err(RouteError::internal)?;
-            Ok(json!({ "ok": true }))
+            sessions.write_input(input).map_err(RouteError::from)?;
+            Ok(json!({ "ok": true, "data": null }))
         }
         (&Method::Post, "/session/resize") => {
             let input = read_json::<ResizeSessionInput>(request)?;
-            sessions.resize(input).map_err(RouteError::internal)?;
-            Ok(json!({ "ok": true }))
+            sessions.resize(input).map_err(RouteError::from)?;
+            Ok(json!({ "ok": true, "data": null }))
         }
         (&Method::Post, "/session/terminate") => {
             let input = read_json::<ProjectSessionTarget>(request)?;
             sessions
                 .terminate(input, state, &context.source)
-                .map_err(RouteError::internal)?;
-            Ok(json!({ "ok": true }))
+                .map_err(RouteError::from)?;
+            Ok(json!({ "ok": true, "data": null }))
         }
         (&Method::Post, "/session/orphaned-terminate") => {
             let input = read_json::<ProjectSessionRecordTarget>(request)?;
-            serde_json::to_value(terminate_orphaned_session(state, context, input)?).map_err(
-                |error| {
+            serde_json::to_value(terminate_orphaned_session(state, context, input)?)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
                     RouteError::internal(format!(
                         "failed to encode orphaned session termination response: {error}"
                     ))
-                },
-            )
+                })
         }
         (&Method::Post, "/cleanup/list") => {
             let _ = read_json::<ListCleanupCandidatesInput>(request)?;
-            let candidates = list_cleanup_candidates(state).map_err(RouteError::internal)?;
+            let candidates = list_cleanup_candidates(state).map_err(RouteError::from)?;
 
-            serde_json::to_value(candidates).map_err(|error| {
-                RouteError::internal(format!("failed to encode cleanup candidates: {error}"))
-            })
+            serde_json::to_value(candidates)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode cleanup candidates: {error}"))
+                })
         }
         (&Method::Post, "/cleanup/remove") => {
             let input = read_json::<CleanupCandidateTarget>(request)?;
-            serde_json::to_value(remove_cleanup_candidate(state, context, input)?).map_err(
-                |error| RouteError::internal(format!("failed to encode cleanup removal: {error}")),
-            )
+            serde_json::to_value(remove_cleanup_candidate(state, context, input)?)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| RouteError::internal(format!("failed to encode cleanup removal: {error}")))
         }
         (&Method::Post, "/cleanup/repair-all") => {
             let _ = read_json::<RepairCleanupInput>(request)?;
-            serde_json::to_value(repair_cleanup_candidates(state, context)?).map_err(|error| {
-                RouteError::internal(format!("failed to encode cleanup repair output: {error}"))
-            })
+            serde_json::to_value(repair_cleanup_candidates(state, context)?)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode cleanup repair output: {error}"))
+                })
         }
         (&Method::Post, "/event/list") => {
             let input = read_json::<ListProjectSessionEventsInput>(request)?;
             let events = state
                 .list_session_events(input.project_id, input.limit.unwrap_or(100))
-                .map_err(RouteError::internal)?;
+                .map_err(RouteError::from)?;
 
-            serde_json::to_value(events).map_err(|error| {
-                RouteError::internal(format!("failed to encode session events: {error}"))
-            })
+            serde_json::to_value(events)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode session events: {error}"))
+                })
         }
         (&Method::Post, "/project/current") => {
             let input = read_json::<ProjectSessionTarget>(request)?;
             serde_json::to_value(
-                state
-                    .get_project(input.project_id)
-                    .map_err(RouteError::not_found)?,
+                state.get_project(input.project_id)?,
             )
+            .map(|data| json!({ "ok": true, "data": data }))
             .map_err(|error| {
                 RouteError::internal(format!("failed to encode current project: {error}"))
             })
         }
         (&Method::Post, "/project/create") => {
             let input = read_json::<CreateProjectInput>(request)?;
-            let project = state.create_project(input).map_err(RouteError::internal)?;
+            let project = state.create_project(input).map_err(RouteError::from)?;
             append_project_event(
                 state,
                 context,
@@ -387,13 +451,15 @@ fn route_request(
                 &project,
             );
 
-            serde_json::to_value(project).map_err(|error| {
-                RouteError::internal(format!("failed to encode created project: {error}"))
-            })
+            serde_json::to_value(project)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode created project: {error}"))
+                })
         }
         (&Method::Post, "/project/update") => {
             let input = read_json::<UpdateProjectInput>(request)?;
-            let project = state.update_project(input).map_err(RouteError::internal)?;
+            let project = state.update_project(input).map_err(RouteError::from)?;
             append_project_event(
                 state,
                 context,
@@ -404,15 +470,17 @@ fn route_request(
                 &project,
             );
 
-            serde_json::to_value(project).map_err(|error| {
-                RouteError::internal(format!("failed to encode updated project: {error}"))
-            })
+            serde_json::to_value(project)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode updated project: {error}"))
+                })
         }
         (&Method::Post, "/project/session-brief") => {
             let input = read_json::<ProjectSessionTarget>(request)?;
             let project = state
                 .get_project(input.project_id)
-                .map_err(RouteError::not_found)?;
+                ?;
             let active_worktree = match input.worktree_id {
                 Some(worktree_id) => Some(require_worktree_for_project(
                     state,
@@ -423,10 +491,10 @@ fn route_request(
             };
             let work_items = state
                 .list_work_items(input.project_id)
-                .map_err(RouteError::internal)?;
+                .map_err(RouteError::from)?;
             let documents = state
                 .list_documents(input.project_id)
-                .map_err(RouteError::internal)?;
+                .map_err(RouteError::from)?;
 
             serde_json::to_value(SessionBriefOutput {
                 project,
@@ -434,6 +502,7 @@ fn route_request(
                 work_items,
                 documents,
             })
+            .map(|data| json!({ "ok": true, "data": data }))
             .map_err(|error| {
                 RouteError::internal(format!("failed to encode session brief: {error}"))
             })
@@ -442,10 +511,10 @@ fn route_request(
             let input = read_json::<ListProjectWorkItemsInput>(request)?;
             state
                 .get_project(input.project_id)
-                .map_err(RouteError::not_found)?;
+                ?;
             let mut items = state
                 .list_work_items(input.project_id)
-                .map_err(RouteError::internal)?;
+                .map_err(RouteError::from)?;
 
             if let Some(status) = input.status.as_deref() {
                 items.retain(|item| item.status == status);
@@ -463,16 +532,18 @@ fn route_request(
                 items.retain(|item| item.parent_work_item_id.is_none());
             }
 
-            serde_json::to_value(items).map_err(|error| {
-                RouteError::internal(format!("failed to encode work items: {error}"))
-            })
+            serde_json::to_value(items)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode work items: {error}"))
+                })
         }
         (&Method::Post, "/work-item/get") => {
             let input = read_json::<ProjectWorkItemTarget>(request)?;
             let work_item = require_work_item_for_project(state, input.project_id, input.id)?;
             let linked_documents = state
                 .list_documents(input.project_id)
-                .map_err(RouteError::internal)?
+                .map_err(RouteError::from)?
                 .into_iter()
                 .filter(|document| document.work_item_id == Some(input.id))
                 .collect::<Vec<_>>();
@@ -481,6 +552,7 @@ fn route_request(
                 work_item,
                 linked_documents,
             })
+            .map(|data| json!({ "ok": true, "data": data }))
             .map_err(|error| {
                 RouteError::internal(format!("failed to encode work item detail: {error}"))
             })
@@ -496,7 +568,7 @@ fn route_request(
                     item_type: input.item_type.unwrap_or_else(|| "task".to_string()),
                     status: input.status.unwrap_or_else(|| "backlog".to_string()),
                 })
-                .map_err(RouteError::internal)?;
+                .map_err(RouteError::from)?;
             append_project_event(
                 state,
                 context,
@@ -507,9 +579,11 @@ fn route_request(
                 &work_item,
             );
 
-            serde_json::to_value(work_item).map_err(|error| {
-                RouteError::internal(format!("failed to encode created work item: {error}"))
-            })
+            serde_json::to_value(work_item)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode created work item: {error}"))
+                })
         }
         (&Method::Post, "/work-item/update") => {
             let input = read_json::<UpdateProjectWorkItemInput>(request)?;
@@ -522,7 +596,7 @@ fn route_request(
                     item_type: input.item_type.unwrap_or(existing.item_type),
                     status: input.status.unwrap_or(existing.status),
                 })
-                .map_err(RouteError::internal)?;
+                .map_err(RouteError::from)?;
             append_project_event(
                 state,
                 context,
@@ -533,9 +607,11 @@ fn route_request(
                 &work_item,
             );
 
-            serde_json::to_value(work_item).map_err(|error| {
-                RouteError::internal(format!("failed to encode updated work item: {error}"))
-            })
+            serde_json::to_value(work_item)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode updated work item: {error}"))
+                })
         }
         (&Method::Post, "/work-item/close") => {
             let input = read_json::<ProjectWorkItemTarget>(request)?;
@@ -548,7 +624,7 @@ fn route_request(
                     item_type: existing.item_type,
                     status: "done".to_string(),
                 })
-                .map_err(RouteError::internal)?;
+                .map_err(RouteError::from)?;
             append_project_event(
                 state,
                 context,
@@ -559,16 +635,18 @@ fn route_request(
                 &work_item,
             );
 
-            serde_json::to_value(work_item).map_err(|error| {
-                RouteError::internal(format!("failed to encode closed work item: {error}"))
-            })
+            serde_json::to_value(work_item)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode closed work item: {error}"))
+                })
         }
         (&Method::Post, "/work-item/delete") => {
             let input = read_json::<ProjectWorkItemTarget>(request)?;
             let work_item = require_work_item_for_project(state, input.project_id, input.id)?;
             state
                 .delete_work_item(input.id)
-                .map_err(RouteError::internal)?;
+                .map_err(RouteError::from)?;
             append_project_event(
                 state,
                 context,
@@ -578,13 +656,13 @@ fn route_request(
                 work_item.id,
                 &work_item,
             );
-            Ok(json!({ "ok": true }))
+            Ok(json!({ "ok": true, "data": null }))
         }
         (&Method::Post, "/document/list") => {
             let input = read_json::<ListProjectDocumentsInput>(request)?;
             state
                 .get_project(input.project_id)
-                .map_err(RouteError::not_found)?;
+                ?;
 
             if let Some(work_item_id) = input.work_item_id {
                 let _ = require_work_item_for_project(state, input.project_id, work_item_id)?;
@@ -592,42 +670,48 @@ fn route_request(
 
             let mut documents = state
                 .list_documents(input.project_id)
-                .map_err(RouteError::internal)?;
+                .map_err(RouteError::from)?;
 
             if let Some(work_item_id) = input.work_item_id {
                 documents.retain(|document| document.work_item_id == Some(work_item_id));
             }
 
-            serde_json::to_value(documents).map_err(|error| {
-                RouteError::internal(format!("failed to encode documents: {error}"))
-            })
+            serde_json::to_value(documents)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode documents: {error}"))
+                })
         }
         (&Method::Post, "/launch-profile/create") => {
             let input = read_json::<CreateLaunchProfileInput>(request)?;
             let profile = state
                 .create_launch_profile(input)
-                .map_err(RouteError::internal)?;
+                .map_err(RouteError::from)?;
 
-            serde_json::to_value(profile).map_err(|error| {
-                RouteError::internal(format!("failed to encode created launch profile: {error}"))
-            })
+            serde_json::to_value(profile)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode created launch profile: {error}"))
+                })
         }
         (&Method::Post, "/launch-profile/update") => {
             let input = read_json::<UpdateLaunchProfileInput>(request)?;
             let profile = state
                 .update_launch_profile(input)
-                .map_err(RouteError::internal)?;
+                .map_err(RouteError::from)?;
 
-            serde_json::to_value(profile).map_err(|error| {
-                RouteError::internal(format!("failed to encode updated launch profile: {error}"))
-            })
+            serde_json::to_value(profile)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode updated launch profile: {error}"))
+                })
         }
         (&Method::Post, "/launch-profile/delete") => {
             let input = read_json::<LaunchProfileTarget>(request)?;
             state
                 .delete_launch_profile(input.id)
-                .map_err(RouteError::internal)?;
-            Ok(json!({ "ok": true }))
+                .map_err(RouteError::from)?;
+            Ok(json!({ "ok": true, "data": null }))
         }
         (&Method::Post, "/document/create") => {
             let input = read_json::<CreateProjectDocumentInput>(request)?;
@@ -643,7 +727,7 @@ fn route_request(
                     title: input.title,
                     body: input.body.unwrap_or_default(),
                 })
-                .map_err(RouteError::internal)?;
+                .map_err(RouteError::from)?;
             append_project_event(
                 state,
                 context,
@@ -654,9 +738,11 @@ fn route_request(
                 &document,
             );
 
-            serde_json::to_value(document).map_err(|error| {
-                RouteError::internal(format!("failed to encode created document: {error}"))
-            })
+            serde_json::to_value(document)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode created document: {error}"))
+                })
         }
         (&Method::Post, "/document/update") => {
             let input = read_json::<UpdateProjectDocumentInput>(request)?;
@@ -678,7 +764,7 @@ fn route_request(
                     title: input.title.unwrap_or(existing.title),
                     body: input.body.unwrap_or(existing.body),
                 })
-                .map_err(RouteError::internal)?;
+                .map_err(RouteError::from)?;
             append_project_event(
                 state,
                 context,
@@ -689,16 +775,18 @@ fn route_request(
                 &document,
             );
 
-            serde_json::to_value(document).map_err(|error| {
-                RouteError::internal(format!("failed to encode updated document: {error}"))
-            })
+            serde_json::to_value(document)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode updated document: {error}"))
+                })
         }
         (&Method::Post, "/document/delete") => {
             let input = read_json::<ProjectDocumentTarget>(request)?;
             let document = require_document_for_project(state, input.project_id, input.id)?;
             state
                 .delete_document(input.id)
-                .map_err(RouteError::internal)?;
+                .map_err(RouteError::from)?;
             append_project_event(
                 state,
                 context,
@@ -708,20 +796,20 @@ fn route_request(
                 document.id,
                 &document,
             );
-            Ok(json!({ "ok": true }))
+            Ok(json!({ "ok": true, "data": null }))
         }
         (&Method::Post, "/worktree/list") => {
             let input = read_json::<ListProjectWorktreesInput>(request)?;
-            state
-                .get_project(input.project_id)
-                .map_err(RouteError::not_found)?;
+            state.get_project(input.project_id)?;
             let worktrees = state
                 .list_worktrees(input.project_id)
-                .map_err(RouteError::internal)?;
+                .map_err(RouteError::from)?;
 
-            serde_json::to_value(worktrees).map_err(|error| {
-                RouteError::internal(format!("failed to encode worktrees: {error}"))
-            })
+            serde_json::to_value(worktrees)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode worktrees: {error}"))
+                })
         }
         (&Method::Post, "/worktree/ensure") => {
             let input = read_json::<EnsureProjectWorktreeInput>(request)?;
@@ -736,9 +824,11 @@ fn route_request(
                 &worktree,
             );
 
-            serde_json::to_value(worktree).map_err(|error| {
-                RouteError::internal(format!("failed to encode worktree: {error}"))
-            })
+            serde_json::to_value(worktree)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode worktree: {error}"))
+                })
         }
         (&Method::Post, "/worktree/launch-agent") => {
             let input = read_json::<LaunchProjectWorktreeAgentInput>(request)?;
@@ -754,9 +844,11 @@ fn route_request(
                 &launched,
             );
 
-            serde_json::to_value(launched).map_err(|error| {
-                RouteError::internal(format!("failed to encode launched worktree agent: {error}"))
-            })
+            serde_json::to_value(launched)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode launched worktree agent: {error}"))
+                })
         }
         (&Method::Post, "/worktree/remove") => {
             let input = read_json::<ProjectWorktreeTarget>(request)?;
@@ -771,9 +863,11 @@ fn route_request(
                 &removed,
             );
 
-            serde_json::to_value(removed).map_err(|error| {
-                RouteError::internal(format!("failed to encode removed worktree: {error}"))
-            })
+            serde_json::to_value(removed)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode removed worktree: {error}"))
+                })
         }
         (&Method::Post, "/worktree/recreate") => {
             let input = read_json::<ProjectWorktreeTarget>(request)?;
@@ -789,9 +883,11 @@ fn route_request(
                 &worktree,
             );
 
-            serde_json::to_value(worktree).map_err(|error| {
-                RouteError::internal(format!("failed to encode recreated worktree: {error}"))
-            })
+            serde_json::to_value(worktree)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode recreated worktree: {error}"))
+                })
         }
         (&Method::Post, "/worktree/clear") => {
             let input = read_json::<ClearProjectWorktreesInput>(request)?;
@@ -805,7 +901,7 @@ fn route_request(
                 0,
                 &json!({ "count": cleared }),
             );
-            Ok(json!({ "ok": true, "count": cleared }))
+            Ok(json!({ "ok": true, "data": { "count": cleared } }))
         }
         _ => Err(RouteError::not_found("route not found")),
     }
@@ -818,7 +914,7 @@ fn require_work_item_for_project(
 ) -> Result<WorkItemRecord, RouteError> {
     let work_item = state
         .get_work_item(work_item_id)
-        .map_err(RouteError::not_found)?;
+        ?;
 
     if work_item.project_id != project_id {
         return Err(RouteError::not_found(format!(
@@ -836,7 +932,7 @@ fn require_document_for_project(
 ) -> Result<DocumentRecord, RouteError> {
     state
         .list_documents(project_id)
-        .map_err(RouteError::internal)?
+        .map_err(RouteError::from)?
         .into_iter()
         .find(|document| document.id == document_id)
         .ok_or_else(|| {
@@ -853,7 +949,7 @@ fn require_worktree_for_project(
 ) -> Result<WorktreeRecord, RouteError> {
     let worktree = state
         .get_worktree(worktree_id)
-        .map_err(RouteError::not_found)?;
+        ?;
 
     if worktree.project_id != project_id {
         return Err(RouteError::not_found(format!(
@@ -871,12 +967,12 @@ fn ensure_project_worktree(
 ) -> Result<WorktreeRecord, RouteError> {
     let project = state
         .get_project(project_id)
-        .map_err(RouteError::not_found)?;
+        ?;
     let work_item = require_work_item_for_project(state, project_id, work_item_id)?;
 
     let existing = state
         .get_worktree_for_project_and_work_item(project_id, work_item_id)
-        .map_err(RouteError::internal)?;
+        .map_err(RouteError::from)?;
     let branch_name = existing
         .as_ref()
         .map(|record| record.branch_name.clone())
@@ -937,7 +1033,7 @@ fn ensure_project_worktree(
             branch_name,
             worktree_path: worktree_path.display().to_string(),
         })
-        .map_err(RouteError::internal)
+        .map_err(RouteError::from)
 }
 
 fn launch_worktree_agent(
@@ -949,7 +1045,7 @@ fn launch_worktree_agent(
 ) -> Result<WorktreeLaunchOutput, RouteError> {
     let project = state
         .get_project(input.project_id)
-        .map_err(RouteError::not_found)?;
+        ?;
     let work_item = require_work_item_for_project(state, input.project_id, input.work_item_id)?;
     let worktree = ensure_project_worktree(state, input.project_id, input.work_item_id)?;
     let launch_profile_id = resolve_worktree_launch_profile_id(
@@ -972,7 +1068,7 @@ fn launch_worktree_agent(
             runtime,
             &context.source,
         )
-        .map_err(RouteError::internal)?;
+        .map_err(RouteError::from)?;
 
     Ok(WorktreeLaunchOutput { worktree, session })
 }
@@ -985,21 +1081,21 @@ fn resolve_worktree_launch_profile_id(
     if let Some(launch_profile_id) = requested_launch_profile_id {
         state
             .get_launch_profile(launch_profile_id)
-            .map_err(RouteError::not_found)?;
+            ?;
         return Ok(launch_profile_id);
     }
 
     if let Some(source_session_id) = source_session_id {
         let source_session = state
             .get_session_record(source_session_id)
-            .map_err(RouteError::not_found)?;
+            ?;
 
         if let Some(launch_profile_id) = source_session.launch_profile_id {
             return Ok(launch_profile_id);
         }
     }
 
-    let bootstrap = state.bootstrap().map_err(RouteError::internal)?;
+    let bootstrap = state.bootstrap().map_err(RouteError::from)?;
 
     if let Some(launch_profile_id) = bootstrap.settings.default_launch_profile_id {
         return Ok(launch_profile_id);
@@ -1020,7 +1116,7 @@ fn build_worktree_startup_prompt(
 ) -> Result<String, RouteError> {
     let linked_documents = state
         .list_documents(project.id)
-        .map_err(RouteError::internal)?
+        .map_err(RouteError::from)?
         .into_iter()
         .filter(|document| document.work_item_id == Some(work_item.id))
         .collect::<Vec<_>>();
@@ -1071,7 +1167,7 @@ fn latest_session_record_for_worktree(
 ) -> Result<Option<project_commander_lib::db::SessionRecord>, RouteError> {
     Ok(state
         .list_session_records(project_id)
-        .map_err(RouteError::internal)?
+        .map_err(RouteError::from)?
         .into_iter()
         .find(|record| record.worktree_id == Some(worktree_id)))
 }
@@ -1089,7 +1185,7 @@ fn ensure_worktree_lifecycle_allowed(
             project_id,
             worktree_id: Some(worktree_id),
         })
-        .map_err(RouteError::internal)?
+        .map_err(RouteError::from)?
     {
         if snapshot.is_running {
             return Err(RouteError::bad_request(format!(
@@ -1184,7 +1280,7 @@ fn remove_project_worktree(
 ) -> Result<WorktreeRecord, RouteError> {
     let project = state
         .get_project(project_id)
-        .map_err(RouteError::not_found)?;
+        ?;
     let worktree = require_worktree_for_project(state, project_id, worktree_id)?;
     ensure_worktree_lifecycle_allowed(
         state,
@@ -1205,7 +1301,7 @@ fn remove_project_worktree(
 
     state
         .delete_worktree(worktree.id)
-        .map_err(RouteError::internal)?;
+        .map_err(RouteError::from)?;
 
     Ok(worktree)
 }
@@ -1218,7 +1314,7 @@ fn recreate_project_worktree(
 ) -> Result<WorktreeRecord, RouteError> {
     let project = state
         .get_project(project_id)
-        .map_err(RouteError::not_found)?;
+        ?;
     let worktree = require_worktree_for_project(state, project_id, worktree_id)?;
     ensure_worktree_lifecycle_allowed(
         state,
@@ -1241,12 +1337,10 @@ fn recreate_project_worktree(
 }
 
 fn clear_project_worktrees(state: &AppState, project_id: i64) -> Result<usize, RouteError> {
-    let project = state
-        .get_project(project_id)
-        .map_err(RouteError::not_found)?;
+    let project = state.get_project(project_id)?;
     let worktrees = state
         .list_worktrees(project_id)
-        .map_err(RouteError::internal)?;
+        .map_err(RouteError::from)?;
     let project_git_root = resolve_git_root(&project.root_path)?;
     let worktree_root = PathBuf::from(state.storage().app_data_dir).join("worktrees");
     let mut cleared = 0_usize;
@@ -1277,7 +1371,7 @@ fn clear_project_worktrees(state: &AppState, project_id: i64) -> Result<usize, R
 
         state
             .delete_worktree(worktree.id)
-            .map_err(RouteError::internal)?;
+            .map_err(RouteError::from)?;
         cleared += 1;
     }
 
@@ -1291,11 +1385,11 @@ fn terminate_orphaned_session(
 ) -> Result<project_commander_lib::db::SessionRecord, RouteError> {
     state
         .get_project(input.project_id)
-        .map_err(RouteError::not_found)?;
+        ?;
 
     let session = state
         .get_session_record(input.session_id)
-        .map_err(RouteError::not_found)?;
+        ?;
 
     if session.project_id != input.project_id {
         return Err(RouteError::not_found(format!(
@@ -1435,7 +1529,7 @@ fn terminate_orphaned_session(
             exit_code: None,
             exit_success: Some(false),
         })
-        .map_err(RouteError::internal)?;
+        .map_err(RouteError::from)?;
 
     append_supervisor_session_event(
         state,
@@ -1520,7 +1614,7 @@ fn repair_cleanup_candidates(
     state: &AppState,
     context: &RequestContext,
 ) -> Result<CleanupRepairOutput, RouteError> {
-    let candidates = list_cleanup_candidates(state).map_err(RouteError::internal)?;
+    let candidates = list_cleanup_candidates(state).map_err(RouteError::from)?;
     let mut actions = Vec::with_capacity(candidates.len());
 
     for candidate in candidates {
@@ -1535,7 +1629,7 @@ fn remove_cleanup_candidate(
     context: &RequestContext,
     input: CleanupCandidateTarget,
 ) -> Result<CleanupActionOutput, RouteError> {
-    let candidates = list_cleanup_candidates(state).map_err(RouteError::internal)?;
+    let candidates = list_cleanup_candidates(state).map_err(RouteError::from)?;
     let candidate = candidates
         .into_iter()
         .find(|candidate| candidate.kind == input.kind && candidate.path == input.path)
@@ -1584,7 +1678,7 @@ fn apply_cleanup_candidate(
 
             state
                 .delete_worktree(worktree_id)
-                .map_err(RouteError::internal)?;
+                .map_err(RouteError::from)?;
             append_project_audit_event(
                 state,
                 project_id,
@@ -1659,12 +1753,15 @@ fn collect_stale_managed_worktree_candidates(
         return Ok(Vec::new());
     }
 
-    let projects = state.list_projects()?;
+    let projects = state.list_projects().map_err(|error| error.to_string())?;
     let mut tracked_paths = HashSet::new();
     let (protected_worktree_ids, protected_paths) = collect_protected_worktree_state(state)?;
 
     for project in projects {
-        for worktree in state.list_worktrees(project.id)? {
+        for worktree in state
+            .list_worktrees(project.id)
+            .map_err(|error| error.to_string())?
+        {
             tracked_paths.insert(normalize_cleanup_path_key(Path::new(
                 &worktree.worktree_path,
             )));
@@ -1735,12 +1832,16 @@ fn collect_stale_managed_worktree_candidates(
 fn collect_stale_worktree_record_candidates(
     state: &AppState,
 ) -> Result<Vec<CleanupCandidate>, String> {
-    let projects = state.list_projects()?;
-    let (protected_worktree_ids, protected_paths) = collect_protected_worktree_state(state)?;
+    let projects = state.list_projects().map_err(|error| error.to_string())?;
+    let (protected_worktree_ids, protected_paths) =
+        collect_protected_worktree_state(state)?;
     let mut candidates = Vec::new();
 
     for project in projects {
-        for worktree in state.list_worktrees(project.id)? {
+        for worktree in state
+            .list_worktrees(project.id)
+            .map_err(|error| error.to_string())?
+        {
             if worktree.path_available {
                 continue;
             }
@@ -1772,12 +1873,15 @@ fn collect_stale_worktree_record_candidates(
 fn collect_protected_worktree_state(
     state: &AppState,
 ) -> Result<(HashSet<i64>, HashSet<String>), String> {
-    let projects = state.list_projects()?;
+    let projects = state.list_projects().map_err(|error| error.to_string())?;
     let mut protected_worktree_ids = HashSet::new();
     let mut protected_paths = HashSet::new();
 
     for project in projects {
-        for session in state.list_session_records(project.id)? {
+        for session in state
+            .list_session_records(project.id)
+            .map_err(|error| error.to_string())?
+        {
             if !matches!(session.state.as_str(), "running" | "orphaned") {
                 continue;
             }
@@ -2557,6 +2661,16 @@ mod tests {
         Client::new()
     }
 
+    fn unwrap_envelope<T: serde::de::DeserializeOwned>(response: reqwest::blocking::Response, context: &str) -> T {
+        let body: serde_json::Value = response.json().expect(&format!("{context}: should decode JSON"));
+        let data = body.get("data").expect(&format!("{context}: should have 'data' field")).clone();
+        serde_json::from_value(data).expect(&format!("{context}: should decode inner data"))
+    }
+
+    fn unwrap_envelope_list<T: serde::de::DeserializeOwned>(response: reqwest::blocking::Response, context: &str) -> Vec<T> {
+        unwrap_envelope::<Vec<T>>(response, context)
+    }
+
     fn supervisor_url(runtime: &SupervisorRuntimeInfo, route: &str) -> String {
         format!("http://127.0.0.1:{}{route}", runtime.port)
     }
@@ -2659,9 +2773,8 @@ mod tests {
             .send()
             .expect("worktree remove request should succeed")
             .error_for_status()
-            .expect("worktree remove route should return success")
-            .json::<WorktreeRecord>()
-            .expect("worktree remove response should decode");
+            .expect("worktree remove route should return success");
+        let removed = unwrap_envelope::<WorktreeRecord>(removed, "worktree remove response should decode");
 
         handle
             .join()
@@ -2793,9 +2906,8 @@ mod tests {
             .send()
             .expect("worktree recreate request should succeed")
             .error_for_status()
-            .expect("worktree recreate route should return success")
-            .json::<WorktreeRecord>()
-            .expect("worktree recreate response should decode");
+            .expect("worktree recreate route should return success");
+        let recreated = unwrap_envelope::<WorktreeRecord>(recreated, "worktree recreate response should decode");
 
         handle
             .join()
@@ -2837,9 +2949,8 @@ mod tests {
             .send()
             .expect("project create request should succeed")
             .error_for_status()
-            .expect("project create route should return success")
-            .json::<ProjectRecord>()
-            .expect("project create response should decode");
+            .expect("project create route should return success");
+        let created_project = unwrap_envelope::<ProjectRecord>(created_project, "project create response");
 
         let updated_project = client
             .post(supervisor_url(&runtime, "/project/update"))
@@ -2853,9 +2964,8 @@ mod tests {
             .send()
             .expect("project update request should succeed")
             .error_for_status()
-            .expect("project update route should return success")
-            .json::<ProjectRecord>()
-            .expect("project update response should decode");
+            .expect("project update route should return success");
+        let updated_project = unwrap_envelope::<ProjectRecord>(updated_project, "project update response");
 
         let created_profile = client
             .post(supervisor_url(&runtime, "/launch-profile/create"))
@@ -2870,9 +2980,8 @@ mod tests {
             .send()
             .expect("launch profile create request should succeed")
             .error_for_status()
-            .expect("launch profile create route should return success")
-            .json::<LaunchProfileRecord>()
-            .expect("launch profile create response should decode");
+            .expect("launch profile create route should return success");
+        let created_profile = unwrap_envelope::<LaunchProfileRecord>(created_profile, "launch profile create response");
 
         let updated_profile = client
             .post(supervisor_url(&runtime, "/launch-profile/update"))
@@ -2888,9 +2997,8 @@ mod tests {
             .send()
             .expect("launch profile update request should succeed")
             .error_for_status()
-            .expect("launch profile update route should return success")
-            .json::<LaunchProfileRecord>()
-            .expect("launch profile update response should decode");
+            .expect("launch profile update route should return success");
+        let updated_profile = unwrap_envelope::<LaunchProfileRecord>(updated_profile, "launch profile update response");
 
         let updated_settings = client
             .post(supervisor_url(&runtime, "/settings/update"))
@@ -2903,9 +3011,8 @@ mod tests {
             .send()
             .expect("app settings update request should succeed")
             .error_for_status()
-            .expect("app settings update route should return success")
-            .json::<AppSettings>()
-            .expect("app settings update response should decode");
+            .expect("app settings update route should return success");
+        let updated_settings = unwrap_envelope::<AppSettings>(updated_settings, "app settings update response");
 
         client
             .post(supervisor_url(&runtime, "/launch-profile/delete"))
@@ -2957,6 +3064,97 @@ mod tests {
         assert!(settings.auto_repair_safe_cleanup_on_startup);
         assert!(events.contains(&"project.created".to_string()));
         assert!(events.contains(&"project.updated".to_string()));
+    }
+
+    #[test]
+    fn supervisor_routes_return_conflict_for_duplicate_launch_profiles() {
+        let harness = TestHarness::new("duplicate-launch-profile-route", false);
+        let (runtime, handle) = spawn_route_server(harness.state.clone(), 2);
+        let client = authorized_client(&runtime);
+
+        client
+            .post(supervisor_url(&runtime, "/launch-profile/create"))
+            .header("x-project-commander-token", &runtime.token)
+            .header("x-project-commander-source", "integration_test")
+            .json(&CreateLaunchProfileInput {
+                label: "Duplicate Route Profile".to_string(),
+                executable: "cmd.exe".to_string(),
+                args: "/c echo first".to_string(),
+                env_json: "{}".to_string(),
+            })
+            .send()
+            .expect("first launch profile create request should succeed")
+            .error_for_status()
+            .expect("first launch profile create route should return success");
+
+        let response = client
+            .post(supervisor_url(&runtime, "/launch-profile/create"))
+            .header("x-project-commander-token", &runtime.token)
+            .header("x-project-commander-source", "integration_test")
+            .json(&CreateLaunchProfileInput {
+                label: "Duplicate Route Profile".to_string(),
+                executable: "cmd.exe".to_string(),
+                args: "/c echo second".to_string(),
+                env_json: "{}".to_string(),
+            })
+            .send()
+            .expect("duplicate launch profile request should return a response");
+        let status = response.status();
+        let body = response
+            .json::<Value>()
+            .expect("duplicate launch profile error body should decode");
+
+        handle
+            .join()
+            .expect("duplicate launch profile route server should stop cleanly");
+
+        assert_eq!(status, reqwest::StatusCode::CONFLICT);
+        assert_eq!(body.get("code").and_then(Value::as_str), Some("conflict"));
+        assert!(
+            body.get("error")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .contains("already exists")
+        );
+    }
+
+    #[test]
+    fn supervisor_routes_return_bad_request_for_invalid_work_item_payloads() {
+        let harness = TestHarness::new("invalid-work-item-route", false);
+        let project = harness.create_project("Commander");
+        let (runtime, handle) = spawn_route_server(harness.state.clone(), 1);
+
+        let response = authorized_client(&runtime)
+            .post(supervisor_url(&runtime, "/work-item/create"))
+            .header("x-project-commander-token", &runtime.token)
+            .header("x-project-commander-source", "integration_test")
+            .json(&CreateProjectWorkItemInput {
+                project_id: project.id,
+                parent_work_item_id: None,
+                title: "Invalid item".to_string(),
+                body: Some(String::new()),
+                item_type: Some("mystery".to_string()),
+                status: Some("backlog".to_string()),
+            })
+            .send()
+            .expect("invalid work item request should return a response");
+        let status = response.status();
+        let body = response
+            .json::<Value>()
+            .expect("invalid work item error body should decode");
+
+        handle
+            .join()
+            .expect("invalid work item route server should stop cleanly");
+
+        assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+        assert_eq!(body.get("code").and_then(Value::as_str), Some("invalid_input"));
+        assert!(
+            body.get("error")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .contains("work item type must be")
+        );
     }
 
     #[test]
@@ -3117,9 +3315,8 @@ mod tests {
             .send()
             .expect("cleanup candidate request should succeed")
             .error_for_status()
-            .expect("cleanup candidate route should return success")
-            .json::<Vec<CleanupCandidate>>()
-            .expect("cleanup candidate response should decode");
+            .expect("cleanup candidate route should return success");
+        let candidates = unwrap_envelope_list::<CleanupCandidate>(candidates, "cleanup candidate response should decode");
 
         let removed = client
             .post(supervisor_url(&runtime, "/cleanup/remove"))
@@ -3132,9 +3329,8 @@ mod tests {
             .send()
             .expect("cleanup remove request should succeed")
             .error_for_status()
-            .expect("cleanup remove route should return success")
-            .json::<CleanupActionOutput>()
-            .expect("cleanup remove response should decode");
+            .expect("cleanup remove route should return success");
+        let removed = unwrap_envelope::<CleanupActionOutput>(removed, "cleanup remove response should decode");
 
         handle
             .join()
@@ -3180,9 +3376,8 @@ mod tests {
             .send()
             .expect("cleanup candidate request should succeed")
             .error_for_status()
-            .expect("cleanup candidate route should return success")
-            .json::<Vec<CleanupCandidate>>()
-            .expect("cleanup candidate response should decode");
+            .expect("cleanup candidate route should return success");
+        let candidates = unwrap_envelope_list::<CleanupCandidate>(candidates, "cleanup candidate response should decode");
 
         let removed = client
             .post(supervisor_url(&runtime, "/cleanup/remove"))
@@ -3195,9 +3390,8 @@ mod tests {
             .send()
             .expect("cleanup remove request should succeed")
             .error_for_status()
-            .expect("cleanup remove route should return success")
-            .json::<CleanupActionOutput>()
-            .expect("cleanup remove response should decode");
+            .expect("cleanup remove route should return success");
+        let removed = unwrap_envelope::<CleanupActionOutput>(removed, "cleanup remove response should decode");
 
         handle
             .join()
@@ -3262,9 +3456,8 @@ mod tests {
             .send()
             .expect("orphaned session list request should succeed")
             .error_for_status()
-            .expect("orphaned session list route should return success")
-            .json::<Vec<SessionRecord>>()
-            .expect("orphaned session list response should decode");
+            .expect("orphaned session list route should return success");
+        let orphaned = unwrap_envelope_list::<SessionRecord>(orphaned, "orphaned session list response should decode");
 
         let terminated = client
             .post(supervisor_url(&runtime, "/session/orphaned-terminate"))
@@ -3277,9 +3470,8 @@ mod tests {
             .send()
             .expect("orphaned session terminate request should succeed")
             .error_for_status()
-            .expect("orphaned session terminate route should return success")
-            .json::<SessionRecord>()
-            .expect("orphaned session terminate response should decode");
+            .expect("orphaned session terminate route should return success");
+        let terminated = unwrap_envelope::<SessionRecord>(terminated, "orphaned session terminate response should decode");
 
         handle
             .join()
@@ -3327,9 +3519,8 @@ mod tests {
             .send()
             .expect("bootstrap request should succeed")
             .error_for_status()
-            .expect("bootstrap route should return success")
-            .json::<BootstrapData>()
-            .expect("bootstrap response should decode");
+            .expect("bootstrap route should return success");
+        let bootstrap = unwrap_envelope::<BootstrapData>(bootstrap, "bootstrap response should decode");
 
         handle
             .join()

@@ -1,7 +1,7 @@
 # Project Commander Architecture Checkpoint
 
-Date: 2026-04-09
-Status: Working architecture baseline
+Date: 2026-04-10
+Status: Working architecture baseline; close out the current workflow before expanding scope
 
 ## Purpose
 
@@ -82,17 +82,31 @@ The current app already has the right architectural direction:
 - supervisor-owned session runtime
 - supervisor-routed MCP attachment for Claude Code
 - supervisor-routed work-item and document CRUD
+- supervisor-routed project, launch-profile, and app-settings writes
 - durable session records and append-only session events
 - supervisor-owned worktree creation and worktree-backed sessions
+- supervisor-owned recovery and safe cleanup flows for runtime/session/worktree artifacts
 
-The main architectural gaps are now narrower:
+Core-loop decisions that should now stay fixed unless there is a strong reason
+to revisit them:
 
-- project and launch-profile management still partly live on the Tauri side
-- supervisor integration tests are still thin
-- at least one frontend/runtime sync issue remains around newly created worktrees appearing in the runtime rail
+- project identity is resolved by the supervisor around the repository root, not by transient UI folder state
+- selecting a nested folder inside an already registered repository should reconnect to the existing project, not create a duplicate project or error dead-end
+- registering a non-Git folder should initialize Git and then treat that folder as the project root
+- if a repo is still unborn when the first managed worktree is requested, the supervisor should create the one-time bootstrap snapshot commit instead of forcing the user to discover an initial-commit prerequisite
+- the project-level Dispatcher is the single main session for a project and runs in the repo root
+- focused worktree agents are launched by the supervisor in the worktree path with work-item context injected at launch
+- work-item identifiers are supervisor-owned and use flat parent call signs plus dotted child numbering
 
-The direction is still correct, but the remaining split authority and missing
-test coverage should be resolved before major expansion.
+The main architectural risks are now narrower:
+
+- split authority is no longer the immediate problem in the current MVP slice
+- session/event history, reconnect/recovery, and worktree create/remove/recreate are now exposed through the supervisor-backed desktop flow
+- the immediate risk is expanding scope before the current project -> session -> worktree -> recovery -> history loop is proved clean end-to-end
+
+The direction is still correct. The immediate risk is no longer split
+authority; it is failing to capitalize on the supervisor model in the product
+UX before expanding into planning and workflows.
 
 ## Target Runtime Shape
 
@@ -398,8 +412,8 @@ coordination layers, the following must be hardened.
 
 ### 1. Single writer
 
-Move the remaining project, launch-profile, and settings authority behind the
-supervisor.
+Keep new durable entities behind the supervisor and do not regress into split
+authority.
 
 Reason:
 
@@ -456,7 +470,7 @@ Need explicit rules for:
 
 ### 6. Integration tests
 
-Need real tests around:
+Need to keep extending real tests around:
 
 - supervisor boot
 - session launch
@@ -465,6 +479,11 @@ Need real tests around:
 - worktree creation and worktree-backed launch
 - frontend reconnect
 - packaged app runtime
+
+Core supervisor route and recovery coverage now exists for the current MVP
+domain, so the next testing emphasis should be the end-to-end core workflow
+pass across launch, reconnect/recovery, worktree lifecycle, and history/audit
+surfaces before more feature expansion.
 
 ### 7. Schema planning
 
@@ -476,9 +495,9 @@ Otherwise the UI will hard-code assumptions that later have to be ripped out.
 
 Recommended next sequence:
 
-1. Fix the runtime-rail worktree refresh bug.
-2. Add supervisor integration tests for launch, MCP, worktree, stop, and reconnect flows.
-3. Move remaining project/profile/settings authority behind supervisor APIs.
+1. Prove the current core workflow end-to-end in both dev and packaged app runs.
+2. Fix issues exposed by that pass without introducing new authority paths or new product scope.
+3. Only then continue richer worktree lifecycle controls on top of the current supervisor-owned model.
 4. Define planning entities and workflow schema in a second design doc.
 5. Only then build planning and workflow UI.
 

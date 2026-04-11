@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { FitAddon } from '@xterm/addon-fit'
@@ -11,11 +11,36 @@ type LiveTerminalProps = {
   onSessionExit: (event: TerminalExitEvent) => void
 }
 
+function getTerminalErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message
+  }
+
+  if (typeof error === 'string' && error.trim()) {
+    return error
+  }
+
+  if (error && typeof error === 'object') {
+    const candidate = error as { error?: unknown; message?: unknown }
+
+    if (typeof candidate.error === 'string' && candidate.error.trim()) {
+      return candidate.error
+    }
+
+    if (typeof candidate.message === 'string' && candidate.message.trim()) {
+      return candidate.message
+    }
+  }
+
+  return fallback
+}
+
 function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const onSessionExitRef = useRef(onSessionExit)
+  const [terminalError, setTerminalError] = useState<string | null>(null)
   const sessionKey = `${snapshot.projectId}:${snapshot.worktreeId ?? 'project'}:${snapshot.startedAt}`
 
   useEffect(() => {
@@ -75,7 +100,18 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
             cols: terminal.cols,
             rows: terminal.rows,
           },
-        }).catch(() => undefined)
+        })
+          .then(() => {
+            setTerminalError(null)
+          })
+          .catch((error) => {
+            setTerminalError(
+              getTerminalErrorMessage(
+                error,
+                'Terminal resize failed. The session may no longer be available.',
+              ),
+            )
+          })
       }
     }
 
@@ -97,14 +133,36 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
     }
 
     const pasteClipboard = async () => {
+      let text = ''
+
       try {
-        const text = await navigator.clipboard.readText()
-        if (!text) return
+        text = await navigator.clipboard.readText()
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'NotAllowedError') {
+          return
+        }
+
+        return
+      }
+
+      if (!text) {
+        return
+      }
+
+      try {
         await invoke('write_session_input', {
           input: { projectId: snapshot.projectId, worktreeId: snapshot.worktreeId, data: text },
         })
+        setTerminalError(null)
         focusTerminal()
-      } catch { /* ignore */ }
+      } catch (error) {
+        setTerminalError(
+          getTerminalErrorMessage(
+            error,
+            'Terminal paste failed. The session may no longer be available.',
+          ),
+        )
+      }
     }
 
     terminal.attachCustomKeyEventHandler((event) => {
@@ -141,6 +199,7 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
         return
       }
 
+      setTerminalError(null)
       terminal.write((latestSnapshot ?? snapshot).output)
       focusTerminal()
 
@@ -217,7 +276,18 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
           worktreeId: snapshot.worktreeId,
           data,
         },
-      }).catch(() => undefined)
+      })
+        .then(() => {
+          setTerminalError(null)
+        })
+        .catch((error) => {
+          setTerminalError(
+            getTerminalErrorMessage(
+              error,
+              'Terminal input failed. The session may no longer be available.',
+            ),
+          )
+        })
     }
 
     const dataDisposable = terminal.onData((data) => {
@@ -250,8 +320,16 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
   }, [sessionKey, snapshot.isRunning, snapshot.projectId, snapshot.worktreeId])
 
   return (
-    <div className="terminal-shell">
-      <div className="terminal-host" ref={hostRef} />
+    <div className="terminal-shell flex h-full min-h-0 flex-col gap-3">
+      {terminalError ? (
+        <div
+          className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-destructive"
+          role="status"
+        >
+          {terminalError}
+        </div>
+      ) : null}
+      <div className="terminal-host flex-1" ref={hostRef} />
     </div>
   )
 }

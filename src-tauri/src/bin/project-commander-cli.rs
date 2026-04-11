@@ -3,6 +3,7 @@ use project_commander_lib::db::{
     AppState, CreateDocumentInput, CreateWorkItemInput, DocumentRecord, ProjectRecord,
     UpdateDocumentInput, UpdateWorkItemInput, WorkItemRecord,
 };
+use project_commander_lib::error::{AppError, AppResult};
 use serde::Serialize;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -106,6 +107,12 @@ struct ListWorkItemsArgs {
     project: ProjectSelectionArgs,
     #[arg(long, value_parser = ["backlog", "in_progress", "blocked", "done"])]
     status: Option<String>,
+    #[arg(long = "type", value_parser = ["bug", "task", "feature", "note"])]
+    item_type: Option<String>,
+    #[arg(long)]
+    parent_only: bool,
+    #[arg(long)]
+    open_only: bool,
     #[arg(long)]
     json: bool,
 }
@@ -122,6 +129,8 @@ struct CreateWorkItemArgs {
     item_type: String,
     #[arg(long, default_value = "backlog", value_parser = ["backlog", "in_progress", "blocked", "done"])]
     status: String,
+    #[arg(long)]
+    parent_work_item_id: Option<i64>,
     #[arg(long)]
     json: bool,
 }
@@ -221,10 +230,11 @@ fn main() {
     }
 }
 
-fn run(cli: Cli) -> Result<(), String> {
+fn run(cli: Cli) -> AppResult<()> {
     let db_path = cli.db_path.ok_or_else(|| {
-        "database path not provided. Pass --db-path or launch the session from Project Commander."
-            .to_string()
+        AppError::invalid_input(
+            "database path not provided. Pass --db-path or launch the session from Project Commander.",
+        )
     })?;
     let state = AppState::from_database_path(db_path)?;
 
@@ -236,7 +246,7 @@ fn run(cli: Cli) -> Result<(), String> {
     }
 }
 
-fn handle_project_command(state: &AppState, command: ProjectCommand) -> Result<(), String> {
+fn handle_project_command(state: &AppState, command: ProjectCommand) -> AppResult<()> {
     match command.command {
         ProjectSubcommand::Current(args) => {
             let project = resolve_project(state, args.project)?;
@@ -256,13 +266,13 @@ fn handle_project_command(state: &AppState, command: ProjectCommand) -> Result<(
     }
 }
 
-fn handle_session_command(state: &AppState, command: SessionCommand) -> Result<(), String> {
+fn handle_session_command(state: &AppState, command: SessionCommand) -> AppResult<()> {
     match command.command {
         SessionSubcommand::Brief(args) => session_brief(state, args),
     }
 }
 
-fn handle_work_item_command(state: &AppState, command: WorkItemCommand) -> Result<(), String> {
+fn handle_work_item_command(state: &AppState, command: WorkItemCommand) -> AppResult<()> {
     match command.command {
         WorkItemSubcommand::List(args) => list_work_items(state, args),
         WorkItemSubcommand::Create(args) => create_work_item(state, args),
@@ -271,7 +281,7 @@ fn handle_work_item_command(state: &AppState, command: WorkItemCommand) -> Resul
     }
 }
 
-fn handle_document_command(state: &AppState, command: DocumentCommand) -> Result<(), String> {
+fn handle_document_command(state: &AppState, command: DocumentCommand) -> AppResult<()> {
     match command.command {
         DocumentSubcommand::List(args) => list_documents(state, args),
         DocumentSubcommand::Create(args) => create_document(state, args),
@@ -280,7 +290,7 @@ fn handle_document_command(state: &AppState, command: DocumentCommand) -> Result
     }
 }
 
-fn session_brief(state: &AppState, args: SessionBriefArgs) -> Result<(), String> {
+fn session_brief(state: &AppState, args: SessionBriefArgs) -> AppResult<()> {
     let project = resolve_project(state, args.project)?;
     let work_items = state.list_work_items(project.id)?;
     let documents = state.list_documents(project.id)?;
@@ -305,12 +315,24 @@ fn session_brief(state: &AppState, args: SessionBriefArgs) -> Result<(), String>
     }
 }
 
-fn list_work_items(state: &AppState, args: ListWorkItemsArgs) -> Result<(), String> {
+fn list_work_items(state: &AppState, args: ListWorkItemsArgs) -> AppResult<()> {
     let project = resolve_project(state, args.project)?;
     let mut items = state.list_work_items(project.id)?;
 
     if let Some(status) = args.status {
         items.retain(|item| item.status == status);
+    }
+
+    if let Some(item_type) = args.item_type {
+        items.retain(|item| item.item_type == item_type);
+    }
+
+    if args.open_only {
+        items.retain(|item| item.status != "done");
+    }
+
+    if args.parent_only {
+        items.retain(|item| item.parent_work_item_id.is_none());
     }
 
     if args.json {
@@ -323,8 +345,8 @@ fn list_work_items(state: &AppState, args: ListWorkItemsArgs) -> Result<(), Stri
 
         for item in items {
             println!(
-                "#{} [{} / {}] {}",
-                item.id, item.status, item.item_type, item.title
+                "{} [{} / {}] {}",
+                item.call_sign, item.status, item.item_type, item.title
             );
 
             if !item.body.trim().is_empty() {
@@ -336,7 +358,7 @@ fn list_work_items(state: &AppState, args: ListWorkItemsArgs) -> Result<(), Stri
     }
 }
 
-fn list_documents(state: &AppState, args: ListDocumentsArgs) -> Result<(), String> {
+fn list_documents(state: &AppState, args: ListDocumentsArgs) -> AppResult<()> {
     let project = resolve_project(state, args.project)?;
     let documents = state.list_documents(project.id)?;
     let work_item_titles = work_item_title_map(&state.list_work_items(project.id)?);
@@ -371,10 +393,11 @@ fn list_documents(state: &AppState, args: ListDocumentsArgs) -> Result<(), Strin
     }
 }
 
-fn create_work_item(state: &AppState, args: CreateWorkItemArgs) -> Result<(), String> {
+fn create_work_item(state: &AppState, args: CreateWorkItemArgs) -> AppResult<()> {
     let project = resolve_project(state, args.project)?;
     let item = state.create_work_item(CreateWorkItemInput {
         project_id: project.id,
+        parent_work_item_id: args.parent_work_item_id,
         title: args.title,
         body: args.body,
         item_type: args.item_type,
@@ -389,7 +412,7 @@ fn create_work_item(state: &AppState, args: CreateWorkItemArgs) -> Result<(), St
     }
 }
 
-fn create_document(state: &AppState, args: CreateDocumentArgs) -> Result<(), String> {
+fn create_document(state: &AppState, args: CreateDocumentArgs) -> AppResult<()> {
     let project = resolve_project(state, args.project)?;
     let document = state.create_document(CreateDocumentInput {
         project_id: project.id,
@@ -406,16 +429,15 @@ fn create_document(state: &AppState, args: CreateDocumentArgs) -> Result<(), Str
     }
 }
 
-fn update_work_item(state: &AppState, args: UpdateWorkItemArgs) -> Result<(), String> {
+fn update_work_item(state: &AppState, args: UpdateWorkItemArgs) -> AppResult<()> {
     if args.title.is_none()
         && args.body.is_none()
         && args.item_type.is_none()
         && args.status.is_none()
     {
-        return Err(
-            "no changes provided. Pass at least one of --title, --body, --type, or --status."
-                .to_string(),
-        );
+        return Err(AppError::invalid_input(
+            "no changes provided. Pass at least one of --title, --body, --type, or --status.",
+        ));
     }
 
     let project = resolve_project(state, args.project)?;
@@ -437,16 +459,15 @@ fn update_work_item(state: &AppState, args: UpdateWorkItemArgs) -> Result<(), St
     }
 }
 
-fn update_document(state: &AppState, args: UpdateDocumentArgs) -> Result<(), String> {
+fn update_document(state: &AppState, args: UpdateDocumentArgs) -> AppResult<()> {
     if args.title.is_none()
         && args.body.is_none()
         && args.work_item_id.is_none()
         && !args.clear_work_item
     {
-        return Err(
-            "no changes provided. Pass at least one of --title, --body, --work-item-id, or --clear-work-item."
-                .to_string(),
-        );
+        return Err(AppError::invalid_input(
+            "no changes provided. Pass at least one of --title, --body, --work-item-id, or --clear-work-item.",
+        ));
     }
 
     let project = resolve_project(state, args.project)?;
@@ -455,10 +476,10 @@ fn update_document(state: &AppState, args: UpdateDocumentArgs) -> Result<(), Str
         .into_iter()
         .find(|document| document.id == args.id)
         .ok_or_else(|| {
-            format!(
+            AppError::not_found(format!(
                 "document #{} does not belong to the active project",
                 args.id
-            )
+            ))
         })?;
 
     let work_item_id = if args.clear_work_item {
@@ -481,7 +502,7 @@ fn update_document(state: &AppState, args: UpdateDocumentArgs) -> Result<(), Str
     }
 }
 
-fn close_work_item(state: &AppState, args: CloseWorkItemArgs) -> Result<(), String> {
+fn close_work_item(state: &AppState, args: CloseWorkItemArgs) -> AppResult<()> {
     let project = resolve_project(state, args.project)?;
     let existing = state.get_work_item(args.id)?;
     ensure_work_item_project(&existing, &project)?;
@@ -501,17 +522,17 @@ fn close_work_item(state: &AppState, args: CloseWorkItemArgs) -> Result<(), Stri
     }
 }
 
-fn delete_document(state: &AppState, args: DeleteDocumentArgs) -> Result<(), String> {
+fn delete_document(state: &AppState, args: DeleteDocumentArgs) -> AppResult<()> {
     let project = resolve_project(state, args.project)?;
     let existing = state
         .list_documents(project.id)?
         .into_iter()
         .find(|document| document.id == args.id)
         .ok_or_else(|| {
-            format!(
+            AppError::not_found(format!(
                 "document #{} does not belong to the active project",
                 args.id
-            )
+            ))
         })?;
 
     state.delete_document(existing.id)?;
@@ -530,7 +551,7 @@ fn delete_document(state: &AppState, args: DeleteDocumentArgs) -> Result<(), Str
 fn resolve_project(
     state: &AppState,
     selection: ProjectSelectionArgs,
-) -> Result<ProjectRecord, String> {
+) -> AppResult<ProjectRecord> {
     if let Some(project_id) = selection.project_id {
         return state.get_project(project_id);
     }
@@ -555,18 +576,17 @@ fn resolve_project(
         }
     }
 
-    Err(
-        "no active project found. Launch the session from Project Commander or pass --project-id."
-            .to_string(),
-    )
+    Err(AppError::not_found(
+        "no active project found. Launch the session from Project Commander or pass --project-id.",
+    ))
 }
 
-fn ensure_work_item_project(item: &WorkItemRecord, project: &ProjectRecord) -> Result<(), String> {
+fn ensure_work_item_project(item: &WorkItemRecord, project: &ProjectRecord) -> AppResult<()> {
     if item.project_id != project.id {
-        return Err(format!(
+        return Err(AppError::invalid_input(format!(
             "work item #{} belongs to project #{} instead of the active project #{}",
             item.id, item.project_id, project.id
-        ));
+        )));
     }
 
     Ok(())
@@ -579,17 +599,17 @@ fn work_item_title_map(items: &[WorkItemRecord]) -> std::collections::HashMap<i6
         .collect()
 }
 
-fn print_json(value: &impl Serialize) -> Result<(), String> {
+fn print_json(value: &impl Serialize) -> AppResult<()> {
     let json = serde_json::to_string_pretty(value)
-        .map_err(|error| format!("failed to serialize output: {error}"))?;
+        .map_err(|error| AppError::internal(format!("failed to serialize output: {error}")))?;
     println!("{json}");
     Ok(())
 }
 
 fn print_work_item_result(action: &str, item: &WorkItemRecord) {
     println!(
-        "{action} work item #{} [{} / {}] {}",
-        item.id, item.status, item.item_type, item.title
+        "{action} work item {} [{} / {}] {}",
+        item.call_sign, item.status, item.item_type, item.title
     );
 
     if !item.body.trim().is_empty() {
