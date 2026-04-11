@@ -313,7 +313,8 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
       profileError: null,
       settingsMessage: null,
       isProfileFormOpen: true,
-      activeView: 'settings',
+      isAppSettingsOpen: true,
+      appSettingsInitialTab: 'accounts',
     })
   },
 
@@ -327,7 +328,8 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
       profileError: null,
       settingsMessage: null,
       isProfileFormOpen: true,
-      activeView: 'settings',
+      isAppSettingsOpen: true,
+      appSettingsInitialTab: 'accounts',
     })
   },
 

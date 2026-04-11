@@ -1,5 +1,5 @@
 import { Suspense, type FormEvent } from 'react'
-import { Settings, Plus, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Settings, Plus, ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -8,7 +8,8 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import DocumentsPanel from './DocumentsPanel'
 import HistoryPanel from './HistoryPanel'
 import LiveTerminal from './LiveTerminal'
-import SettingsPanel from './SettingsPanel'
+import ConfigurationPanel from './ConfigurationPanel'
+import AppSettingsPanel from './AppSettingsPanel'
 import WorkItemsPanel from './WorkItemsPanel'
 import {
   formatSessionState,
@@ -137,7 +138,12 @@ function WorkspaceShell() {
     createDocument,
     updateDocument,
     deleteDocument,
+    openAppSettings,
+    closeAppSettings,
   } = useAppStore.getState()
+
+  const isAppSettingsOpen = useAppStore((s) => s.isAppSettingsOpen)
+  const appSettingsInitialTab = useAppStore((s) => s.appSettingsInitialTab)
 
   // Derive dispatcher status from live sessions
   const isDispatcherRunning = liveSessions.some(
@@ -310,9 +316,9 @@ function WorkspaceShell() {
               ) : null}
 
               <div className="p-4 border-t border-hud-cyan/30">
-                <Button variant="ghost" className="w-full justify-start h-8 text-[10px] uppercase tracking-widest hover:text-hud-cyan" onClick={() => setActiveView('settings')}>
+                <Button variant="ghost" className="w-full justify-start h-8 text-[10px] uppercase tracking-widest hover:text-hud-cyan" onClick={() => openAppSettings()}>
                   <Settings size={12} className="mr-2" />
-                  Settings
+                  App Settings
                 </Button>
               </div>
             </>
@@ -433,9 +439,18 @@ function WorkspaceShell() {
                         </span>
                       ) : null}
                     </TabsTrigger>
-                    <TabsTrigger value="settings">SETTINGS</TabsTrigger>
+                    <TabsTrigger value="configuration">CONFIGURATION</TabsTrigger>
                   </TabsList>
                   <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      className="h-6 w-6 inline-flex items-center justify-center rounded text-hud-cyan/60 hover:text-hud-cyan hover:bg-hud-cyan/10 transition-colors"
+                      title="App Settings"
+                      aria-label="Open App Settings"
+                      onClick={() => openAppSettings()}
+                    >
+                      <Settings size={13} />
+                    </button>
                     <span className="text-[10px] font-black uppercase tracking-[0.15em] text-hud-cyan truncate max-w-[200px]">
                       {selectedProject?.name}
                     </span>
@@ -639,7 +654,7 @@ function WorkspaceShell() {
                                 variant="outline"
                                 size="sm"
                                 className="h-7 text-[9px] font-bold tracking-widest hud-button--cyan"
-                                onClick={() => setActiveView('settings')}
+                                onClick={() => setActiveView('configuration')}
                               >
                                 CONFIGURE
                               </Button>
@@ -678,7 +693,7 @@ function WorkspaceShell() {
                                 variant="outline"
                                 size="sm"
                                 className="h-7 text-[9px] font-bold tracking-widest hud-button--primary"
-                                onClick={() => setActiveView('settings')}
+                                onClick={() => openAppSettings('accounts')}
                               >
                                 EDIT
                               </Button>
@@ -1183,12 +1198,8 @@ function WorkspaceShell() {
                     </ScrollArea>
                   ) : null}
 
-                  {activeView === 'settings' ? (
-                    <ScrollArea className="flex-1 hud-scrollarea">
-                      <div className="p-6">
-                        <SettingsPanel />
-                      </div>
-                    </ScrollArea>
+                  {activeView === 'configuration' ? (
+                    <ConfigurationPanel />
                   ) : null}
 
                   {activeView === 'workItems' ? (
@@ -1347,6 +1358,40 @@ function WorkspaceShell() {
           )}
         </aside>
       </section>
+
+      {isAppSettingsOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => closeAppSettings()}
+        >
+          <div
+            className="relative flex flex-col w-[min(960px,92vw)] h-[min(720px,88vh)] bg-background border border-hud-cyan/40 rounded shadow-[0_0_40px_rgba(94,234,255,0.15)] overflow-hidden"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between h-10 px-4 border-b border-hud-cyan/30 shrink-0">
+              <div className="flex items-center gap-2">
+                <Settings size={12} className="text-hud-cyan" />
+                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-hud-cyan">
+                  App Settings
+                </span>
+              </div>
+              <button
+                type="button"
+                className="h-6 w-6 inline-flex items-center justify-center rounded text-hud-cyan/60 hover:text-hud-cyan hover:bg-hud-cyan/10"
+                aria-label="Close App Settings"
+                onClick={() => closeAppSettings()}
+              >
+                <X size={13} />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0">
+              <AppSettingsPanel initialTab={appSettingsInitialTab} />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   )
 }
