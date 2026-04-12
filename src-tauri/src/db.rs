@@ -42,6 +42,7 @@ pub struct ProjectRecord {
     pub work_item_count: i64,
     pub document_count: i64,
     pub session_count: i64,
+    pub work_item_prefix: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -2030,7 +2031,8 @@ fn load_projects(connection: &Connection) -> Result<Vec<ProjectRecord>, String> 
               p.updated_at,
               (SELECT COUNT(*) FROM work_items w WHERE w.project_id = p.id) AS work_item_count,
               (SELECT COUNT(*) FROM documents d WHERE d.project_id = p.id) AS document_count,
-              (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS session_count
+              (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS session_count,
+              p.work_item_prefix
             FROM projects p
             ORDER BY p.updated_at DESC, p.id DESC
             ",
@@ -2050,6 +2052,7 @@ fn load_projects(connection: &Connection) -> Result<Vec<ProjectRecord>, String> 
                 work_item_count: row.get(5)?,
                 document_count: row.get(6)?,
                 session_count: row.get(7)?,
+                work_item_prefix: row.get(8)?,
             })
         })
         .map_err(|error| format!("failed to load projects: {error}"))?;
@@ -2070,7 +2073,8 @@ fn load_project_by_id(connection: &Connection, id: i64) -> Result<ProjectRecord,
               p.updated_at,
               (SELECT COUNT(*) FROM work_items w WHERE w.project_id = p.id) AS work_item_count,
               (SELECT COUNT(*) FROM documents d WHERE d.project_id = p.id) AS document_count,
-              (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS session_count
+              (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS session_count,
+              p.work_item_prefix
             FROM projects p
             WHERE p.id = ?1
             ",
@@ -2087,6 +2091,7 @@ fn load_project_by_id(connection: &Connection, id: i64) -> Result<ProjectRecord,
                     work_item_count: row.get(5)?,
                     document_count: row.get(6)?,
                     session_count: row.get(7)?,
+                    work_item_prefix: row.get(8)?,
                 })
             },
         )
