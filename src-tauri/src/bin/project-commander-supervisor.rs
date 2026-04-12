@@ -1471,27 +1471,31 @@ fn emit_agent_signal(
         &signal,
     );
 
-    // Push signal to dispatcher session stdin so it sees it immediately.
+    // Push signal to dispatcher via teammate mailbox.
     let agent_label = worktree_id
         .and_then(|wtid| state.get_worktree(wtid).ok())
         .map(|wt| wt.work_item_call_sign)
         .unwrap_or_else(|| "unknown-agent".to_string());
-    let injected = format!(
-        "\n[Agent {agent_label}] ({signal_type}): {message}\r"
-    );
-    if let Err(e) = sessions.write_input(project_commander_lib::session_api::SessionInput {
-        project_id,
-        worktree_id: None,
-        data: injected,
-    }) {
-        eprintln!("failed to inject signal into dispatcher stdin: {e}");
+    let signal_text = format!("[Agent {agent_label}] ({signal_type}): {message}");
+
+    if let Err(e) = write_to_teammate_mailbox("dispatcher", &agent_label, &signal_text) {
+        eprintln!("mailbox write to dispatcher failed, falling back to stdin: {e}");
+        // Fallback: PTY stdin injection.
+        let injected = format!("\n{signal_text}\r");
+        if let Err(e2) = sessions.write_input(project_commander_lib::session_api::SessionInput {
+            project_id,
+            worktree_id: None,
+            data: injected,
+        }) {
+            eprintln!("stdin fallback also failed: {e2}");
+        }
     }
 
     Ok(signal)
 }
 
 fn direct_agent(
-    _state: &AppState,
+    state: &AppState,
     sessions: &SessionRegistry,
     context: &RequestContext,
     project_id: i64,
@@ -1502,17 +1506,33 @@ fn direct_agent(
     if message.is_empty() {
         return Err(RouteError::bad_request("message is required"));
     }
-    let injected = format!("\n[Dispatcher]: {message}\r");
-    sessions
-        .write_input(project_commander_lib::session_api::SessionInput {
-            project_id,
-            worktree_id: Some(worktree_id),
-            data: injected,
-        })
-        .map_err(|e| RouteError::internal(format!("failed to write to agent session: {e}")))?;
+
+    // Resolve agent name from worktree's work item call sign.
+    let agent_name = state
+        .get_worktree(worktree_id)
+        .map(|wt| wt.work_item_call_sign)
+        .unwrap_or_else(|_| format!("worktree-{worktree_id}"));
+
+    let directive = format!("[Dispatcher]: {message}");
+
+    // Primary: write to teammate mailbox.
+    if let Err(e) = write_to_teammate_mailbox(&agent_name, "dispatcher", &directive) {
+        eprintln!("mailbox write failed for agent {agent_name}, falling back to stdin: {e}");
+        // Fallback: PTY stdin injection.
+        let injected = format!("\n{directive}\r");
+        sessions
+            .write_input(project_commander_lib::session_api::SessionInput {
+                project_id,
+                worktree_id: Some(worktree_id),
+                data: injected,
+            })
+            .map_err(|e| {
+                RouteError::internal(format!("failed to write to agent session: {e}"))
+            })?;
+    }
 
     append_project_event(
-        _state,
+        state,
         context,
         project_id,
         "agent.directed",
@@ -1540,17 +1560,25 @@ fn respond_to_agent_signal(
         })
         .map_err(RouteError::from)?;
 
-    // Inject response into the agent's session stdin so the agent receives it immediately.
+    // Deliver response to the agent via teammate mailbox.
     if let Some(worktree_id) = signal.worktree_id {
-        let injected = format!(
-            "\n[Dispatcher]: {response}\r"
-        );
-        if let Err(e) = sessions.write_input(project_commander_lib::session_api::SessionInput {
-            project_id,
-            worktree_id: Some(worktree_id),
-            data: injected,
-        }) {
-            eprintln!("failed to inject response into agent #{worktree_id} session: {e}");
+        let agent_name = state
+            .get_worktree(worktree_id)
+            .map(|wt| wt.work_item_call_sign)
+            .unwrap_or_else(|_| format!("worktree-{worktree_id}"));
+        let directive = format!("[Dispatcher]: {response}");
+
+        if let Err(e) = write_to_teammate_mailbox(&agent_name, "dispatcher", &directive) {
+            eprintln!("mailbox write to agent {agent_name} failed, falling back to stdin: {e}");
+            // Fallback: PTY stdin injection.
+            let injected = format!("\n{directive}\r");
+            if let Err(e2) = sessions.write_input(project_commander_lib::session_api::SessionInput {
+                project_id,
+                worktree_id: Some(worktree_id),
+                data: injected,
+            }) {
+                eprintln!("stdin fallback also failed for agent #{worktree_id}: {e2}");
+            }
         }
     }
 
@@ -2615,6 +2643,85 @@ fn append_project_audit_event<T>(
     }) {
         eprintln!("failed to append Project Commander audit event: {error}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Teammate mailbox helpers — write messages to Claude Code's file-based inbox
+// ---------------------------------------------------------------------------
+
+/// Return the path to the Claude Code teams inbox directory:
+/// `~/.claude/teams/project-commander/inboxes/`
+fn get_claude_teams_inbox_dir() -> PathBuf {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(home)
+        .join(".claude")
+        .join("teams")
+        .join("project-commander")
+        .join("inboxes")
+}
+
+/// A single message in the teammate mailbox JSON array.
+#[derive(Serialize, serde::Deserialize, Clone)]
+struct TeammateMessage {
+    from: String,
+    text: String,
+    timestamp: String,
+    read: bool,
+}
+
+/// Write a message to a Claude Code teammate mailbox.
+///
+/// Reads the existing JSON array (if any), appends the new message, and writes
+/// back atomically with an exclusive file lock via `fs2`.
+fn write_to_teammate_mailbox(agent_name: &str, from: &str, text: &str) -> Result<(), String> {
+    let inbox_dir = get_claude_teams_inbox_dir();
+    fs::create_dir_all(&inbox_dir)
+        .map_err(|e| format!("failed to create inbox dir {}: {e}", inbox_dir.display()))?;
+
+    let inbox_path = inbox_dir.join(format!("{agent_name}.json"));
+
+    // Open or create the inbox file.
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&inbox_path)
+        .map_err(|e| format!("failed to open inbox {}: {e}", inbox_path.display()))?;
+
+    // Acquire exclusive lock (blocks briefly if another writer is active).
+    use fs2::FileExt;
+    file.lock_exclusive()
+        .map_err(|e| format!("failed to lock inbox {}: {e}", inbox_path.display()))?;
+
+    // Read existing messages.
+    let mut messages: Vec<TeammateMessage> = {
+        let contents = fs::read_to_string(&inbox_path).unwrap_or_default();
+        if contents.trim().is_empty() {
+            Vec::new()
+        } else {
+            serde_json::from_str(&contents).unwrap_or_default()
+        }
+    };
+
+    // Append the new message.
+    messages.push(TeammateMessage {
+        from: from.to_string(),
+        text: text.to_string(),
+        timestamp: now_timestamp_string(),
+        read: false,
+    });
+
+    // Write back.
+    let json = serde_json::to_string_pretty(&messages)
+        .map_err(|e| format!("failed to serialize inbox: {e}"))?;
+    fs::write(&inbox_path, json)
+        .map_err(|e| format!("failed to write inbox {}: {e}", inbox_path.display()))?;
+
+    // Lock is released when `file` is dropped.
+    Ok(())
 }
 
 fn append_project_event<T>(
