@@ -1536,7 +1536,7 @@ fn emit_agent_signal(
         .map(|wt| wt.work_item_call_sign)
         .unwrap_or_else(|| "unknown-agent".to_string());
     let injected = format!(
-        "\n[Agent {agent_label}] ({signal_type}): {message}\n"
+        "\n[Agent {agent_label}] ({signal_type}): {message}\r"
     );
     if let Err(e) = sessions.write_input(project_commander_lib::session_api::SessionInput {
         project_id,
@@ -1561,7 +1561,7 @@ fn direct_agent(
     if message.is_empty() {
         return Err(RouteError::bad_request("message is required"));
     }
-    let injected = format!("\n[Dispatcher]: {message}\n");
+    let injected = format!("\n[Dispatcher]: {message}\r");
     sessions
         .write_input(project_commander_lib::session_api::SessionInput {
             project_id,
@@ -1621,7 +1621,7 @@ fn respond_to_agent_signal(
     // Inject response into the agent's session stdin so the agent receives it immediately.
     if let Some(worktree_id) = signal.worktree_id {
         let injected = format!(
-            "\n[Dispatcher]: {response}\n"
+            "\n[Dispatcher]: {response}\r"
         );
         let _ = sessions.write_input(project_commander_lib::session_api::SessionInput {
             project_id,
