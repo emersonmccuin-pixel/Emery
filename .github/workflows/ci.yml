@@ -50,6 +50,15 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+      - name: Create external binary placeholders
+        run: |
+          $triple = "x86_64-pc-windows-msvc"
+          $binDir = "src-tauri/binaries"
+          New-Item -ItemType Directory -Path $binDir -Force | Out-Null
+          foreach ($bin in @("project-commander-supervisor", "project-commander-cli")) {
+            [System.IO.File]::Create("$binDir/$bin-$triple.exe").Close()
+          }
+
       - name: Run library tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib
 
