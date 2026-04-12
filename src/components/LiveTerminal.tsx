@@ -175,6 +175,22 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
       if (mod && event.shiftKey && key === 'c') { void copySelection(); return false }
       if (mod && event.shiftKey && key === 'v') { void pasteClipboard(); return false }
       if (event.shiftKey && key === 'insert') { void pasteClipboard(); return false }
+
+      // Shift+Enter: send a newline character so Claude Code inserts a new line
+      // in the current input rather than submitting (which plain Enter / \r does).
+      if (event.type === 'keydown' && event.shiftKey && event.key === 'Enter') {
+        void invoke('write_session_input', {
+          input: { projectId: snapshot.projectId, worktreeId: snapshot.worktreeId, data: '\n' },
+        })
+          .then(() => { setTerminalError(null) })
+          .catch((error) => {
+            setTerminalError(
+              getTerminalErrorMessage(error, 'Terminal input failed. The session may no longer be available.'),
+            )
+          })
+        return false
+      }
+
       return true
     })
 
