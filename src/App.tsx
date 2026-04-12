@@ -132,6 +132,22 @@ function App() {
     return () => window.clearInterval(intervalId)
   }, [liveSessionCount, selectedProject?.id, shouldAutoRefreshProjectContext])
 
+  // Always poll worktrees + live sessions so externally-created worktrees (e.g. via MCP) appear
+  // without requiring a manual refresh. Runs whenever a project is selected, regardless of view
+  // or session count (the existing view-gated intervals don't fire in the terminal-with-no-sessions
+  // state that occurs right after MCP creates a new worktree+session).
+  useEffect(() => {
+    if (!selectedProject) return
+
+    const intervalId = window.setInterval(() => {
+      const store = useAppStore.getState()
+      void store.refreshWorktrees(selectedProject.id)
+      void store.refreshLiveSessions(selectedProject.id)
+    }, 5000)
+
+    return () => window.clearInterval(intervalId)
+  }, [selectedProject?.id])
+
   // Worktree polling when not on terminal view
   useEffect(() => {
     if (!selectedProject || liveSessionCount === 0 || activeView === 'terminal') {
