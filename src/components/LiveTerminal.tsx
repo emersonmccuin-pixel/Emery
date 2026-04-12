@@ -133,6 +133,43 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
     }
 
     const pasteClipboard = async () => {
+      // Check for image data first (screenshots from PrintScreen / Snipping Tool)
+      try {
+        const clipboardItems = await navigator.clipboard.read()
+        for (const item of clipboardItems) {
+          const imageType = item.types.find((t) => t.startsWith('image/'))
+          if (imageType) {
+            const blob = await item.getType(imageType)
+            const arrayBuffer = await blob.arrayBuffer()
+
+            // Encode to base64 in chunks to avoid call stack overflow on large images
+            const bytes = new Uint8Array(arrayBuffer)
+            const chunks: string[] = []
+            const CHUNK = 0x8000
+            for (let i = 0; i < bytes.length; i += CHUNK) {
+              chunks.push(String.fromCharCode(...bytes.subarray(i, i + CHUNK)))
+            }
+            const base64Png = btoa(chunks.join(''))
+
+            try {
+              const filePath = await invoke<string>('save_clipboard_image', { base64Png })
+              await invoke('write_session_input', {
+                input: { projectId: snapshot.projectId, worktreeId: snapshot.worktreeId, data: filePath },
+              })
+              setTerminalError(null)
+              focusTerminal()
+            } catch (error) {
+              setTerminalError(
+                getTerminalErrorMessage(error, 'Failed to save clipboard image.'),
+              )
+            }
+            return
+          }
+        }
+      } catch {
+        // Clipboard Items API unavailable or no image — fall through to text paste
+      }
+
       let text = ''
 
       try {
