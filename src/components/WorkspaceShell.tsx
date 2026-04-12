@@ -1093,11 +1093,11 @@ function WorkspaceShell() {
                                           ) : null}
                                         </div>
                                         {(worktree.workItemTitle || worktree.sessionSummary) ? (
-                                          <p className="text-[10px] text-white/65 leading-snug line-clamp-3">
+                                          <p className="text-[10px] text-white/80 leading-snug line-clamp-3">
                                             {worktree.workItemTitle ?? worktree.sessionSummary}
                                           </p>
                                         ) : null}
-                                        <p className="text-[9px] font-mono text-white/40 break-all">
+                                        <p className="text-[9px] font-mono text-white/60 break-all">
                                           {worktree.worktreePath}
                                         </p>
                                         {recoverableSession ? (
@@ -1464,12 +1464,12 @@ function WorkspaceShell() {
                               ) : null}
                             </div>
                             {worktree.workItemTitle ? (
-                              <p className="text-[8px] text-white/65 leading-snug line-clamp-2">
+                              <p className="text-[8px] text-white/80 leading-snug line-clamp-2">
                                 {worktree.workItemTitle}
                               </p>
                             ) : null}
                             {worktree.sessionSummary ? (
-                              <p className="text-[8px] text-white/40 leading-snug line-clamp-2 mt-0.5 italic">
+                              <p className="text-[8px] text-white/60 leading-snug line-clamp-2 mt-0.5 italic">
                                 {worktree.sessionSummary}
                               </p>
                             ) : null}
