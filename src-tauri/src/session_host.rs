@@ -16,6 +16,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 const MAX_OUTPUT_BUFFER_BYTES: usize = 200_000;
 
 #[derive(Clone)]
@@ -1447,38 +1453,20 @@ fn persist_session_exit(
 #[cfg(windows)]
 fn try_taskkill(pid: Option<u32>) -> Result<(), String> {
     let pid = pid.ok_or_else(|| "missing session process id".to_string())?;
-    let mut child = std::process::Command::new("taskkill")
+
+    // CREATE_NO_WINDOW prevents a visible console from flashing on the desktop.
+    // Fire-and-forget: don't wait for taskkill to exit — the supervisor HTTP thread
+    // must not block here. The exit-watch thread will detect the process exit.
+    std::process::Command::new("taskkill")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null())
         .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .creation_flags(CREATE_NO_WINDOW)
         .spawn()
-        .map_err(|error| format!("failed to run taskkill: {error}"))?;
+        .map_err(|error| format!("failed to spawn taskkill: {error}"))?;
 
-    let timeout = std::time::Duration::from_secs(5);
-    let poll_interval = std::time::Duration::from_millis(50);
-    let deadline = std::time::Instant::now() + timeout;
-
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {
-                if std::time::Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(format!("taskkill timed out after {}s", timeout.as_secs()));
-                }
-
-                std::thread::sleep(poll_interval);
-            }
-            Err(error) => return Err(format!("failed to wait for taskkill: {error}")),
-        }
-    };
-
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("taskkill exited with status {status}"))
-    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -1200,14 +1200,14 @@ fn build_worktree_startup_prompt(
         [
             "You are the focused Project Commander worktree agent for this task.",
             &format!("Project: {}", project.name),
-            &format!("Work item: {} {}", work_item.call_sign, work_item.title),
+            &format!("Work item: {} {} (id: {})", work_item.call_sign, work_item.title, work_item.id),
             &format!("Status: {}", work_item.status),
             &format!("Worktree branch: {}", worktree.branch_name),
             &format!("Worktree path: {}", worktree.worktree_path),
             "Rules:",
             "- Operate only inside the attached worktree path.",
             "- Use Project Commander MCP tools as the source of truth for work-item and document changes.",
-            "- First call session_brief.",
+            &format!("- First call get_work_item(id: {}) to read your full work item details. Do NOT call session_brief.", work_item.id),
             "- Then state the exact work item you are taking and either begin or say exactly why you are blocked.",
             "Linked documents:",
             &document_lines.join("\n"),
@@ -2447,8 +2447,10 @@ fn supervisor_process_is_alive(process_id: u32) -> bool {
     #[cfg(windows)]
     {
         let filter = format!("PID eq {process_id}");
-        return ProcessCommand::new("tasklist")
-            .args(["/FI", &filter, "/FO", "CSV", "/NH"])
+        let mut cmd = ProcessCommand::new("tasklist");
+        cmd.args(["/FI", &filter, "/FO", "CSV", "/NH"]);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        return cmd
             .output()
             .map(|output| {
                 output.status.success()
@@ -2471,10 +2473,12 @@ fn supervisor_process_is_alive(process_id: u32) -> bool {
 fn terminate_process_tree(process_id: u32) -> Result<(), String> {
     #[cfg(windows)]
     {
-        let status = ProcessCommand::new("taskkill")
-            .stdout(std::process::Stdio::null())
+        let mut cmd = ProcessCommand::new("taskkill");
+        cmd.stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .args(["/PID", &process_id.to_string(), "/T", "/F"])
+            .args(["/PID", &process_id.to_string(), "/T", "/F"]);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        let status = cmd
             .status()
             .map_err(|error| format!("failed to run taskkill: {error}"))?;
 
