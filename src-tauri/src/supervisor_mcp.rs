@@ -2,11 +2,12 @@ use crate::db::{DocumentRecord, ProjectRecord, WorkItemRecord, WorktreeRecord};
 use crate::error::{AppError, AppResult};
 use crate::session_api::ProjectSessionTarget;
 use crate::supervisor_api::{
+    AckAgentMessagesApiInput, AgentInboxApiInput, AgentMessageListOutput,
     CleanupWorktreeInput, CreateProjectDocumentInput, CreateProjectWorkItemInput,
-    ListProjectDocumentsInput,
-    LaunchProjectWorktreeAgentInput, ListProjectWorkItemsInput, ListProjectWorktreesInput,
+    LaunchProjectWorktreeAgentInput, ListAgentMessagesApiInput, ListProjectDocumentsInput,
+    ListProjectWorkItemsInput, ListProjectWorktreesInput,
     PinWorktreeInput, ProjectDocumentTarget, ProjectWorkItemTarget,
-    SessionBriefOutput, UpdateProjectDocumentInput,
+    SendAgentMessageApiInput, SessionBriefOutput, UpdateProjectDocumentInput,
     UpdateProjectWorkItemInput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
 use reqwest::blocking::Client;
@@ -324,6 +325,73 @@ impl SupervisorMcpClient {
         )
     }
 
+    fn send_message(
+        &self,
+        to: String,
+        message_type: String,
+        body: String,
+        context_json: Option<String>,
+    ) -> AppResult<Value> {
+        self.post(
+            "message/send",
+            &SendAgentMessageApiInput {
+                project_id: self.project_id,
+                to_agent: to,
+                message_type,
+                body,
+                context_json,
+            },
+        )
+    }
+
+    fn list_messages(
+        &self,
+        from_agent: Option<String>,
+        to_agent: Option<String>,
+        message_type: Option<String>,
+        status: Option<String>,
+        limit: Option<i64>,
+    ) -> AppResult<AgentMessageListOutput> {
+        self.post(
+            "message/list",
+            &ListAgentMessagesApiInput {
+                project_id: self.project_id,
+                from_agent,
+                to_agent,
+                message_type,
+                status,
+                limit,
+            },
+        )
+    }
+
+    fn get_inbox(
+        &self,
+        unread_only: bool,
+        limit: Option<i64>,
+    ) -> AppResult<AgentMessageListOutput> {
+        self.post(
+            "message/inbox",
+            &AgentInboxApiInput {
+                project_id: self.project_id,
+                agent_name: None,
+                unread_only,
+                limit,
+            },
+        )
+    }
+
+    fn ack_messages(&self, message_ids: Vec<i64>) -> AppResult<Value> {
+        self.post(
+            "message/ack",
+            &AckAgentMessagesApiInput {
+                project_id: self.project_id,
+                message_ids: Some(message_ids),
+                all: false,
+            },
+        )
+    }
+
     fn post<TRequest, TResponse>(
         &self,
         route: &str,
@@ -628,6 +696,37 @@ fn call_tool(
         "terminate_session" => Ok(client.terminate_session(
             read_required_i64(&arguments, "worktreeId")?,
         )?),
+        "send_message" => Ok(client.send_message(
+            read_required_string(&arguments, "to")?,
+            read_required_string(&arguments, "messageType")?,
+            read_required_string(&arguments, "body")?,
+            read_optional_string(&arguments, "contextJson"),
+        )?),
+        "list_messages" => {
+            let result = client.list_messages(
+                read_optional_string(&arguments, "fromAgent"),
+                read_optional_string(&arguments, "toAgent"),
+                read_optional_string(&arguments, "messageType"),
+                read_optional_string(&arguments, "status"),
+                read_optional_i64(&arguments, "limit"),
+            )?;
+            Ok(serde_json::to_value(result)
+                .map_err(|error| AppError::internal(format!("failed to encode message list: {error}")))?)
+        }
+        "get_messages" => {
+            let mark_as_read = arguments
+                .get("markAsRead")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            let limit = read_optional_i64(&arguments, "limit");
+            let result = client.get_inbox(!mark_as_read, limit)?;
+            let ids: Vec<i64> = result.messages.iter().map(|m| m.id).collect();
+            if mark_as_read && !ids.is_empty() {
+                client.ack_messages(ids)?;
+            }
+            Ok(serde_json::to_value(result)
+                .map_err(|error| AppError::internal(format!("failed to encode inbox: {error}")))?)
+        }
         _ => Err(AppError::invalid_input(format!("unknown tool: {tool_name}"))),
     }
 }
@@ -970,6 +1069,91 @@ fn build_tool_definitions() -> Vec<Value> {
                 },
                 "required": ["worktreeId"],
                 "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "send_message",
+            "description": "Send a message to another agent in the project. The message will be queued in the recipient's inbox.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "to": {
+                        "type": "string",
+                        "description": "Recipient agent name (e.g. 'dispatcher', 'teammate-42')."
+                    },
+                    "messageType": {
+                        "type": "string",
+                        "enum": ["question", "status_update", "request_approval", "complete", "blocked", "info"],
+                        "description": "Message type that classifies intent."
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Message body text."
+                    },
+                    "contextJson": {
+                        "type": "string",
+                        "description": "Optional JSON string with additional structured context."
+                    }
+                },
+                "required": ["to", "messageType", "body"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "list_messages",
+            "description": "List agent messages in the project, optionally filtered by sender, recipient, type, or status.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "fromAgent": {
+                        "type": "string",
+                        "description": "Optional filter by sender agent name."
+                    },
+                    "toAgent": {
+                        "type": "string",
+                        "description": "Optional filter by recipient agent name."
+                    },
+                    "messageType": {
+                        "type": "string",
+                        "description": "Optional filter by message type."
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["unread", "read"],
+                        "description": "Optional filter by read status."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of messages to return."
+                    }
+                },
+                "required": [],
+                "additionalProperties": false
+            },
+            "_meta": {
+                "anthropic/maxResultSizeChars": 200000
+            }
+        }),
+        json!({
+            "name": "get_messages",
+            "description": "Check this agent's inbox. By default marks retrieved messages as read.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "markAsRead": {
+                        "type": "boolean",
+                        "description": "When true (default), mark returned messages as read and acknowledge them."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of messages to return."
+                    }
+                },
+                "required": [],
+                "additionalProperties": false
+            },
+            "_meta": {
+                "anthropic/maxResultSizeChars": 200000
             }
         }),
     ]
