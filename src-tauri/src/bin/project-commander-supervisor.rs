@@ -1150,6 +1150,7 @@ fn ensure_project_worktree(
             )?;
         }
         inject_claude_gitexclude(&worktree_path);
+        link_node_modules(&project_git_root, &worktree_path);
     }
 
     state
@@ -2445,6 +2446,53 @@ fn inject_claude_gitexclude(worktree_path: &Path) {
         "\n.claude/\n".to_string()
     };
     let _ = fs::write(&exclude_path, format!("{existing}{append}"));
+}
+
+/// Creates a junction (Windows) or symlink (Unix) at `{worktree_path}/node_modules`
+/// pointing to `{main_root}/node_modules` so that TS/LSP tooling works inside the
+/// worktree without requiring a separate `npm install`.
+///
+/// Best-effort: logs on failure but never prevents worktree creation.
+fn link_node_modules(main_root: &Path, worktree_path: &Path) {
+    let source = main_root.join("node_modules");
+    if !source.exists() {
+        return;
+    }
+
+    let target = worktree_path.join("node_modules");
+    if target.exists() {
+        return; // already present (previous run or manual install)
+    }
+
+    #[cfg(windows)]
+    {
+        // `mklink /J` creates a directory junction — no elevation required.
+        let output = ProcessCommand::new("cmd")
+            .args([
+                "/c",
+                "mklink",
+                "/J",
+                &target.to_string_lossy(),
+                &source.to_string_lossy(),
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+        match output {
+            Ok(o) if o.status.success() => {}
+            Ok(o) => eprintln!(
+                "[supervisor] node_modules junction failed: {}",
+                String::from_utf8_lossy(&o.stderr).trim()
+            ),
+            Err(e) => eprintln!("[supervisor] node_modules junction error: {e}"),
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        if let Err(e) = std::os::unix::fs::symlink(&source, &target) {
+            eprintln!("[supervisor] node_modules symlink error: {e}");
+        }
+    }
 }
 
 fn is_git_worktree_path(worktree_path: &Path) -> bool {
