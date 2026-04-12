@@ -3101,7 +3101,7 @@ fn generate_project_work_item_prefix(
 
     while project_prefix_in_use(connection, &candidate, exclude_project_id)? {
         let suffix_text = suffix.to_string();
-        let max_base_len = 12_usize.saturating_sub(suffix_text.len());
+        let max_base_len = 6_usize.saturating_sub(suffix_text.len());
         let trimmed_base = base.chars().take(max_base_len.max(1)).collect::<String>();
         candidate = format!("{trimmed_base}{suffix_text}");
         suffix += 1;
@@ -3133,18 +3133,75 @@ fn project_prefix_in_use(
 }
 
 fn derive_project_work_item_prefix(project_name: &str) -> String {
-    let candidate = project_name
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .take(12)
-        .collect::<String>()
-        .to_uppercase();
+    let words: Vec<String> = project_name
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .map(|w| w.to_uppercase())
+        .collect();
 
-    if candidate.is_empty() {
+    if words.is_empty() {
+        return "PROJECT".to_string();
+    }
+
+    const MAX_LEN: usize = 6;
+
+    let result = if words.len() == 1 {
+        abbreviate_word_to(&words[0], MAX_LEN)
+    } else {
+        // Distribute MAX_LEN chars across words (ceiling div gives each word its fair share)
+        let chars_per_word = (MAX_LEN + words.len() - 1) / words.len();
+        let combined: String = words
+            .iter()
+            .map(|w| abbreviate_word_to(w, chars_per_word))
+            .collect();
+        combined.chars().take(MAX_LEN).collect()
+    };
+
+    if result.is_empty() {
         "PROJECT".to_string()
     } else {
-        candidate
+        result
     }
+}
+
+/// Abbreviate a single (already-uppercased) word to at most `max_len` chars.
+/// Keeps the first char, then prefers consonants over vowels. If consonants
+/// alone don't fill the budget, vowels are appended in original order.
+fn abbreviate_word_to(word: &str, max_len: usize) -> String {
+    if word.len() <= max_len {
+        return word.to_string();
+    }
+
+    let chars: Vec<char> = word.chars().collect();
+    let mut result = String::new();
+
+    // Pass 1: first char + consonants
+    for (i, &ch) in chars.iter().enumerate() {
+        if result.len() >= max_len {
+            break;
+        }
+        if i == 0 || !is_ascii_vowel(ch) {
+            result.push(ch);
+        }
+    }
+
+    // Pass 2: fill remaining budget with vowels (in original word order)
+    if result.len() < max_len {
+        for (i, &ch) in chars.iter().enumerate() {
+            if result.len() >= max_len {
+                break;
+            }
+            if i > 0 && is_ascii_vowel(ch) {
+                result.push(ch);
+            }
+        }
+    }
+
+    result.chars().take(max_len).collect()
+}
+
+fn is_ascii_vowel(ch: char) -> bool {
+    matches!(ch, 'A' | 'E' | 'I' | 'O' | 'U')
 }
 
 fn assign_next_work_item_identifier(
