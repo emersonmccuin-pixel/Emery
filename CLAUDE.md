@@ -37,3 +37,12 @@ and place `<TabsList>` alongside the status in a plain `<nav>`. See
 **Do not** introduce another tabs component, another styling system for
 tabs, or inline "fake tabs" built from `Button`s. If the shared primitive is
 missing a capability you need, extend it — don't fork.
+
+## Bug Logging
+
+We are building Project Commander itself. Any bug, unexpected behavior, or
+workaround encountered during development **must** be logged:
+
+- Call `list_work_items` first to avoid duplicates
+- Then `create_work_item(itemType: 'bug')` with clear repro steps
+- Do this before continuing work — don't silently paper over issues

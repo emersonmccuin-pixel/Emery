@@ -1176,6 +1176,8 @@ fn build_claude_bridge_system_prompt(
                 "2. Existing tests pass (run the test suite if one exists)\n",
                 "3. Changes are staged with git add (do NOT commit — the dispatcher handles commits)\n",
                 "4. Your work item body is updated with a handoff summary\n\n",
+                "## Bug Logging\n",
+                "If you hit a bug, unexpected behavior, or need a workaround: check list_work_items for duplicates, then create_work_item(itemType: 'bug') with repro steps before continuing.\n\n",
                 "## When Done\n",
                 "1. Update your work item body with: what you changed, files touched, any follow-up notes\n",
                 "2. Stage your changes: git add <files>\n",
@@ -1207,7 +1209,9 @@ fn build_claude_bridge_system_prompt(
             "Call list_worktrees to see all active worktrees and their agent names.",
             " Agent names match the work item call sign with dots replaced by hyphens (e.g., PROJECTCOMMA-23.01 → PROJECTCOMMA-23-01).\n\n",
             "## On Agent Completion\n",
-            "When an agent signals 'complete': review its work item body for the handoff summary, inspect staged changes in the worktree, then commit if satisfactory.",
+            "When an agent signals 'complete': review its work item body for the handoff summary, inspect staged changes in the worktree, then commit if satisfactory.\n\n",
+            "## Bug Logging\n",
+            "If you encounter a bug, unexpected behavior, or need a workaround: check list_work_items for duplicates, then create_work_item(itemType: 'bug') with repro steps before continuing.",
         ));
     }
 
