@@ -12,6 +12,7 @@ function createWorktreeRecord(overrides: Partial<WorktreeRecord> = {}): Worktree
     workItemStatus: 'in_progress',
     pinned: false,
     isCleanupEligible: false,
+    pendingSignalCount: 0,
     branchName: 'project-100-42-fix-worktree-rail-refresh',
     shortBranchName: 'project-100-42-fix-worktree-rail-refresh',
     worktreePath: 'E:\\worktrees\\project-100-42',

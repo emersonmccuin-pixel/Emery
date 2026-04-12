@@ -766,6 +766,8 @@ fn build_claude_launch_command(
         resolve_cli_directory(),
     );
 
+    command.env("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS", "1");
+
     for arg in prepare_claude_profile_args(&profile.args)? {
         command.arg(arg);
     }
@@ -795,11 +797,10 @@ fn build_claude_launch_command(
     // the dispatcher (project session, no worktree) uses "dispatcher".
     {
         let agent_name = match worktree {
-            Some(wt) => wt.work_item_call_sign.clone(),
+            Some(wt) => wt.work_item_call_sign.replace('.', "-"),
             None => "dispatcher".to_string(),
         };
         let agent_id = generate_agent_uuid();
-        command.arg("--agent-teams");
         command.arg("--agent-id");
         command.arg(&agent_id);
         command.arg("--agent-name");
@@ -1300,6 +1301,17 @@ fn spawn_output_thread(session: Arc<HostedSession>, mut reader: Box<dyn Read + S
                 Ok(bytes_read) => {
                     let chunk = String::from_utf8_lossy(&buffer[..bytes_read]).to_string();
                     append_output(&session.output_state, &chunk);
+
+                    // Auto-reply to cursor position queries (DSR: ESC[6n).
+                    // Without an attached xterm, nobody answers this query and
+                    // the child process blocks on startup waiting for the
+                    // response.  Reply with a plausible position (row 1, col 1).
+                    if chunk.contains("\x1b[6n") {
+                        if let Ok(mut writer) = session.writer.lock() {
+                            let _ = writer.write_all(b"\x1b[1;1R");
+                            let _ = writer.flush();
+                        }
+                    }
                 }
                 Err(_) => break,
             }

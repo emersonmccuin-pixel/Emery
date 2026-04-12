@@ -1472,9 +1472,10 @@ fn emit_agent_signal(
     );
 
     // Push signal to dispatcher via teammate mailbox.
+    // Replace dots with hyphens to match the sanitized agent name used at launch.
     let agent_label = worktree_id
         .and_then(|wtid| state.get_worktree(wtid).ok())
-        .map(|wt| wt.work_item_call_sign)
+        .map(|wt| wt.work_item_call_sign.replace('.', "-"))
         .unwrap_or_else(|| "unknown-agent".to_string());
     let signal_text = format!("[Agent {agent_label}] ({signal_type}): {message}");
 
@@ -1508,9 +1509,10 @@ fn direct_agent(
     }
 
     // Resolve agent name from worktree's work item call sign.
+    // Replace dots with hyphens — dots in agent names break Claude Code's mailbox file resolution.
     let agent_name = state
         .get_worktree(worktree_id)
-        .map(|wt| wt.work_item_call_sign)
+        .map(|wt| wt.work_item_call_sign.replace('.', "-"))
         .unwrap_or_else(|_| format!("worktree-{worktree_id}"));
 
     let directive = format!("[Dispatcher]: {message}");
@@ -1564,7 +1566,7 @@ fn respond_to_agent_signal(
     if let Some(worktree_id) = signal.worktree_id {
         let agent_name = state
             .get_worktree(worktree_id)
-            .map(|wt| wt.work_item_call_sign)
+            .map(|wt| wt.work_item_call_sign.replace('.', "-"))
             .unwrap_or_else(|_| format!("worktree-{worktree_id}"));
         let directive = format!("[Dispatcher]: {response}");
 
@@ -2675,7 +2677,13 @@ struct TeammateMessage {
 ///
 /// Reads the existing JSON array (if any), appends the new message, and writes
 /// back atomically with an exclusive file lock via `fs2`.
+///
+/// All I/O goes through the locked file handle — on Windows, mandatory locking
+/// prevents separate `fs::read_to_string` / `fs::write` calls from opening
+/// the same file while the lock is held.
 fn write_to_teammate_mailbox(agent_name: &str, from: &str, text: &str) -> Result<(), String> {
+    use std::io::{Read as _, Seek, SeekFrom, Write as _};
+
     let inbox_dir = get_claude_teams_inbox_dir();
     fs::create_dir_all(&inbox_dir)
         .map_err(|e| format!("failed to create inbox dir {}: {e}", inbox_dir.display()))?;
@@ -2683,7 +2691,7 @@ fn write_to_teammate_mailbox(agent_name: &str, from: &str, text: &str) -> Result
     let inbox_path = inbox_dir.join(format!("{agent_name}.json"));
 
     // Open or create the inbox file.
-    let file = fs::OpenOptions::new()
+    let mut file = fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
@@ -2696,14 +2704,15 @@ fn write_to_teammate_mailbox(agent_name: &str, from: &str, text: &str) -> Result
     file.lock_exclusive()
         .map_err(|e| format!("failed to lock inbox {}: {e}", inbox_path.display()))?;
 
-    // Read existing messages.
-    let mut messages: Vec<TeammateMessage> = {
-        let contents = fs::read_to_string(&inbox_path).unwrap_or_default();
-        if contents.trim().is_empty() {
-            Vec::new()
-        } else {
-            serde_json::from_str(&contents).unwrap_or_default()
-        }
+    // Read existing messages through the locked handle.
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)
+        .map_err(|e| format!("failed to read inbox {}: {e}", inbox_path.display()))?;
+
+    let mut messages: Vec<TeammateMessage> = if contents.trim().is_empty() {
+        Vec::new()
+    } else {
+        serde_json::from_str(&contents).unwrap_or_default()
     };
 
     // Append the new message.
@@ -2714,11 +2723,17 @@ fn write_to_teammate_mailbox(agent_name: &str, from: &str, text: &str) -> Result
         read: false,
     });
 
-    // Write back.
+    // Write back through the locked handle — seek to start and truncate.
     let json = serde_json::to_string_pretty(&messages)
         .map_err(|e| format!("failed to serialize inbox: {e}"))?;
-    fs::write(&inbox_path, json)
+    file.seek(SeekFrom::Start(0))
+        .map_err(|e| format!("failed to seek inbox {}: {e}", inbox_path.display()))?;
+    file.set_len(0)
+        .map_err(|e| format!("failed to truncate inbox {}: {e}", inbox_path.display()))?;
+    file.write_all(json.as_bytes())
         .map_err(|e| format!("failed to write inbox {}: {e}", inbox_path.display()))?;
+    file.flush()
+        .map_err(|e| format!("failed to flush inbox {}: {e}", inbox_path.display()))?;
 
     // Lock is released when `file` is dropped.
     Ok(())
