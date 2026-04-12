@@ -219,8 +219,16 @@ struct DeleteDocumentArgs {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ProjectTrackerInfo {
+    call_sign: String,
+    body: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct SessionBriefOutput {
     project: ProjectRecord,
+    tracker: Option<ProjectTrackerInfo>,
     work_items: Vec<WorkItemRecord>,
     documents: Vec<DocumentRecord>,
 }
@@ -296,10 +304,23 @@ fn handle_document_command(state: &AppState, command: DocumentCommand) -> AppRes
 
 fn session_brief(state: &AppState, args: SessionBriefArgs) -> AppResult<()> {
     let project = resolve_project(state, args.project)?;
-    let work_items = state.list_work_items(project.id)?;
+    let mut work_items = state.list_work_items(project.id)?;
     let documents = state.list_documents(project.id)?;
+
+    let tracker = work_items
+        .iter()
+        .position(|item| item.sequence_number == 0 && item.parent_work_item_id.is_none())
+        .map(|idx| {
+            let item = work_items.remove(idx);
+            ProjectTrackerInfo {
+                call_sign: item.call_sign,
+                body: item.body,
+            }
+        });
+
     let brief = SessionBriefOutput {
         project,
+        tracker,
         work_items,
         documents,
     };

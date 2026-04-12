@@ -25,7 +25,7 @@ use project_commander_lib::supervisor_api::{
     ListProjectWorkItemsInput, ListProjectWorktreesInput, ProjectDocumentTarget,
     ProjectSessionRecordTarget, ProjectWorkItemTarget, ProjectWorktreeTarget, PinWorktreeInput,
     RepairCleanupInput, RespondToAgentSignalInput as ApiRespondToAgentSignalInput,
-    SendAgentMessageApiInput, SessionBriefOutput, UpdateProjectDocumentInput,
+    ProjectTrackerInfo, SendAgentMessageApiInput, SessionBriefOutput, UpdateProjectDocumentInput,
     UpdateProjectWorkItemInput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
 use project_commander_lib::supervisor_mcp::run_supervisor_mcp_stdio_with_session;
@@ -494,16 +494,28 @@ fn route_request(
                 )?),
                 None => None,
             };
-            let work_items = state
+            let mut work_items = state
                 .list_work_items(input.project_id)
                 .map_err(RouteError::from)?;
             let documents = state
                 .list_documents(input.project_id)
                 .map_err(RouteError::from)?;
 
+            let tracker = work_items
+                .iter()
+                .position(|item| item.sequence_number == 0 && item.parent_work_item_id.is_none())
+                .map(|idx| {
+                    let item = work_items.remove(idx);
+                    ProjectTrackerInfo {
+                        call_sign: item.call_sign,
+                        body: item.body,
+                    }
+                });
+
             serde_json::to_value(SessionBriefOutput {
                 project,
                 active_worktree,
+                tracker,
                 work_items,
                 documents,
             })
