@@ -1919,8 +1919,9 @@ fn load_work_items_by_project_id(
                 WHEN 'in_progress' THEN 0
                 WHEN 'blocked' THEN 1
                 WHEN 'backlog' THEN 2
-                WHEN 'done' THEN 3
-                ELSE 4
+                WHEN 'parked' THEN 3
+                WHEN 'done' THEN 4
+                ELSE 5
               END,
               sequence_number ASC,
               CASE WHEN child_number IS NULL THEN 0 ELSE 1 END ASC,
@@ -2439,9 +2440,7 @@ fn enrich_worktree_record(
     record.has_unmerged_commits =
         worktree_has_unmerged_commits(Path::new(&project.root_path), worktree_path);
     record.session_summary = worktree_session_summary(connection, &record)?;
-    record.is_cleanup_eligible = record.work_item_status == "done"
-        && !record.has_unmerged_commits
-        && !record.pinned;
+    record.is_cleanup_eligible = !record.pinned;
     record.pending_signal_count =
         count_pending_signals_for_worktree(connection, record.id).unwrap_or(0);
 
@@ -3131,8 +3130,8 @@ fn normalize_work_item_status(value: &str) -> Result<String, String> {
     let normalized = value.trim().to_lowercase();
 
     match normalized.as_str() {
-        "backlog" | "in_progress" | "blocked" | "done" => Ok(normalized),
-        _ => Err("work item status must be backlog, in_progress, blocked, or done".to_string()),
+        "backlog" | "in_progress" | "blocked" | "parked" | "done" => Ok(normalized),
+        _ => Err("work item status must be backlog, in_progress, blocked, parked, or done".to_string()),
     }
 }
 

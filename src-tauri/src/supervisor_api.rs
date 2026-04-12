@@ -209,6 +209,15 @@ pub struct ProjectWorktreeTarget {
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CleanupWorktreeInput {
+    pub project_id: i64,
+    pub worktree_id: i64,
+    #[serde(default)]
+    pub force: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ClearProjectWorktreesInput {
     pub project_id: i64,
 }

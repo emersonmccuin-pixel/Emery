@@ -69,7 +69,7 @@ export type TerminalExitEvent = {
   success: boolean
 }
 
-export type WorkItemStatus = 'backlog' | 'in_progress' | 'blocked' | 'done'
+export type WorkItemStatus = 'backlog' | 'in_progress' | 'blocked' | 'parked' | 'done'
 
 export type WorkItemType = 'bug' | 'task' | 'feature' | 'note'
 

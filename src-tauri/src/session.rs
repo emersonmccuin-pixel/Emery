@@ -15,7 +15,7 @@ use crate::session_api::{
 use crate::session_host::{now_timestamp_string, resolve_helper_binary_path};
 use crate::supervisor_api::{
     CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget, CleanupRepairOutput,
-    CreateProjectDocumentInput, CreateProjectWorkItemInput, EnsureProjectWorktreeInput,
+    CleanupWorktreeInput, CreateProjectDocumentInput, CreateProjectWorkItemInput, EnsureProjectWorktreeInput,
     LaunchProfileTarget, LaunchProjectWorktreeAgentInput, WorktreeLaunchOutput,
     ListCleanupCandidatesInput, ListProjectDocumentsInput, ListProjectSessionEventsInput,
     ListProjectSessionsInput, ListProjectWorkItemsInput, ListProjectWorktreesInput,
@@ -295,9 +295,10 @@ impl SupervisorClient {
     pub fn cleanup_worktree(&self, project_id: i64, worktree_id: i64) -> AppResult<WorktreeRecord> {
         self.request_json_with_timeout(
             "worktree/cleanup",
-            &ProjectWorktreeTarget {
+            &CleanupWorktreeInput {
                 project_id,
                 worktree_id,
+                force: false,
             },
             SUPERVISOR_LONG_REQUEST_TIMEOUT,
         )

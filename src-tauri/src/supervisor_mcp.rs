@@ -2,10 +2,10 @@ use crate::db::{AgentSignalRecord, DocumentRecord, ProjectRecord, WorkItemRecord
 use crate::error::{AppError, AppResult};
 use crate::session_api::ProjectSessionTarget;
 use crate::supervisor_api::{
-    AgentSignalTarget, CreateProjectDocumentInput, CreateProjectWorkItemInput,
+    AgentSignalTarget, CleanupWorktreeInput, CreateProjectDocumentInput, CreateProjectWorkItemInput,
     DirectAgentInput, EmitAgentSignalInput, ListAgentSignalsInput, ListProjectDocumentsInput,
     LaunchProjectWorktreeAgentInput, ListProjectWorkItemsInput, ListProjectWorktreesInput,
-    PinWorktreeInput, ProjectDocumentTarget, ProjectWorktreeTarget, ProjectWorkItemTarget,
+    PinWorktreeInput, ProjectDocumentTarget, ProjectWorkItemTarget,
     RespondToAgentSignalInput, SessionBriefOutput, UpdateProjectDocumentInput,
     UpdateProjectWorkItemInput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
@@ -292,12 +292,13 @@ impl SupervisorMcpClient {
         )
     }
 
-    fn cleanup_worktree(&self, worktree_id: i64) -> AppResult<WorktreeRecord> {
+    fn cleanup_worktree(&self, worktree_id: i64, force: bool) -> AppResult<WorktreeRecord> {
         self.post(
             "worktree/cleanup",
-            &ProjectWorktreeTarget {
+            &CleanupWorktreeInput {
                 project_id: self.project_id,
                 worktree_id,
+                force,
             },
         )
     }
@@ -681,6 +682,7 @@ fn call_tool(
         }
         "cleanup_worktree" => Ok(serde_json::to_value(client.cleanup_worktree(
             read_required_i64(&arguments, "worktreeId")?,
+            arguments.get("force").and_then(|v| v.as_bool()).unwrap_or(false),
         )?)
         .map_err(|error| AppError::internal(format!("failed to encode cleaned-up worktree: {error}")))?),
         "pin_worktree" => Ok(serde_json::to_value(client.pin_worktree(
@@ -764,7 +766,7 @@ fn build_tool_definitions() -> Vec<Value> {
                 "properties": {
                     "status": {
                         "type": "string",
-                        "enum": ["backlog", "in_progress", "blocked", "done"],
+                        "enum": ["backlog", "in_progress", "blocked", "parked", "done"],
                         "description": "Optional status filter."
                     },
                     "itemType": {
@@ -827,7 +829,7 @@ fn build_tool_definitions() -> Vec<Value> {
                     },
                     "status": {
                         "type": "string",
-                        "enum": ["backlog", "in_progress", "blocked", "done"],
+                        "enum": ["backlog", "in_progress", "blocked", "parked", "done"],
                         "description": "Initial work item status."
                     },
                     "parentWorkItemId": {
@@ -864,7 +866,7 @@ fn build_tool_definitions() -> Vec<Value> {
                     },
                     "status": {
                         "type": "string",
-                        "enum": ["backlog", "in_progress", "blocked", "done"],
+                        "enum": ["backlog", "in_progress", "blocked", "parked", "done"],
                         "description": "Optional new status."
                     },
                     "parentWorkItemId": {
@@ -1017,13 +1019,17 @@ fn build_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "cleanup_worktree",
-            "description": "Clean up a completed worktree: remove the git worktree, delete the branch (best-effort), and drop the DB record. Only succeeds if the work item is done, the branch is fully merged, and the worktree is not pinned (is_cleanup_eligible = true).",
+            "description": "Clean up a worktree: remove the git worktree, delete the branch (best-effort), and drop the DB record. Blocked by a live session or pinned worktree. If the work item is in_progress or blocked it is automatically set to parked. If the branch has unmerged commits you must pass force=true.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "worktreeId": {
                         "type": "integer",
                         "description": "Worktree id to clean up."
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "Pass true to allow cleanup even when the branch has unmerged commits. Defaults to false."
                     }
                 },
                 "required": ["worktreeId"],

@@ -15,7 +15,7 @@ use project_commander_lib::session_api::{
 use project_commander_lib::session_host::{now_timestamp_string, SessionRegistry};
 use project_commander_lib::supervisor_api::{
     AgentSignalTarget, CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget,
-    CleanupRepairOutput, ClearProjectWorktreesInput, CreateProjectDocumentInput,
+    CleanupRepairOutput, CleanupWorktreeInput, ClearProjectWorktreesInput, CreateProjectDocumentInput,
     CreateProjectWorkItemInput, DirectAgentInput, EmitAgentSignalInput as ApiEmitAgentSignalInput,
     EnsureProjectWorktreeInput, LaunchProfileTarget, LaunchProjectWorktreeAgentInput,
     ListAgentSignalsInput, ListCleanupCandidatesInput, ListProjectDocumentsInput,
@@ -925,8 +925,8 @@ fn route_request(
             Ok(json!({ "ok": true, "data": { "count": cleared } }))
         }
         (&Method::Post, "/worktree/cleanup") => {
-            let input = read_json::<ProjectWorktreeTarget>(request)?;
-            let removed = cleanup_project_worktree(state, sessions, input.project_id, input.worktree_id)?;
+            let input = read_json::<CleanupWorktreeInput>(request)?;
+            let removed = cleanup_project_worktree(state, sessions, input.project_id, input.worktree_id, input.force)?;
             append_project_event(
                 state,
                 context,
@@ -1390,14 +1390,35 @@ fn cleanup_project_worktree(
     sessions: &SessionRegistry,
     project_id: i64,
     worktree_id: i64,
+    force: bool,
 ) -> Result<WorktreeRecord, RouteError> {
     let worktree = require_worktree_for_project(state, project_id, worktree_id)?;
 
     if !worktree.is_cleanup_eligible {
         return Err(RouteError::bad_request(format!(
-            "worktree #{worktree_id} is not eligible for cleanup: \
-             work item must be done, branch must be fully merged, and worktree must not be pinned"
+            "worktree #{worktree_id} is not eligible for cleanup: worktree must not be pinned"
         )));
+    }
+
+    if worktree.has_unmerged_commits && !force {
+        return Err(RouteError::bad_request(format!(
+            "worktree #{worktree_id} has unmerged commits; pass force=true to clean it up anyway"
+        )));
+    }
+
+    // Auto-park active work items so they aren't lost in the backlog.
+    let work_item_id = worktree.work_item_id;
+    let status = worktree.work_item_status.as_str();
+    if status == "in_progress" || status == "blocked" {
+        if let Ok(existing) = state.get_work_item(work_item_id) {
+            let _ = state.update_work_item(UpdateWorkItemInput {
+                id: work_item_id,
+                title: existing.title,
+                body: existing.body,
+                item_type: existing.item_type,
+                status: "parked".to_string(),
+            });
+        }
     }
 
     remove_project_worktree(state, sessions, project_id, worktree_id, true)

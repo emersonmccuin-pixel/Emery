@@ -11,7 +11,8 @@ export const WORK_ITEM_STATUS_ORDER: Record<WorkItemStatus, number> = {
   in_progress: 0,
   blocked: 1,
   backlog: 2,
-  done: 3,
+  parked: 3,
+  done: 4,
 }
 
 export const PROJECT_COMMANDER_TOOLS = [
