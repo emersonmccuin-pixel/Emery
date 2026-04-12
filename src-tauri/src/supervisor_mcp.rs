@@ -546,8 +546,24 @@ fn call_tool(
     match tool_name {
         "current_project" => Ok(serde_json::to_value(client.current_project()?)
             .map_err(|error| AppError::internal(format!("failed to encode current project result: {error}")))?),
-        "session_brief" => Ok(serde_json::to_value(client.session_brief()?)
-            .map_err(|error| AppError::internal(format!("failed to encode session brief result: {error}")))?),
+        "session_brief" => {
+            let brief = client.session_brief()?;
+            let mut value = serde_json::to_value(brief)
+                .map_err(|error| AppError::internal(format!("failed to encode session brief result: {error}")))?;
+            // Strip bodies — keep headers only so the response stays bounded.
+            // Callers that need a body should use get_work_item(id) on demand.
+            if let Some(items) = value.get_mut("workItems").and_then(Value::as_array_mut) {
+                for item in items.iter_mut() {
+                    *item = slim_work_item(item);
+                }
+            }
+            if let Some(docs) = value.get_mut("documents").and_then(Value::as_array_mut) {
+                for doc in docs.iter_mut() {
+                    *doc = slim_document(doc);
+                }
+            }
+            Ok(value)
+        }
         "list_work_items" => {
             let status = arguments
                 .get("status")
@@ -557,8 +573,8 @@ fn call_tool(
                 .get("itemType")
                 .and_then(Value::as_str)
                 .map(ToOwned::to_owned);
-            Ok(json!({
-                "workItems": client.list_work_items(
+            let items: Vec<Value> = client
+                .list_work_items(
                     status,
                     item_type,
                     arguments
@@ -570,7 +586,16 @@ fn call_tool(
                         .and_then(Value::as_bool)
                         .unwrap_or(false),
                 )?
-            }))
+                .into_iter()
+                .map(|item| {
+                    let mut v = serde_json::to_value(item).unwrap_or(Value::Null);
+                    if let Some(obj) = v.as_object_mut() {
+                        obj.remove("body");
+                    }
+                    v
+                })
+                .collect();
+            Ok(json!({ "workItems": items }))
         }
         "get_work_item" => {
             let id = read_required_i64(&arguments, "id")?;
@@ -602,9 +627,20 @@ fn call_tool(
             client.close_work_item(read_required_i64(&arguments, "id")?)?,
         )
         .map_err(|error| AppError::internal(format!("failed to encode closed work item: {error}")))?),
-        "list_documents" => Ok(json!({
-            "documents": client.list_documents(read_optional_i64(&arguments, "workItemId"))?
-        })),
+        "list_documents" => {
+            let docs: Vec<Value> = client
+                .list_documents(read_optional_i64(&arguments, "workItemId"))?
+                .into_iter()
+                .map(|doc| {
+                    let mut v = serde_json::to_value(doc).unwrap_or(Value::Null);
+                    if let Some(obj) = v.as_object_mut() {
+                        obj.remove("body");
+                    }
+                    v
+                })
+                .collect();
+            Ok(json!({ "documents": docs }))
+        }
         "create_document" => Ok(serde_json::to_value(client.create_document(
             read_required_string(&arguments, "title")?,
             read_optional_string(&arguments, "body"),
@@ -628,12 +664,21 @@ fn call_tool(
         "list_worktrees" => Ok(json!({
             "worktrees": client.list_worktrees()?
         })),
-        "launch_worktree_agent" => Ok(serde_json::to_value(client.launch_worktree_agent(
-            read_required_i64(&arguments, "workItemId")?,
-            read_optional_i64(&arguments, "launchProfileId"),
-            arguments.get("model").and_then(|v| v.as_str()).map(String::from),
-        )?)
-        .map_err(|error| AppError::internal(format!("failed to encode launched worktree agent: {error}")))?),
+        "launch_worktree_agent" => {
+            let mut value = serde_json::to_value(client.launch_worktree_agent(
+                read_required_i64(&arguments, "workItemId")?,
+                read_optional_i64(&arguments, "launchProfileId"),
+                arguments.get("model").and_then(|v| v.as_str()).map(String::from),
+            )?)
+            .map_err(|error| AppError::internal(format!("failed to encode launched worktree agent: {error}")))?;
+            // Strip session.output — it can be 200k+ chars for long-running sessions.
+            // Callers receive output via terminal-output events; they don't need it here.
+            if let Some(session) = value.get_mut("session").and_then(Value::as_object_mut) {
+                session.remove("output");
+                session.remove("outputCursor");
+            }
+            Ok(value)
+        }
         "cleanup_worktree" => Ok(serde_json::to_value(client.cleanup_worktree(
             read_required_i64(&arguments, "worktreeId")?,
         )?)
@@ -1232,4 +1277,27 @@ fn read_required_i64(arguments: &Value, key: &str) -> AppResult<i64> {
 
 fn read_optional_i64(arguments: &Value, key: &str) -> Option<i64> {
     arguments.get(key).and_then(Value::as_i64)
+}
+
+/// Return a work item header for list/brief contexts — strips body and metadata.
+/// Callers that need the full body should use get_work_item(id).
+fn slim_work_item(item: &Value) -> Value {
+    json!({
+        "id": item["id"],
+        "callSign": item["callSign"],
+        "title": item["title"],
+        "status": item["status"],
+        "itemType": item["itemType"],
+        "parentWorkItemId": item["parentWorkItemId"],
+        "childNumber": item["childNumber"],
+    })
+}
+
+/// Return a document header for list/brief contexts — strips body and metadata.
+/// Callers that need the full body should use get_work_item(id) or update_document.
+fn slim_document(doc: &Value) -> Value {
+    json!({
+        "id": doc["id"],
+        "title": doc["title"],
+    })
 }
