@@ -2,7 +2,7 @@ use clap::{Args, Parser, Subcommand};
 use project_commander_lib::db::{
     AgentSignalRecord, AppState, AppendSessionEventInput, CreateDocumentInput,
     CreateLaunchProfileInput, CreateProjectInput, CreateWorkItemInput, DocumentRecord,
-    EmitAgentSignalInput, ProjectRecord, ReparentRequest, RespondToAgentSignalInput,
+    EmitAgentSignalInput, ReparentRequest, RespondToAgentSignalInput,
     UpdateAppSettingsInput, UpdateDocumentInput, UpdateLaunchProfileInput, UpdateProjectInput,
     UpdateWorkItemInput, UpsertWorktreeRecordInput, WorkItemRecord, WorktreeRecord,
 };
@@ -1160,17 +1160,16 @@ fn launch_worktree_agent(
     context: &RequestContext,
     input: LaunchProjectWorktreeAgentInput,
 ) -> Result<WorktreeLaunchOutput, RouteError> {
-    let project = state
+    let _project = state
         .get_project(input.project_id)
         ?;
-    let work_item = require_work_item_for_project(state, input.project_id, input.work_item_id)?;
+    let _work_item = require_work_item_for_project(state, input.project_id, input.work_item_id)?;
     let worktree = ensure_project_worktree(state, input.project_id, input.work_item_id)?;
     let launch_profile_id = resolve_worktree_launch_profile_id(
         state,
         context.session_id,
         input.launch_profile_id,
     )?;
-    let startup_prompt = build_worktree_startup_prompt(state, &project, &work_item, &worktree)?;
     let session = sessions
         .launch(
             LaunchSessionInput {
@@ -1179,7 +1178,7 @@ fn launch_worktree_agent(
                 launch_profile_id,
                 cols: 120,
                 rows: 32,
-                startup_prompt: Some(startup_prompt),
+                startup_prompt: None,
                 model: input.model,
             },
             state,
@@ -1224,66 +1223,6 @@ fn resolve_worktree_launch_profile_id(
         .first()
         .map(|profile| profile.id)
         .ok_or_else(|| RouteError::bad_request("no launch profile is available for worktree launch"))
-}
-
-fn build_worktree_startup_prompt(
-    state: &AppState,
-    project: &ProjectRecord,
-    work_item: &WorkItemRecord,
-    worktree: &WorktreeRecord,
-) -> Result<String, RouteError> {
-    let linked_documents = state
-        .list_documents(project.id)
-        .map_err(RouteError::from)?
-        .into_iter()
-        .filter(|document| document.work_item_id == Some(work_item.id))
-        .collect::<Vec<_>>();
-    let document_lines = if linked_documents.is_empty() {
-        vec![
-            "- No linked documents yet. Use Project Commander tools if you need more project context."
-                .to_string(),
-        ]
-    } else {
-        linked_documents
-            .into_iter()
-            .map(|document| {
-                let body = document.body.trim();
-                if body.is_empty() {
-                    format!("- {} {}", document.id, document.title)
-                } else {
-                    format!("- {} {} :: {}", document.id, document.title, one_line(body))
-                }
-            })
-            .collect::<Vec<_>>()
-    };
-
-    Ok(
-        [
-            "You are the focused Project Commander worktree agent for this task.",
-            &format!("Project: {}", project.name),
-            &format!("Work item: {} {} (id: {})", work_item.call_sign, work_item.title, work_item.id),
-            &format!("Status: {}", work_item.status),
-            &format!("Worktree branch: {}", worktree.branch_name),
-            &format!("Worktree path: {}", worktree.worktree_path),
-            "Rules:",
-            "- Operate only inside the attached worktree path.",
-            "- Use Project Commander MCP tools as the source of truth for work-item and document changes.",
-            &format!("- First call get_work_item(id: {}) to read your full work item details. Do NOT call session_brief.", work_item.id),
-            "- Then state the exact work item you are taking and either begin or say exactly why you are blocked.",
-            "Communicating with the dispatcher:",
-            "- The dispatcher can send you directives at any time. They appear in your stdin as '[Dispatcher]: ...' messages. Follow these instructions when they arrive.",
-            "- Use signal_dispatcher to send messages back to the dispatcher. Your signal is pushed to the dispatcher's stdin immediately — no polling needed on their end.",
-            "- Signal types: 'question' (need input), 'blocked' (cannot proceed), 'complete' (task done), 'status_update' (progress note), 'request_approval' (need sign-off before proceeding).",
-            "- After emitting a signal that needs a response, call get_signal_response with the returned signalId to check for the dispatcher's reply.",
-            "- When your task is complete: call signal_dispatcher with signalType='complete', update your work item body with a handoff summary, stage your changes (do not commit), then stop.",
-            "Bug reporting:",
-            "- We are all building the Project Commander app together. If you encounter any bugs — in the app, build, tools, or workflow — log them as a bug work item via create_work_item (itemType: 'bug') with clear repro steps. Check list_work_items first to avoid duplicates.",
-            "Linked documents:",
-            &document_lines.join("\n"),
-            "If you change work-item state, persist it through Project Commander tools.",
-        ]
-        .join("\n"),
-    )
 }
 
 fn latest_session_record_for_worktree(
@@ -2391,10 +2330,6 @@ fn slugify_path_segment(value: &str, max_len: usize) -> String {
     } else {
         trimmed.to_string()
     }
-}
-
-fn one_line(value: &str) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn resolve_git_root(project_root_path: &str) -> Result<PathBuf, RouteError> {

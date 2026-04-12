@@ -1097,11 +1097,9 @@ fn build_claude_bridge_system_prompt(
             "Current session root path: {}. ",
             "Project Commander MCP tools are available in this session and are already bound to the active project. ",
             "Use the Project Commander MCP tools as the source of truth for project context, work items, and documents. ",
-            "At the start of each session, call the session_brief tool. ",
             "The project-commander-cli helper is also available as a fallback if MCP tools are unavailable. ",
             "Do not use WCP or any unrelated MCP work-item tracker for Project Commander state unless I explicitly ask you to. ",
             "When you create, update, block, or close work, persist the change with Project Commander MCP tools or the CLI fallback instead of only describing it in chat. ",
-            "If the startup user prompt assigns a work item, treat it as the active task immediately. ",
             "Do not respond with acknowledgment only."
         ),
         project.name, launch_root_path
@@ -1113,8 +1111,13 @@ fn build_claude_bridge_system_prompt(
     );
 
     if let Some(worktree) = worktree {
-        prompt.push_str(&format!(
-            " This session is attached to worktree #{} on branch {} for work item {} ({}). Treat the attached worktree path as the only writable project path and do not intentionally modify files outside it.",
+        prompt.push_str(&format!(concat!(
+            " This session is attached to worktree #{} on branch {} for work item {} ({}).",
+            " Treat the attached worktree path as the only writable project path and do not intentionally modify files outside it.",
+            " Wait for the dispatcher to send you instructions via stdin before starting work. Dispatcher messages appear as '[Dispatcher]: ...' — follow them.",
+            " Use signal_dispatcher to communicate back: 'question' (need input), 'blocked' (cannot proceed), 'complete' (task done), 'status_update' (progress note), 'request_approval' (need sign-off).",
+            " When done: signal_dispatcher with signalType='complete', update your work item body with a handoff summary, stage changes (do not commit), then stop.",
+        ),
             worktree.id,
             worktree.branch_name,
             worktree.work_item_call_sign,
@@ -1122,7 +1125,7 @@ fn build_claude_bridge_system_prompt(
         ));
     } else {
         prompt.push_str(concat!(
-            " This is the project dispatcher session. Operate from the main repository root and coordinate focused worktree handoffs when needed.",
+            " This is the project dispatcher session. Operate from the main repository root and coordinate focused worktree handoffs when needed. At the start of each session, call the session_brief tool.",
             " When launching worktree agents: (1) Choose the right model for the task — opus for hard/architectural work, sonnet for standard features and bugs, haiku for simple/mechanical tasks — by passing the 'model' parameter to launch_worktree_agent.",
             " (2) After launching an agent, use direct_agent to send it specific instructions about what to do, any context it needs, and your expectations.",
             " (3) Monitor agent signals and respond promptly via respond_to_signal.",
