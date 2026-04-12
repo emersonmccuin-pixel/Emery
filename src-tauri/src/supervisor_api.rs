@@ -1,26 +1,9 @@
 use crate::db::{
-    AgentMessageRecord, AgentSignalRecord, DocumentRecord, ProjectRecord, SessionEventRecord,
+    AgentMessageRecord, AgentSignalRecord, DocumentRecord, SessionEventRecord,
     SessionRecord, WorkItemRecord, WorktreeRecord,
 };
 use crate::session_api::SessionSnapshot;
 use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectTrackerInfo {
-    pub call_sign: String,
-    pub body: String,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionBriefOutput {
-    pub project: ProjectRecord,
-    pub active_worktree: Option<WorktreeRecord>,
-    pub tracker: Option<ProjectTrackerInfo>,
-    pub work_items: Vec<WorkItemRecord>,
-    pub documents: Vec<DocumentRecord>,
-}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

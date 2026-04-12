@@ -25,7 +25,7 @@ use project_commander_lib::supervisor_api::{
     ListProjectWorkItemsInput, ListProjectWorktreesInput, ProjectDocumentTarget,
     ProjectSessionRecordTarget, ProjectWorkItemTarget, ProjectWorktreeTarget, PinWorktreeInput,
     RepairCleanupInput, RespondToAgentSignalInput as ApiRespondToAgentSignalInput,
-    ProjectTrackerInfo, SendAgentMessageApiInput, SessionBriefOutput, UpdateProjectDocumentInput,
+    SendAgentMessageApiInput, UpdateProjectDocumentInput,
     UpdateProjectWorkItemInput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
 use project_commander_lib::supervisor_mcp::run_supervisor_mcp_stdio_with_session;
@@ -480,49 +480,6 @@ fn route_request(
                 .map_err(|error| {
                     RouteError::internal(format!("failed to encode updated project: {error}"))
                 })
-        }
-        (&Method::Post, "/project/session-brief") => {
-            let input = read_json::<ProjectSessionTarget>(request)?;
-            let project = state
-                .get_project(input.project_id)
-                ?;
-            let active_worktree = match input.worktree_id {
-                Some(worktree_id) => Some(require_worktree_for_project(
-                    state,
-                    input.project_id,
-                    worktree_id,
-                )?),
-                None => None,
-            };
-            let mut work_items = state
-                .list_work_items(input.project_id)
-                .map_err(RouteError::from)?;
-            let documents = state
-                .list_documents(input.project_id)
-                .map_err(RouteError::from)?;
-
-            let tracker = work_items
-                .iter()
-                .position(|item| item.sequence_number == 0 && item.parent_work_item_id.is_none())
-                .map(|idx| {
-                    let item = work_items.remove(idx);
-                    ProjectTrackerInfo {
-                        call_sign: item.call_sign,
-                        body: item.body,
-                    }
-                });
-
-            serde_json::to_value(SessionBriefOutput {
-                project,
-                active_worktree,
-                tracker,
-                work_items,
-                documents,
-            })
-            .map(|data| json!({ "ok": true, "data": data }))
-            .map_err(|error| {
-                RouteError::internal(format!("failed to encode session brief: {error}"))
-            })
         }
         (&Method::Post, "/work-item/list") => {
             let input = read_json::<ListProjectWorkItemsInput>(request)?;

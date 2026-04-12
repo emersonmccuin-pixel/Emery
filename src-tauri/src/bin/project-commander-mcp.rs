@@ -142,30 +142,6 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
             let project = resolve_project(state)?;
             Ok(serde_json::to_value(project).expect("project should serialize"))
         }),
-        "session_brief" => execute_tool(|| {
-            let project = resolve_project(state)?;
-            let mut work_items = state.list_work_items(project.id)?;
-            let documents = state.list_documents(project.id)?;
-
-            let tracker = work_items
-                .iter()
-                .position(|item| item.sequence_number == 0 && item.parent_work_item_id.is_none())
-                .map(|idx| {
-                    let item = work_items.remove(idx);
-                    ProjectTrackerInfo {
-                        call_sign: item.call_sign,
-                        body: item.body,
-                    }
-                });
-
-            Ok(serde_json::to_value(SessionBriefOutput {
-                project,
-                tracker,
-                work_items,
-                documents,
-            })
-            .expect("session brief should serialize"))
-        }),
         "list_work_items" => execute_tool(|| {
             let args: ListWorkItemsArgs = decode_args(arguments)?;
             let project = resolve_project(state)?;
@@ -380,12 +356,6 @@ fn tool_definitions() -> Vec<Value> {
         tool_definition(
             "current_project",
             "Return the active Project Commander project bound to this session.",
-            json_schema_object(json!({}), vec![]),
-            true,
-        ),
-        tool_definition(
-            "session_brief",
-            "Return the active project plus all work items and documents for a quick briefing.",
             json_schema_object(json!({}), vec![]),
             true,
         ),
@@ -721,22 +691,6 @@ impl McpError {
             message: message.into(),
         }
     }
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ProjectTrackerInfo {
-    call_sign: String,
-    body: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SessionBriefOutput {
-    project: ProjectRecord,
-    tracker: Option<ProjectTrackerInfo>,
-    work_items: Vec<WorkItemRecord>,
-    documents: Vec<DocumentRecord>,
 }
 
 #[derive(Serialize)]

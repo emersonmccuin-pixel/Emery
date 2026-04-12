@@ -24,7 +24,6 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Project(ProjectCommand),
-    Session(SessionCommand),
     WorkItem(WorkItemCommand),
     Document(DocumentCommand),
 }
@@ -42,25 +41,6 @@ enum ProjectSubcommand {
 
 #[derive(Args)]
 struct ProjectCurrentArgs {
-    #[command(flatten)]
-    project: ProjectSelectionArgs,
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Args)]
-struct SessionCommand {
-    #[command(subcommand)]
-    command: SessionSubcommand,
-}
-
-#[derive(Subcommand)]
-enum SessionSubcommand {
-    Brief(SessionBriefArgs),
-}
-
-#[derive(Args)]
-struct SessionBriefArgs {
     #[command(flatten)]
     project: ProjectSelectionArgs,
     #[arg(long)]
@@ -217,22 +197,6 @@ struct DeleteDocumentArgs {
     json: bool,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ProjectTrackerInfo {
-    call_sign: String,
-    body: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SessionBriefOutput {
-    project: ProjectRecord,
-    tracker: Option<ProjectTrackerInfo>,
-    work_items: Vec<WorkItemRecord>,
-    documents: Vec<DocumentRecord>,
-}
-
 fn main() {
     let cli = Cli::parse();
 
@@ -252,7 +216,6 @@ fn run(cli: Cli) -> AppResult<()> {
 
     match cli.command {
         Command::Project(command) => handle_project_command(&state, command),
-        Command::Session(command) => handle_session_command(&state, command),
         Command::WorkItem(command) => handle_work_item_command(&state, command),
         Command::Document(command) => handle_document_command(&state, command),
     }
@@ -278,12 +241,6 @@ fn handle_project_command(state: &AppState, command: ProjectCommand) -> AppResul
     }
 }
 
-fn handle_session_command(state: &AppState, command: SessionCommand) -> AppResult<()> {
-    match command.command {
-        SessionSubcommand::Brief(args) => session_brief(state, args),
-    }
-}
-
 fn handle_work_item_command(state: &AppState, command: WorkItemCommand) -> AppResult<()> {
     match command.command {
         WorkItemSubcommand::List(args) => list_work_items(state, args),
@@ -299,44 +256,6 @@ fn handle_document_command(state: &AppState, command: DocumentCommand) -> AppRes
         DocumentSubcommand::Create(args) => create_document(state, args),
         DocumentSubcommand::Update(args) => update_document(state, args),
         DocumentSubcommand::Delete(args) => delete_document(state, args),
-    }
-}
-
-fn session_brief(state: &AppState, args: SessionBriefArgs) -> AppResult<()> {
-    let project = resolve_project(state, args.project)?;
-    let mut work_items = state.list_work_items(project.id)?;
-    let documents = state.list_documents(project.id)?;
-
-    let tracker = work_items
-        .iter()
-        .position(|item| item.sequence_number == 0 && item.parent_work_item_id.is_none())
-        .map(|idx| {
-            let item = work_items.remove(idx);
-            ProjectTrackerInfo {
-                call_sign: item.call_sign,
-                body: item.body,
-            }
-        });
-
-    let brief = SessionBriefOutput {
-        project,
-        tracker,
-        work_items,
-        documents,
-    };
-
-    if args.json {
-        print_json(&brief)
-    } else {
-        println!(
-            "Session brief for {} (#{})",
-            brief.project.name, brief.project.id
-        );
-        println!("Root: {}", brief.project.root_path);
-        println!("Work items: {}", brief.work_items.len());
-        println!("Documents: {}", brief.documents.len());
-        println!("Recommended first command: project-commander-cli session brief --json");
-        Ok(())
     }
 }
 

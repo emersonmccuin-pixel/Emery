@@ -16,7 +16,6 @@ export const WORK_ITEM_STATUS_ORDER: Record<WorkItemStatus, number> = {
 }
 
 export const PROJECT_COMMANDER_TOOLS = [
-  'session_brief()',
   'list_work_items(status?, itemType?, parentOnly?, openOnly?)',
   'get_work_item(id)',
   'create_work_item(...)',
@@ -184,12 +183,10 @@ export function buildAgentStartupPrompt(
     `Project: ${project.name}`,
     `Root path: ${project.rootPath}`,
     'Project Commander MCP tools are attached to this session.',
-    'Required first action: call session_brief.',
     'You are the repository dispatcher for this project.',
     'Use the Project Commander MCP tools as the source of truth for project context, work items, documents, and focused worktree launches.',
     'If MCP tools are unavailable, fall back to project-commander-cli.',
     'Key tools:',
-    '- session_brief()',
     '- list_work_items(status?, itemType?, parentOnly?, openOnly?)',
     '- list_worktrees()',
     '- launch_worktree_agent(workItemId, launchProfileId?)',
@@ -201,7 +198,7 @@ export function buildAgentStartupPrompt(
     ...workItemLines,
     'Current documents:',
     ...documentLines,
-    'After reading this context, inspect open bugs/features or create the next work item, then coordinate focused worktree execution when appropriate.',
+    `Required first action: call get_work_item for ${project.workItemPrefix ?? project.name}-0 to load current project state, priorities, and operating procedures. Then list_worktrees to check for active agents.`,
   ].join('\n')
 }
 

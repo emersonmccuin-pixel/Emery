@@ -7,7 +7,7 @@ use crate::supervisor_api::{
     LaunchProjectWorktreeAgentInput, ListAgentMessagesApiInput, ListProjectDocumentsInput,
     ListProjectWorkItemsInput, ListProjectWorktreesInput,
     PinWorktreeInput, ProjectDocumentTarget, ProjectWorkItemTarget,
-    SendAgentMessageApiInput, SessionBriefOutput, UpdateProjectDocumentInput,
+    SendAgentMessageApiInput, UpdateProjectDocumentInput,
     UpdateProjectWorkItemInput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
 use reqwest::blocking::Client;
@@ -107,16 +107,6 @@ impl SupervisorMcpClient {
     fn current_project(&self) -> AppResult<ProjectRecord> {
         self.post(
             "project/current",
-            &ProjectSessionTarget {
-                project_id: self.project_id,
-                worktree_id: self.worktree_id,
-            },
-        )
-    }
-
-    fn session_brief(&self) -> AppResult<SessionBriefOutput> {
-        self.post(
-            "project/session-brief",
             &ProjectSessionTarget {
                 project_id: self.project_id,
                 worktree_id: self.worktree_id,
@@ -547,24 +537,6 @@ fn call_tool(
     match tool_name {
         "current_project" => Ok(serde_json::to_value(client.current_project()?)
             .map_err(|error| AppError::internal(format!("failed to encode current project result: {error}")))?),
-        "session_brief" => {
-            let brief = client.session_brief()?;
-            let mut value = serde_json::to_value(brief)
-                .map_err(|error| AppError::internal(format!("failed to encode session brief result: {error}")))?;
-            // Strip bodies — keep headers only so the response stays bounded.
-            // Callers that need a body should use get_work_item(id) on demand.
-            if let Some(items) = value.get_mut("workItems").and_then(Value::as_array_mut) {
-                for item in items.iter_mut() {
-                    *item = slim_work_item(item);
-                }
-            }
-            if let Some(docs) = value.get_mut("documents").and_then(Value::as_array_mut) {
-                for doc in docs.iter_mut() {
-                    *doc = slim_document(doc);
-                }
-            }
-            Ok(value)
-        }
         "list_work_items" => {
             let status = arguments
                 .get("status")
@@ -742,19 +714,6 @@ fn build_tool_definitions() -> Vec<Value> {
         json!({
             "name": "current_project",
             "description": "Return the active Project Commander project bound to this session.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {},
-                "required": [],
-                "additionalProperties": false
-            },
-            "_meta": {
-                "anthropic/maxResultSizeChars": 200000
-            }
-        }),
-        json!({
-            "name": "session_brief",
-            "description": "Return the active project plus all work items and documents for a quick briefing.",
             "inputSchema": {
                 "type": "object",
                 "properties": {},
