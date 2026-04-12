@@ -15,6 +15,24 @@ use crate::error::{AppError, AppResult};
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+const PROJECT_TRACKER_TEMPLATE: &str = "\
+## Current Priorities
+- (none yet)
+
+## Active Work
+| Call Sign | Title | Status | Agent |
+|---|---|---|---|
+
+## Blocked / Waiting
+- (none)
+
+## Recent Decisions
+- (none yet)
+
+## Backlog Highlights
+- (none yet)
+";
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StorageInfo {
@@ -1905,6 +1923,7 @@ fn migrate(connection: &Connection) -> Result<(), String> {
         .map_err(|error| format!("failed to finalize work item indexes: {error}"))?;
     backfill_project_work_item_prefixes(connection)?;
     reconcile_work_item_identifiers(connection)?;
+    backfill_project_tracker_work_items(connection)?;
 
     Ok(())
 }
@@ -2937,8 +2956,11 @@ fn ensure_project_registration(
         )
         .map_err(|error| format!("failed to create project: {error}"))?;
 
+    let project_id = connection.last_insert_rowid();
+    ensure_project_tracker_work_item(connection, project_id, &prefix, trimmed_name)?;
+
     Ok(ProjectRegistrationResult {
-        project: load_project_by_id(connection, connection.last_insert_rowid())?,
+        project: load_project_by_id(connection, project_id)?,
     })
 }
 
@@ -3295,6 +3317,7 @@ fn reconcile_work_item_identifiers(connection: &Connection) -> Result<(), String
                 SELECT id, parent_work_item_id
                 FROM work_items
                 WHERE project_id = ?1
+                  AND (sequence_number IS NULL OR sequence_number != 0 OR parent_work_item_id IS NOT NULL)
                 ORDER BY sequence_number ASC, child_number ASC, id ASC
                 ",
             )
@@ -3359,6 +3382,80 @@ fn reconcile_work_item_identifiers(connection: &Connection) -> Result<(), String
                     .map_err(|error| format!("failed to reconcile child work item identifiers: {error}"))?;
             }
         }
+    }
+
+    Ok(())
+}
+
+/// Ensures that a single project has its {NS}-0 tracker work item.
+/// Creates one if it doesn't already exist.
+fn ensure_project_tracker_work_item(
+    connection: &Connection,
+    project_id: i64,
+    project_prefix: &str,
+    project_name: &str,
+) -> Result<(), String> {
+    let exists = connection
+        .query_row(
+            "SELECT id FROM work_items WHERE project_id = ?1 AND sequence_number = 0 AND parent_work_item_id IS NULL",
+            [project_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|error| format!("failed to check for project tracker work item: {error}"))?;
+
+    if exists.is_some() {
+        return Ok(());
+    }
+
+    let call_sign = format!("{project_prefix}-0");
+    let title = format!("{project_name} \u{2014} Project Tracker");
+
+    connection
+        .execute(
+            "INSERT INTO work_items (
+                project_id,
+                parent_work_item_id,
+                sequence_number,
+                child_number,
+                call_sign,
+                title,
+                body,
+                item_type,
+                status
+             ) VALUES (?1, NULL, 0, NULL, ?2, ?3, ?4, 'note', 'in_progress')",
+            params![project_id, call_sign, title, PROJECT_TRACKER_TEMPLATE],
+        )
+        .map_err(|error| format!("failed to create project tracker work item: {error}"))?;
+
+    Ok(())
+}
+
+/// Backfills {NS}-0 tracker work items for all projects that don't have one.
+fn backfill_project_tracker_work_items(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, name, COALESCE(work_item_prefix, '') FROM projects ORDER BY id ASC",
+        )
+        .map_err(|error| format!("failed to prepare project tracker backfill query: {error}"))?;
+
+    let projects = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|error| format!("failed to load projects for tracker backfill: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to decode projects for tracker backfill: {error}"))?;
+
+    for (project_id, project_name, prefix) in projects {
+        if prefix.trim().is_empty() {
+            continue;
+        }
+        ensure_project_tracker_work_item(connection, project_id, &prefix, &project_name)?;
     }
 
     Ok(())
@@ -4015,13 +4112,14 @@ mod tests {
             "cannot delete a parent work item while child work items still exist"
         );
 
+        // +1 for auto-created {NS}-0 project tracker
         assert_eq!(
             harness
                 .state
                 .get_project(project.id)
                 .expect("project should load after work item creation")
                 .work_item_count,
-            3
+            4
         );
 
         harness
@@ -4037,15 +4135,17 @@ mod tests {
             .state
             .list_work_items(project.id)
             .expect("remaining work items should list");
-        assert_eq!(remaining.len(), 1);
-        assert_eq!(remaining[0].id, sibling_parent.id);
+        // 2 remaining: {NS}-0 tracker + sibling_parent
+        assert_eq!(remaining.len(), 2);
+        assert!(remaining.iter().any(|item| item.id == sibling_parent.id));
+        assert!(remaining.iter().any(|item| item.sequence_number == 0));
         assert_eq!(
             harness
                 .state
                 .get_project(project.id)
                 .expect("project should load after deletions")
                 .work_item_count,
-            1
+            2
         );
     }
 
