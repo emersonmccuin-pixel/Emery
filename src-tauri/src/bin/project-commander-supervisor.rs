@@ -1778,13 +1778,6 @@ fn direct_agent(
         return Err(RouteError::bad_request("message is required"));
     }
 
-    // Resolve agent name from worktree's work item call sign.
-    // Replace dots with hyphens — dots in agent names break Claude Code's mailbox file resolution.
-    let agent_name = state
-        .get_worktree(worktree_id)
-        .map(|wt| wt.work_item_call_sign.replace('.', "-"))
-        .unwrap_or_else(|_| format!("worktree-{worktree_id}"));
-
     let directive = format!("[Dispatcher]: {message}");
 
     // Primary: PTY stdin injection.
@@ -1828,12 +1821,8 @@ fn respond_to_agent_signal(
         })
         .map_err(RouteError::from)?;
 
-    // Deliver response to the agent via teammate mailbox.
+    // Deliver response to the agent via PTY injection.
     if let Some(worktree_id) = signal.worktree_id {
-        let agent_name = state
-            .get_worktree(worktree_id)
-            .map(|wt| wt.work_item_call_sign.replace('.', "-"))
-            .unwrap_or_else(|_| format!("worktree-{worktree_id}"));
         let directive = format!("[Dispatcher]: {response}");
 
         // PTY stdin injection.
