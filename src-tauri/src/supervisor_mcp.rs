@@ -271,6 +271,7 @@ impl SupervisorMcpClient {
         work_item_id: i64,
         launch_profile_id: Option<i64>,
         model: Option<String>,
+        execution_mode: Option<String>,
     ) -> AppResult<WorktreeLaunchOutput> {
         self.post(
             "worktree/launch-agent",
@@ -279,6 +280,7 @@ impl SupervisorMcpClient {
                 work_item_id,
                 launch_profile_id,
                 model,
+                execution_mode,
             },
         )
     }
@@ -642,6 +644,7 @@ fn call_tool(
                 read_required_i64(&arguments, "workItemId")?,
                 read_optional_i64(&arguments, "launchProfileId"),
                 arguments.get("model").and_then(|v| v.as_str()).map(String::from),
+                arguments.get("executionMode").and_then(|v| v.as_str()).map(String::from),
             )?)
             .map_err(|error| AppError::internal(format!("failed to encode launched worktree agent: {error}")))?;
             // Strip session.output — it can be 200k+ chars for long-running sessions.
@@ -977,6 +980,11 @@ fn build_tool_definitions() -> Vec<Value> {
                     "model": {
                         "type": "string",
                         "description": "Optional Claude model override (e.g. 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'). Pick based on task complexity."
+                    },
+                    "executionMode": {
+                        "type": "string",
+                        "enum": ["plan", "build", "plan_and_build"],
+                        "description": "Controls the agent's execution strategy. 'plan': agent writes a plan and requests approval before writing code. 'build': agent implements immediately (default). 'plan_and_build': agent plans then implements without waiting for approval."
                     }
                 },
                 "required": ["workItemId"],

@@ -49,6 +49,8 @@ pub struct LaunchSessionInput {
     pub startup_prompt: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
+    #[serde(default)]
+    pub execution_mode: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

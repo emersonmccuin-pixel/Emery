@@ -252,6 +252,7 @@ impl SessionRegistry {
             (!startup_prompt.is_empty()).then_some(startup_prompt.as_str()),
             session_record.id,
             input.model.as_deref(),
+            input.execution_mode.as_deref(),
         ) {
             Ok(command) => command,
             Err(error) => {
@@ -715,6 +716,7 @@ fn build_launch_command(
     startup_prompt: Option<&str>,
     session_record_id: i64,
     model: Option<&str>,
+    execution_mode: Option<&str>,
 ) -> Result<CommandBuilder, String> {
     if profile.provider == "claude_code" {
         return build_claude_launch_command(
@@ -727,6 +729,7 @@ fn build_launch_command(
             startup_prompt,
             session_record_id,
             model,
+            execution_mode,
         );
     }
 
@@ -739,6 +742,7 @@ fn build_launch_command(
         supervisor_runtime,
         startup_prompt,
         session_record_id,
+        execution_mode,
     )
 }
 
@@ -752,6 +756,7 @@ fn build_claude_launch_command(
     startup_prompt: Option<&str>,
     session_record_id: i64,
     model: Option<&str>,
+    execution_mode: Option<&str>,
 ) -> Result<CommandBuilder, String> {
     let mut command = CommandBuilder::new(&profile.executable);
     command.cwd(launch_root_path);
@@ -790,6 +795,7 @@ fn build_claude_launch_command(
         project,
         worktree,
         launch_root_path,
+        execution_mode,
     ));
 
     // Enable Claude Code teammate mailbox for reliable dispatcher ↔ agent messaging.
@@ -850,6 +856,7 @@ fn build_wrapped_launch_command(
     _supervisor_runtime: &SupervisorRuntimeInfo,
     startup_prompt: Option<&str>,
     session_record_id: i64,
+    execution_mode: Option<&str>,
 ) -> Result<CommandBuilder, String> {
     let mut command = CommandBuilder::new("powershell.exe");
     let env_pairs = parse_env_json(&profile.env_json)?;
@@ -902,6 +909,7 @@ fn build_wrapped_launch_command(
                 project,
                 worktree,
                 launch_root_path,
+                execution_mode,
             ))
         ));
     }
@@ -1129,6 +1137,7 @@ fn build_claude_bridge_system_prompt(
     project: &crate::db::ProjectRecord,
     worktree: Option<&crate::db::WorktreeRecord>,
     launch_root_path: &str,
+    execution_mode: Option<&str>,
 ) -> String {
     let namespace = project
         .work_item_prefix
@@ -1190,6 +1199,25 @@ fn build_claude_bridge_system_prompt(
             worktree.work_item_title,
             worktree.work_item_call_sign,
         ));
+
+        let mode_paragraph = match execution_mode.unwrap_or("build") {
+            "plan" => concat!(
+                "\n\n## Execution Mode: Plan\n",
+                "Do NOT write any code yet. First, analyze your work item and create a detailed implementation plan.\n",
+                "Send your plan to the dispatcher via send_message(to=\"dispatcher\", messageType=\"request_approval\", body=\"<your plan>\").\n",
+                "Wait for dispatcher approval before writing any code.",
+            ),
+            "plan_and_build" => concat!(
+                "\n\n## Execution Mode: Plan & Build\n",
+                "First create a brief implementation plan (note it in your work item body), then proceed to implement it.\n",
+                "Do not wait for approval — the dispatcher will review your completed work.",
+            ),
+            _ => concat!(
+                "\n\n## Execution Mode: Build\n",
+                "Proceed directly to implementation. Your work item has sufficient detail.",
+            ),
+        };
+        prompt.push_str(mode_paragraph);
     } else {
         prompt.push_str(&format!(
             concat!(

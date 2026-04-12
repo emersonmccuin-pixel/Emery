@@ -176,6 +176,8 @@ pub struct LaunchProjectWorktreeAgentInput {
     pub launch_profile_id: Option<i64>,
     #[serde(default)]
     pub model: Option<String>,
+    #[serde(default)]
+    pub execution_mode: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

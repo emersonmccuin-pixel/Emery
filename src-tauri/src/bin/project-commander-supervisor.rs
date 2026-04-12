@@ -1199,6 +1199,7 @@ fn launch_worktree_agent(
                 rows: 32,
                 startup_prompt: None,
                 model: input.model,
+                execution_mode: input.execution_mode,
             },
             state,
             runtime,
@@ -4216,6 +4217,7 @@ mod tests {
             rows: 32,
             startup_prompt: None,
             model: None,
+            execution_mode: None,
         };
 
         let first = sessions
@@ -4331,6 +4333,7 @@ mod tests {
                     rows: 32,
                     startup_prompt: None,
                     model: None,
+                    execution_mode: None,
                 },
                 &harness.state,
                 &harness.runtime,
