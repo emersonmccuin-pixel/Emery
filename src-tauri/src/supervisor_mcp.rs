@@ -3,7 +3,7 @@ use crate::error::{AppError, AppResult};
 use crate::session_api::ProjectSessionTarget;
 use crate::supervisor_api::{
     AgentSignalTarget, CreateProjectDocumentInput, CreateProjectWorkItemInput,
-    EmitAgentSignalInput, ListAgentSignalsInput, ListProjectDocumentsInput,
+    DirectAgentInput, EmitAgentSignalInput, ListAgentSignalsInput, ListProjectDocumentsInput,
     LaunchProjectWorktreeAgentInput, ListProjectWorkItemsInput, ListProjectWorktreesInput,
     PinWorktreeInput, ProjectDocumentTarget, ProjectWorktreeTarget, ProjectWorkItemTarget,
     RespondToAgentSignalInput, SessionBriefOutput, UpdateProjectDocumentInput,
@@ -378,6 +378,17 @@ impl SupervisorMcpClient {
         )
     }
 
+    fn direct_agent(&self, worktree_id: i64, message: &str) -> AppResult<serde_json::Value> {
+        self.post(
+            "agent/direct",
+            &DirectAgentInput {
+                project_id: self.project_id,
+                worktree_id,
+                message: message.to_string(),
+            },
+        )
+    }
+
     fn post<TRequest, TResponse>(
         &self,
         route: &str,
@@ -658,6 +669,13 @@ fn call_tool(
             client.acknowledge_signal(read_required_i64(&arguments, "signalId")?)?,
         )
         .map_err(|error| AppError::internal(format!("failed to encode acknowledged signal: {error}")))?),
+        "direct_agent" => {
+            client.direct_agent(
+                read_required_i64(&arguments, "worktreeId")?,
+                &read_required_string(&arguments, "message")?,
+            )?;
+            Ok(json!({ "ok": true }))
+        }
         _ => Err(AppError::invalid_input(format!("unknown tool: {tool_name}"))),
     }
 }
@@ -1072,6 +1090,25 @@ fn build_tool_definitions() -> Vec<Value> {
                     }
                 },
                 "required": ["signalId"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "direct_agent",
+            "description": "Send a directive to a worktree agent. The message is injected directly into the agent's session stdin so it receives it immediately — no polling needed. Use this to assign work, redirect approach, give feedback, or send follow-up instructions to a running agent.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "worktreeId": {
+                        "type": "integer",
+                        "description": "Worktree id of the agent to direct."
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "The directive or message to send to the agent."
+                    }
+                },
+                "required": ["worktreeId", "message"],
                 "additionalProperties": false
             }
         }),

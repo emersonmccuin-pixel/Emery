@@ -256,3 +256,11 @@ pub struct RespondToAgentSignalInput {
 pub struct ListAgentSignalsOutput {
     pub signals: Vec<AgentSignalRecord>,
 }
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectAgentInput {
+    pub project_id: i64,
+    pub worktree_id: i64,
+    pub message: String,
+}

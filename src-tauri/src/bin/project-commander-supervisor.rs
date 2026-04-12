@@ -16,7 +16,7 @@ use project_commander_lib::session_host::{now_timestamp_string, SessionRegistry}
 use project_commander_lib::supervisor_api::{
     AgentSignalTarget, CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget,
     CleanupRepairOutput, ClearProjectWorktreesInput, CreateProjectDocumentInput,
-    CreateProjectWorkItemInput, EmitAgentSignalInput as ApiEmitAgentSignalInput,
+    CreateProjectWorkItemInput, DirectAgentInput, EmitAgentSignalInput as ApiEmitAgentSignalInput,
     EnsureProjectWorktreeInput, LaunchProfileTarget, LaunchProjectWorktreeAgentInput,
     ListAgentSignalsInput, ListCleanupCandidatesInput, ListProjectDocumentsInput,
     ListProjectSessionEventsInput, ListProjectSessionsInput, ListProjectWorkItemsInput,
@@ -1014,6 +1014,11 @@ fn route_request(
                 .map(|data| json!({ "ok": true, "data": data }))
                 .map_err(|error| RouteError::internal(format!("failed to encode acknowledged signal: {error}")))
         }
+        (&Method::Post, "/agent/direct") => {
+            let input = read_json::<DirectAgentInput>(request)?;
+            direct_agent(state, sessions, context, input.project_id, input.worktree_id, &input.message)?;
+            Ok(json!({ "ok": true }))
+        }
         _ => Err(RouteError::not_found("route not found")),
     }
 }
@@ -1264,10 +1269,11 @@ fn build_worktree_startup_prompt(
             "- Use Project Commander MCP tools as the source of truth for work-item and document changes.",
             &format!("- First call get_work_item(id: {}) to read your full work item details. Do NOT call session_brief.", work_item.id),
             "- Then state the exact work item you are taking and either begin or say exactly why you are blocked.",
-            "Signaling the dispatcher:",
-            "- Use signal_dispatcher to communicate with the dispatcher without requiring user intervention.",
+            "Communicating with the dispatcher:",
+            "- The dispatcher can send you directives at any time. They appear in your stdin as '[Dispatcher]: ...' messages. Follow these instructions when they arrive.",
+            "- Use signal_dispatcher to send messages back to the dispatcher. Your signal is pushed to the dispatcher's stdin immediately — no polling needed on their end.",
             "- Signal types: 'question' (need input), 'blocked' (cannot proceed), 'complete' (task done), 'status_update' (progress note), 'request_approval' (need sign-off before proceeding).",
-            "- After emitting a signal, call get_signal_response with the returned signalId to poll for the dispatcher's reply.",
+            "- After emitting a signal that needs a response, call get_signal_response with the returned signalId to check for the dispatcher's reply.",
             "- When your task is complete: call signal_dispatcher with signalType='complete', update your work item body with a handoff summary, stage your changes (do not commit), then stop.",
             "Linked documents:",
             &document_lines.join("\n"),
@@ -1459,7 +1465,7 @@ fn pin_project_worktree(
 
 fn emit_agent_signal(
     state: &AppState,
-    _sessions: &SessionRegistry,
+    sessions: &SessionRegistry,
     context: &RequestContext,
     project_id: i64,
     signal_type: &str,
@@ -1524,7 +1530,57 @@ fn emit_agent_signal(
         &signal,
     );
 
+    // Push signal to dispatcher session stdin so it sees it immediately.
+    let agent_label = worktree_id
+        .and_then(|wtid| state.get_worktree(wtid).ok())
+        .map(|wt| wt.work_item_call_sign)
+        .unwrap_or_else(|| "unknown-agent".to_string());
+    let injected = format!(
+        "\n[Agent {agent_label}] ({signal_type}): {message}\n"
+    );
+    if let Err(e) = sessions.write_input(project_commander_lib::session_api::SessionInput {
+        project_id,
+        worktree_id: None,
+        data: injected,
+    }) {
+        eprintln!("failed to inject signal into dispatcher stdin: {e}");
+    }
+
     Ok(signal)
+}
+
+fn direct_agent(
+    _state: &AppState,
+    sessions: &SessionRegistry,
+    context: &RequestContext,
+    project_id: i64,
+    worktree_id: i64,
+    message: &str,
+) -> Result<(), RouteError> {
+    let message = message.trim();
+    if message.is_empty() {
+        return Err(RouteError::bad_request("message is required"));
+    }
+    let injected = format!("\n[Dispatcher]: {message}\n");
+    sessions
+        .write_input(project_commander_lib::session_api::SessionInput {
+            project_id,
+            worktree_id: Some(worktree_id),
+            data: injected,
+        })
+        .map_err(|e| RouteError::internal(format!("failed to write to agent session: {e}")))?;
+
+    append_project_event(
+        _state,
+        context,
+        project_id,
+        "agent.directed",
+        "worktree",
+        worktree_id,
+        &json!({ "message": message }),
+    );
+
+    Ok(())
 }
 
 fn respond_to_agent_signal(
