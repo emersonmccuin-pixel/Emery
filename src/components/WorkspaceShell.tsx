@@ -1064,6 +1064,16 @@ function WorkspaceShell() {
                                               READY TO CLEAN
                                             </Badge>
                                           ) : null}
+                                          {(worktree.pendingSignalCount ?? 0) > 0 ? (
+                                            <Badge
+                                              variant="offline"
+                                              className="text-[8px] h-4 bg-hud-amber/10 text-hud-amber border-hud-amber/30 animate-pulse"
+                                            >
+                                              {worktree.pendingSignalCount === 1
+                                                ? '1 SIGNAL'
+                                                : `${worktree.pendingSignalCount} SIGNALS`}
+                                            </Badge>
+                                          ) : null}
                                           {recoverableSession ? (
                                             <Badge
                                               variant="destructive"
@@ -1418,6 +1428,14 @@ function WorkspaceShell() {
                               </Badge>
                             </div>
                             <div className="mb-1.5 flex gap-1 flex-wrap">
+                              {(worktree.pendingSignalCount ?? 0) > 0 ? (
+                                <Badge
+                                  variant="offline"
+                                  className="h-3.5 text-[7px] px-1 bg-hud-amber/10 text-hud-amber border-hud-amber/30 animate-pulse"
+                                >
+                                  {worktree.pendingSignalCount === 1 ? '1 SIG' : `${worktree.pendingSignalCount} SIGS`}
+                                </Badge>
+                              ) : null}
                               {worktree.hasUncommittedChanges ? (
                                 <Badge variant="destructive" className="h-3.5 text-[7px] px-1">
                                   DIRTY

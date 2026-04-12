@@ -103,7 +103,26 @@ pub struct WorktreeRecord {
     pub has_unmerged_commits: bool,
     pub pinned: bool,
     pub is_cleanup_eligible: bool,
+    pub pending_signal_count: i64,
     pub session_summary: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSignalRecord {
+    pub id: i64,
+    pub project_id: i64,
+    pub worktree_id: Option<i64>,
+    pub work_item_id: Option<i64>,
+    pub session_id: Option<i64>,
+    pub signal_type: String,
+    pub message: String,
+    pub context_json: String,
+    pub status: String,
+    pub response: Option<String>,
+    pub responded_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -237,6 +256,24 @@ pub struct UpdateDocumentInput {
     pub work_item_id: Option<i64>,
     pub title: String,
     pub body: String,
+}
+
+#[derive(Clone)]
+pub struct EmitAgentSignalInput {
+    pub project_id: i64,
+    pub worktree_id: Option<i64>,
+    pub work_item_id: Option<i64>,
+    pub session_id: Option<i64>,
+    pub signal_type: String,
+    pub message: String,
+    pub context_json: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct RespondToAgentSignalInput {
+    pub id: i64,
+    pub project_id: i64,
+    pub response: String,
 }
 
 #[derive(Clone)]
@@ -1144,6 +1181,144 @@ impl AppState {
         )?)
     }
 
+    pub fn emit_agent_signal(&self, input: EmitAgentSignalInput) -> AppResult<AgentSignalRecord> {
+        let connection = self.connect()?;
+        self.get_project(input.project_id)?;
+
+        let signal_type = input.signal_type.trim();
+        if signal_type.is_empty() {
+            return Err(AppError::invalid_input("signal_type is required"));
+        }
+
+        const VALID_TYPES: &[&str] = &[
+            "question",
+            "blocked",
+            "complete",
+            "status_update",
+            "request_approval",
+        ];
+        if !VALID_TYPES.contains(&signal_type) {
+            return Err(AppError::invalid_input(format!(
+                "invalid signal_type '{signal_type}'; expected one of: {}",
+                VALID_TYPES.join(", ")
+            )));
+        }
+
+        let message = input.message.trim().to_string();
+        let context_json = input
+            .context_json
+            .as_deref()
+            .map(normalize_json_payload)
+            .transpose()?
+            .unwrap_or_else(|| "{}".to_string());
+
+        connection
+            .execute(
+                "INSERT INTO agent_signals (
+                    project_id, worktree_id, work_item_id, session_id,
+                    signal_type, message, context_json, status
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending')",
+                params![
+                    input.project_id,
+                    input.worktree_id,
+                    input.work_item_id,
+                    input.session_id,
+                    signal_type,
+                    message,
+                    context_json,
+                ],
+            )
+            .map_err(|error| format!("failed to emit agent signal: {error}"))?;
+
+        Ok(load_agent_signal_by_id(
+            &connection,
+            connection.last_insert_rowid(),
+        )?)
+    }
+
+    pub fn list_agent_signals(
+        &self,
+        project_id: i64,
+        worktree_id: Option<i64>,
+        status: Option<&str>,
+    ) -> AppResult<Vec<AgentSignalRecord>> {
+        let connection = self.connect()?;
+        self.get_project(project_id)?;
+        Ok(load_agent_signals(&connection, project_id, worktree_id, status)?)
+    }
+
+    pub fn get_agent_signal(&self, id: i64, project_id: i64) -> AppResult<AgentSignalRecord> {
+        let connection = self.connect()?;
+        let signal = load_agent_signal_by_id(&connection, id)?;
+        if signal.project_id != project_id {
+            return Err(AppError::not_found(format!(
+                "agent signal #{id} not found in project #{project_id}"
+            )));
+        }
+        Ok(signal)
+    }
+
+    pub fn respond_to_agent_signal(
+        &self,
+        input: RespondToAgentSignalInput,
+    ) -> AppResult<AgentSignalRecord> {
+        let connection = self.connect()?;
+        let signal = self.get_agent_signal(input.id, input.project_id)?;
+
+        if signal.status == "responded" {
+            return Err(AppError::conflict(
+                "signal has already been responded to",
+            ));
+        }
+
+        let response = input.response.trim().to_string();
+        if response.is_empty() {
+            return Err(AppError::invalid_input("response is required"));
+        }
+
+        let now = now_timestamp_string();
+        connection
+            .execute(
+                "UPDATE agent_signals
+                 SET status = 'responded',
+                     response = ?1,
+                     responded_at = ?2,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?3",
+                params![response, now, input.id],
+            )
+            .map_err(|error| format!("failed to respond to agent signal: {error}"))?;
+
+        Ok(load_agent_signal_by_id(&connection, input.id)?)
+    }
+
+    pub fn acknowledge_agent_signal(
+        &self,
+        id: i64,
+        project_id: i64,
+    ) -> AppResult<AgentSignalRecord> {
+        let connection = self.connect()?;
+        let signal = self.get_agent_signal(id, project_id)?;
+
+        if signal.status != "pending" {
+            return Err(AppError::conflict(format!(
+                "signal #{id} cannot be acknowledged in status '{}'",
+                signal.status
+            )));
+        }
+
+        connection
+            .execute(
+                "UPDATE agent_signals
+                 SET status = 'acknowledged', updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?1",
+                params![id],
+            )
+            .map_err(|error| format!("failed to acknowledge agent signal: {error}"))?;
+
+        Ok(load_agent_signal_by_id(&connection, id)?)
+    }
+
     pub fn list_session_records(&self, project_id: i64) -> AppResult<Vec<SessionRecord>> {
         let connection = self.connect()?;
         self.get_project(project_id)?;
@@ -1371,6 +1546,22 @@ fn migrate(connection: &Connection) -> Result<(), String> {
               created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS agent_signals (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              worktree_id INTEGER REFERENCES worktrees(id) ON DELETE CASCADE,
+              work_item_id INTEGER REFERENCES work_items(id) ON DELETE CASCADE,
+              session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+              signal_type TEXT NOT NULL,
+              message TEXT NOT NULL DEFAULT '',
+              context_json TEXT NOT NULL DEFAULT '{}',
+              status TEXT NOT NULL DEFAULT 'pending',
+              response TEXT,
+              responded_at TEXT,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE INDEX IF NOT EXISTS idx_work_items_project_id
               ON work_items(project_id);
 
@@ -1394,6 +1585,12 @@ fn migrate(connection: &Connection) -> Result<(), String> {
 
             CREATE INDEX IF NOT EXISTS idx_session_events_session_id
               ON session_events(session_id);
+
+            CREATE INDEX IF NOT EXISTS idx_agent_signals_project_id
+              ON agent_signals(project_id);
+
+            CREATE INDEX IF NOT EXISTS idx_agent_signals_worktree_id
+              ON agent_signals(worktree_id);
             ",
         )
         .map_err(|error| format!("failed to run database migrations: {error}"))?;
@@ -2220,6 +2417,7 @@ fn map_worktree_record_base(row: &rusqlite::Row<'_>) -> rusqlite::Result<Worktre
         has_unmerged_commits: false,
         pinned,
         is_cleanup_eligible: false,
+        pending_signal_count: 0,
         session_summary: short_summary_text(&row.get::<_, String>(4)?, 6),
         created_at: row.get(7)?,
         updated_at: row.get(8)?,
@@ -2241,6 +2439,8 @@ fn enrich_worktree_record(
     record.is_cleanup_eligible = record.work_item_status == "done"
         && !record.has_unmerged_commits
         && !record.pinned;
+    record.pending_signal_count =
+        count_pending_signals_for_worktree(connection, record.id).unwrap_or(0);
 
     Ok(record)
 }
@@ -2257,6 +2457,108 @@ fn map_session_event_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<Session
         payload_json: row.get(7)?,
         created_at: row.get(8)?,
     })
+}
+
+fn map_agent_signal_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentSignalRecord> {
+    Ok(AgentSignalRecord {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        worktree_id: row.get(2)?,
+        work_item_id: row.get(3)?,
+        session_id: row.get(4)?,
+        signal_type: row.get(5)?,
+        message: row.get(6)?,
+        context_json: row.get(7)?,
+        status: row.get(8)?,
+        response: row.get(9)?,
+        responded_at: row.get(10)?,
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
+    })
+}
+
+fn load_agent_signal_by_id(connection: &Connection, id: i64) -> Result<AgentSignalRecord, String> {
+    connection
+        .query_row(
+            "SELECT id, project_id, worktree_id, work_item_id, session_id,
+                    signal_type, message, context_json, status, response,
+                    responded_at, created_at, updated_at
+             FROM agent_signals WHERE id = ?1",
+            [id],
+            map_agent_signal_record,
+        )
+        .map_err(|error| format!("failed to load agent signal #{id}: {error}"))
+}
+
+fn load_agent_signals(
+    connection: &Connection,
+    project_id: i64,
+    worktree_id: Option<i64>,
+    status: Option<&str>,
+) -> Result<Vec<AgentSignalRecord>, String> {
+    let mut sql = String::from(
+        "SELECT id, project_id, worktree_id, work_item_id, session_id,
+                signal_type, message, context_json, status, response,
+                responded_at, created_at, updated_at
+         FROM agent_signals
+         WHERE project_id = ?1",
+    );
+
+    if worktree_id.is_some() {
+        sql.push_str(" AND worktree_id = ?2");
+    }
+
+    if status.is_some() {
+        let param_idx = if worktree_id.is_some() { 3 } else { 2 };
+        sql.push_str(&format!(" AND status = ?{param_idx}"));
+    }
+
+    sql.push_str(" ORDER BY id DESC");
+
+    let mut statement = connection
+        .prepare(&sql)
+        .map_err(|error| format!("failed to prepare agent signal query: {error}"))?;
+
+    let rows: Vec<AgentSignalRecord> = match (worktree_id, status) {
+        (Some(wid), Some(st)) => statement
+            .query_map(params![project_id, wid, st], map_agent_signal_record)
+            .map_err(|error| format!("failed to load agent signals: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to map agent signals: {error}"))?,
+        (Some(wid), None) => statement
+            .query_map(params![project_id, wid], map_agent_signal_record)
+            .map_err(|error| format!("failed to load agent signals: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to map agent signals: {error}"))?,
+        (None, Some(st)) => statement
+            .query_map(params![project_id, st], map_agent_signal_record)
+            .map_err(|error| format!("failed to load agent signals: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to map agent signals: {error}"))?,
+        (None, None) => statement
+            .query_map(params![project_id], map_agent_signal_record)
+            .map_err(|error| format!("failed to load agent signals: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to map agent signals: {error}"))?,
+    };
+
+    Ok(rows)
+}
+
+fn count_pending_signals_for_worktree(
+    connection: &Connection,
+    worktree_id: i64,
+) -> Result<i64, String> {
+    connection
+        .query_row(
+            "SELECT COUNT(*) FROM agent_signals
+             WHERE worktree_id = ?1 AND status = 'pending'",
+            [worktree_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| {
+            format!("failed to count pending signals for worktree #{worktree_id}: {error}")
+        })
 }
 
 fn find_project_by_path(

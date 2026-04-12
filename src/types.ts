@@ -113,7 +113,24 @@ export type WorktreeRecord = {
   hasUnmergedCommits: boolean
   pinned: boolean
   isCleanupEligible: boolean
+  pendingSignalCount: number
   sessionSummary: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type AgentSignalRecord = {
+  id: number
+  projectId: number
+  worktreeId?: number | null
+  workItemId?: number | null
+  sessionId?: number | null
+  signalType: string
+  message: string
+  contextJson: string
+  status: string
+  response?: string | null
+  respondedAt?: string | null
   createdAt: string
   updatedAt: string
 }

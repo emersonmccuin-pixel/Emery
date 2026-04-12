@@ -1,6 +1,6 @@
 use crate::db::{
-    DocumentRecord, ProjectRecord, SessionEventRecord, SessionRecord, WorkItemRecord,
-    WorktreeRecord,
+    AgentSignalRecord, DocumentRecord, ProjectRecord, SessionEventRecord, SessionRecord,
+    WorkItemRecord, WorktreeRecord,
 };
 use crate::session_api::SessionSnapshot;
 use serde::{Deserialize, Serialize};
@@ -217,4 +217,42 @@ pub struct PinWorktreeInput {
     pub project_id: i64,
     pub worktree_id: i64,
     pub pinned: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmitAgentSignalInput {
+    pub project_id: i64,
+    pub signal_type: String,
+    pub message: String,
+    pub context_json: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListAgentSignalsInput {
+    pub project_id: i64,
+    pub worktree_id: Option<i64>,
+    pub status: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentSignalTarget {
+    pub project_id: i64,
+    pub id: i64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RespondToAgentSignalInput {
+    pub project_id: i64,
+    pub id: i64,
+    pub response: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListAgentSignalsOutput {
+    pub signals: Vec<AgentSignalRecord>,
 }

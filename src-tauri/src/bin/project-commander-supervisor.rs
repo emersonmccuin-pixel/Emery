@@ -1,10 +1,10 @@
 use clap::{Args, Parser, Subcommand};
 use project_commander_lib::db::{
-    AppState, AppendSessionEventInput, CreateDocumentInput, CreateLaunchProfileInput,
-    CreateProjectInput, CreateWorkItemInput, DocumentRecord, ProjectRecord,
-    ReparentRequest, UpdateAppSettingsInput, UpdateDocumentInput, UpdateLaunchProfileInput,
-    UpdateProjectInput, UpdateWorkItemInput, UpsertWorktreeRecordInput, WorkItemRecord,
-    WorktreeRecord,
+    AgentSignalRecord, AppState, AppendSessionEventInput, CreateDocumentInput,
+    CreateLaunchProfileInput, CreateProjectInput, CreateWorkItemInput, DocumentRecord,
+    EmitAgentSignalInput, ProjectRecord, ReparentRequest, RespondToAgentSignalInput,
+    UpdateAppSettingsInput, UpdateDocumentInput, UpdateLaunchProfileInput, UpdateProjectInput,
+    UpdateWorkItemInput, UpsertWorktreeRecordInput, WorkItemRecord, WorktreeRecord,
 };
 use project_commander_lib::error::{AppError, AppErrorCode};
 use project_commander_lib::session::build_supervisor_runtime_info;
@@ -14,15 +14,17 @@ use project_commander_lib::session_api::{
 };
 use project_commander_lib::session_host::{now_timestamp_string, SessionRegistry};
 use project_commander_lib::supervisor_api::{
-    CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget, CleanupRepairOutput,
-    ClearProjectWorktreesInput, CreateProjectDocumentInput, CreateProjectWorkItemInput,
+    AgentSignalTarget, CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget,
+    CleanupRepairOutput, ClearProjectWorktreesInput, CreateProjectDocumentInput,
+    CreateProjectWorkItemInput, EmitAgentSignalInput as ApiEmitAgentSignalInput,
     EnsureProjectWorktreeInput, LaunchProfileTarget, LaunchProjectWorktreeAgentInput,
-    ListCleanupCandidatesInput,
-    ListProjectDocumentsInput, ListProjectSessionEventsInput, ListProjectSessionsInput,
-    ListProjectWorkItemsInput, ListProjectWorktreesInput, ProjectDocumentTarget,
-    ProjectSessionRecordTarget, ProjectWorkItemTarget, ProjectWorktreeTarget,
-    PinWorktreeInput, RepairCleanupInput, SessionBriefOutput, UpdateProjectDocumentInput,
-    UpdateProjectWorkItemInput, WorkItemDetailOutput, WorktreeLaunchOutput,
+    ListAgentSignalsInput, ListCleanupCandidatesInput, ListProjectDocumentsInput,
+    ListProjectSessionEventsInput, ListProjectSessionsInput, ListProjectWorkItemsInput,
+    ListProjectWorktreesInput, ProjectDocumentTarget, ProjectSessionRecordTarget,
+    ProjectWorkItemTarget, ProjectWorktreeTarget, PinWorktreeInput, RepairCleanupInput,
+    RespondToAgentSignalInput as ApiRespondToAgentSignalInput, SessionBriefOutput,
+    UpdateProjectDocumentInput, UpdateProjectWorkItemInput, WorkItemDetailOutput,
+    WorktreeLaunchOutput,
 };
 use project_commander_lib::supervisor_mcp::run_supervisor_mcp_stdio_with_session;
 use serde::de::DeserializeOwned;
@@ -960,6 +962,58 @@ fn route_request(
                     RouteError::internal(format!("failed to encode pinned worktree: {error}"))
                 })
         }
+        (&Method::Post, "/signal/emit") => {
+            let input = read_json::<ApiEmitAgentSignalInput>(request)?;
+            let signal = emit_agent_signal(state, sessions, context, input.project_id, &input.signal_type, &input.message, input.context_json.as_deref())?;
+            serde_json::to_value(&signal)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| RouteError::internal(format!("failed to encode emitted signal: {error}")))
+        }
+        (&Method::Post, "/signal/list") => {
+            let input = read_json::<ListAgentSignalsInput>(request)?;
+            let signals = state
+                .list_agent_signals(
+                    input.project_id,
+                    input.worktree_id,
+                    input.status.as_deref(),
+                )
+                .map_err(RouteError::from)?;
+            Ok(json!({ "ok": true, "data": { "signals": signals } }))
+        }
+        (&Method::Post, "/signal/get") => {
+            let input = read_json::<AgentSignalTarget>(request)?;
+            let signal = state
+                .get_agent_signal(input.id, input.project_id)
+                .map_err(RouteError::from)?;
+            serde_json::to_value(&signal)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| RouteError::internal(format!("failed to encode signal: {error}")))
+        }
+        (&Method::Post, "/signal/respond") => {
+            let input = read_json::<ApiRespondToAgentSignalInput>(request)?;
+            let signal = respond_to_agent_signal(state, sessions, context, input.project_id, input.id, &input.response)?;
+            serde_json::to_value(&signal)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| RouteError::internal(format!("failed to encode responded signal: {error}")))
+        }
+        (&Method::Post, "/signal/acknowledge") => {
+            let input = read_json::<AgentSignalTarget>(request)?;
+            let signal = state
+                .acknowledge_agent_signal(input.id, input.project_id)
+                .map_err(RouteError::from)?;
+            append_project_event(
+                state,
+                context,
+                input.project_id,
+                "signal.acknowledged",
+                "agent_signal",
+                signal.id,
+                &signal,
+            );
+            serde_json::to_value(&signal)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| RouteError::internal(format!("failed to encode acknowledged signal: {error}")))
+        }
         _ => Err(RouteError::not_found("route not found")),
     }
 }
@@ -1210,6 +1264,11 @@ fn build_worktree_startup_prompt(
             "- Use Project Commander MCP tools as the source of truth for work-item and document changes.",
             &format!("- First call get_work_item(id: {}) to read your full work item details. Do NOT call session_brief.", work_item.id),
             "- Then state the exact work item you are taking and either begin or say exactly why you are blocked.",
+            "Signaling the dispatcher:",
+            "- Use signal_dispatcher to communicate with the dispatcher without requiring user intervention.",
+            "- Signal types: 'question' (need input), 'blocked' (cannot proceed), 'complete' (task done), 'status_update' (progress note), 'request_approval' (need sign-off before proceeding).",
+            "- After emitting a signal, call get_signal_response with the returned signalId to poll for the dispatcher's reply.",
+            "- When your task is complete: call signal_dispatcher with signalType='complete', update your work item body with a handoff summary, stage your changes (do not commit), then stop.",
             "Linked documents:",
             &document_lines.join("\n"),
             "If you change work-item state, persist it through Project Commander tools.",
@@ -1396,6 +1455,136 @@ fn pin_project_worktree(
     state
         .set_worktree_pinned(worktree_id, pinned)
         .map_err(RouteError::from)
+}
+
+fn emit_agent_signal(
+    state: &AppState,
+    _sessions: &SessionRegistry,
+    context: &RequestContext,
+    project_id: i64,
+    signal_type: &str,
+    message: &str,
+    context_json: Option<&str>,
+) -> Result<AgentSignalRecord, RouteError> {
+    // Resolve worktree and work_item from calling session context.
+    let (worktree_id, work_item_id) = if let Some(session_id) = context.session_id {
+        match state.get_session_record(session_id) {
+            Ok(session) => {
+                let wt_id = session.worktree_id;
+                let wi_id = wt_id
+                    .and_then(|wtid| state.get_worktree(wtid).ok())
+                    .map(|wt| wt.work_item_id);
+                (wt_id, wi_id)
+            }
+            Err(_) => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+
+    let signal = state
+        .emit_agent_signal(EmitAgentSignalInput {
+            project_id,
+            worktree_id,
+            work_item_id,
+            session_id: context.session_id,
+            signal_type: signal_type.to_string(),
+            message: message.to_string(),
+            context_json: context_json.map(ToOwned::to_owned),
+        })
+        .map_err(RouteError::from)?;
+
+    // Append signal to work item body for audit trail.
+    if let Some(wi_id) = work_item_id {
+        if let Ok(wi) = state.get_work_item(wi_id) {
+            let timestamp = &signal.created_at;
+            let type_label = &signal.signal_type;
+            let append_text = format!(
+                "\n\n## Signal: {type_label} — {timestamp}\n\n{}",
+                signal.message
+            );
+            let new_body = format!("{}{append_text}", wi.body);
+            let _ = state.update_work_item(UpdateWorkItemInput {
+                id: wi_id,
+                title: wi.title.clone(),
+                body: new_body,
+                item_type: wi.item_type.clone(),
+                status: wi.status.clone(),
+            });
+        }
+    }
+
+    append_project_event(
+        state,
+        context,
+        project_id,
+        "signal.emitted",
+        "agent_signal",
+        signal.id,
+        &signal,
+    );
+
+    Ok(signal)
+}
+
+fn respond_to_agent_signal(
+    state: &AppState,
+    sessions: &SessionRegistry,
+    context: &RequestContext,
+    project_id: i64,
+    signal_id: i64,
+    response: &str,
+) -> Result<AgentSignalRecord, RouteError> {
+    let signal = state
+        .respond_to_agent_signal(RespondToAgentSignalInput {
+            id: signal_id,
+            project_id,
+            response: response.to_string(),
+        })
+        .map_err(RouteError::from)?;
+
+    // Append response to work item body for audit trail.
+    if let Some(wi_id) = signal.work_item_id {
+        if let Ok(wi) = state.get_work_item(wi_id) {
+            let timestamp = signal.responded_at.as_deref().unwrap_or("—");
+            let append_text = format!(
+                "\n\n### Dispatcher Response — {timestamp}\n\n{}",
+                response
+            );
+            let new_body = format!("{}{append_text}", wi.body);
+            let _ = state.update_work_item(UpdateWorkItemInput {
+                id: wi_id,
+                title: wi.title.clone(),
+                body: new_body,
+                item_type: wi.item_type.clone(),
+                status: wi.status.clone(),
+            });
+        }
+    }
+
+    // Inject response into the agent's session stdin so the agent receives it immediately.
+    if let Some(worktree_id) = signal.worktree_id {
+        let injected = format!(
+            "\n[Dispatcher]: {response}\n"
+        );
+        let _ = sessions.write_input(project_commander_lib::session_api::SessionInput {
+            project_id,
+            worktree_id: Some(worktree_id),
+            data: injected,
+        });
+    }
+
+    append_project_event(
+        state,
+        context,
+        project_id,
+        "signal.responded",
+        "agent_signal",
+        signal.id,
+        &signal,
+    );
+
+    Ok(signal)
 }
 
 fn recreate_project_worktree(
