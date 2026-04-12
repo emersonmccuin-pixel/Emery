@@ -1591,6 +1591,9 @@ fn migrate(connection: &Connection) -> Result<(), String> {
 
             CREATE INDEX IF NOT EXISTS idx_agent_signals_worktree_id
               ON agent_signals(worktree_id);
+
+            CREATE INDEX IF NOT EXISTS idx_agent_signals_worktree_id_status
+              ON agent_signals(worktree_id, status);
             ",
         )
         .map_err(|error| format!("failed to run database migrations: {error}"))?;
