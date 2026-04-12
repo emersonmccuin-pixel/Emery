@@ -971,6 +971,15 @@ fn route_request(
         }
         (&Method::Post, "/signal/list") => {
             let input = read_json::<ListAgentSignalsInput>(request)?;
+            // Validate status parameter if provided.
+            if let Some(ref status) = input.status {
+                match status.as_str() {
+                    "pending" | "acknowledged" | "responded" => {},
+                    _ => return Err(RouteError::bad_request(
+                        format!("invalid status value '{status}': must be one of 'pending', 'acknowledged', 'responded'")
+                    )),
+                }
+            }
             let signals = state
                 .list_agent_signals(
                     input.project_id,
@@ -1414,6 +1423,12 @@ fn emit_agent_signal(
     message: &str,
     context_json: Option<&str>,
 ) -> Result<AgentSignalRecord, RouteError> {
+    // Validate message is not empty.
+    let message = message.trim();
+    if message.is_empty() {
+        return Err(RouteError::bad_request("message is required"));
+    }
+
     // Resolve worktree and work_item from calling session context.
     let (worktree_id, work_item_id) = if let Some(session_id) = context.session_id {
         match state.get_session_record(session_id) {
@@ -1424,7 +1439,10 @@ fn emit_agent_signal(
                     .map(|wt| wt.work_item_id);
                 (wt_id, wi_id)
             }
-            Err(_) => (None, None),
+            Err(e) => {
+                eprintln!("failed to resolve session #{}: {e}", session_id);
+                (None, None)
+            }
         }
     } else {
         (None, None)
@@ -1452,13 +1470,15 @@ fn emit_agent_signal(
                 signal.message
             );
             let new_body = format!("{}{append_text}", wi.body);
-            let _ = state.update_work_item(UpdateWorkItemInput {
+            if let Err(e) = state.update_work_item(UpdateWorkItemInput {
                 id: wi_id,
                 title: wi.title.clone(),
                 body: new_body,
                 item_type: wi.item_type.clone(),
                 status: wi.status.clone(),
-            });
+            }) {
+                eprintln!("failed to append signal to work item #{wi_id}: {e}");
+            }
         }
     }
 
@@ -1550,13 +1570,15 @@ fn respond_to_agent_signal(
                 response
             );
             let new_body = format!("{}{append_text}", wi.body);
-            let _ = state.update_work_item(UpdateWorkItemInput {
+            if let Err(e) = state.update_work_item(UpdateWorkItemInput {
                 id: wi_id,
                 title: wi.title.clone(),
                 body: new_body,
                 item_type: wi.item_type.clone(),
                 status: wi.status.clone(),
-            });
+            }) {
+                eprintln!("failed to append response to work item #{wi_id}: {e}");
+            }
         }
     }
 
@@ -1565,11 +1587,13 @@ fn respond_to_agent_signal(
         let injected = format!(
             "\n[Dispatcher]: {response}\r"
         );
-        let _ = sessions.write_input(project_commander_lib::session_api::SessionInput {
+        if let Err(e) = sessions.write_input(project_commander_lib::session_api::SessionInput {
             project_id,
             worktree_id: Some(worktree_id),
             data: injected,
-        });
+        }) {
+            eprintln!("failed to inject response into agent #{worktree_id} session: {e}");
+        }
     }
 
     append_project_event(
