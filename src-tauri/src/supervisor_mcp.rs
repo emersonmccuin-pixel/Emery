@@ -313,6 +313,16 @@ impl SupervisorMcpClient {
         )
     }
 
+    fn terminate_session(&self, worktree_id: i64) -> AppResult<Value> {
+        self.post(
+            "session/terminate",
+            &ProjectSessionTarget {
+                project_id: self.project_id,
+                worktree_id: Some(worktree_id),
+            },
+        )
+    }
+
     fn post<TRequest, TResponse>(
         &self,
         route: &str,
@@ -613,6 +623,9 @@ fn call_tool(
                 .unwrap_or(true),
         )?)
         .map_err(|error| AppError::internal(format!("failed to encode pinned worktree: {error}")))?),
+        "terminate_session" => Ok(client.terminate_session(
+            read_required_i64(&arguments, "worktreeId")?,
+        )?),
         _ => Err(AppError::invalid_input(format!("unknown tool: {tool_name}"))),
     }
 }
@@ -932,6 +945,21 @@ fn build_tool_definitions() -> Vec<Value> {
                     "pinned": {
                         "type": "boolean",
                         "description": "true to pin (keep), false to unpin (allow cleanup). Defaults to true."
+                    }
+                },
+                "required": ["worktreeId"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "terminate_session",
+            "description": "Forcefully terminate a running worktree agent session. Kills the Claude Code process and cleans up the PTY. Use this when an agent is stuck, completed but lingering, or needs to be stopped before worktree cleanup.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "worktreeId": {
+                        "type": "integer",
+                        "description": "Worktree id whose active session should be terminated."
                     }
                 },
                 "required": ["worktreeId"],
