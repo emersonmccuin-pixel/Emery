@@ -72,6 +72,19 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
 
+    // Block native paste events from reaching xterm's textarea in the capture
+    // phase. Our attachCustomKeyEventHandler below handles Ctrl+V by calling
+    // pasteClipboard() directly. On Windows/WebView2, calling preventDefault()
+    // on the keydown event does NOT suppress the subsequent DOM paste event, so
+    // without this guard xterm's own paste path (→ onData → write_session_input)
+    // also fires, producing duplicate or triple pastes.
+    const terminalHost = hostRef.current
+    const suppressNativePaste = (e: ClipboardEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+    }
+    terminalHost.addEventListener('paste', suppressNativePaste, true)
+
     const focusTerminal = () => {
       window.requestAnimationFrame(() => {
         terminal.focus()
@@ -169,9 +182,9 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
       const key = event.key.toLowerCase()
       const mod = event.ctrlKey || event.metaKey
 
-      if (mod && event.shiftKey && key === 'c') { void copySelection(); return false }
-      if (mod && event.shiftKey && key === 'v') { void pasteClipboard(); return false }
-      if (event.shiftKey && key === 'insert') { void pasteClipboard(); return false }
+      if (event.type === 'keydown' && mod && event.shiftKey && key === 'c') { void copySelection(); return false }
+      if (event.type === 'keydown' && mod && event.shiftKey && key === 'v') { void pasteClipboard(); return false }
+      if (event.type === 'keydown' && event.shiftKey && key === 'insert') { void pasteClipboard(); return false }
 
       // Ctrl+C: copy selection to clipboard, or fall through to send SIGINT if nothing selected
       if (event.type === 'keydown' && mod && !event.shiftKey && key === 'c') {
@@ -267,6 +280,7 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
 
     return () => {
       disposed = true
+      terminalHost.removeEventListener('paste', suppressNativePaste, true)
       hostRef.current?.removeEventListener('pointerdown', handlePointerFocus)
       resizeObserver?.disconnect()
       if (resizeTimeoutId !== null) {
