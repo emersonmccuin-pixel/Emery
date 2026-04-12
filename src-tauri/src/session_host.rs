@@ -251,6 +251,7 @@ impl SessionRegistry {
             supervisor_runtime,
             (!startup_prompt.is_empty()).then_some(startup_prompt.as_str()),
             session_record.id,
+            input.model.as_deref(),
         ) {
             Ok(command) => command,
             Err(error) => {
@@ -713,6 +714,7 @@ fn build_launch_command(
     supervisor_runtime: &SupervisorRuntimeInfo,
     startup_prompt: Option<&str>,
     session_record_id: i64,
+    model: Option<&str>,
 ) -> Result<CommandBuilder, String> {
     if profile.provider == "claude_code" {
         return build_claude_launch_command(
@@ -724,6 +726,7 @@ fn build_launch_command(
             supervisor_runtime,
             startup_prompt,
             session_record_id,
+            model,
         );
     }
 
@@ -748,6 +751,7 @@ fn build_claude_launch_command(
     supervisor_runtime: &SupervisorRuntimeInfo,
     startup_prompt: Option<&str>,
     session_record_id: i64,
+    model: Option<&str>,
 ) -> Result<CommandBuilder, String> {
     let mut command = CommandBuilder::new(&profile.executable);
     command.cwd(launch_root_path);
@@ -764,6 +768,11 @@ fn build_claude_launch_command(
 
     for arg in prepare_claude_profile_args(&profile.args)? {
         command.arg(arg);
+    }
+
+    if let Some(model) = model {
+        command.arg("--model");
+        command.arg(model);
     }
 
     let mcp_config_json = build_project_commander_mcp_config_json(
@@ -1098,6 +1107,11 @@ fn build_claude_bridge_system_prompt(
         project.name, launch_root_path
     );
 
+    // Bug logging instruction for all sessions.
+    prompt.push_str(
+        " We are all building the Project Commander app together. If you encounter any bugs — in the app, the build, the tools, or the workflow — immediately log them as a bug work item via create_work_item (itemType: 'bug') with clear repro steps. Check list_work_items first to avoid duplicates.",
+    );
+
     if let Some(worktree) = worktree {
         prompt.push_str(&format!(
             " This session is attached to worktree #{} on branch {} for work item {} ({}). Treat the attached worktree path as the only writable project path and do not intentionally modify files outside it.",
@@ -1107,9 +1121,12 @@ fn build_claude_bridge_system_prompt(
             worktree.work_item_title
         ));
     } else {
-        prompt.push_str(
+        prompt.push_str(concat!(
             " This is the project dispatcher session. Operate from the main repository root and coordinate focused worktree handoffs when needed.",
-        );
+            " When launching worktree agents: (1) Choose the right model for the task — opus for hard/architectural work, sonnet for standard features and bugs, haiku for simple/mechanical tasks — by passing the 'model' parameter to launch_worktree_agent.",
+            " (2) After launching an agent, use direct_agent to send it specific instructions about what to do, any context it needs, and your expectations.",
+            " (3) Monitor agent signals and respond promptly via respond_to_signal.",
+        ));
     }
 
     prompt

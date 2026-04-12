@@ -183,6 +183,8 @@ pub struct LaunchProjectWorktreeAgentInput {
     pub project_id: i64,
     pub work_item_id: i64,
     pub launch_profile_id: Option<i64>,
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

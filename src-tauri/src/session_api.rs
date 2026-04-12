@@ -47,6 +47,8 @@ pub struct LaunchSessionInput {
     pub cols: u16,
     pub rows: u16,
     pub startup_prompt: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

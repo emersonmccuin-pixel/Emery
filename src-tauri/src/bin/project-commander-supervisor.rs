@@ -1180,6 +1180,7 @@ fn launch_worktree_agent(
                 cols: 120,
                 rows: 32,
                 startup_prompt: Some(startup_prompt),
+                model: input.model,
             },
             state,
             runtime,
@@ -1275,6 +1276,8 @@ fn build_worktree_startup_prompt(
             "- Signal types: 'question' (need input), 'blocked' (cannot proceed), 'complete' (task done), 'status_update' (progress note), 'request_approval' (need sign-off before proceeding).",
             "- After emitting a signal that needs a response, call get_signal_response with the returned signalId to check for the dispatcher's reply.",
             "- When your task is complete: call signal_dispatcher with signalType='complete', update your work item body with a handoff summary, stage your changes (do not commit), then stop.",
+            "Bug reporting:",
+            "- We are all building the Project Commander app together. If you encounter any bugs — in the app, build, tools, or workflow — log them as a bug work item via create_work_item (itemType: 'bug') with clear repro steps. Check list_work_items first to avoid duplicates.",
             "Linked documents:",
             &document_lines.join("\n"),
             "If you change work-item state, persist it through Project Commander tools.",
@@ -3943,6 +3946,7 @@ mod tests {
             cols: 120,
             rows: 32,
             startup_prompt: None,
+            model: None,
         };
 
         let first = sessions
@@ -4057,6 +4061,7 @@ mod tests {
                     cols: 120,
                     rows: 32,
                     startup_prompt: None,
+                    model: None,
                 },
                 &harness.state,
                 &harness.runtime,

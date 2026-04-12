@@ -279,6 +279,7 @@ impl SupervisorMcpClient {
         &self,
         work_item_id: i64,
         launch_profile_id: Option<i64>,
+        model: Option<String>,
     ) -> AppResult<WorktreeLaunchOutput> {
         self.post(
             "worktree/launch-agent",
@@ -286,6 +287,7 @@ impl SupervisorMcpClient {
                 project_id: self.project_id,
                 work_item_id,
                 launch_profile_id,
+                model,
             },
         )
     }
@@ -629,6 +631,7 @@ fn call_tool(
         "launch_worktree_agent" => Ok(serde_json::to_value(client.launch_worktree_agent(
             read_required_i64(&arguments, "workItemId")?,
             read_optional_i64(&arguments, "launchProfileId"),
+            arguments.get("model").and_then(|v| v.as_str()).map(String::from),
         )?)
         .map_err(|error| AppError::internal(format!("failed to encode launched worktree agent: {error}")))?),
         "cleanup_worktree" => Ok(serde_json::to_value(client.cleanup_worktree(
@@ -946,7 +949,7 @@ fn build_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "launch_worktree_agent",
-            "description": "Ensure a worktree for a work item and launch or reconnect to its Claude session.",
+            "description": "Ensure a worktree for a work item and launch or reconnect to its Claude session. Optionally specify a model — choose based on task complexity: opus for hard/architectural work, sonnet for standard features/bugs, haiku for simple/mechanical tasks.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -957,6 +960,10 @@ fn build_tool_definitions() -> Vec<Value> {
                     "launchProfileId": {
                         "type": "integer",
                         "description": "Optional launch profile override. Defaults to the current session profile or the project default."
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Optional Claude model override (e.g. 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'). Pick based on task complexity."
                     }
                 },
                 "required": ["workItemId"],
