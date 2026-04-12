@@ -1504,7 +1504,17 @@ fn deliver_message_to_agent(
     _from_agent: &str,
     message_text: &str,
 ) -> bool {
-    let injected = format!("\n{message_text}\r");
+    // Normalize: collapse embedded newlines to spaces so the entire message is
+    // injected as a single PTY input line. End with \r (carriage return = Enter)
+    // to auto-submit without human interaction.
+    //
+    // Do NOT prepend \n — a leading newline can trigger an empty submit or switch
+    // Claude Code's ink TUI into multi-line input mode, causing the trailing \r
+    // to be treated as a literal character rather than a submit keystroke. The
+    // working UI path (flattenPromptForTerminal) uses "{message}\r" with no
+    // leading newline; we mirror that here.
+    let normalized = message_text.replace('\n', " ").replace('\r', " ");
+    let injected = format!("{normalized}\r");
 
     if to_agent == "dispatcher" {
         // Target the project session (worktree_id = None).
@@ -1753,7 +1763,8 @@ fn emit_agent_signal(
         .unwrap_or_else(|| "unknown-agent".to_string());
     let signal_text = format!("[Agent {agent_label}] ({signal_type}): {message}");
 
-    let injected = format!("\n{signal_text}\r");
+    let normalized_signal = signal_text.replace('\n', " ").replace('\r', " ");
+    let injected = format!("{normalized_signal}\r");
     if let Err(e) = sessions.write_input(project_commander_lib::session_api::SessionInput {
         project_id,
         worktree_id: None,
@@ -1781,7 +1792,8 @@ fn direct_agent(
     let directive = format!("[Dispatcher]: {message}");
 
     // Primary: PTY stdin injection.
-    let injected = format!("\n{directive}\r");
+    let normalized_directive = directive.replace('\n', " ").replace('\r', " ");
+    let injected = format!("{normalized_directive}\r");
     sessions
         .write_input(project_commander_lib::session_api::SessionInput {
             project_id,
@@ -1826,7 +1838,8 @@ fn respond_to_agent_signal(
         let directive = format!("[Dispatcher]: {response}");
 
         // PTY stdin injection.
-        let injected = format!("\n{directive}\r");
+        let normalized_directive = directive.replace('\n', " ").replace('\r', " ");
+        let injected = format!("{normalized_directive}\r");
         if let Err(e) = sessions.write_input(project_commander_lib::session_api::SessionInput {
             project_id,
             worktree_id: Some(worktree_id),
