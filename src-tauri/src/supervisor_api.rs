@@ -1,6 +1,6 @@
 use crate::db::{
-    AgentSignalRecord, DocumentRecord, ProjectRecord, SessionEventRecord, SessionRecord,
-    WorkItemRecord, WorktreeRecord,
+    AgentMessageRecord, AgentSignalRecord, DocumentRecord, ProjectRecord, SessionEventRecord,
+    SessionRecord, WorkItemRecord, WorktreeRecord,
 };
 use crate::session_api::SessionSnapshot;
 use serde::{Deserialize, Serialize};
@@ -274,4 +274,50 @@ pub struct DirectAgentInput {
     pub project_id: i64,
     pub worktree_id: i64,
     pub message: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendAgentMessageApiInput {
+    pub project_id: i64,
+    pub to_agent: String,
+    pub message_type: String,
+    pub body: String,
+    pub context_json: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListAgentMessagesApiInput {
+    pub project_id: i64,
+    pub from_agent: Option<String>,
+    pub to_agent: Option<String>,
+    pub message_type: Option<String>,
+    pub status: Option<String>,
+    pub limit: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentInboxApiInput {
+    pub project_id: i64,
+    pub agent_name: Option<String>,
+    #[serde(default)]
+    pub unread_only: bool,
+    pub limit: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AckAgentMessagesApiInput {
+    pub project_id: i64,
+    pub message_ids: Option<Vec<i64>>,
+    #[serde(default)]
+    pub all: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentMessageListOutput {
+    pub messages: Vec<AgentMessageRecord>,
 }

@@ -2,9 +2,10 @@ use clap::{Args, Parser, Subcommand};
 use project_commander_lib::db::{
     AgentSignalRecord, AppState, AppendSessionEventInput, CreateDocumentInput,
     CreateLaunchProfileInput, CreateProjectInput, CreateWorkItemInput, DocumentRecord,
-    EmitAgentSignalInput, ReparentRequest, RespondToAgentSignalInput,
-    UpdateAppSettingsInput, UpdateDocumentInput, UpdateLaunchProfileInput, UpdateProjectInput,
-    UpdateWorkItemInput, UpsertWorktreeRecordInput, WorkItemRecord, WorktreeRecord,
+    EmitAgentSignalInput, ListAgentMessagesFilter, ReparentRequest, RespondToAgentSignalInput,
+    SendAgentMessageInput, UpdateAppSettingsInput, UpdateDocumentInput, UpdateLaunchProfileInput,
+    UpdateProjectInput, UpdateWorkItemInput, UpsertWorktreeRecordInput, WorkItemRecord,
+    WorktreeRecord,
 };
 use project_commander_lib::error::{AppError, AppErrorCode};
 use project_commander_lib::session::build_supervisor_runtime_info;
@@ -14,17 +15,18 @@ use project_commander_lib::session_api::{
 };
 use project_commander_lib::session_host::{now_timestamp_string, SessionRegistry};
 use project_commander_lib::supervisor_api::{
-    AgentSignalTarget, CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget,
-    CleanupRepairOutput, CleanupWorktreeInput, ClearProjectWorktreesInput, CreateProjectDocumentInput,
+    AckAgentMessagesApiInput, AgentInboxApiInput, AgentSignalTarget,
+    CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget, CleanupRepairOutput,
+    CleanupWorktreeInput, ClearProjectWorktreesInput, CreateProjectDocumentInput,
     CreateProjectWorkItemInput, DirectAgentInput, EmitAgentSignalInput as ApiEmitAgentSignalInput,
     EnsureProjectWorktreeInput, LaunchProfileTarget, LaunchProjectWorktreeAgentInput,
-    ListAgentSignalsInput, ListCleanupCandidatesInput, ListProjectDocumentsInput,
-    ListProjectSessionEventsInput, ListProjectSessionsInput, ListProjectWorkItemsInput,
-    ListProjectWorktreesInput, ProjectDocumentTarget, ProjectSessionRecordTarget,
-    ProjectWorkItemTarget, ProjectWorktreeTarget, PinWorktreeInput, RepairCleanupInput,
-    RespondToAgentSignalInput as ApiRespondToAgentSignalInput, SessionBriefOutput,
-    UpdateProjectDocumentInput, UpdateProjectWorkItemInput, WorkItemDetailOutput,
-    WorktreeLaunchOutput,
+    ListAgentMessagesApiInput, ListAgentSignalsInput, ListCleanupCandidatesInput,
+    ListProjectDocumentsInput, ListProjectSessionEventsInput, ListProjectSessionsInput,
+    ListProjectWorkItemsInput, ListProjectWorktreesInput, ProjectDocumentTarget,
+    ProjectSessionRecordTarget, ProjectWorkItemTarget, ProjectWorktreeTarget, PinWorktreeInput,
+    RepairCleanupInput, RespondToAgentSignalInput as ApiRespondToAgentSignalInput,
+    SendAgentMessageApiInput, SessionBriefOutput, UpdateProjectDocumentInput,
+    UpdateProjectWorkItemInput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
 use project_commander_lib::supervisor_mcp::run_supervisor_mcp_stdio_with_session;
 use serde::de::DeserializeOwned;
@@ -1028,6 +1030,44 @@ fn route_request(
             direct_agent(state, sessions, context, input.project_id, input.worktree_id, &input.message)?;
             Ok(json!({ "ok": true }))
         }
+        (&Method::Post, "/message/send") => {
+            let input = read_json::<SendAgentMessageApiInput>(request)?;
+            let result = handle_message_send(state, sessions, context, input)?;
+            serde_json::to_value(&result)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| RouteError::internal(format!("failed to encode sent message: {error}")))
+        }
+        (&Method::Post, "/message/list") => {
+            let input = read_json::<ListAgentMessagesApiInput>(request)?;
+            let messages = state
+                .list_agent_messages(
+                    input.project_id,
+                    ListAgentMessagesFilter {
+                        from_agent: input.from_agent,
+                        to_agent: input.to_agent,
+                        message_type: input.message_type,
+                        status: input.status,
+                        limit: input.limit,
+                    },
+                )
+                .map_err(RouteError::from)?;
+            Ok(json!({ "ok": true, "data": { "messages": messages } }))
+        }
+        (&Method::Post, "/message/inbox") => {
+            let input = read_json::<AgentInboxApiInput>(request)?;
+            let agent_name = input
+                .agent_name
+                .unwrap_or_else(|| resolve_agent_name_from_context(state, context));
+            let messages = state
+                .get_agent_inbox(input.project_id, &agent_name, input.unread_only, input.limit)
+                .map_err(RouteError::from)?;
+            Ok(json!({ "ok": true, "data": { "messages": messages } }))
+        }
+        (&Method::Post, "/message/ack") => {
+            let input = read_json::<AckAgentMessagesApiInput>(request)?;
+            handle_message_ack(state, context, input)?;
+            Ok(json!({ "ok": true, "data": null }))
+        }
         _ => Err(RouteError::not_found("route not found")),
     }
 }
@@ -1434,6 +1474,219 @@ fn pin_project_worktree(
     state
         .set_worktree_pinned(worktree_id, pinned)
         .map_err(RouteError::from)
+}
+
+/// Resolve the calling agent's name from the request context.
+/// If the session has a worktree, derive from work_item_call_sign (dots→hyphens).
+/// If no worktree (project session), return "dispatcher".
+fn resolve_agent_name_from_context(state: &AppState, context: &RequestContext) -> String {
+    if let Some(session_id) = context.session_id {
+        if let Ok(session) = state.get_session_record(session_id) {
+            if let Some(worktree_id) = session.worktree_id {
+                if let Ok(wt) = state.get_worktree(worktree_id) {
+                    return wt.work_item_call_sign.replace('.', "-");
+                }
+            }
+        }
+    }
+    "dispatcher".to_string()
+}
+
+/// Deliver a message to a target agent by injecting text into their PTY session.
+/// Returns true if the message was successfully injected into at least one session.
+/// For "dispatcher", target the project session (worktree_id = None).
+/// For "*", enumerate all running sessions (excluding the sender).
+fn deliver_message_to_agent(
+    state: &AppState,
+    sessions: &SessionRegistry,
+    project_id: i64,
+    to_agent: &str,
+    _from_agent: &str,
+    message_text: &str,
+) -> bool {
+    let injected = format!("\n{message_text}\r");
+
+    if to_agent == "dispatcher" {
+        // Target the project session (worktree_id = None).
+        return sessions
+            .write_input(project_commander_lib::session_api::SessionInput {
+                project_id,
+                worktree_id: None,
+                data: injected,
+            })
+            .is_ok();
+    }
+
+    // Find the worktree whose agent_name matches to_agent.
+    let worktrees = match state.list_worktrees(project_id) {
+        Ok(wts) => wts,
+        Err(_) => return false,
+    };
+
+    for wt in &worktrees {
+        if wt.agent_name == to_agent {
+            return sessions
+                .write_input(project_commander_lib::session_api::SessionInput {
+                    project_id,
+                    worktree_id: Some(wt.id),
+                    data: injected,
+                })
+                .is_ok();
+        }
+    }
+
+    false
+}
+
+fn handle_message_send(
+    state: &AppState,
+    sessions: &SessionRegistry,
+    context: &RequestContext,
+    input: SendAgentMessageApiInput,
+) -> Result<serde_json::Value, RouteError> {
+    let from_agent = resolve_agent_name_from_context(state, context);
+    let to_agent = input.to_agent.trim().to_string();
+    let message_type = input.message_type.trim().to_string();
+    let body = input.body.trim().to_string();
+
+    if to_agent == "*" {
+        // Broadcast: insert one row per recipient, deliver to each.
+        let running = sessions
+            .list_running_snapshots(input.project_id)
+            .map_err(RouteError::from)?;
+
+        let mut sent_messages = Vec::new();
+
+        for snapshot in &running {
+            // Derive agent name for this session.
+            let recipient = if snapshot.worktree_id.is_none() {
+                "dispatcher".to_string()
+            } else {
+                let wt_id = snapshot.worktree_id.unwrap();
+                state
+                    .get_worktree(wt_id)
+                    .map(|wt| wt.work_item_call_sign.replace('.', "-"))
+                    .unwrap_or_else(|_| format!("worktree-{wt_id}"))
+            };
+
+            // Skip the sender.
+            if recipient == from_agent {
+                continue;
+            }
+
+            let msg = state
+                .send_agent_message(SendAgentMessageInput {
+                    project_id: input.project_id,
+                    session_id: context.session_id,
+                    from_agent: from_agent.clone(),
+                    to_agent: recipient.clone(),
+                    message_type: message_type.clone(),
+                    body: body.clone(),
+                    context_json: input.context_json.clone(),
+                })
+                .map_err(RouteError::from)?;
+
+            let message_text = format!("[{from_agent}] ({message_type}): {body}");
+            let delivered = deliver_message_to_agent(
+                state,
+                sessions,
+                input.project_id,
+                &recipient,
+                &from_agent,
+                &message_text,
+            );
+            if delivered {
+                let _ = state.mark_agent_message_delivered(msg.id);
+            }
+
+            sent_messages.push(msg);
+        }
+
+        append_project_event(
+            state,
+            context,
+            input.project_id,
+            "message.broadcast",
+            "agent_message",
+            0,
+            &json!({
+                "fromAgent": from_agent,
+                "messageType": message_type,
+                "recipientCount": sent_messages.len(),
+            }),
+        );
+
+        return Ok(json!({
+            "broadcast": true,
+            "recipientCount": sent_messages.len(),
+            "messages": sent_messages,
+        }));
+    }
+
+    // Single recipient.
+    let msg = state
+        .send_agent_message(SendAgentMessageInput {
+            project_id: input.project_id,
+            session_id: context.session_id,
+            from_agent: from_agent.clone(),
+            to_agent: to_agent.clone(),
+            message_type: message_type.clone(),
+            body: body.clone(),
+            context_json: input.context_json,
+        })
+        .map_err(RouteError::from)?;
+
+    let message_text = format!("[{from_agent}] ({message_type}): {body}");
+    let delivered = deliver_message_to_agent(
+        state,
+        sessions,
+        input.project_id,
+        &to_agent,
+        &from_agent,
+        &message_text,
+    );
+    if delivered {
+        let _ = state.mark_agent_message_delivered(msg.id);
+    }
+
+    append_project_event(
+        state,
+        context,
+        input.project_id,
+        "message.sent",
+        "agent_message",
+        msg.id,
+        &msg,
+    );
+
+    serde_json::to_value(&msg).map_err(|error| {
+        RouteError::internal(format!("failed to encode agent message: {error}"))
+    })
+}
+
+fn handle_message_ack(
+    state: &AppState,
+    context: &RequestContext,
+    input: AckAgentMessagesApiInput,
+) -> Result<(), RouteError> {
+    let message_ids = if input.all {
+        // Ack all messages for the calling agent.
+        let agent_name = resolve_agent_name_from_context(state, context);
+        let inbox = state
+            .get_agent_inbox(input.project_id, &agent_name, true, None)
+            .map_err(RouteError::from)?;
+        inbox.into_iter().map(|m| m.id).collect::<Vec<_>>()
+    } else {
+        input.message_ids.unwrap_or_default()
+    };
+
+    if !message_ids.is_empty() {
+        state
+            .ack_agent_messages(input.project_id, &message_ids)
+            .map_err(RouteError::from)?;
+    }
+
+    Ok(())
 }
 
 fn emit_agent_signal(
