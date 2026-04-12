@@ -380,6 +380,16 @@ impl SupervisorMcpClient {
         )
     }
 
+    fn terminate_session(&self, worktree_id: i64) -> AppResult<Value> {
+        self.post(
+            "session/terminate",
+            &ProjectSessionTarget {
+                project_id: self.project_id,
+                worktree_id: Some(worktree_id),
+            },
+        )
+    }
+
     fn direct_agent(&self, worktree_id: i64, message: &str) -> AppResult<serde_json::Value> {
         self.post(
             "agent/direct",
@@ -717,6 +727,9 @@ fn call_tool(
             client.acknowledge_signal(read_required_i64(&arguments, "signalId")?)?,
         )
         .map_err(|error| AppError::internal(format!("failed to encode acknowledged signal: {error}")))?),
+        "terminate_session" => Ok(client.terminate_session(
+            read_required_i64(&arguments, "worktreeId")?,
+        )?),
         "direct_agent" => {
             client.direct_agent(
                 read_required_i64(&arguments, "worktreeId")?,
@@ -1142,6 +1155,21 @@ fn build_tool_definitions() -> Vec<Value> {
                     }
                 },
                 "required": ["signalId"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "terminate_session",
+            "description": "Forcefully terminate a running worktree agent session. Kills the Claude Code process and cleans up the PTY. Use this when an agent is stuck, completed but lingering, or needs to be stopped before worktree cleanup.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "worktreeId": {
+                        "type": "integer",
+                        "description": "Worktree id whose active session should be terminated."
+                    }
+                },
+                "required": ["worktreeId"],
                 "additionalProperties": false
             }
         }),
