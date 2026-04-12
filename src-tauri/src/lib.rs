@@ -337,6 +337,37 @@ fn repair_cleanup_candidates(
     state.repair_cleanup_candidates()
 }
 
+#[tauri::command]
+fn save_clipboard_image(base64_png: String, app_handle: AppHandle) -> AppResult<String> {
+    use base64::{Engine as _, engine::general_purpose};
+
+    let png_bytes = general_purpose::STANDARD
+        .decode(&base64_png)
+        .map_err(|e| format!("failed to decode clipboard image: {e}"))?;
+
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("failed to resolve app data dir: {e}"))?;
+
+    let screenshots_dir = app_data_dir.join("screenshots");
+    fs::create_dir_all(&screenshots_dir)
+        .map_err(|e| format!("failed to create screenshots dir: {e}"))?;
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+
+    let filename = format!("screenshot-{timestamp}.png");
+    let path = screenshots_dir.join(&filename);
+
+    fs::write(&path, &png_bytes)
+        .map_err(|e| format!("failed to write screenshot: {e}"))?;
+
+    Ok(path.display().to_string())
+}
+
 const PROJECT_FILE_WHITELIST: &[&str] = &["CLAUDE.md", "AGENTS.md"];
 
 fn resolve_project_file(root_path: &str, filename: &str) -> AppResult<std::path::PathBuf> {
@@ -415,7 +446,8 @@ pub fn run() {
             remove_cleanup_candidate,
             repair_cleanup_candidates,
             read_project_file,
-            write_project_file
+            write_project_file,
+            save_clipboard_image
         ])
         .setup(|app| {
             let storage = ensure_storage_dirs(&app.handle())?;

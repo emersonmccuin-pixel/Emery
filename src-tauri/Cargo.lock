@@ -2877,6 +2877,7 @@ dependencies = [
 name = "project-commander"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "clap",
  "fs2",
  "log",
