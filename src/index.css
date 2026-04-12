@@ -19,21 +19,37 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-hud-cyan: var(--hud-cyan);
+  --color-hud-magenta: var(--hud-magenta);
+  --color-hud-green: var(--hud-green);
+  --color-hud-amber: var(--hud-amber);
+  --color-hud-purple: var(--hud-purple);
+  --color-hud-bg: var(--hud-bg);
+  --color-hud-panel-bg: var(--hud-panel-bg);
   --radius-sm: 2px;
   --radius-md: 4px;
   --radius-lg: 6px;
 }
 
 :root {
+  /* Core semantic tokens — fallback values matching "Command" theme */
   --background: #050a0e;
   --foreground: #d7f5dd;
   --card: rgba(8, 18, 25, 0.95);
+  --card-foreground: #d7f5dd;
   --primary: #74f3a1;
+  --primary-foreground: #050a0e;
   --secondary: #ff3399;
-  --accent: #3af0e0;
+  --secondary-foreground: #ffffff;
   --muted: #162a1e;
   --muted-foreground: #93b89e;
+  --accent: #3af0e0;
+  --accent-foreground: #050a0e;
+  --destructive: #ff4444;
+  --destructive-foreground: #ffffff;
   --border: rgba(116, 243, 161, 0.35);
+  --input: rgba(58, 240, 224, 0.25);
+  --ring: rgba(58, 240, 224, 0.5);
   --radius: 12px;
   --font-mono: 'JetBrains Mono', 'Cascadia Mono', monospace;
 
@@ -46,6 +62,19 @@
   --hud-bg: #050a0e;
   --hud-panel-bg: rgba(8, 16, 22, 0.94);
 
+  /* Panel tint vars */
+  --rail-projects-tint: #3af0e0;
+  --rail-sessions-tint: #ff3399;
+  --center-tint: #74f3a1;
+
+  /* Background vars */
+  --bg-gradient-1: rgba(58, 240, 224, 0.08);
+  --bg-gradient-2: rgba(255, 51, 153, 0.08);
+  --bg-gradient-3: rgba(116, 243, 161, 0.06);
+  --bg-gradient-4: rgba(180, 103, 247, 0.06);
+  --bg-grid-color: 116, 243, 161;
+  --bg-grid-opacity: 0.04;
+
   --panel-gap: 12px;
 }
 
@@ -57,13 +86,13 @@
   background-color: var(--hud-bg);
   background-image:
     /* Radial color splashes visible between panels */
-    radial-gradient(ellipse 600px 400px at 10% 20%, rgba(58, 240, 224, 0.08), transparent),
-    radial-gradient(ellipse 500px 500px at 90% 80%, rgba(255, 51, 153, 0.08), transparent),
-    radial-gradient(ellipse 400px 300px at 50% 50%, rgba(116, 243, 161, 0.06), transparent),
-    radial-gradient(ellipse 300px 400px at 80% 15%, rgba(180, 103, 247, 0.06), transparent),
+    radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
+    radial-gradient(ellipse 500px 500px at 90% 80%, var(--bg-gradient-2), transparent),
+    radial-gradient(ellipse 400px 300px at 50% 50%, var(--bg-gradient-3), transparent),
+    radial-gradient(ellipse 300px 400px at 80% 15%, var(--bg-gradient-4), transparent),
     /* Grid overlay */
-    linear-gradient(rgba(116, 243, 161, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(116, 243, 161, 0.04) 1px, transparent 1px);
+    linear-gradient(rgba(var(--bg-grid-color), var(--bg-grid-opacity)) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(var(--bg-grid-color), var(--bg-grid-opacity)) 1px, transparent 1px);
   background-size: 100% 100%, 100% 100%, 100% 100%, 100% 100%, 32px 32px, 32px 32px;
   color: var(--foreground);
 }
@@ -118,32 +147,32 @@
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
 
-/* Projects rail — cyan theme */
+/* Projects rail — tinted with --rail-projects-tint */
 .side-rail--projects {
-  border: 1px solid rgba(58, 240, 224, 0.5);
-  background: linear-gradient(170deg, rgba(58, 240, 224, 0.08) 0%, var(--hud-panel-bg) 40%);
+  border: 1px solid color-mix(in srgb, var(--rail-projects-tint) 50%, transparent);
+  background: linear-gradient(170deg, color-mix(in srgb, var(--rail-projects-tint) 8%, transparent) 0%, var(--hud-panel-bg) 40%);
   box-shadow:
-    inset 0 0 30px rgba(58, 240, 224, 0.06),
-    0 0 20px rgba(58, 240, 224, 0.08);
+    inset 0 0 30px color-mix(in srgb, var(--rail-projects-tint) 6%, transparent),
+    0 0 20px color-mix(in srgb, var(--rail-projects-tint) 8%, transparent);
 }
 
-/* Center — green theme */
+/* Center — tinted with --center-tint */
 .center-stage {
-  border: 1px solid rgba(116, 243, 161, 0.45);
-  background: linear-gradient(180deg, rgba(116, 243, 161, 0.06) 0%, var(--hud-panel-bg) 30%);
+  border: 1px solid color-mix(in srgb, var(--center-tint) 45%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--center-tint) 6%, transparent) 0%, var(--hud-panel-bg) 30%);
   box-shadow:
-    inset 0 0 30px rgba(116, 243, 161, 0.05),
-    0 0 20px rgba(116, 243, 161, 0.06);
+    inset 0 0 30px color-mix(in srgb, var(--center-tint) 5%, transparent),
+    0 0 20px color-mix(in srgb, var(--center-tint) 6%, transparent);
   padding: 0;
 }
 
-/* Sessions rail — magenta theme */
+/* Sessions rail — tinted with --rail-sessions-tint */
 .side-rail--sessions {
-  border: 1px solid rgba(255, 51, 153, 0.5);
-  background: linear-gradient(190deg, rgba(255, 51, 153, 0.08) 0%, var(--hud-panel-bg) 40%);
+  border: 1px solid color-mix(in srgb, var(--rail-sessions-tint) 50%, transparent);
+  background: linear-gradient(190deg, color-mix(in srgb, var(--rail-sessions-tint) 8%, transparent) 0%, var(--hud-panel-bg) 40%);
   box-shadow:
-    inset 0 0 30px rgba(255, 51, 153, 0.06),
-    0 0 20px rgba(255, 51, 153, 0.08);
+    inset 0 0 30px color-mix(in srgb, var(--rail-sessions-tint) 6%, transparent),
+    0 0 20px color-mix(in srgb, var(--rail-sessions-tint) 8%, transparent);
 }
 
 .rail-label {
@@ -164,13 +193,13 @@
 }
 
 .side-rail--projects .side-rail__header {
-  border-bottom-color: rgba(58, 240, 224, 0.3);
-  background: linear-gradient(90deg, rgba(58, 240, 224, 0.08), transparent);
+  border-bottom-color: color-mix(in srgb, var(--rail-projects-tint) 30%, transparent);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--rail-projects-tint) 8%, transparent), transparent);
 }
 
 .side-rail--sessions .side-rail__header {
-  border-bottom-color: rgba(255, 51, 153, 0.3);
-  background: linear-gradient(90deg, rgba(255, 51, 153, 0.08), transparent);
+  border-bottom-color: color-mix(in srgb, var(--rail-sessions-tint) 30%, transparent);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--rail-sessions-tint) 8%, transparent), transparent);
 }
 
 /* ── Project cards ── */
@@ -183,22 +212,22 @@
 }
 
 .project-card--minimal:hover {
-  background: linear-gradient(90deg, rgba(58, 240, 224, 0.1), transparent);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--rail-projects-tint) 10%, transparent), transparent);
   color: var(--hud-cyan);
 }
 
 .project-card--minimal.project-card--active {
-  background: linear-gradient(90deg, rgba(58, 240, 224, 0.15), rgba(58, 240, 224, 0.03));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--rail-projects-tint) 15%, transparent), color-mix(in srgb, var(--rail-projects-tint) 3%, transparent));
   color: var(--hud-cyan);
   border-left-color: var(--hud-cyan);
-  text-shadow: 0 0 8px rgba(58, 240, 224, 0.4);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--rail-projects-tint) 40%, transparent);
 }
 
 /* ── Tabs ── */
 .workspace-tabs--shell {
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0.4), rgba(116, 243, 161, 0.04));
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.4), color-mix(in srgb, var(--center-tint) 4%, transparent));
   padding: 0 8px;
-  border-bottom: 1px solid rgba(116, 243, 161, 0.15);
+  border-bottom: 1px solid color-mix(in srgb, var(--center-tint) 15%, transparent);
 }
 
 .workspace-tab {
@@ -213,14 +242,14 @@
 
 .workspace-tab:hover {
   color: var(--hud-green);
-  background: linear-gradient(180deg, transparent, rgba(116, 243, 161, 0.06));
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--center-tint) 6%, transparent));
 }
 
 .workspace-tab--active {
   color: var(--hud-green);
   border-bottom-color: var(--hud-green);
-  text-shadow: 0 0 10px rgba(116, 243, 161, 0.5);
-  background: linear-gradient(180deg, transparent, rgba(116, 243, 161, 0.08));
+  text-shadow: 0 0 10px color-mix(in srgb, var(--center-tint) 50%, transparent);
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--center-tint) 8%, transparent));
 }
 
 /* ── Cards ── */
@@ -233,23 +262,23 @@
 }
 
 .dispatcher-card--active {
-  background: linear-gradient(135deg, rgba(58, 240, 224, 0.22), rgba(58, 240, 224, 0.06));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--rail-projects-tint) 22%, transparent), color-mix(in srgb, var(--rail-projects-tint) 6%, transparent));
   border-color: var(--hud-cyan);
   border-width: 2px;
   box-shadow:
-    0 0 0 1px rgba(58, 240, 224, 0.4),
-    0 0 20px rgba(58, 240, 224, 0.45),
-    inset 0 0 16px rgba(58, 240, 224, 0.08);
+    0 0 0 1px color-mix(in srgb, var(--rail-projects-tint) 40%, transparent),
+    0 0 20px color-mix(in srgb, var(--rail-projects-tint) 45%, transparent),
+    inset 0 0 16px color-mix(in srgb, var(--rail-projects-tint) 8%, transparent);
 }
 
 .session-card--active {
-  background: linear-gradient(135deg, rgba(255, 51, 153, 0.22), rgba(255, 51, 153, 0.06));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--rail-sessions-tint) 22%, transparent), color-mix(in srgb, var(--rail-sessions-tint) 6%, transparent));
   border-color: var(--hud-magenta);
   border-width: 2px;
   box-shadow:
-    0 0 0 1px rgba(255, 51, 153, 0.4),
-    0 0 20px rgba(255, 51, 153, 0.45),
-    inset 0 0 16px rgba(255, 51, 153, 0.08);
+    0 0 0 1px color-mix(in srgb, var(--rail-sessions-tint) 40%, transparent),
+    0 0 20px color-mix(in srgb, var(--rail-sessions-tint) 45%, transparent),
+    inset 0 0 16px color-mix(in srgb, var(--rail-sessions-tint) 8%, transparent);
 }
 
 /* ── Progress bar ── */
@@ -271,10 +300,10 @@
 
 /* ── Badges ── */
 .badge-running {
-  background: linear-gradient(135deg, rgba(116, 243, 161, 0.2), rgba(58, 240, 224, 0.1));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--center-tint) 20%, transparent), color-mix(in srgb, var(--hud-cyan) 10%, transparent));
   color: var(--hud-green);
   border: 1px solid var(--hud-green);
-  box-shadow: 0 0 10px rgba(116, 243, 161, 0.3);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--center-tint) 30%, transparent);
 }
 
 .badge-offline {
@@ -284,10 +313,10 @@
 }
 
 .pill--live {
-  background: linear-gradient(135deg, rgba(116, 243, 161, 0.18), rgba(58, 240, 224, 0.08));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--center-tint) 18%, transparent), color-mix(in srgb, var(--hud-cyan) 8%, transparent));
   color: var(--primary);
-  border: 1px solid rgba(116, 243, 161, 0.35);
-  box-shadow: 0 0 8px rgba(116, 243, 161, 0.2);
+  border: 1px solid color-mix(in srgb, var(--center-tint) 35%, transparent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--center-tint) 20%, transparent);
 }
 
 /* ── Toolbar ── */
@@ -296,14 +325,14 @@
   justify-content: space-between;
   align-items: center;
   padding: 8px 16px;
-  background: linear-gradient(90deg, rgba(116, 243, 161, 0.06), rgba(58, 240, 224, 0.04), rgba(255, 51, 153, 0.04));
-  border-bottom: 1px solid rgba(116, 243, 161, 0.25);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--center-tint) 6%, transparent), color-mix(in srgb, var(--hud-cyan) 4%, transparent), color-mix(in srgb, var(--rail-sessions-tint) 4%, transparent));
+  border-bottom: 1px solid color-mix(in srgb, var(--center-tint) 25%, transparent);
 }
 
 /* ── Guide panel ── */
 .guide-panel {
-  border: 1px dashed rgba(116, 243, 161, 0.4);
-  background: linear-gradient(135deg, rgba(116, 243, 161, 0.06), rgba(58, 240, 224, 0.03));
+  border: 1px dashed color-mix(in srgb, var(--center-tint) 40%, transparent);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--center-tint) 6%, transparent), color-mix(in srgb, var(--hud-cyan) 3%, transparent));
   padding: 16px;
   border-radius: 8px;
 }
@@ -316,7 +345,7 @@
   align-items: center;
   justify-content: center;
   text-align: center;
-  background: radial-gradient(circle at center, rgba(58, 240, 224, 0.1), rgba(116, 243, 161, 0.04), transparent);
+  background: radial-gradient(circle at center, color-mix(in srgb, var(--hud-cyan) 10%, transparent), color-mix(in srgb, var(--center-tint) 4%, transparent), transparent);
 }
 
 .terminal-launch-card h3 {
@@ -327,7 +356,7 @@
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  filter: drop-shadow(0 0 15px rgba(58, 240, 224, 0.5));
+  filter: drop-shadow(0 0 15px color-mix(in srgb, var(--hud-cyan) 50%, transparent));
 }
 
 /* ── Overview cards ── */
@@ -360,34 +389,34 @@
 .hud-button--primary {
   border-color: var(--hud-green);
   color: var(--hud-green);
-  background: linear-gradient(135deg, rgba(116, 243, 161, 0.15), rgba(116, 243, 161, 0.04));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--center-tint) 15%, transparent), color-mix(in srgb, var(--center-tint) 4%, transparent));
 }
 
 .hud-button--primary:hover {
-  background: linear-gradient(135deg, rgba(116, 243, 161, 0.25), rgba(58, 240, 224, 0.1));
-  box-shadow: 0 0 12px rgba(116, 243, 161, 0.35);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--center-tint) 25%, transparent), color-mix(in srgb, var(--hud-cyan) 10%, transparent));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--center-tint) 35%, transparent);
 }
 
 .hud-button--magenta {
   border-color: var(--hud-magenta);
   color: var(--hud-magenta);
-  background: linear-gradient(135deg, rgba(255, 51, 153, 0.15), rgba(255, 51, 153, 0.04));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--rail-sessions-tint) 15%, transparent), color-mix(in srgb, var(--rail-sessions-tint) 4%, transparent));
 }
 
 .hud-button--magenta:hover {
-  background: linear-gradient(135deg, rgba(255, 51, 153, 0.25), rgba(180, 103, 247, 0.1));
-  box-shadow: 0 0 12px rgba(255, 51, 153, 0.35);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--rail-sessions-tint) 25%, transparent), color-mix(in srgb, var(--hud-purple) 10%, transparent));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--rail-sessions-tint) 35%, transparent);
 }
 
 .hud-button--cyan {
   border-color: var(--hud-cyan);
   color: var(--hud-cyan);
-  background: linear-gradient(135deg, rgba(58, 240, 224, 0.15), rgba(58, 240, 224, 0.04));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--rail-projects-tint) 15%, transparent), color-mix(in srgb, var(--rail-projects-tint) 4%, transparent));
 }
 
 .hud-button--cyan:hover {
-  background: linear-gradient(135deg, rgba(58, 240, 224, 0.25), rgba(116, 243, 161, 0.1));
-  box-shadow: 0 0 12px rgba(58, 240, 224, 0.35);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--rail-projects-tint) 25%, transparent), color-mix(in srgb, var(--center-tint) 10%, transparent));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--rail-projects-tint) 35%, transparent);
 }
 
 /* ── Inputs ── */
@@ -402,7 +431,7 @@
 
 .hud-input {
   background: rgba(0, 0, 0, 0.5) !important;
-  border: 1px solid rgba(58, 240, 224, 0.25) !important;
+  border: 1px solid color-mix(in srgb, var(--rail-projects-tint) 25%, transparent) !important;
   border-radius: 4px !important;
   font-size: 0.75rem !important;
   padding: 6px 10px !important;
@@ -410,7 +439,7 @@
 
 .hud-input:focus {
   border-color: var(--hud-cyan) !important;
-  box-shadow: 0 0 10px rgba(58, 240, 224, 0.3) !important;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--rail-projects-tint) 30%, transparent) !important;
 }
 
 
@@ -425,7 +454,7 @@
 }
 
 .hud-scrollarea [data-radix-scroll-area-thumb] {
-  background: linear-gradient(180deg, rgba(58, 240, 224, 0.5), rgba(116, 243, 161, 0.4)) !important;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--rail-projects-tint) 50%, transparent), color-mix(in srgb, var(--center-tint) 40%, transparent)) !important;
 }
 
 /* ── Settings ── */
@@ -444,8 +473,8 @@
   align-items: start;
   padding: 10px;
   border-radius: var(--panel-radius);
-  border: 1px solid rgba(116, 243, 161, 0.25);
-  background: linear-gradient(135deg, rgba(116, 243, 161, 0.06), rgba(58, 240, 224, 0.02));
+  border: 1px solid color-mix(in srgb, var(--center-tint) 25%, transparent);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--center-tint) 6%, transparent), color-mix(in srgb, var(--hud-cyan) 2%, transparent));
 }
 
 .settings-toggle span {
@@ -471,7 +500,7 @@
   gap: 8px;
   padding: 10px;
   border-radius: var(--panel-radius);
-  border: 1px solid rgba(116, 243, 161, 0.2);
+  border: 1px solid color-mix(in srgb, var(--center-tint) 20%, transparent);
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.01));
 }
 
@@ -497,8 +526,8 @@
   display: inline-flex;
   padding: 4px 8px;
   border-radius: var(--panel-radius);
-  background: rgba(58, 240, 224, 0.06);
-  border: 1px solid rgba(58, 240, 224, 0.15);
+  background: color-mix(in srgb, var(--rail-projects-tint) 6%, transparent);
+  border: 1px solid color-mix(in srgb, var(--rail-projects-tint) 15%, transparent);
   color: var(--foreground);
   font-size: 0.72rem;
   overflow-wrap: anywhere;
@@ -521,7 +550,7 @@
   gap: 4px;
   padding: 8px 10px;
   border-radius: var(--panel-radius);
-  border: 1px solid rgba(116, 243, 161, 0.2);
+  border: 1px solid color-mix(in srgb, var(--center-tint) 20%, transparent);
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.01));
 }
 
@@ -544,8 +573,8 @@
 }
 
 .session-card:hover {
-  border-color: rgba(116, 243, 161, 0.4);
-  background: linear-gradient(135deg, rgba(116, 243, 161, 0.1), rgba(58, 240, 224, 0.04));
+  border-color: color-mix(in srgb, var(--center-tint) 40%, transparent);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--center-tint) 10%, transparent), color-mix(in srgb, var(--hud-cyan) 4%, transparent));
 }
 
 .session-dot {
@@ -553,7 +582,7 @@
   height: 8px;
   border-radius: 999px;
   background: linear-gradient(135deg, var(--hud-cyan), var(--hud-green));
-  box-shadow: 0 0 6px rgba(58, 240, 224, 0.4);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--hud-cyan) 40%, transparent);
 }
 
 /* ── Rail sections ── */
@@ -582,8 +611,8 @@
   text-align: left;
   padding: 10px 12px;
   border-radius: var(--panel-radius);
-  border: 1px solid rgba(58, 240, 224, 0.2);
-  background: linear-gradient(135deg, rgba(58, 240, 224, 0.05), transparent);
+  border: 1px solid color-mix(in srgb, var(--rail-projects-tint) 20%, transparent);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--rail-projects-tint) 5%, transparent), transparent);
   transition:
     border-color 150ms ease,
     background-color 150ms ease,
@@ -591,18 +620,18 @@
 }
 
 .dispatcher-card:hover {
-  border-color: rgba(58, 240, 224, 0.4);
-  background: linear-gradient(135deg, rgba(58, 240, 224, 0.1), rgba(116, 243, 161, 0.03));
+  border-color: color-mix(in srgb, var(--rail-projects-tint) 40%, transparent);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--rail-projects-tint) 10%, transparent), color-mix(in srgb, var(--center-tint) 3%, transparent));
 }
 
 .dispatcher-card--active {
   border-color: var(--hud-cyan);
   border-width: 2px;
-  background: linear-gradient(135deg, rgba(58, 240, 224, 0.22), rgba(116, 243, 161, 0.07));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--rail-projects-tint) 22%, transparent), color-mix(in srgb, var(--center-tint) 7%, transparent));
   box-shadow:
-    0 0 0 1px rgba(58, 240, 224, 0.4),
-    0 0 20px rgba(58, 240, 224, 0.45),
-    inset 0 0 16px rgba(58, 240, 224, 0.08);
+    0 0 0 1px color-mix(in srgb, var(--rail-projects-tint) 40%, transparent),
+    0 0 20px color-mix(in srgb, var(--rail-projects-tint) 45%, transparent),
+    inset 0 0 16px color-mix(in srgb, var(--rail-projects-tint) 8%, transparent);
 }
 
 .dispatcher-card__row {

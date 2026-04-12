@@ -244,6 +244,7 @@ export type AppSettingsTab = 'appearance' | 'accounts' | 'defaults' | 'diagnosti
 
 export type UiSlice = {
   activeView: WorkspaceView
+  activeThemeId: string
   isProjectRailCollapsed: boolean
   isSessionRailCollapsed: boolean
   isAgentGuideOpen: boolean
@@ -252,6 +253,7 @@ export type UiSlice = {
   contextRefreshKey: number
 
   setActiveView: (value: WorkspaceView) => void
+  setActiveThemeId: (id: string) => void
   setIsProjectRailCollapsed: (value: boolean) => void
   setIsSessionRailCollapsed: (value: boolean) => void
   setIsAgentGuideOpen: (value: boolean) => void
