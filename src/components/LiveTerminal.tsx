@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { FitAddon } from '@xterm/addon-fit'
@@ -39,8 +39,11 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
+  const chatInputRef = useRef<HTMLTextAreaElement | null>(null)
   const onSessionExitRef = useRef(onSessionExit)
   const [terminalError, setTerminalError] = useState<string | null>(null)
+  const [chatInput, setChatInput] = useState('')
+  const [chatError, setChatError] = useState<string | null>(null)
   const sessionKey = `${snapshot.projectId}:${snapshot.worktreeId ?? 'project'}:${snapshot.startedAt}`
 
   useEffect(() => {
@@ -248,6 +251,28 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
     }
   }, [sessionKey, snapshot.projectId])
 
+  const submitChatInput = useCallback(async () => {
+    const text = chatInput.trim()
+    if (!text) return
+
+    setChatInput('')
+    setChatError(null)
+
+    try {
+      await invoke('write_session_input', {
+        input: {
+          projectId: snapshot.projectId,
+          worktreeId: snapshot.worktreeId,
+          data: text + '\n',
+        },
+      })
+    } catch (error) {
+      setChatError(
+        getTerminalErrorMessage(error, 'Failed to send message. The session may no longer be available.'),
+      )
+    }
+  }, [chatInput, snapshot.projectId, snapshot.worktreeId])
+
   useEffect(() => {
     const terminal = terminalRef.current
 
@@ -330,6 +355,43 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
         </div>
       ) : null}
       <div className="terminal-host flex-1" ref={hostRef} />
+      {snapshot.isRunning ? (
+        <div className="terminal-chat-input shrink-0 flex flex-col gap-1 px-3 pb-3 border-t border-hud-green/10 pt-3">
+          {chatError ? (
+            <div
+              className="rounded border border-destructive/40 bg-destructive/10 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-destructive"
+              role="status"
+            >
+              {chatError}
+            </div>
+          ) : null}
+          <div className="flex items-end gap-2">
+            <textarea
+              ref={chatInputRef}
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  void submitChatInput()
+                }
+              }}
+              rows={1}
+              placeholder="Type a message… (Enter to send)"
+              className="terminal-chat-input__textarea flex-1 resize-none rounded border border-hud-green/20 bg-black/80 px-3 py-2 font-mono text-[12px] text-[#f3ecdf] placeholder:text-white/25 focus:border-hud-green/50 focus:outline-none"
+              style={{ fontFamily: 'JetBrains Mono, Consolas, monospace' }}
+            />
+            <button
+              type="button"
+              disabled={!chatInput.trim()}
+              onClick={() => void submitChatInput()}
+              className="shrink-0 h-8 px-3 rounded border border-hud-green/30 bg-hud-green/10 text-[9px] font-black uppercase tracking-widest text-hud-green hover:bg-hud-green/20 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              SEND
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
