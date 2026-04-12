@@ -572,7 +572,7 @@ function WorkspaceShell() {
                                           ? 'PREVIOUS SESSION STILL RUNNING'
                                           : 'PREVIOUS SESSION CRASHED'}
                                       </h4>
-                                      <p className="text-[11px] text-white/70 leading-relaxed">
+                                      <p className="text-[11px] text-white/90 leading-relaxed">
                                         {selectedTargetHistoryRecord.state === 'orphaned'
                                           ? 'A Claude Code session was left running from a previous app launch. You can clean it up and start fresh, or view its history.'
                                           : 'The last Claude Code session on this target exited unexpectedly. You can relaunch on the same target, or view what happened.'}
@@ -1141,7 +1141,7 @@ function WorkspaceShell() {
                                         <Button
                                           variant="ghost"
                                           size="sm"
-                                          className="h-8 px-2 text-white/40 hover:text-white/70 hover:bg-white/5"
+                                          className="h-8 px-2 text-white/60 hover:text-white/90 hover:bg-white/10"
                                           title={worktree.pinned ? 'Unpin worktree' : 'Pin worktree (exclude from auto-cleanup)'}
                                           onClick={() => void pinWorktree(worktree, !worktree.pinned)}
                                           disabled={isBusy}
@@ -1469,7 +1469,7 @@ function WorkspaceShell() {
                               </p>
                             ) : null}
                             {worktree.sessionSummary ? (
-                              <p className="text-[10px] text-white/70 leading-snug line-clamp-2 mt-0.5 italic">
+                              <p className="text-[10px] text-white/90 leading-snug line-clamp-2 mt-0.5 italic">
                                 {worktree.sessionSummary}
                               </p>
                             ) : null}

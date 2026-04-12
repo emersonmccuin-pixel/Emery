@@ -86,18 +86,18 @@ const command: Theme = {
   '--hud-amber': '#f0c040',
   '--hud-purple': '#b467f7',
   '--hud-bg': '#050a0e',
-  '--hud-panel-bg': 'rgba(8, 16, 22, 0.94)',
+  '--hud-panel-bg': 'rgba(10, 22, 18, 0.95)',
 
   '--rail-projects-tint': '#3af0e0',
   '--rail-sessions-tint': '#ff3399',
   '--center-tint': '#74f3a1',
 
-  '--bg-gradient-1': 'rgba(58, 240, 224, 0.08)',
-  '--bg-gradient-2': 'rgba(255, 51, 153, 0.08)',
-  '--bg-gradient-3': 'rgba(116, 243, 161, 0.06)',
-  '--bg-gradient-4': 'rgba(180, 103, 247, 0.06)',
+  '--bg-gradient-1': 'rgba(58, 240, 224, 0.18)',
+  '--bg-gradient-2': 'rgba(255, 51, 153, 0.16)',
+  '--bg-gradient-3': 'rgba(116, 243, 161, 0.14)',
+  '--bg-gradient-4': 'rgba(180, 103, 247, 0.12)',
   '--bg-grid-color': '116, 243, 161',
-  '--bg-grid-opacity': '0.04',
+  '--bg-grid-opacity': '0.06',
 }
 
 const midnight: Theme = {
@@ -127,18 +127,18 @@ const midnight: Theme = {
   '--hud-amber': '#f0c040',
   '--hud-purple': '#c084fc',
   '--hud-bg': '#060b18',
-  '--hud-panel-bg': 'rgba(10, 16, 36, 0.94)',
+  '--hud-panel-bg': 'rgba(12, 18, 42, 0.95)',
 
   '--rail-projects-tint': '#5b7fff',
   '--rail-sessions-tint': '#a855f7',
   '--center-tint': '#7b8cff',
 
-  '--bg-gradient-1': 'rgba(91, 127, 255, 0.08)',
-  '--bg-gradient-2': 'rgba(168, 85, 247, 0.08)',
-  '--bg-gradient-3': 'rgba(123, 140, 255, 0.06)',
-  '--bg-gradient-4': 'rgba(192, 132, 252, 0.06)',
+  '--bg-gradient-1': 'rgba(91, 127, 255, 0.20)',
+  '--bg-gradient-2': 'rgba(168, 85, 247, 0.18)',
+  '--bg-gradient-3': 'rgba(123, 140, 255, 0.14)',
+  '--bg-gradient-4': 'rgba(192, 132, 252, 0.12)',
   '--bg-grid-color': '123, 140, 255',
-  '--bg-grid-opacity': '0.03',
+  '--bg-grid-opacity': '0.05',
 }
 
 const ember: Theme = {
@@ -168,18 +168,18 @@ const ember: Theme = {
   '--hud-amber': '#ffb347',
   '--hud-purple': '#d4553a',
   '--hud-bg': '#0c0806',
-  '--hud-panel-bg': 'rgba(20, 12, 8, 0.94)',
+  '--hud-panel-bg': 'rgba(28, 14, 10, 0.95)',
 
   '--rail-projects-tint': '#ff6b35',
   '--rail-sessions-tint': '#e63946',
   '--center-tint': '#ff8c42',
 
-  '--bg-gradient-1': 'rgba(255, 107, 53, 0.08)',
-  '--bg-gradient-2': 'rgba(230, 57, 70, 0.08)',
-  '--bg-gradient-3': 'rgba(255, 140, 66, 0.06)',
-  '--bg-gradient-4': 'rgba(212, 85, 58, 0.06)',
+  '--bg-gradient-1': 'rgba(255, 107, 53, 0.20)',
+  '--bg-gradient-2': 'rgba(230, 57, 70, 0.18)',
+  '--bg-gradient-3': 'rgba(255, 140, 66, 0.14)',
+  '--bg-gradient-4': 'rgba(212, 85, 58, 0.12)',
   '--bg-grid-color': '255, 140, 66',
-  '--bg-grid-opacity': '0.03',
+  '--bg-grid-opacity': '0.05',
 }
 
 const arctic: Theme = {
@@ -209,18 +209,18 @@ const arctic: Theme = {
   '--hud-amber': '#e0d890',
   '--hud-purple': '#90b8d8',
   '--hud-bg': '#070b10',
-  '--hud-panel-bg': 'rgba(10, 18, 28, 0.94)',
+  '--hud-panel-bg': 'rgba(10, 22, 34, 0.95)',
 
   '--rail-projects-tint': '#60c8f0',
   '--rail-sessions-tint': '#a0d0e8',
   '--center-tint': '#88d8f8',
 
-  '--bg-gradient-1': 'rgba(96, 200, 240, 0.08)',
-  '--bg-gradient-2': 'rgba(160, 208, 232, 0.06)',
-  '--bg-gradient-3': 'rgba(136, 216, 248, 0.06)',
-  '--bg-gradient-4': 'rgba(144, 184, 216, 0.05)',
+  '--bg-gradient-1': 'rgba(96, 200, 240, 0.20)',
+  '--bg-gradient-2': 'rgba(160, 208, 232, 0.16)',
+  '--bg-gradient-3': 'rgba(136, 216, 248, 0.14)',
+  '--bg-gradient-4': 'rgba(144, 184, 216, 0.12)',
   '--bg-grid-color': '136, 216, 248',
-  '--bg-grid-opacity': '0.03',
+  '--bg-grid-opacity': '0.05',
 }
 
 const phantom: Theme = {
@@ -250,18 +250,18 @@ const phantom: Theme = {
   '--hud-amber': '#94a3b8',
   '--hud-purple': '#7c3aed',
   '--hud-bg': '#08080a',
-  '--hud-panel-bg': 'rgba(14, 14, 18, 0.94)',
+  '--hud-panel-bg': 'rgba(18, 14, 28, 0.95)',
 
   '--rail-projects-tint': '#8b5cf6',
   '--rail-sessions-tint': '#6d28d9',
   '--center-tint': '#a78bfa',
 
-  '--bg-gradient-1': 'rgba(139, 92, 246, 0.06)',
-  '--bg-gradient-2': 'rgba(109, 40, 217, 0.05)',
-  '--bg-gradient-3': 'rgba(167, 139, 250, 0.04)',
-  '--bg-gradient-4': 'rgba(124, 58, 237, 0.04)',
+  '--bg-gradient-1': 'rgba(139, 92, 246, 0.18)',
+  '--bg-gradient-2': 'rgba(109, 40, 217, 0.16)',
+  '--bg-gradient-3': 'rgba(167, 139, 250, 0.12)',
+  '--bg-gradient-4': 'rgba(124, 58, 237, 0.12)',
   '--bg-grid-color': '139, 92, 246',
-  '--bg-grid-opacity': '0.025',
+  '--bg-grid-opacity': '0.05',
 }
 
 /* ════════════════════════════════════════════════════════════════════
