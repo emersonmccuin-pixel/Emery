@@ -1,12 +1,12 @@
-use crate::db::{AgentSignalRecord, DocumentRecord, ProjectRecord, WorkItemRecord, WorktreeRecord};
+use crate::db::{DocumentRecord, ProjectRecord, WorkItemRecord, WorktreeRecord};
 use crate::error::{AppError, AppResult};
 use crate::session_api::ProjectSessionTarget;
 use crate::supervisor_api::{
-    AgentSignalTarget, CreateProjectDocumentInput, CreateProjectWorkItemInput,
-    DirectAgentInput, EmitAgentSignalInput, ListAgentSignalsInput, ListProjectDocumentsInput,
+    CreateProjectDocumentInput, CreateProjectWorkItemInput,
+    ListProjectDocumentsInput,
     LaunchProjectWorktreeAgentInput, ListProjectWorkItemsInput, ListProjectWorktreesInput,
     PinWorktreeInput, ProjectDocumentTarget, ProjectWorktreeTarget, ProjectWorkItemTarget,
-    RespondToAgentSignalInput, SessionBriefOutput, UpdateProjectDocumentInput,
+    SessionBriefOutput, UpdateProjectDocumentInput,
     UpdateProjectWorkItemInput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
 use reqwest::blocking::Client;
@@ -313,84 +313,6 @@ impl SupervisorMcpClient {
         )
     }
 
-    fn signal_dispatcher(
-        &self,
-        signal_type: String,
-        message: String,
-        context_json: Option<String>,
-    ) -> AppResult<AgentSignalRecord> {
-        self.post(
-            "signal/emit",
-            &EmitAgentSignalInput {
-                project_id: self.project_id,
-                signal_type,
-                message,
-                context_json,
-            },
-        )
-    }
-
-    fn list_agent_signals(
-        &self,
-        worktree_id: Option<i64>,
-        status: Option<String>,
-    ) -> AppResult<serde_json::Value> {
-        self.post(
-            "signal/list",
-            &ListAgentSignalsInput {
-                project_id: self.project_id,
-                worktree_id,
-                status,
-            },
-        )
-    }
-
-    fn get_signal_response(&self, signal_id: i64) -> AppResult<AgentSignalRecord> {
-        self.post(
-            "signal/get",
-            &AgentSignalTarget {
-                project_id: self.project_id,
-                id: signal_id,
-            },
-        )
-    }
-
-    fn respond_to_signal(
-        &self,
-        signal_id: i64,
-        response: String,
-    ) -> AppResult<AgentSignalRecord> {
-        self.post(
-            "signal/respond",
-            &RespondToAgentSignalInput {
-                project_id: self.project_id,
-                id: signal_id,
-                response,
-            },
-        )
-    }
-
-    fn acknowledge_signal(&self, signal_id: i64) -> AppResult<AgentSignalRecord> {
-        self.post(
-            "signal/acknowledge",
-            &AgentSignalTarget {
-                project_id: self.project_id,
-                id: signal_id,
-            },
-        )
-    }
-
-    fn direct_agent(&self, worktree_id: i64, message: &str) -> AppResult<serde_json::Value> {
-        self.post(
-            "agent/direct",
-            &DirectAgentInput {
-                project_id: self.project_id,
-                worktree_id,
-                message: message.to_string(),
-            },
-        )
-    }
-
     fn post<TRequest, TResponse>(
         &self,
         route: &str,
@@ -691,39 +613,6 @@ fn call_tool(
                 .unwrap_or(true),
         )?)
         .map_err(|error| AppError::internal(format!("failed to encode pinned worktree: {error}")))?),
-        "signal_dispatcher" => Ok(serde_json::to_value(client.signal_dispatcher(
-            read_required_string(&arguments, "signalType")?,
-            read_required_string(&arguments, "message")?,
-            read_optional_string(&arguments, "contextJson"),
-        )?)
-        .map_err(|error| AppError::internal(format!("failed to encode emitted signal: {error}")))?),
-        "list_agent_signals" => {
-            let result = client.list_agent_signals(
-                read_optional_i64(&arguments, "worktreeId"),
-                read_optional_string(&arguments, "status"),
-            )?;
-            Ok(result)
-        }
-        "get_signal_response" => Ok(serde_json::to_value(
-            client.get_signal_response(read_required_i64(&arguments, "signalId")?)?,
-        )
-        .map_err(|error| AppError::internal(format!("failed to encode signal: {error}")))?),
-        "respond_to_signal" => Ok(serde_json::to_value(client.respond_to_signal(
-            read_required_i64(&arguments, "signalId")?,
-            read_required_string(&arguments, "response")?,
-        )?)
-        .map_err(|error| AppError::internal(format!("failed to encode signal response: {error}")))?),
-        "acknowledge_signal" => Ok(serde_json::to_value(
-            client.acknowledge_signal(read_required_i64(&arguments, "signalId")?)?,
-        )
-        .map_err(|error| AppError::internal(format!("failed to encode acknowledged signal: {error}")))?),
-        "direct_agent" => {
-            client.direct_agent(
-                read_required_i64(&arguments, "worktreeId")?,
-                &read_required_string(&arguments, "message")?,
-            )?;
-            Ok(json!({ "ok": true }))
-        }
         _ => Err(AppError::invalid_input(format!("unknown tool: {tool_name}"))),
     }
 }
@@ -1046,121 +935,6 @@ fn build_tool_definitions() -> Vec<Value> {
                     }
                 },
                 "required": ["worktreeId"],
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "signal_dispatcher",
-            "description": "Send a structured signal to the dispatcher. Use this when you are blocked, need a decision, have a question, want approval, or have completed your task. The dispatcher will see the signal in the right rail and can respond. After signaling, you can poll for a response with get_signal_response.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "signalType": {
-                        "type": "string",
-                        "enum": ["question", "blocked", "complete", "status_update", "request_approval"],
-                        "description": "Signal type. Use 'question' to ask something, 'blocked' when you cannot proceed without input, 'complete' when your task is done, 'status_update' for informational updates, 'request_approval' to get dispatcher sign-off before proceeding."
-                    },
-                    "message": {
-                        "type": "string",
-                        "description": "Human-readable message for the dispatcher describing what you need or what happened."
-                    },
-                    "contextJson": {
-                        "type": "string",
-                        "description": "Optional JSON string with structured context (e.g. file paths, error text, options). Must be valid JSON."
-                    }
-                },
-                "required": ["signalType", "message"],
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "get_signal_response",
-            "description": "Poll for the dispatcher's response to a signal you previously emitted via signal_dispatcher. Returns the signal record including response and status ('pending', 'acknowledged', 'responded').",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "signalId": {
-                        "type": "integer",
-                        "description": "Signal id returned by signal_dispatcher."
-                    }
-                },
-                "required": ["signalId"],
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "list_agent_signals",
-            "description": "List agent signals for the active project. Dispatcher uses this to see what agents need attention. Optionally filter by worktree or status.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "worktreeId": {
-                        "type": "integer",
-                        "description": "Optional worktree id filter."
-                    },
-                    "status": {
-                        "type": "string",
-                        "enum": ["pending", "acknowledged", "responded"],
-                        "description": "Optional status filter. Use 'pending' to see all signals awaiting dispatcher attention."
-                    }
-                },
-                "required": [],
-                "additionalProperties": false
-            },
-            "_meta": {
-                "anthropic/maxResultSizeChars": 200000
-            }
-        }),
-        json!({
-            "name": "respond_to_signal",
-            "description": "Dispatcher responds to an agent signal. The response is stored in the signal record, appended to the work item body, and injected into the agent's session stdin so the agent receives it immediately.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "signalId": {
-                        "type": "integer",
-                        "description": "Signal id to respond to."
-                    },
-                    "response": {
-                        "type": "string",
-                        "description": "Dispatcher's response text. Will be delivered to the agent's terminal session."
-                    }
-                },
-                "required": ["signalId", "response"],
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "acknowledge_signal",
-            "description": "Mark a pending signal as acknowledged (dispatcher has seen it but not yet responded). Use this to clear the attention indicator in the right rail while you compose a fuller response.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "signalId": {
-                        "type": "integer",
-                        "description": "Signal id to acknowledge."
-                    }
-                },
-                "required": ["signalId"],
-                "additionalProperties": false
-            }
-        }),
-        json!({
-            "name": "direct_agent",
-            "description": "Send a directive to a worktree agent. The message is injected directly into the agent's session stdin so it receives it immediately — no polling needed. Use this to assign work, redirect approach, give feedback, or send follow-up instructions to a running agent.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "worktreeId": {
-                        "type": "integer",
-                        "description": "Worktree id of the agent to direct."
-                    },
-                    "message": {
-                        "type": "string",
-                        "description": "The directive or message to send to the agent."
-                    }
-                },
-                "required": ["worktreeId", "message"],
                 "additionalProperties": false
             }
         }),

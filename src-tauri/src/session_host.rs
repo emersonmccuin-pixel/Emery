@@ -1151,24 +1151,25 @@ fn build_claude_bridge_system_prompt(
     );
 
     if let Some(worktree) = worktree {
-        prompt.push_str(&format!(concat!(
-            " This session is attached to worktree #{} on branch {} for work item {} ({}).",
-            " Treat the attached worktree path as the only writable project path and do not intentionally modify files outside it.",
-            " Wait for the dispatcher to send you instructions via stdin before starting work. Dispatcher messages appear as '[Dispatcher]: ...' — follow them.",
-            " Use signal_dispatcher to communicate back: 'question' (need input), 'blocked' (cannot proceed), 'complete' (task done), 'status_update' (progress note), 'request_approval' (need sign-off).",
-            " When done: signal_dispatcher with signalType='complete', update your work item body with a handoff summary, stage changes (do not commit), then stop.",
-        ),
+        prompt.push_str(&format!(
+            concat!(
+                " This session is attached to worktree #{} on branch {} for work item {} ({}).",
+                " Treat the attached worktree path as the only writable project path and do not intentionally modify files outside it.",
+                " Wait for the dispatcher to send you instructions before starting work. Dispatcher messages appear as '[Dispatcher]: ...' — follow them.",
+                " Communicate with the dispatcher and other teammates using SendMessage. Signal types: 'question' (need input), 'blocked' (cannot proceed), 'complete' (task done), 'status_update' (progress note), 'request_approval' (need sign-off).",
+                " When done: send a completion message to the dispatcher via SendMessage, update your work item body with a handoff summary, stage changes (do not commit), then stop."
+            ),
             worktree.id,
             worktree.branch_name,
             worktree.work_item_call_sign,
-            worktree.work_item_title
+            worktree.work_item_title,
         ));
     } else {
         prompt.push_str(concat!(
             " This is the project dispatcher session. Operate from the main repository root and coordinate focused worktree handoffs when needed. At the start of each session, call the session_brief tool.",
             " When launching worktree agents: (1) Choose the right model for the task — opus for hard/architectural work, sonnet for standard features and bugs, haiku for simple/mechanical tasks — by passing the 'model' parameter to launch_worktree_agent.",
-            " (2) After launching an agent, use direct_agent to send it specific instructions about what to do, any context it needs, and your expectations.",
-            " (3) Monitor agent signals and respond promptly via respond_to_signal.",
+            " (2) After launching an agent, use SendMessage to send it specific instructions about what to do, any context it needs, and your expectations.",
+            " (3) Monitor teammate messages and respond promptly via SendMessage.",
         ));
     }
 
