@@ -473,14 +473,14 @@ function WorkspaceShell() {
                 </nav>
               </Tabs>
 
-              <div className="flex-1 min-height-0 overflow-hidden flex flex-col">
+              <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                 {sessionError ? (
                   <div className="px-4 py-2 bg-destructive/10 border-b border-destructive/20 text-destructive text-[10px] uppercase font-bold tracking-widest animate-pulse">
                     SYSTEM ALERT: {sessionError}
                   </div>
                 ) : null}
                 
-                <div className="flex-1 min-height-0 overflow-hidden">
+                <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                   {activeView === 'terminal' ? (
                     <section className="terminal-view flex flex-col h-full">
                       <div className="terminal-view__toolbar h-10 shrink-0">
