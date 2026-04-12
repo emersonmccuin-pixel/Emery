@@ -1354,7 +1354,7 @@ function WorkspaceShell() {
           ) : (
             <>
               <div className="side-rail__header flex items-center justify-between">
-                <span className="rail-label">TACTICAL OPS</span>
+                <span className="rail-label">AGENTS</span>
                 <Button
                   variant="ghost"
                   size="icon"
