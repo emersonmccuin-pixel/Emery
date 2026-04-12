@@ -189,11 +189,14 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
         return false
       }
 
-      // Shift+Enter: send a newline character so Claude Code inserts a new line
-      // in the current input rather than submitting (which plain Enter / \r does).
+      // Shift+Enter: send the VT escape sequence for Shift+Return so Claude Code
+      // inserts a newline in the current input rather than submitting. Bare \n is
+      // treated as a line-complete by Node.js readline/ink — the proper sequence
+      // \x1b[13;2~ (xterm modifyOtherKeys: Shift+Return) is what Claude Code
+      // recognises as "insert newline, don't submit."
       if (event.type === 'keydown' && event.shiftKey && event.key === 'Enter') {
         void invoke('write_session_input', {
-          input: { projectId: snapshot.projectId, worktreeId: snapshot.worktreeId, data: '\n' },
+          input: { projectId: snapshot.projectId, worktreeId: snapshot.worktreeId, data: '\x1b[13;2~' },
         })
           .then(() => { setTerminalError(null) })
           .catch((error) => {
