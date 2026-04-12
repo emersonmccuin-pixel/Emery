@@ -11,6 +11,7 @@ import LiveTerminal from './LiveTerminal'
 import ConfigurationPanel from './ConfigurationPanel'
 import AppSettingsPanel from './AppSettingsPanel'
 import WorkItemsPanel from './WorkItemsPanel'
+import WorktreeWorkItemPanel from './WorktreeWorkItemPanel'
 import {
   formatSessionState,
   formatTimestamp,
@@ -424,27 +425,34 @@ function WorkspaceShell() {
                 className="contents"
               >
                 <nav className="workspace-tabs--shell flex items-center justify-between h-10 px-4 shrink-0">
-                  <TabsList>
-                    <TabsTrigger value="terminal">CONSOLE</TabsTrigger>
-                    <TabsTrigger value="overview">OVERVIEW</TabsTrigger>
-                    <TabsTrigger value="workItems">
-                      BACKLOG
-                      {openWorkItemCount > 0 ? (
-                        <span className="ml-2 px-1 rounded-sm bg-hud-green/10 text-[9px] text-hud-green font-bold border border-hud-green/40">
-                          {openWorkItemCount}
-                        </span>
-                      ) : null}
-                    </TabsTrigger>
-                    <TabsTrigger value="history">
-                      HISTORY
-                      {recoverableSessionCount > 0 ? (
-                        <span className="ml-2 px-1 rounded-sm bg-hud-magenta/10 text-[9px] text-hud-magenta font-bold border border-hud-magenta/40">
-                          {recoverableSessionCount}
-                        </span>
-                      ) : null}
-                    </TabsTrigger>
-                    <TabsTrigger value="configuration">CONFIGURATION</TabsTrigger>
-                  </TabsList>
+                  {selectedTerminalWorktreeId !== null ? (
+                    <TabsList>
+                      <TabsTrigger value="terminal">CONSOLE</TabsTrigger>
+                      <TabsTrigger value="worktreeWorkItem">WORK ITEM</TabsTrigger>
+                    </TabsList>
+                  ) : (
+                    <TabsList>
+                      <TabsTrigger value="terminal">CONSOLE</TabsTrigger>
+                      <TabsTrigger value="overview">OVERVIEW</TabsTrigger>
+                      <TabsTrigger value="workItems">
+                        BACKLOG
+                        {openWorkItemCount > 0 ? (
+                          <span className="ml-2 px-1 rounded-sm bg-hud-green/10 text-[9px] text-hud-green font-bold border border-hud-green/40">
+                            {openWorkItemCount}
+                          </span>
+                        ) : null}
+                      </TabsTrigger>
+                      <TabsTrigger value="history">
+                        HISTORY
+                        {recoverableSessionCount > 0 ? (
+                          <span className="ml-2 px-1 rounded-sm bg-hud-magenta/10 text-[9px] text-hud-magenta font-bold border border-hud-magenta/40">
+                            {recoverableSessionCount}
+                          </span>
+                        ) : null}
+                      </TabsTrigger>
+                      <TabsTrigger value="configuration">CONFIGURATION</TabsTrigger>
+                    </TabsList>
+                  )}
                   <div className="flex items-center gap-3">
                     <button
                       type="button"
@@ -456,7 +464,9 @@ function WorkspaceShell() {
                       <Settings size={13} />
                     </button>
                     <span className="text-[10px] font-black uppercase tracking-[0.15em] text-hud-cyan truncate max-w-[200px]">
-                      {selectedProject?.name}
+                      {selectedTerminalWorktreeId !== null && selectedWorktree
+                        ? selectedWorktree.workItemCallSign || selectedWorktree.shortBranchName.toUpperCase()
+                        : selectedProject?.name}
                     </span>
                     <div className={`h-1.5 w-1.5 rounded-full ${bridgeReady ? 'bg-hud-green shadow-[0_0_8px_rgba(116,243,161,0.6)]' : 'bg-destructive'}`} />
                   </div>
@@ -512,7 +522,9 @@ function WorkspaceShell() {
                                 ? 'INITIALIZING...'
                                 : launchBlockedByMissingRoot
                                   ? 'REBIND ROOT'
-                                  : 'LAUNCH DISPATCHER'}
+                                  : selectedTerminalWorktreeId !== null
+                                    ? 'LAUNCH AGENT'
+                                    : 'LAUNCH DISPATCHER'}
                             </Button>
                           )}
                         </div>
@@ -631,10 +643,10 @@ function WorkspaceShell() {
                                 onClick={() => void launchWorkspaceGuide()}
                               >
                                 {isLaunchingSession
-                                  ? 'INITIALIZING DISPATCHER...'
+                                  ? selectedTerminalWorktreeId !== null ? 'INITIALIZING AGENT...' : 'INITIALIZING DISPATCHER...'
                                   : launchBlockedByMissingRoot
                                     ? 'REBIND ROOT'
-                                    : 'LAUNCH DISPATCHER'}
+                                    : selectedTerminalWorktreeId !== null ? 'LAUNCH AGENT' : 'LAUNCH DISPATCHER'}
                               </Button>
                             </div>
                           </div>
@@ -1292,6 +1304,10 @@ function WorkspaceShell() {
                       startingWorkItemId={startingWorkItemId}
                       workItems={workItems}
                     />
+                  ) : null}
+
+                  {activeView === 'worktreeWorkItem' && selectedWorktree ? (
+                    <WorktreeWorkItemPanel worktree={selectedWorktree} />
                   ) : null}
                 </div>
               </div>

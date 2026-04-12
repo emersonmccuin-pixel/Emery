@@ -15,7 +15,7 @@ import type {
   WorktreeRecord,
 } from '../types'
 
-export type WorkspaceView = 'terminal' | 'overview' | 'history' | 'configuration' | 'workItems'
+export type WorkspaceView = 'terminal' | 'overview' | 'history' | 'configuration' | 'workItems' | 'worktreeWorkItem'
 
 export type TerminalPromptDraft = {
   label: string

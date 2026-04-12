@@ -235,7 +235,12 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
   },
 
   selectWorktreeTerminal: (worktreeId) => {
-    set({ selectedTerminalWorktreeId: worktreeId, activeView: 'terminal' })
+    const currentView = get().activeView
+    const worktreeViews = ['terminal', 'worktreeWorkItem']
+    set({
+      selectedTerminalWorktreeId: worktreeId,
+      activeView: worktreeViews.includes(currentView) ? currentView : 'terminal',
+    })
   },
 
   sendPromptToSession: async (projectId, worktreeId, prompt, successMessage) => {
