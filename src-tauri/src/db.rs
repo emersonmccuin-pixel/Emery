@@ -2748,8 +2748,23 @@ fn worktree_has_uncommitted_changes(worktree_path: &Path) -> bool {
         .output()
         .ok()
         .filter(|output| output.status.success())
-        .map(|output| !String::from_utf8_lossy(&output.stdout).trim().is_empty())
+        .map(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .any(|line| !is_scratch_untracked_entry(line))
+        })
         .unwrap_or(false)
+}
+
+/// Returns `true` for `git status --porcelain` lines that represent untracked
+/// scratch files/directories that should not trigger the DIRTY indicator.
+/// Suppresses `.claude/` and any path beneath it, since every worktree session
+/// auto-creates a `.claude/` directory that is intentionally not committed.
+fn is_scratch_untracked_entry(porcelain_line: &str) -> bool {
+    if let Some(path) = porcelain_line.strip_prefix("?? ") {
+        return path == ".claude" || path == ".claude/" || path.starts_with(".claude/");
+    }
+    false
 }
 
 fn worktree_has_unmerged_commits(project_root: &Path, worktree_path: &Path) -> bool {

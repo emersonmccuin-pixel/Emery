@@ -1081,6 +1081,7 @@ fn ensure_project_worktree(
                 ],
             )?;
         }
+        inject_claude_gitexclude(&worktree_path);
     }
 
     state
@@ -2230,6 +2231,56 @@ fn ensure_git_repository_head(project_git_root: &Path) -> Result<(), RouteError>
     Err(RouteError::internal(
         "git repository still has no HEAD after bootstrap commit".to_string(),
     ))
+}
+
+/// Appends `.claude/` to the worktree-local `info/exclude` file so that the
+/// Claude session scratch directory never triggers the DIRTY indicator.
+///
+/// Linked worktrees have a `.git` *file* (not a directory) containing
+/// `gitdir: <path>`, pointing to the per-worktree gitdir inside the main
+/// repo's `.git/worktrees/` subtree. The `info/exclude` file lives there.
+/// Best-effort: all errors are silently ignored so worktree creation still
+/// succeeds even if the exclude injection fails.
+fn inject_claude_gitexclude(worktree_path: &Path) {
+    let git_file = worktree_path.join(".git");
+    let gitdir = if git_file.is_file() {
+        match fs::read_to_string(&git_file) {
+            Ok(contents) => {
+                let trimmed = contents.trim();
+                match trimmed.strip_prefix("gitdir:") {
+                    Some(path) => PathBuf::from(path.trim()),
+                    None => return,
+                }
+            }
+            Err(_) => return,
+        }
+    } else if git_file.is_dir() {
+        git_file
+    } else {
+        return;
+    };
+
+    let info_dir = gitdir.join("info");
+    let exclude_path = info_dir.join("exclude");
+
+    if fs::create_dir_all(&info_dir).is_err() {
+        return;
+    }
+
+    let existing = fs::read_to_string(&exclude_path).unwrap_or_default();
+    if existing
+        .lines()
+        .any(|l| l.trim() == ".claude/" || l.trim() == ".claude")
+    {
+        return; // already excluded
+    }
+
+    let append = if existing.is_empty() || existing.ends_with('\n') {
+        ".claude/\n".to_string()
+    } else {
+        "\n.claude/\n".to_string()
+    };
+    let _ = fs::write(&exclude_path, format!("{existing}{append}"));
 }
 
 fn is_git_worktree_path(worktree_path: &Path) -> bool {
