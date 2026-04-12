@@ -1261,14 +1261,22 @@ fn read_optional_string(arguments: &Value, key: &str) -> Option<String> {
 }
 
 fn read_required_i64(arguments: &Value, key: &str) -> AppResult<i64> {
-    arguments
-        .get(key)
-        .and_then(Value::as_i64)
+    coerce_i64(arguments.get(key))
         .ok_or_else(|| AppError::invalid_input(format!("missing required integer field: {key}")))
 }
 
 fn read_optional_i64(arguments: &Value, key: &str) -> Option<i64> {
-    arguments.get(key).and_then(Value::as_i64)
+    coerce_i64(arguments.get(key))
+}
+
+/// Coerce a JSON value to i64, accepting both JSON numbers and numeric strings.
+/// MCP clients sometimes send integer parameters as strings (e.g. `"101"` instead of `101`).
+fn coerce_i64(value: Option<&Value>) -> Option<i64> {
+    let v = value?;
+    if let Some(n) = v.as_i64() {
+        return Some(n);
+    }
+    v.as_str().and_then(|s| s.parse::<i64>().ok())
 }
 
 /// Return a work item header for list/brief contexts — strips body and metadata.
