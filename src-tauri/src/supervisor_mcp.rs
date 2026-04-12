@@ -1083,7 +1083,7 @@ fn build_tool_definitions() -> Vec<Value> {
                     },
                     "messageType": {
                         "type": "string",
-                        "enum": ["question", "status_update", "request_approval", "complete", "blocked", "info"],
+                        "enum": ["question", "blocked", "complete", "status_update", "request_approval", "handoff", "directive"],
                         "description": "Message type that classifies intent."
                     },
                     "body": {

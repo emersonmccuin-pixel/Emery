@@ -2869,6 +2869,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "clap",
+ "dirs",
  "log",
  "portable-pty",
  "rand 0.8.5",

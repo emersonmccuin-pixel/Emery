@@ -1492,60 +1492,109 @@ fn resolve_agent_name_from_context(state: &AppState, context: &RequestContext) -
     "dispatcher".to_string()
 }
 
-/// Deliver a message to a target agent by injecting text into their PTY session.
-/// Returns true if the message was successfully injected into at least one session.
-/// For "dispatcher", target the project session (worktree_id = None).
-/// For "*", enumerate all running sessions (excluding the sender).
+/// Deliver a message to a target agent by writing to Claude Code's native
+/// file-based teammate mailbox at `~/.claude/teams/project-commander/inboxes/{agent}.json`.
+/// Returns true if the message was successfully written.
 fn deliver_message_to_agent(
-    state: &AppState,
-    sessions: &SessionRegistry,
-    project_id: i64,
+    _state: &AppState,
+    _sessions: &SessionRegistry,
+    _project_id: i64,
     to_agent: &str,
-    _from_agent: &str,
+    from_agent: &str,
     message_text: &str,
 ) -> bool {
-    // Normalize: collapse embedded newlines to spaces so the entire message is
-    // injected as a single PTY input line. End with \r (carriage return = Enter)
-    // to auto-submit without human interaction.
-    //
-    // Do NOT prepend \n — a leading newline can trigger an empty submit or switch
-    // Claude Code's ink TUI into multi-line input mode, causing the trailing \r
-    // to be treated as a literal character rather than a submit keystroke. The
-    // working UI path (flattenPromptForTerminal) uses "{message}\r" with no
-    // leading newline; we mirror that here.
-    let normalized = message_text.replace('\n', " ").replace('\r', " ");
-    let injected = format!("{normalized}\r");
+    write_to_claude_mailbox(to_agent, from_agent, message_text).is_ok()
+}
 
-    if to_agent == "dispatcher" {
-        // Target the project session (worktree_id = None).
-        return sessions
-            .write_input(project_commander_lib::session_api::SessionInput {
-                project_id,
-                worktree_id: None,
-                data: injected,
-            })
-            .is_ok();
+/// Write a message into Claude Code's native teammate inbox file.
+/// The inbox is a JSON array at `~/.claude/teams/project-commander/inboxes/{agent}.json`.
+/// Claude Code polls this file every ~1 second and surfaces new messages as
+/// `<teammate_message>` XML tags in the agent's conversation.
+fn write_to_claude_mailbox(
+    to_agent: &str,
+    from_agent: &str,
+    message_text: &str,
+) -> Result<(), String> {
+    let home = dirs::home_dir().ok_or_else(|| "cannot resolve home directory".to_string())?;
+    let inbox_dir = home
+        .join(".claude")
+        .join("teams")
+        .join("project-commander")
+        .join("inboxes");
+
+    if let Err(e) = fs::create_dir_all(&inbox_dir) {
+        return Err(format!("failed to create inbox directory: {e}"));
     }
 
-    // Find the worktree whose agent_name matches to_agent.
-    let worktrees = match state.list_worktrees(project_id) {
-        Ok(wts) => wts,
-        Err(_) => return false,
-    };
+    let inbox_path = inbox_dir.join(format!("{to_agent}.json"));
+    let lock_path = inbox_dir.join(format!("{to_agent}.json.lock"));
 
-    for wt in &worktrees {
-        if wt.agent_name == to_agent {
-            return sessions
-                .write_input(project_commander_lib::session_api::SessionInput {
-                    project_id,
-                    worktree_id: Some(wt.id),
-                    data: injected,
-                })
-                .is_ok();
+    // Simple file-based locking: create a .lock sidecar with retries.
+    let mut lock_acquired = false;
+    for _ in 0..20 {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+        {
+            Ok(_) => {
+                lock_acquired = true;
+                break;
+            }
+            Err(_) => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
         }
     }
 
-    false
+    if !lock_acquired {
+        // Force-remove stale lock and retry once.
+        let _ = fs::remove_file(&lock_path);
+        if fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+            .is_err()
+        {
+            return Err("failed to acquire inbox lock".to_string());
+        }
+    }
+
+    let result = (|| -> Result<(), String> {
+        // Read existing inbox array (or start fresh).
+        let mut inbox: Vec<serde_json::Value> = if inbox_path.exists() {
+            let contents = fs::read_to_string(&inbox_path)
+                .map_err(|e| format!("failed to read inbox: {e}"))?;
+            serde_json::from_str(&contents).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        // Append the new message.
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs().to_string())
+            .unwrap_or_default();
+
+        inbox.push(json!({
+            "from": from_agent,
+            "text": message_text,
+            "timestamp": timestamp,
+            "read": false,
+        }));
+
+        let serialized = serde_json::to_string_pretty(&inbox)
+            .map_err(|e| format!("failed to serialize inbox: {e}"))?;
+        fs::write(&inbox_path, serialized)
+            .map_err(|e| format!("failed to write inbox: {e}"))?;
+
+        Ok(())
+    })();
+
+    // Always release the lock.
+    let _ = fs::remove_file(&lock_path);
+
+    result
 }
 
 fn handle_message_send(
@@ -1701,7 +1750,7 @@ fn handle_message_ack(
 
 fn emit_agent_signal(
     state: &AppState,
-    sessions: &SessionRegistry,
+    _sessions: &SessionRegistry,
     context: &RequestContext,
     project_id: i64,
     signal_type: &str,
@@ -1755,22 +1804,15 @@ fn emit_agent_signal(
         &signal,
     );
 
-    // Push signal to dispatcher via PTY stdin injection.
-    // Replace dots with hyphens to match the sanitized agent name used at launch.
+    // Deliver signal to dispatcher via native Claude Code mailbox.
     let agent_label = worktree_id
         .and_then(|wtid| state.get_worktree(wtid).ok())
         .map(|wt| wt.work_item_call_sign.replace('.', "-"))
         .unwrap_or_else(|| "unknown-agent".to_string());
     let signal_text = format!("[Agent {agent_label}] ({signal_type}): {message}");
 
-    let normalized_signal = signal_text.replace('\n', " ").replace('\r', " ");
-    let injected = format!("{normalized_signal}\r");
-    if let Err(e) = sessions.write_input(project_commander_lib::session_api::SessionInput {
-        project_id,
-        worktree_id: None,
-        data: injected,
-    }) {
-        eprintln!("PTY injection to dispatcher failed: {e}");
+    if let Err(e) = write_to_claude_mailbox("dispatcher", &agent_label, &signal_text) {
+        eprintln!("mailbox delivery to dispatcher failed: {e}");
     }
 
     Ok(signal)
@@ -1778,7 +1820,7 @@ fn emit_agent_signal(
 
 fn direct_agent(
     state: &AppState,
-    sessions: &SessionRegistry,
+    _sessions: &SessionRegistry,
     context: &RequestContext,
     project_id: i64,
     worktree_id: i64,
@@ -1789,20 +1831,17 @@ fn direct_agent(
         return Err(RouteError::bad_request("message is required"));
     }
 
+    // Resolve the agent's mailbox name from the worktree's work item call sign.
+    let wt = state
+        .get_worktree(worktree_id)
+        .map_err(|e| RouteError::internal(format!("failed to look up worktree: {e}")))?;
+    let agent_name = wt.work_item_call_sign.replace('.', "-");
+
     let directive = format!("[Dispatcher]: {message}");
 
-    // Primary: PTY stdin injection.
-    let normalized_directive = directive.replace('\n', " ").replace('\r', " ");
-    let injected = format!("{normalized_directive}\r");
-    sessions
-        .write_input(project_commander_lib::session_api::SessionInput {
-            project_id,
-            worktree_id: Some(worktree_id),
-            data: injected,
-        })
-        .map_err(|e| {
-            RouteError::internal(format!("failed to write to agent session: {e}"))
-        })?;
+    write_to_claude_mailbox(&agent_name, "dispatcher", &directive).map_err(|e| {
+        RouteError::internal(format!("failed to deliver directive to agent mailbox: {e}"))
+    })?;
 
     append_project_event(
         state,
@@ -1819,7 +1858,7 @@ fn direct_agent(
 
 fn respond_to_agent_signal(
     state: &AppState,
-    sessions: &SessionRegistry,
+    _sessions: &SessionRegistry,
     context: &RequestContext,
     project_id: i64,
     signal_id: i64,
@@ -1833,19 +1872,17 @@ fn respond_to_agent_signal(
         })
         .map_err(RouteError::from)?;
 
-    // Deliver response to the agent via PTY injection.
+    // Deliver response to the agent via native Claude Code mailbox.
     if let Some(worktree_id) = signal.worktree_id {
+        let agent_name = state
+            .get_worktree(worktree_id)
+            .map(|wt| wt.work_item_call_sign.replace('.', "-"))
+            .unwrap_or_else(|_| format!("worktree-{worktree_id}"));
+
         let directive = format!("[Dispatcher]: {response}");
 
-        // PTY stdin injection.
-        let normalized_directive = directive.replace('\n', " ").replace('\r', " ");
-        let injected = format!("{normalized_directive}\r");
-        if let Err(e) = sessions.write_input(project_commander_lib::session_api::SessionInput {
-            project_id,
-            worktree_id: Some(worktree_id),
-            data: injected,
-        }) {
-            eprintln!("PTY injection to agent #{worktree_id} failed: {e}");
+        if let Err(e) = write_to_claude_mailbox(&agent_name, "dispatcher", &directive) {
+            eprintln!("mailbox delivery to agent {agent_name} failed: {e}");
         }
     }
 
