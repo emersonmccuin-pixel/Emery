@@ -1,5 +1,5 @@
 use crate::db::{DocumentRecord, ProjectRecord, WorkItemRecord, WorktreeRecord};
-use crate::error::{AppError, AppResult};
+use crate::error::{AppError, AppErrorCode, AppResult};
 use crate::session_api::ProjectSessionTarget;
 use crate::supervisor_api::{
     AckAgentMessagesApiInput, AgentInboxApiInput, AgentMessageListOutput,
@@ -693,9 +693,15 @@ fn call_tool(
                 .unwrap_or(true),
         )?)
         .map_err(|error| AppError::internal(format!("failed to encode pinned worktree: {error}")))?),
-        "terminate_session" => Ok(client.terminate_session(
-            read_required_i64(&arguments, "worktreeId")?,
-        )?),
+        "terminate_session" => {
+            match client.terminate_session(read_required_i64(&arguments, "worktreeId")?) {
+                Ok(_) => Ok(json!({ "status": "terminated", "message": "Session terminated" })),
+                Err(error) if error.code == AppErrorCode::NotFound => {
+                    Ok(json!({ "status": "already_exited", "message": "Session already exited" }))
+                }
+                Err(error) => Err(error),
+            }
+        }
         "send_message" => Ok(client.send_message(
             read_required_string(&arguments, "to")?,
             read_required_string(&arguments, "messageType")?,
