@@ -42,7 +42,7 @@ jobs:
           workspaces: src-tauri -> target
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm install
 
       - name: Run frontend tests
         run: npm test
