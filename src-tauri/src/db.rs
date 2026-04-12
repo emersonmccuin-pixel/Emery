@@ -104,6 +104,7 @@ pub struct WorktreeRecord {
     pub pinned: bool,
     pub is_cleanup_eligible: bool,
     pub pending_signal_count: i64,
+    pub agent_name: String,
     pub session_summary: String,
     pub created_at: String,
     pub updated_at: String,
@@ -125,6 +126,23 @@ pub struct AgentSignalRecord {
     pub responded_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentMessageRecord {
+    pub id: i64,
+    pub project_id: i64,
+    pub session_id: Option<i64>,
+    pub from_agent: String,
+    pub to_agent: String,
+    pub message_type: String,
+    pub body: String,
+    pub context_json: String,
+    pub status: String,
+    pub created_at: String,
+    pub delivered_at: Option<String>,
+    pub read_at: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -274,6 +292,26 @@ pub struct RespondToAgentSignalInput {
     pub id: i64,
     pub project_id: i64,
     pub response: String,
+}
+
+#[derive(Clone)]
+pub struct SendAgentMessageInput {
+    pub project_id: i64,
+    pub session_id: Option<i64>,
+    pub from_agent: String,
+    pub to_agent: String,
+    pub message_type: String,
+    pub body: String,
+    pub context_json: Option<String>,
+}
+
+#[derive(Clone, Default)]
+pub struct ListAgentMessagesFilter {
+    pub from_agent: Option<String>,
+    pub to_agent: Option<String>,
+    pub message_type: Option<String>,
+    pub status: Option<String>,
+    pub limit: Option<i64>,
 }
 
 #[derive(Clone)]
@@ -1319,6 +1357,219 @@ impl AppState {
         Ok(load_agent_signal_by_id(&connection, id)?)
     }
 
+    // ── Agent Messages ──────────────────────────────────────────────────
+
+    pub fn send_agent_message(
+        &self,
+        input: SendAgentMessageInput,
+    ) -> AppResult<AgentMessageRecord> {
+        let connection = self.connect()?;
+        self.get_project(input.project_id)?;
+
+        let from_agent = input.from_agent.trim().to_string();
+        if from_agent.is_empty() {
+            return Err(AppError::invalid_input("from_agent is required"));
+        }
+
+        let to_agent = input.to_agent.trim().to_string();
+        if to_agent.is_empty() {
+            return Err(AppError::invalid_input("to_agent is required"));
+        }
+
+        let message_type = input.message_type.trim().to_string();
+        const VALID_MESSAGE_TYPES: &[&str] = &[
+            "question",
+            "blocked",
+            "complete",
+            "status_update",
+            "request_approval",
+            "handoff",
+            "directive",
+        ];
+        if !VALID_MESSAGE_TYPES.contains(&message_type.as_str()) {
+            return Err(AppError::invalid_input(format!(
+                "invalid message_type '{message_type}'; expected one of: {}",
+                VALID_MESSAGE_TYPES.join(", ")
+            )));
+        }
+
+        let body = input.body.trim().to_string();
+        let context_json = input
+            .context_json
+            .as_deref()
+            .map(normalize_json_payload)
+            .transpose()?
+            .unwrap_or_else(|| "{}".to_string());
+
+        connection
+            .execute(
+                "INSERT INTO agent_messages (
+                    project_id, session_id, from_agent, to_agent,
+                    message_type, body, context_json, status
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'sent')",
+                params![
+                    input.project_id,
+                    input.session_id,
+                    from_agent,
+                    to_agent,
+                    message_type,
+                    body,
+                    context_json,
+                ],
+            )
+            .map_err(|error| format!("failed to insert agent message: {error}"))?;
+
+        Ok(load_agent_message_by_id(
+            &connection,
+            connection.last_insert_rowid(),
+        )?)
+    }
+
+    pub fn list_agent_messages(
+        &self,
+        project_id: i64,
+        filters: ListAgentMessagesFilter,
+    ) -> AppResult<Vec<AgentMessageRecord>> {
+        let connection = self.connect()?;
+        self.get_project(project_id)?;
+
+        let mut sql = String::from(
+            "SELECT id, project_id, session_id, from_agent, to_agent,
+                    message_type, body, context_json, status,
+                    created_at, delivered_at, read_at
+             FROM agent_messages
+             WHERE project_id = ?1",
+        );
+        let mut param_index = 2u32;
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(project_id)];
+
+        if let Some(ref from_agent) = filters.from_agent {
+            sql.push_str(&format!(" AND from_agent = ?{param_index}"));
+            param_values.push(Box::new(from_agent.clone()));
+            param_index += 1;
+        }
+        if let Some(ref to_agent) = filters.to_agent {
+            sql.push_str(&format!(" AND to_agent = ?{param_index}"));
+            param_values.push(Box::new(to_agent.clone()));
+            param_index += 1;
+        }
+        if let Some(ref message_type) = filters.message_type {
+            sql.push_str(&format!(" AND message_type = ?{param_index}"));
+            param_values.push(Box::new(message_type.clone()));
+            param_index += 1;
+        }
+        if let Some(ref status) = filters.status {
+            sql.push_str(&format!(" AND status = ?{param_index}"));
+            param_values.push(Box::new(status.clone()));
+            param_index += 1;
+        }
+
+        sql.push_str(" ORDER BY id DESC");
+
+        let limit = filters.limit.unwrap_or(50);
+        sql.push_str(&format!(" LIMIT ?{param_index}"));
+        param_values.push(Box::new(limit));
+
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|error| format!("failed to prepare agent messages query: {error}"))?;
+        let rows = statement
+            .query_map(params_ref.as_slice(), map_agent_message_record)
+            .map_err(|error| format!("failed to query agent messages: {error}"))?;
+
+        Ok(rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to map agent messages: {error}"))?)
+    }
+
+    pub fn get_agent_inbox(
+        &self,
+        project_id: i64,
+        agent_name: &str,
+        unread_only: bool,
+        limit: Option<i64>,
+    ) -> AppResult<Vec<AgentMessageRecord>> {
+        let connection = self.connect()?;
+        self.get_project(project_id)?;
+
+        let limit = limit.unwrap_or(50);
+        let mut sql = String::from(
+            "SELECT id, project_id, session_id, from_agent, to_agent,
+                    message_type, body, context_json, status,
+                    created_at, delivered_at, read_at
+             FROM agent_messages
+             WHERE project_id = ?1 AND to_agent = ?2",
+        );
+        if unread_only {
+            sql.push_str(" AND status != 'read'");
+        }
+        sql.push_str(" ORDER BY id DESC LIMIT ?3");
+
+        let mut statement = connection
+            .prepare(&sql)
+            .map_err(|error| format!("failed to prepare inbox query: {error}"))?;
+        let rows = statement
+            .query_map(params![project_id, agent_name, limit], map_agent_message_record)
+            .map_err(|error| format!("failed to query agent inbox: {error}"))?;
+
+        Ok(rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("failed to map agent inbox: {error}"))?)
+    }
+
+    pub fn ack_agent_messages(
+        &self,
+        project_id: i64,
+        message_ids: &[i64],
+    ) -> AppResult<()> {
+        if message_ids.is_empty() {
+            return Ok(());
+        }
+
+        let connection = self.connect()?;
+        self.get_project(project_id)?;
+
+        let now = now_timestamp_string();
+        let placeholders: Vec<String> = (0..message_ids.len())
+            .map(|i| format!("?{}", i + 3))
+            .collect();
+        let sql = format!(
+            "UPDATE agent_messages SET status = 'read', read_at = ?1
+             WHERE project_id = ?2 AND id IN ({})",
+            placeholders.join(", ")
+        );
+
+        let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        params_vec.push(Box::new(now));
+        params_vec.push(Box::new(project_id));
+        for &id in message_ids {
+            params_vec.push(Box::new(id));
+        }
+
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
+        connection
+            .execute(&sql, params_ref.as_slice())
+            .map_err(|error| format!("failed to ack agent messages: {error}"))?;
+
+        Ok(())
+    }
+
+    pub fn mark_agent_message_delivered(&self, message_id: i64) -> AppResult<()> {
+        let connection = self.connect()?;
+        let now = now_timestamp_string();
+
+        connection
+            .execute(
+                "UPDATE agent_messages SET status = 'delivered', delivered_at = ?1
+                 WHERE id = ?2 AND status = 'sent'",
+                params![now, message_id],
+            )
+            .map_err(|error| format!("failed to mark agent message delivered: {error}"))?;
+
+        Ok(())
+    }
+
     pub fn list_session_records(&self, project_id: i64) -> AppResult<Vec<SessionRecord>> {
         let connection = self.connect()?;
         self.get_project(project_id)?;
@@ -1594,6 +1845,30 @@ fn migrate(connection: &Connection) -> Result<(), String> {
 
             CREATE INDEX IF NOT EXISTS idx_agent_signals_worktree_id_status
               ON agent_signals(worktree_id, status);
+
+            CREATE TABLE IF NOT EXISTS agent_messages (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+              from_agent TEXT NOT NULL,
+              to_agent TEXT NOT NULL,
+              message_type TEXT NOT NULL,
+              body TEXT NOT NULL DEFAULT '',
+              context_json TEXT NOT NULL DEFAULT '{}',
+              status TEXT NOT NULL DEFAULT 'sent',
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              delivered_at TEXT,
+              read_at TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_agent_messages_project_id
+              ON agent_messages(project_id);
+
+            CREATE INDEX IF NOT EXISTS idx_agent_messages_to_agent
+              ON agent_messages(project_id, to_agent, status);
+
+            CREATE INDEX IF NOT EXISTS idx_agent_messages_from_agent
+              ON agent_messages(project_id, from_agent);
             ",
         )
         .map_err(|error| format!("failed to run database migrations: {error}"))?;
@@ -2055,7 +2330,8 @@ fn load_worktrees_by_project_id(
               wt.created_at,
               wt.updated_at,
               wi.status,
-              wt.pinned
+              wt.pinned,
+              REPLACE(wi.call_sign, '.', '-') AS agent_name
             FROM worktrees wt
             INNER JOIN work_items wi ON wi.id = wt.work_item_id
             WHERE wt.project_id = ?1
@@ -2090,7 +2366,8 @@ fn load_worktree_by_id(connection: &Connection, id: i64) -> Result<WorktreeRecor
               wt.created_at,
               wt.updated_at,
               wi.status,
-              wt.pinned
+              wt.pinned,
+              REPLACE(wi.call_sign, '.', '-') AS agent_name
             FROM worktrees wt
             INNER JOIN work_items wi ON wi.id = wt.work_item_id
             WHERE wt.id = ?1
@@ -2127,7 +2404,8 @@ fn load_worktree_by_project_and_work_item(
               wt.created_at,
               wt.updated_at,
               wi.status,
-              wt.pinned
+              wt.pinned,
+              REPLACE(wi.call_sign, '.', '-') AS agent_name
             FROM worktrees wt
             INNER JOIN work_items wi ON wi.id = wt.work_item_id
             WHERE wt.project_id = ?1 AND wt.work_item_id = ?2
@@ -2405,6 +2683,7 @@ fn map_worktree_record_base(row: &rusqlite::Row<'_>) -> rusqlite::Result<Worktre
     let branch_name: String = row.get(5)?;
     let work_item_status: String = row.get(9)?;
     let pinned: bool = row.get::<_, i64>(10)? != 0;
+    let agent_name: String = row.get(11)?;
 
     Ok(WorktreeRecord {
         id: row.get(0)?,
@@ -2422,6 +2701,7 @@ fn map_worktree_record_base(row: &rusqlite::Row<'_>) -> rusqlite::Result<Worktre
         pinned,
         is_cleanup_eligible: false,
         pending_signal_count: 0,
+        agent_name,
         session_summary: short_summary_text(&row.get::<_, String>(4)?, 6),
         created_at: row.get(7)?,
         updated_at: row.get(8)?,
@@ -2561,6 +2841,39 @@ fn count_pending_signals_for_worktree(
         .map_err(|error| {
             format!("failed to count pending signals for worktree #{worktree_id}: {error}")
         })
+}
+
+fn map_agent_message_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentMessageRecord> {
+    Ok(AgentMessageRecord {
+        id: row.get(0)?,
+        project_id: row.get(1)?,
+        session_id: row.get(2)?,
+        from_agent: row.get(3)?,
+        to_agent: row.get(4)?,
+        message_type: row.get(5)?,
+        body: row.get(6)?,
+        context_json: row.get(7)?,
+        status: row.get(8)?,
+        created_at: row.get(9)?,
+        delivered_at: row.get(10)?,
+        read_at: row.get(11)?,
+    })
+}
+
+fn load_agent_message_by_id(
+    connection: &Connection,
+    id: i64,
+) -> Result<AgentMessageRecord, String> {
+    connection
+        .query_row(
+            "SELECT id, project_id, session_id, from_agent, to_agent,
+                    message_type, body, context_json, status,
+                    created_at, delivered_at, read_at
+             FROM agent_messages WHERE id = ?1",
+            [id],
+            map_agent_message_record,
+        )
+        .map_err(|error| format!("failed to load agent message #{id}: {error}"))
 }
 
 fn find_project_by_path(
