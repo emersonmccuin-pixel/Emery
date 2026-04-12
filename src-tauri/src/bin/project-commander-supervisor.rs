@@ -1442,26 +1442,6 @@ fn emit_agent_signal(
         })
         .map_err(RouteError::from)?;
 
-    // Append signal to work item body for audit trail.
-    if let Some(wi_id) = work_item_id {
-        if let Ok(wi) = state.get_work_item(wi_id) {
-            let timestamp = &signal.created_at;
-            let type_label = &signal.signal_type;
-            let append_text = format!(
-                "\n\n## Signal: {type_label} — {timestamp}\n\n{}",
-                signal.message
-            );
-            let new_body = format!("{}{append_text}", wi.body);
-            let _ = state.update_work_item(UpdateWorkItemInput {
-                id: wi_id,
-                title: wi.title.clone(),
-                body: new_body,
-                item_type: wi.item_type.clone(),
-                status: wi.status.clone(),
-            });
-        }
-    }
-
     append_project_event(
         state,
         context,
@@ -1540,25 +1520,6 @@ fn respond_to_agent_signal(
             response: response.to_string(),
         })
         .map_err(RouteError::from)?;
-
-    // Append response to work item body for audit trail.
-    if let Some(wi_id) = signal.work_item_id {
-        if let Ok(wi) = state.get_work_item(wi_id) {
-            let timestamp = signal.responded_at.as_deref().unwrap_or("—");
-            let append_text = format!(
-                "\n\n### Dispatcher Response — {timestamp}\n\n{}",
-                response
-            );
-            let new_body = format!("{}{append_text}", wi.body);
-            let _ = state.update_work_item(UpdateWorkItemInput {
-                id: wi_id,
-                title: wi.title.clone(),
-                body: new_body,
-                item_type: wi.item_type.clone(),
-                status: wi.status.clone(),
-            });
-        }
-    }
 
     // Inject response into the agent's session stdin so the agent receives it immediately.
     if let Some(worktree_id) = signal.worktree_id {
