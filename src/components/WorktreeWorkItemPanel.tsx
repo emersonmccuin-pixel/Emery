@@ -34,6 +34,7 @@ function WorktreeWorkItemPanel({ worktree }: Props) {
     backlog: 'text-white/60',
     in_progress: 'text-hud-cyan',
     blocked: 'text-destructive',
+    parked: 'text-amber-400',
     done: 'text-hud-green',
   }
 

@@ -7,7 +7,7 @@ import { ScrollArea } from './ui/scroll-area'
 import { Play, Trash2 } from 'lucide-react'
 
 const WORK_ITEM_TYPES: WorkItemType[] = ['bug', 'task', 'feature', 'note']
-const WORK_ITEM_STATUSES: WorkItemStatus[] = ['backlog', 'in_progress', 'blocked', 'done']
+const WORK_ITEM_STATUSES: WorkItemStatus[] = ['backlog', 'in_progress', 'blocked', 'parked', 'done']
 
 type SortKey = 'call_sign' | 'updated_desc' | 'created_desc' | 'title_asc'
 
@@ -445,7 +445,10 @@ function WorkItemsPanel({
                           </p>
                           <p className="mt-1 text-[11px] font-bold leading-snug">{item.title}</p>
                         </div>
-                        <Badge variant="default" className="h-4 text-[8px]">
+                        <Badge
+                          variant={item.status === 'parked' ? 'offline' : 'default'}
+                          className={`h-4 text-[8px]${item.status === 'parked' ? ' text-amber-400 border-amber-400/40 bg-amber-400/10' : ''}`}
+                        >
                           {formatStatusLabel(item.status)}
                         </Badge>
                       </div>
