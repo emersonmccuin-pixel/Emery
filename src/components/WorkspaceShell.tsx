@@ -41,6 +41,15 @@ import {
   useSelectedProjectLaunchLabel,
 } from '../store'
 
+/** Truncate the namespace portion of a call sign to 6 chars for display.
+ *  e.g. "PROJECTCOMMA-31" → "PROJEC-31". DB value is never modified. */
+function shortCallSign(callSign: string): string {
+  const match = callSign.match(/^(.+?)(-\d+)$/)
+  if (!match) return callSign
+  const [, ns, num] = match
+  return (ns.length > 6 ? ns.slice(0, 6) : ns) + num
+}
+
 function WorkspaceShell() {
   const selectedProject = useSelectedProject()
   const selectedLaunchProfile = useSelectedLaunchProfile()
@@ -1372,18 +1381,16 @@ function WorkspaceShell() {
                       type="button"
                       onClick={() => selectMainTerminal()}
                     >
-                      <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center justify-between gap-2">
                         <span className="text-[11px] font-black tracking-widest truncate flex-1 uppercase">
                           {selectedProject?.name ?? 'NODE_NULL'}
                         </span>
-                        <Badge variant={isDispatcherRunning ? 'running' : 'offline'} className="h-4 text-[8px] tracking-widest px-1.5 font-black">
-                          {isDispatcherRunning ? 'LIVE' : 'IDLE'}
-                        </Badge>
-                      </div>
-                      <div className="text-[8px] uppercase tracking-widest opacity-60 font-mono">
-                        {isDispatcherRunning
-                          ? `Dispatcher live in project root // ${selectedProjectLaunchLabel}`
-                          : 'Launch Dispatcher in project root'}
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${isDispatcherRunning ? 'bg-hud-green shadow-[0_0_6px_rgba(116,243,161,0.8)]' : 'bg-white/20'}`} />
+                          <Badge variant={isDispatcherRunning ? 'running' : 'offline'} className="h-4 text-[8px] tracking-widest px-1.5 font-black">
+                            {isDispatcherRunning ? 'LIVE' : 'IDLE'}
+                          </Badge>
+                        </div>
                       </div>
                     </button>
                   </section>
@@ -1414,8 +1421,9 @@ function WorkspaceShell() {
                           >
                             <div className="flex items-center gap-1.5 mb-1">
                               <span className="text-[10px] font-black tracking-widest truncate uppercase text-hud-green min-w-0">
-                                {worktree.workItemCallSign ??
-                                  (worktree.shortBranchName.length > 24
+                                {worktree.workItemCallSign
+                                  ? shortCallSign(worktree.workItemCallSign)
+                                  : (worktree.shortBranchName.length > 24
                                     ? `${worktree.shortBranchName.slice(0, 24)}…`
                                     : worktree.shortBranchName
                                   ).toUpperCase()}
@@ -1426,6 +1434,9 @@ function WorkspaceShell() {
                               >
                                 {snapshot?.isRunning ? 'LIVE' : 'OFF'}
                               </Badge>
+                              <span className="ml-auto text-[8px] font-mono text-white/35 shrink-0">
+                                #{worktree.id}
+                              </span>
                             </div>
                             <div className="mb-1.5 flex gap-1 flex-wrap">
                               {(worktree.pendingSignalCount ?? 0) > 0 ? (
@@ -1455,6 +1466,11 @@ function WorkspaceShell() {
                             {worktree.workItemTitle ? (
                               <p className="text-[8px] text-white/65 leading-snug line-clamp-2">
                                 {worktree.workItemTitle}
+                              </p>
+                            ) : null}
+                            {worktree.sessionSummary ? (
+                              <p className="text-[8px] text-white/40 leading-snug line-clamp-2 mt-0.5 italic">
+                                {worktree.sessionSummary}
                               </p>
                             ) : null}
                           </button>

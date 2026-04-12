@@ -233,15 +233,23 @@
 }
 
 .dispatcher-card--active {
-  background: linear-gradient(135deg, rgba(58, 240, 224, 0.15), rgba(58, 240, 224, 0.04));
+  background: linear-gradient(135deg, rgba(58, 240, 224, 0.22), rgba(58, 240, 224, 0.06));
   border-color: var(--hud-cyan);
-  box-shadow: 0 0 15px rgba(58, 240, 224, 0.25);
+  border-width: 2px;
+  box-shadow:
+    0 0 0 1px rgba(58, 240, 224, 0.4),
+    0 0 20px rgba(58, 240, 224, 0.45),
+    inset 0 0 16px rgba(58, 240, 224, 0.08);
 }
 
 .session-card--active {
-  background: linear-gradient(135deg, rgba(255, 51, 153, 0.15), rgba(255, 51, 153, 0.04));
+  background: linear-gradient(135deg, rgba(255, 51, 153, 0.22), rgba(255, 51, 153, 0.06));
   border-color: var(--hud-magenta);
-  box-shadow: 0 0 15px rgba(255, 51, 153, 0.25);
+  border-width: 2px;
+  box-shadow:
+    0 0 0 1px rgba(255, 51, 153, 0.4),
+    0 0 20px rgba(255, 51, 153, 0.45),
+    inset 0 0 16px rgba(255, 51, 153, 0.08);
 }
 
 /* ── Progress bar ── */
@@ -535,7 +543,6 @@
   width: 100%;
 }
 
-.session-card--active,
 .session-card:hover {
   border-color: rgba(116, 243, 161, 0.4);
   background: linear-gradient(135deg, rgba(116, 243, 161, 0.1), rgba(58, 240, 224, 0.04));
@@ -590,8 +597,12 @@
 
 .dispatcher-card--active {
   border-color: var(--hud-cyan);
-  background: linear-gradient(135deg, rgba(58, 240, 224, 0.15), rgba(116, 243, 161, 0.05));
-  box-shadow: 0 0 12px rgba(58, 240, 224, 0.2);
+  border-width: 2px;
+  background: linear-gradient(135deg, rgba(58, 240, 224, 0.22), rgba(116, 243, 161, 0.07));
+  box-shadow:
+    0 0 0 1px rgba(58, 240, 224, 0.4),
+    0 0 20px rgba(58, 240, 224, 0.45),
+    inset 0 0 16px rgba(58, 240, 224, 0.08);
 }
 
 .dispatcher-card__row {
