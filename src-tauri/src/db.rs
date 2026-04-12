@@ -16,20 +16,19 @@ use crate::error::{AppError, AppResult};
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 const PROJECT_TRACKER_TEMPLATE: &str = "\
-## Current Priorities
+## About
+(What this project is and why it exists.)
+
+## Current Focus
+High-level goals and epics driving work right now.
 - (none yet)
 
-## Active Work
-| Call Sign | Title | Status | Agent |
-|---|---|---|---|
-
-## Blocked / Waiting
+## Blockers
+Critical issues preventing forward progress — not task-level problems.
 - (none)
 
-## Recent Decisions
-- (none yet)
-
-## Backlog Highlights
+## Key Decisions
+Strategic or architectural decisions that shape future work.
 - (none yet)
 ";
 
@@ -3054,7 +3053,7 @@ fn ensure_project_work_item_prefix(
         .trim()
         .to_string();
 
-    if !current_prefix.is_empty() {
+    if !current_prefix.is_empty() && current_prefix.len() <= 6 {
         return Ok(current_prefix);
     }
 
@@ -3099,7 +3098,11 @@ fn backfill_project_work_item_prefixes(connection: &Connection) -> Result<(), St
             row.map_err(|error| format!("failed to decode project prefix backfill row: {error}"))?;
         let normalized_prefix = current_prefix.trim().to_uppercase();
 
-        if !normalized_prefix.is_empty() && !seen.contains(&normalized_prefix) {
+        // Regenerate if missing, duplicate, or exceeds 6-char max
+        if !normalized_prefix.is_empty()
+            && normalized_prefix.len() <= 6
+            && !seen.contains(&normalized_prefix)
+        {
             seen.insert(normalized_prefix);
             continue;
         }

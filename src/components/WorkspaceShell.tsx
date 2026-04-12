@@ -1464,12 +1464,12 @@ function WorkspaceShell() {
                               ) : null}
                             </div>
                             {worktree.workItemTitle ? (
-                              <p className="text-[8px] text-white/80 leading-snug line-clamp-2">
+                              <p className="text-[10px] text-white/90 leading-snug line-clamp-2">
                                 {worktree.workItemTitle}
                               </p>
                             ) : null}
                             {worktree.sessionSummary ? (
-                              <p className="text-[8px] text-white/60 leading-snug line-clamp-2 mt-0.5 italic">
+                              <p className="text-[10px] text-white/70 leading-snug line-clamp-2 mt-0.5 italic">
                                 {worktree.sessionSummary}
                               </p>
                             ) : null}

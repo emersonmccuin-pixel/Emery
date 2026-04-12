@@ -1223,7 +1223,8 @@ fn build_claude_bridge_system_prompt(
                 "- Agent names = call signs with dots → hyphens ({}-23.01 → {}-23-01)\n",
                 "- list_worktrees to see active agents\n\n",
                 "## Maintaining {}\n",
-                "Update when: priorities shift, features complete, blockers surface, ",
+                "High-level only — epics, goals, blockers, key decisions. Not individual tasks or child items.\n",
+                "Update when: priorities shift, major features complete, blockers surface, ",
                 "user makes strategic decisions. This is the primary handoff document between dispatcher sessions.",
             ),
             project.name,
@@ -1660,6 +1661,7 @@ mod tests {
             work_item_count: 0,
             document_count: 0,
             session_count: 0,
+            work_item_prefix: Some("CMDR".to_string()),
         };
         let worktree = WorktreeRecord {
             id: 22,
@@ -1736,6 +1738,7 @@ mod tests {
             work_item_count: 0,
             document_count: 0,
             session_count: 0,
+            work_item_prefix: Some("CMDR".to_string()),
         };
         let worktree = WorktreeRecord {
             id: 22,
