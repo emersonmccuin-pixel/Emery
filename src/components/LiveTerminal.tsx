@@ -1,14 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { FitAddon } from '@xterm/addon-fit'
+import type { ILink, ILinkProvider } from '@xterm/xterm'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
+import { CallSignHoverCard } from './CallSignHoverCard'
 import type { SessionSnapshot, TerminalExitEvent, TerminalOutputEvent } from '../types'
 
 type LiveTerminalProps = {
   snapshot: SessionSnapshot
   onSessionExit: (event: TerminalExitEvent) => void
+  workItemPrefix: string | null
+}
+
+type HoverState = {
+  callSign: string
+  anchorX: number
+  anchorY: number
+  containerRect: DOMRect
 }
 
 function getTerminalErrorMessage(error: unknown, fallback: string) {
@@ -35,17 +46,24 @@ function getTerminalErrorMessage(error: unknown, fallback: string) {
   return fallback
 }
 
-function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
+function LiveTerminal({ snapshot, onSessionExit, workItemPrefix }: LiveTerminalProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const onSessionExitRef = useRef(onSessionExit)
+  const workItemPrefixRef = useRef(workItemPrefix)
   const [terminalError, setTerminalError] = useState<string | null>(null)
+  const [hoverState, setHoverState] = useState<HoverState | null>(null)
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null)
   const sessionKey = `${snapshot.projectId}:${snapshot.worktreeId ?? 'project'}:${snapshot.startedAt}`
 
   useEffect(() => {
     onSessionExitRef.current = onSessionExit
   }, [onSessionExit])
+
+  useEffect(() => {
+    workItemPrefixRef.current = workItemPrefix
+  }, [workItemPrefix])
 
   useEffect(() => {
     if (!hostRef.current) {
@@ -71,6 +89,66 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
     terminal.open(hostRef.current)
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
+
+    // Expose xterm's container element for the hover card portal
+    if (terminal.element) {
+      terminal.element.style.position = 'relative'
+      setPortalTarget(terminal.element)
+    }
+
+    // Register call-sign link provider for work item hover cards
+    const callSignLinkProvider: ILinkProvider = {
+      provideLinks(bufferLineNumber: number, callback: (links: ILink[] | undefined) => void) {
+        const prefix = workItemPrefixRef.current
+        if (!prefix) {
+          callback(undefined)
+          return
+        }
+
+        const line = terminal.buffer.active.getLine(bufferLineNumber)
+        if (!line) {
+          callback(undefined)
+          return
+        }
+
+        const lineText = line.translateToString()
+        const pattern = new RegExp(`${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-\\d+(?:\\.\\d+)?`, 'g')
+        const links: ILink[] = []
+        let match: RegExpExecArray | null
+
+        while ((match = pattern.exec(lineText)) !== null) {
+          const startX = match.index
+          const text = match[0]
+          links.push({
+            range: {
+              start: { x: startX + 1, y: bufferLineNumber },
+              end: { x: startX + text.length + 1, y: bufferLineNumber },
+            },
+            text,
+            decorations: { pointerCursor: true, underline: true },
+            activate() {
+              // No-op on click for now
+            },
+            hover(event: MouseEvent, linkText: string) {
+              const container = terminal.element
+              if (!container) return
+              setHoverState({
+                callSign: linkText,
+                anchorX: event.clientX,
+                anchorY: event.clientY,
+                containerRect: container.getBoundingClientRect(),
+              })
+            },
+            leave() {
+              setHoverState(null)
+            },
+          })
+        }
+
+        callback(links.length > 0 ? links : undefined)
+      },
+    }
+    const linkProviderDisposable = terminal.registerLinkProvider(callSignLinkProvider)
 
     // Block native paste events from reaching xterm's textarea in the capture
     // phase. Our attachCustomKeyEventHandler below handles Ctrl+V by calling
@@ -328,6 +406,9 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
       }
       outputUnlisten?.()
       exitUnlisten?.()
+      linkProviderDisposable.dispose()
+      setPortalTarget(null)
+      setHoverState(null)
       terminal.dispose()
       terminalRef.current = null
       fitAddonRef.current = null
@@ -416,6 +497,18 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
         </div>
       ) : null}
       <div className="terminal-host flex-1" ref={hostRef} />
+      {portalTarget && hoverState
+        ? createPortal(
+            <CallSignHoverCard
+              callSign={hoverState.callSign}
+              projectId={snapshot.projectId}
+              anchorX={hoverState.anchorX}
+              anchorY={hoverState.anchorY}
+              containerRect={hoverState.containerRect}
+            />,
+            portalTarget,
+          )
+        : null}
     </div>
   )
 }

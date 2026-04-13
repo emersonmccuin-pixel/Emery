@@ -944,6 +944,90 @@
   border-radius: var(--panel-radius);
 }
 
+/* Call sign hover card (rendered inside xterm container) */
+.callsign-hover-card {
+  position: absolute;
+  z-index: 100;
+  max-width: 400px;
+  max-height: 300px;
+  overflow-y: auto;
+  border-radius: 8px;
+  border: 1px solid rgba(58, 240, 224, 0.25);
+  background: rgba(6, 8, 9, 0.96);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 16px rgba(58, 240, 224, 0.08);
+  padding: 10px 12px;
+  pointer-events: auto;
+  font-family: 'JetBrains Mono', Consolas, monospace;
+}
+
+.callsign-hover-card__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.callsign-hover-card__callsign {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(240, 140, 58, 0.9);
+}
+
+.callsign-hover-card__status {
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border-width: 1px;
+}
+
+.callsign-hover-card__title {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(243, 236, 223, 0.9);
+  line-height: 1.4;
+  margin-bottom: 6px;
+}
+
+.callsign-hover-card__body {
+  font-size: 10px;
+  line-height: 1.5;
+  color: rgba(243, 236, 223, 0.6);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 6px;
+}
+
+.callsign-hover-card__body h1,
+.callsign-hover-card__body h2,
+.callsign-hover-card__body h3 {
+  font-size: 10px;
+  font-weight: 700;
+  margin-top: 6px;
+  margin-bottom: 2px;
+}
+
+.callsign-hover-card__body p {
+  margin-bottom: 4px;
+}
+
+.callsign-hover-card__body ul,
+.callsign-hover-card__body ol {
+  padding-left: 14px;
+  margin-bottom: 4px;
+}
+
+.callsign-hover-card__body code {
+  font-size: 9px;
+  padding: 1px 3px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
 @media (max-width: 1220px) {
   .terminal-layout,
   .terminal-layout--left-collapsed,

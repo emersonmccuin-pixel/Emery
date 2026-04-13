@@ -18,8 +18,9 @@ use crate::supervisor_api::{
     LaunchProjectWorktreeAgentInput, ListCleanupCandidatesInput, ListProjectDocumentsInput,
     ListProjectSessionEventsInput, ListProjectSessionsInput, ListProjectWorkItemsInput,
     ListProjectWorktreesInput, PinWorktreeInput, ProjectDocumentTarget, ProjectSessionRecordTarget,
-    ProjectWorkItemTarget, ProjectWorktreeTarget, RepairCleanupInput, SessionRecoveryDetails,
-    UpdateProjectDocumentInput, UpdateProjectWorkItemInput, WorktreeLaunchOutput,
+    ProjectCallSignTarget, ProjectWorkItemTarget, ProjectWorktreeTarget, RepairCleanupInput,
+    SessionRecoveryDetails, UpdateProjectDocumentInput, UpdateProjectWorkItemInput,
+    WorkItemDetailOutput, WorktreeLaunchOutput,
 };
 use reqwest::blocking::Client;
 use reqwest::StatusCode;
@@ -206,6 +207,10 @@ impl SupervisorClient {
             &ProjectWorkItemTarget { project_id, id },
         )
         .map(|_| ())
+    }
+
+    pub fn get_work_item_by_call_sign(&self, input: &ProjectCallSignTarget) -> AppResult<WorkItemDetailOutput> {
+        self.request_json("work-item/get-by-call-sign", input)
     }
 
     pub fn list_documents(&self, project_id: i64) -> AppResult<Vec<DocumentRecord>> {
