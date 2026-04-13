@@ -79,8 +79,8 @@ function WorkItemsPanel({
   const [editType, setEditType] = useState<WorkItemType>('task')
   const [editStatus, setEditStatus] = useState<WorkItemStatus>('backlog')
   const [searchQuery, setSearchQuery] = useState('')
-  const [typeFilter, setTypeFilter] = useState<'all' | WorkItemType>('all')
-  const [statusFilter, setStatusFilter] = useState<'all' | WorkItemStatus>('all')
+  const [typeFilter, setTypeFilter] = useState<Set<WorkItemType>>(new Set())
+  const [statusFilter, setStatusFilter] = useState<Set<WorkItemStatus>>(new Set())
   const [parentOnly, setParentOnly] = useState(false)
   const [sortKey, setSortKey] = useState<SortKey>('call_sign')
   const [isCreating, setIsCreating] = useState(false)
@@ -100,11 +100,11 @@ function WorkItemsPanel({
 
     return [...workItems]
       .filter((item) => {
-        if (typeFilter !== 'all' && item.itemType !== typeFilter) {
+        if (typeFilter.size > 0 && !typeFilter.has(item.itemType)) {
           return false
         }
 
-        if (statusFilter !== 'all' && item.status !== statusFilter) {
+        if (statusFilter.size > 0 && !statusFilter.has(item.status)) {
           return false
         }
 
@@ -137,8 +137,8 @@ function WorkItemsPanel({
   useEffect(() => {
     setSelectedWorkItemId(workItems[0]?.id ?? null)
     setSearchQuery('')
-    setTypeFilter('all')
-    setStatusFilter('all')
+    setTypeFilter(new Set())
+    setStatusFilter(new Set())
     setParentOnly(false)
     setSortKey('call_sign')
     setCreateParentWorkItemId(null)
@@ -372,33 +372,59 @@ function WorkItemsPanel({
                 placeholder="Search call sign, title, body"
                 className="h-8 text-[11px]"
               />
-              <div className="grid grid-cols-2 gap-2">
-                <select
-                  className="h-8 rounded border border-border bg-background px-2 text-[11px]"
-                  value={typeFilter}
-                  onChange={(event) => setTypeFilter(event.target.value as 'all' | WorkItemType)}
-                >
-                  <option value="all">All types</option>
-                  {WORK_ITEM_TYPES.map((itemType) => (
-                    <option key={itemType} value={itemType}>
-                      {itemType.toUpperCase()}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  className="h-8 rounded border border-border bg-background px-2 text-[11px]"
-                  value={statusFilter}
-                  onChange={(event) =>
-                    setStatusFilter(event.target.value as 'all' | WorkItemStatus)
-                  }
-                >
-                  <option value="all">All statuses</option>
-                  {WORK_ITEM_STATUSES.map((status) => (
-                    <option key={status} value={status}>
-                      {formatStatusLabel(status)}
-                    </option>
-                  ))}
-                </select>
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="shrink-0 text-[9px] uppercase tracking-widest text-muted-foreground/60 w-10">Type</span>
+                  <div className="flex flex-wrap gap-1">
+                    {WORK_ITEM_TYPES.map((itemType) => (
+                      <button
+                        key={itemType}
+                        type="button"
+                        className={`rounded border px-1.5 py-0.5 text-[9px] uppercase tracking-widest transition-colors ${
+                          typeFilter.has(itemType)
+                            ? 'border-hud-cyan/60 bg-hud-cyan/20 text-hud-cyan'
+                            : 'border-border/40 text-muted-foreground hover:border-border hover:text-foreground'
+                        }`}
+                        onClick={() =>
+                          setTypeFilter((prev) => {
+                            const next = new Set(prev)
+                            if (next.has(itemType)) next.delete(itemType)
+                            else next.add(itemType)
+                            return next
+                          })
+                        }
+                      >
+                        {itemType}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="shrink-0 text-[9px] uppercase tracking-widest text-muted-foreground/60 w-10">Status</span>
+                  <div className="flex flex-wrap gap-1">
+                    {WORK_ITEM_STATUSES.map((status) => (
+                      <button
+                        key={status}
+                        type="button"
+                        className={`rounded border px-1.5 py-0.5 text-[9px] uppercase tracking-widest transition-colors ${
+                          statusFilter.has(status)
+                            ? 'border-hud-cyan/60 bg-hud-cyan/20 text-hud-cyan'
+                            : 'border-border/40 text-muted-foreground hover:border-border hover:text-foreground'
+                        }`}
+                        onClick={() =>
+                          setStatusFilter((prev) => {
+                            const next = new Set(prev)
+                            if (next.has(status)) next.delete(status)
+                            else next.add(status)
+                            return next
+                          })
+                        }
+                      >
+                        {formatStatusLabel(status)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <label className="flex items-center gap-2 rounded border border-border/60 px-2 py-1 text-[10px] uppercase tracking-widest text-muted-foreground">
