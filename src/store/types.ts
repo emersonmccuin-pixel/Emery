@@ -139,6 +139,7 @@ export type ProjectSlice = {
   startEditLaunchProfile: (profile: LaunchProfileRecord) => void
   cancelLaunchProfileEditor: () => void
   deleteLaunchProfile: (profile: LaunchProfileRecord) => Promise<void>
+  projectCreated: (project: ProjectRecord) => void
   adjustProjectWorkItemCount: (projectId: number, delta: number) => void
   adjustProjectDocumentCount: (projectId: number, delta: number) => void
 }

@@ -3340,6 +3340,7 @@ mod tests {
                 .create_project(CreateProjectInput {
                     name: name.to_string(),
                     root_path: self.project_root.display().to_string(),
+                    work_item_prefix: None,
                 })
                 .expect("project should be created")
         }
@@ -3784,6 +3785,7 @@ mod tests {
             .json(&CreateProjectInput {
                 name: "Commander".to_string(),
                 root_path: harness.project_root.display().to_string(),
+                work_item_prefix: None,
             })
             .send()
             .expect("project create request should succeed")

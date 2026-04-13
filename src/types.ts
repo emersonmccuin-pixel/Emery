@@ -205,3 +205,9 @@ export type WorktreeLaunchOutput = {
   worktree: WorktreeRecord
   session: SessionSnapshot
 }
+
+export type CheckProjectFolderResult = {
+  isGitRepo: boolean
+  gitBranch: string | null
+  hasClaudeMd: boolean
+}
