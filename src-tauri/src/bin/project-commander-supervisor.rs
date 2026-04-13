@@ -1547,6 +1547,12 @@ fn cleanup_project_worktree(
         )));
     }
 
+    if worktree.has_uncommitted_changes && !force {
+        return Err(RouteError::bad_request(format!(
+            "worktree #{worktree_id} has uncommitted staged changes; commit or stash them first, or pass force=true to discard"
+        )));
+    }
+
     // Auto-park active work items so they aren't lost in the backlog.
     let work_item_id = worktree.work_item_id;
     let status = worktree.work_item_status.as_str();

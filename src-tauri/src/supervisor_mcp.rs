@@ -1005,7 +1005,7 @@ fn build_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "cleanup_worktree",
-            "description": "Clean up a worktree: remove the git worktree, delete the branch (best-effort), and drop the DB record. Blocked by a live session or pinned worktree. If the work item is in_progress or blocked it is automatically set to parked. If the branch has unmerged commits you must pass force=true.",
+            "description": "Clean up a worktree: remove the git worktree, delete the branch (best-effort), and drop the DB record. Blocked by a live session or pinned worktree. If the work item is in_progress or blocked it is automatically set to parked. If the branch has unmerged commits you must pass force=true. Also blocked if the worktree has uncommitted staged changes; commit or stash them first, or pass force=true to discard.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
