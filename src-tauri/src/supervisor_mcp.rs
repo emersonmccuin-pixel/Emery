@@ -693,7 +693,7 @@ fn call_tool(
                 read_optional_string(&arguments, "toAgent"),
                 read_optional_string(&arguments, "messageType"),
                 read_optional_string(&arguments, "status"),
-                read_optional_i64(&arguments, "limit"),
+                read_optional_i64(&arguments, "limit").or(Some(50)),
             )?;
             Ok(serde_json::to_value(result)
                 .map_err(|error| AppError::internal(format!("failed to encode message list: {error}")))?)
@@ -1294,25 +1294,3 @@ fn strip_inbox_response_fields(value: &mut Value) {
     }
 }
 
-/// Return a work item header for list/brief contexts — strips body and metadata.
-/// Callers that need the full body should use get_work_item(id).
-fn slim_work_item(item: &Value) -> Value {
-    json!({
-        "id": item["id"],
-        "callSign": item["callSign"],
-        "title": item["title"],
-        "status": item["status"],
-        "itemType": item["itemType"],
-        "parentWorkItemId": item["parentWorkItemId"],
-        "childNumber": item["childNumber"],
-    })
-}
-
-/// Return a document header for list/brief contexts — strips body and metadata.
-/// Callers that need the full body should use get_work_item(id) or update_document.
-fn slim_document(doc: &Value) -> Value {
-    json!({
-        "id": doc["id"],
-        "title": doc["title"],
-    })
-}
