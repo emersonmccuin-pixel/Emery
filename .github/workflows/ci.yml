@@ -44,6 +44,9 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
+      - name: Check repository health
+        run: npm run check:repo-health
+
       - name: Run frontend tests
         run: npm test
 
@@ -64,3 +67,6 @@ jobs:
 
       - name: Run supervisor tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --bin project-commander-supervisor
+
+      - name: Run supervisor integration smoke tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --test supervisor_client_recovery

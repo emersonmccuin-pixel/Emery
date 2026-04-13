@@ -13,6 +13,7 @@ function createWorktreeRecord(overrides: Partial<WorktreeRecord> = {}): Worktree
     pinned: false,
     isCleanupEligible: false,
     pendingSignalCount: 0,
+    agentName: 'PROJECT100-42',
     branchName: 'project-100-42-fix-worktree-rail-refresh',
     shortBranchName: 'project-100-42-fix-worktree-rail-refresh',
     worktreePath: 'E:\\worktrees\\project-100-42',

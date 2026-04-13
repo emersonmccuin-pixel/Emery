@@ -1,6 +1,14 @@
-import { useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
-import type { TerminalExitEvent } from './types'
+import { useShallow } from 'zustand/react/shallow'
+import {
+  cancelTrackedPerfSpan,
+  failTrackedPerfSpan,
+  finishTrackedPerfSpan,
+  hasTrackedPerfSpan,
+  startTrackedPerfSpan,
+} from './perf'
+import type { TerminalExitEvent, TerminalOutputEvent } from './types'
 import { useAppStore } from './store'
 import {
   useSelectedProject,
@@ -14,26 +22,135 @@ function App() {
   const selectedLaunchProfile = useSelectedLaunchProfile()
   const visibleWorktrees = useVisibleWorktrees()
 
-  const projects = useAppStore((s) => s.projects)
-  const launchProfiles = useAppStore((s) => s.launchProfiles)
-  const defaultLaunchProfileId = useAppStore((s) => s.appSettings.defaultLaunchProfileId)
-  const autoRepairSetting = useAppStore((s) => s.appSettings.autoRepairSafeCleanupOnStartup)
-  const selectedProjectId = useAppStore((s) => s.selectedProjectId)
-  const selectedTerminalWorktreeId = useAppStore((s) => s.selectedTerminalWorktreeId)
-  const stagedWorktreesLength = useAppStore((s) => s.stagedWorktrees.length)
-  const worktreesLength = useAppStore((s) => s.worktrees.length)
-  const liveSessionCount = useAppStore((s) => s.liveSessionSnapshots.length)
-  const activeView = useAppStore((s) => s.activeView)
-  const isAgentGuideOpen = useAppStore((s) => s.isAgentGuideOpen)
-  const contextRefreshKey = useAppStore((s) => s.contextRefreshKey)
-  const selectedHistorySessionId = useAppStore((s) => s.selectedHistorySessionId)
-  const sessionRecords = useAppStore((s) => s.sessionRecords)
+  const {
+    projects,
+    launchProfiles,
+    defaultLaunchProfileId,
+    autoRepairSetting,
+    selectedProjectId,
+    selectedTerminalWorktreeId,
+    stagedWorktreesLength,
+    worktreesLength,
+    liveSessionCount,
+    activeView,
+    isAgentGuideOpen,
+    selectedHistorySessionId,
+    sessionRecords,
+    isLoadingWorkItems,
+    isLoadingDocuments,
+    isLoadingHistory,
+    isLoadingWorktrees,
+  } = useAppStore(
+    useShallow((s) => ({
+      projects: s.projects,
+      launchProfiles: s.launchProfiles,
+      defaultLaunchProfileId: s.appSettings.defaultLaunchProfileId,
+      autoRepairSetting: s.appSettings.autoRepairSafeCleanupOnStartup,
+      selectedProjectId: s.selectedProjectId,
+      selectedTerminalWorktreeId: s.selectedTerminalWorktreeId,
+      stagedWorktreesLength: s.stagedWorktrees.length,
+      worktreesLength: s.worktrees.length,
+      liveSessionCount: s.liveSessionSnapshots.length,
+      activeView: s.activeView,
+      isAgentGuideOpen: s.isAgentGuideOpen,
+      selectedHistorySessionId: s.selectedHistorySessionId,
+      sessionRecords: s.sessionRecords,
+      isLoadingWorkItems: s.isLoadingWorkItems,
+      isLoadingDocuments: s.isLoadingDocuments,
+      isLoadingHistory: s.isLoadingHistory,
+      isLoadingWorktrees: s.isLoadingWorktrees,
+    })),
+  )
+
+  const [startupBootstrapComplete, setStartupBootstrapComplete] = useState(false)
+  const startupObservedLoadingRef = useRef(false)
+  const projectSwitchObservedLoadingRef = useRef(false)
+  const activeProjectSwitchIdRef = useRef<number | null>(null)
+  const visibleContextRefreshTimeoutRef = useRef<number | null>(null)
+  const visibleContextRefreshInFlightRef = useRef(false)
+  const visibleContextRefreshPendingRef = useRef(false)
+
+  const clearVisibleContextRefreshTimer = () => {
+    if (visibleContextRefreshTimeoutRef.current !== null) {
+      window.clearTimeout(visibleContextRefreshTimeoutRef.current)
+      visibleContextRefreshTimeoutRef.current = null
+    }
+  }
+
+  const refreshVisibleProjectContext = async (projectId: number) => {
+    const store = useAppStore.getState()
+
+    if (store.selectedProjectId !== projectId) {
+      return
+    }
+
+    const shouldRefreshHistory = store.activeView === 'history'
+    const shouldRefreshWork =
+      store.activeView === 'workItems' || store.activeView === 'worktreeWorkItem' || store.isAgentGuideOpen
+
+    if (shouldRefreshHistory) {
+      await store.refreshSelectedProjectData(['history', 'orphanedSessions', 'cleanupCandidates'])
+      return
+    }
+
+    if (shouldRefreshWork) {
+      await store.refreshSelectedProjectData(['workItems', 'documents'])
+    }
+  }
+
+  const runVisibleContextRefresh = (projectId: number) => {
+    if (visibleContextRefreshInFlightRef.current) {
+      visibleContextRefreshPendingRef.current = true
+      return
+    }
+
+    visibleContextRefreshInFlightRef.current = true
+
+    void refreshVisibleProjectContext(projectId).finally(() => {
+      visibleContextRefreshInFlightRef.current = false
+
+      if (!visibleContextRefreshPendingRef.current) {
+        return
+      }
+
+      visibleContextRefreshPendingRef.current = false
+      scheduleVisibleContextRefresh(projectId)
+    })
+  }
+
+  const scheduleVisibleContextRefresh = (projectId: number, delayMs = 1200) => {
+    clearVisibleContextRefreshTimer()
+
+    visibleContextRefreshTimeoutRef.current = window.setTimeout(() => {
+      visibleContextRefreshTimeoutRef.current = null
+      runVisibleContextRefresh(projectId)
+    }, delayMs)
+  }
 
   // Bootstrap
   useEffect(() => {
-    void useAppStore.getState().bootstrap().then(() => {
-      void useAppStore.getState().loadCrashManifest()
-    })
+    let cancelled = false
+
+    startTrackedPerfSpan('app-startup', 'app_startup')
+
+    void (async () => {
+      try {
+        const store = useAppStore.getState()
+        await store.bootstrap()
+        await store.loadCrashManifest()
+
+        if (!cancelled) {
+          setStartupBootstrapComplete(true)
+        }
+      } catch (error) {
+        failTrackedPerfSpan('app-startup', error)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+      cancelTrackedPerfSpan('app-startup', { reason: 'app-unmounted' })
+    }
   }, [])
 
   // Terminal exit listener
@@ -107,112 +224,252 @@ function App() {
 
   // Load live sessions on project change
   useEffect(() => {
-    if (!selectedProject) {
+    if (selectedProjectId === null) {
       useAppStore.setState({ liveSessionSnapshots: [] })
       return
     }
-    useAppStore.getState().refreshLiveSessions(selectedProject.id)
-  }, [selectedProject])
+    useAppStore.getState().refreshLiveSessions(selectedProjectId)
+  }, [selectedProjectId])
 
   // Load session snapshot on project/worktree change
   useEffect(() => {
     useAppStore.getState().refreshSelectedSessionSnapshot()
   }, [selectedProjectId, selectedTerminalWorktreeId])
 
-  // Auto-refresh context when live sessions exist
-  const shouldAutoRefreshProjectContext = activeView !== 'terminal' || isAgentGuideOpen
+  useEffect(
+    () => () => {
+      clearVisibleContextRefreshTimer()
+    },
+    [],
+  )
 
   useEffect(() => {
-    if (!selectedProject || liveSessionCount === 0 || !shouldAutoRefreshProjectContext) {
+    clearVisibleContextRefreshTimer()
+    visibleContextRefreshPendingRef.current = false
+  }, [selectedProjectId])
+
+  useEffect(() => {
+    if (!hasTrackedPerfSpan('project-switch')) {
+      activeProjectSwitchIdRef.current = null
+      projectSwitchObservedLoadingRef.current = false
       return
     }
 
-    const intervalId = window.setInterval(() => {
-      useAppStore.getState().invalidateProjectContext()
-    }, 5000)
+    activeProjectSwitchIdRef.current = selectedProjectId
+    projectSwitchObservedLoadingRef.current = false
+  }, [selectedProjectId])
 
-    return () => window.clearInterval(intervalId)
-  }, [liveSessionCount, selectedProject?.id, shouldAutoRefreshProjectContext])
-
-  // Always poll worktrees + live sessions so externally-created worktrees (e.g. via MCP) appear
-  // without requiring a manual refresh. Runs whenever a project is selected, regardless of view
-  // or session count (the existing view-gated intervals don't fire in the terminal-with-no-sessions
-  // state that occurs right after MCP creates a new worktree+session).
   useEffect(() => {
-    if (!selectedProject) return
+    const hasVisibleLoad =
+      isLoadingWorkItems || isLoadingDocuments || isLoadingHistory || isLoadingWorktrees
 
-    const intervalId = window.setInterval(() => {
+    if (hasVisibleLoad) {
+      startupObservedLoadingRef.current = true
+    }
+
+    if (activeProjectSwitchIdRef.current !== selectedProjectId) {
+      return
+    }
+
+    if (hasVisibleLoad) {
+      projectSwitchObservedLoadingRef.current = true
+      return
+    }
+
+    if (selectedProjectId !== null && projectSwitchObservedLoadingRef.current) {
+      const state = useAppStore.getState()
+      finishTrackedPerfSpan('project-switch', {
+        projectId: selectedProjectId,
+        worktreeCount: state.worktrees.length,
+        workItemCount: state.workItems.length,
+        documentCount: state.documents.length,
+        historySessionCount: state.sessionRecords.length,
+      })
+      activeProjectSwitchIdRef.current = null
+      projectSwitchObservedLoadingRef.current = false
+    }
+  }, [
+    selectedProjectId,
+    isLoadingWorkItems,
+    isLoadingDocuments,
+    isLoadingHistory,
+    isLoadingWorktrees,
+  ])
+
+  useEffect(() => {
+    if (!startupBootstrapComplete) {
+      return
+    }
+
+    const hasVisibleLoad =
+      isLoadingWorkItems || isLoadingDocuments || isLoadingHistory || isLoadingWorktrees
+
+    if (selectedProjectId === null) {
+      finishTrackedPerfSpan('app-startup', { projectCount: projects.length, emptyState: true })
+      return
+    }
+
+    if (hasVisibleLoad) {
+      startupObservedLoadingRef.current = true
+      return
+    }
+
+    if (!startupObservedLoadingRef.current) {
+      return
+    }
+
+    const state = useAppStore.getState()
+    finishTrackedPerfSpan('app-startup', {
+      projectId: selectedProjectId,
+      projectCount: state.projects.length,
+      worktreeCount: state.worktrees.length,
+      workItemCount: state.workItems.length,
+      documentCount: state.documents.length,
+      historySessionCount: state.sessionRecords.length,
+    })
+  }, [
+    startupBootstrapComplete,
+    selectedProjectId,
+    projects.length,
+    isLoadingWorkItems,
+    isLoadingDocuments,
+    isLoadingHistory,
+    isLoadingWorktrees,
+  ])
+
+  const shouldRefreshWorkContext =
+    activeView === 'workItems' || activeView === 'worktreeWorkItem' || isAgentGuideOpen
+  const shouldRefreshHistoryContext = activeView === 'history'
+
+  // Reconcile runtime state on focus/visibility and with a low-frequency fallback interval so
+  // out-of-band supervisor/MCP changes surface without tying visible context refreshes to polling.
+  useEffect(() => {
+    if (selectedProjectId === null) return
+
+    const reconcileRuntimeState = () => {
       const store = useAppStore.getState()
-      void store.refreshWorktrees(selectedProject.id)
-      void store.refreshLiveSessions(selectedProject.id)
-    }, 5000)
+      void store.refreshWorktrees(selectedProjectId)
+      void store.refreshLiveSessions(selectedProjectId)
+    }
 
-    return () => window.clearInterval(intervalId)
-  }, [selectedProject?.id])
+    const handleWindowFocus = () => {
+      reconcileRuntimeState()
+    }
 
-  // Worktree polling when not on terminal view
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        reconcileRuntimeState()
+      }
+    }
+
+    window.addEventListener('focus', handleWindowFocus)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    const intervalId = window.setInterval(reconcileRuntimeState, 30000)
+
+    return () => {
+      window.removeEventListener('focus', handleWindowFocus)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.clearInterval(intervalId)
+    }
+  }, [selectedProjectId])
+
   useEffect(() => {
-    if (!selectedProject || liveSessionCount === 0 || activeView === 'terminal') {
+    if (selectedProjectId === null || liveSessionCount === 0) {
       return
     }
 
-    const intervalId = window.setInterval(() => {
-      useAppStore.getState().refreshWorktrees(selectedProject.id)
-    }, 10000)
-
-    return () => window.clearInterval(intervalId)
-  }, [activeView, liveSessionCount, selectedProject?.id])
-
-  // Invalidate on project/view change
-  useEffect(() => {
-    if (!selectedProject || !shouldAutoRefreshProjectContext) return
-    useAppStore.getState().invalidateProjectContext()
-  }, [selectedProject?.id, shouldAutoRefreshProjectContext])
-
-  // Data loading on context refresh
-  useEffect(() => {
-    if (!selectedProject) {
-      useAppStore.setState({ documents: [] })
+    if (!shouldRefreshHistoryContext && !shouldRefreshWorkContext) {
       return
     }
-    useAppStore.getState().loadDocuments(selectedProject.id)
-  }, [contextRefreshKey, selectedProjectId])
+
+    scheduleVisibleContextRefresh(selectedProjectId, 0)
+  }, [
+    liveSessionCount,
+    selectedProjectId,
+    shouldRefreshHistoryContext,
+    shouldRefreshWorkContext,
+  ])
 
   useEffect(() => {
-    if (!selectedProject) {
-      useAppStore.setState((s) => ({ worktrees: [], worktreeRequestId: s.worktreeRequestId + 1 }))
+    if (selectedProjectId === null) {
+      useAppStore.setState((s) => ({
+        documents: [],
+        worktrees: [],
+        worktreeRequestId: s.worktreeRequestId + 1,
+        isLoadingWorktrees: false,
+        orphanedSessions: [],
+        cleanupCandidates: [],
+        sessionRecords: [],
+        sessionEvents: [],
+        selectedHistorySessionId: null,
+        workItems: [],
+      }))
       return
     }
-    useAppStore.getState().refreshWorktrees(selectedProject.id)
-  }, [contextRefreshKey, selectedProjectId])
+
+    const store = useAppStore.getState()
+    void store.loadDocuments(selectedProjectId)
+    void store.refreshWorktrees(selectedProjectId)
+    void store.loadOrphanedSessions(selectedProjectId)
+    void store.loadCleanupCandidates()
+    void store.loadSessionHistory(selectedProjectId)
+    void store.loadWorkItems(selectedProjectId)
+  }, [selectedProjectId])
 
   useEffect(() => {
-    if (!selectedProject) {
-      useAppStore.setState({ orphanedSessions: [] })
+    if (selectedProjectId === null) {
       return
     }
-    useAppStore.getState().loadOrphanedSessions(selectedProject.id)
-  }, [contextRefreshKey, selectedProjectId])
 
-  useEffect(() => {
-    useAppStore.getState().loadCleanupCandidates()
-  }, [contextRefreshKey, selectedProjectId])
+    let disposed = false
+    let outputUnlisten: (() => void) | undefined
+    let exitUnlisten: (() => void) | undefined
 
-  useEffect(() => {
-    if (!selectedProject) {
-      useAppStore.setState({ sessionRecords: [], sessionEvents: [], selectedHistorySessionId: null })
-      return
+    const bind = async () => {
+      outputUnlisten = await listen<TerminalOutputEvent>('terminal-output', (event) => {
+        if (disposed || event.payload.projectId !== selectedProjectId) {
+          return
+        }
+
+        const store = useAppStore.getState()
+        const shouldRefreshVisibleContext =
+          store.activeView === 'history' ||
+          store.activeView === 'workItems' ||
+          store.activeView === 'worktreeWorkItem' ||
+          store.isAgentGuideOpen
+
+        if (shouldRefreshVisibleContext) {
+          scheduleVisibleContextRefresh(selectedProjectId)
+        }
+      })
+
+      exitUnlisten = await listen<TerminalExitEvent>('terminal-exit', (event) => {
+        if (disposed || event.payload.projectId !== selectedProjectId) {
+          return
+        }
+
+        const store = useAppStore.getState()
+        const shouldRefreshVisibleContext =
+          store.activeView === 'history' ||
+          store.activeView === 'workItems' ||
+          store.activeView === 'worktreeWorkItem' ||
+          store.isAgentGuideOpen
+
+        if (shouldRefreshVisibleContext) {
+          scheduleVisibleContextRefresh(selectedProjectId, 150)
+        }
+      })
     }
-    useAppStore.getState().loadSessionHistory(selectedProject.id)
-  }, [contextRefreshKey, selectedProjectId])
 
-  useEffect(() => {
-    if (!selectedProject) {
-      useAppStore.setState({ workItems: [] })
-      return
+    void bind()
+
+    return () => {
+      disposed = true
+      outputUnlisten?.()
+      exitUnlisten?.()
     }
-    useAppStore.getState().loadWorkItems(selectedProject.id)
-  }, [contextRefreshKey, selectedProjectId])
+  }, [selectedProjectId])
 
   // History session validation
   useEffect(() => {

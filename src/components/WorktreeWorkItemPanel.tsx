@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { Pin, PinOff } from 'lucide-react'
+import { useShallow } from 'zustand/react/shallow'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { PanelEmptyState } from '@/components/ui/panel-state'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useAppStore } from '../store'
 import type { WorktreeRecord } from '../types'
@@ -11,19 +13,20 @@ type Props = {
 }
 
 function WorktreeWorkItemPanel({ worktree }: Props) {
-  const workItems = useAppStore((s) => s.workItems)
-  const activeWorktreeActionId = useAppStore((s) => s.activeWorktreeActionId)
-  const activeWorktreeActionKind = useAppStore((s) => s.activeWorktreeActionKind)
-  const worktreeSessions = useAppStore((s) => s.liveSessionSnapshots)
+  const { workItem, activeWorktreeActionId, activeWorktreeActionKind, liveSnapshot } = useAppStore(
+    useShallow((s) => ({
+      workItem: s.workItems.find((item) => item.id === worktree.workItemId) ?? null,
+      activeWorktreeActionId: s.activeWorktreeActionId,
+      activeWorktreeActionKind: s.activeWorktreeActionKind,
+      liveSnapshot:
+        s.liveSessionSnapshots.find((snapshot) => snapshot.worktreeId === worktree.id) ?? null,
+    })),
+  )
 
-  const { updateWorkItem, cleanupWorktree, pinWorktree } = useAppStore.getState()
+  const { updateWorkItem, cleanupWorktree, pinWorktree, setActiveView } = useAppStore.getState()
 
   const [cleanupConfirmOpen, setCleanupConfirmOpen] = useState(false)
   const [isMarkingDone, setIsMarkingDone] = useState(false)
-
-  const workItem = workItems.find((wi) => wi.id === worktree.workItemId) ?? null
-
-  const liveSnapshot = worktreeSessions.find((s) => s.worktreeId === worktree.id) ?? null
 
   const isBusy = activeWorktreeActionId === worktree.id
   const isCleaningUp = isBusy && activeWorktreeActionKind === 'cleanup'
@@ -147,6 +150,17 @@ function WorktreeWorkItemPanel({ worktree }: Props) {
             </Button>
           )}
 
+          {!workItem ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 border-hud-cyan/40 text-[9px] font-black uppercase tracking-widest text-hud-cyan hover:bg-hud-cyan/10"
+              onClick={() => setActiveView('workItems')}
+            >
+              OPEN BACKLOG
+            </Button>
+          ) : null}
+
           {worktree.isCleanupEligible && !cleanupConfirmOpen ? (
             <Button
               variant="outline"
@@ -232,7 +246,34 @@ function WorktreeWorkItemPanel({ worktree }: Props) {
               </pre>
             </div>
           </article>
-        ) : null}
+        ) : workItem ? (
+          <PanelEmptyState
+            align="start"
+            compact
+            detail="This work item is linked, but it does not have any execution notes or body text yet."
+            eyebrow="Work item brief"
+            title="No detailed work item context"
+            tone="cyan"
+          />
+        ) : (
+          <PanelEmptyState
+            action={
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 border-hud-cyan/40 text-[9px] font-black uppercase tracking-widest text-hud-cyan hover:bg-hud-cyan/10"
+                onClick={() => setActiveView('workItems')}
+              >
+                OPEN BACKLOG
+              </Button>
+            }
+            align="start"
+            detail="Link this branch node to a backlog item so its lifecycle, cleanup rules, and execution context stay aligned."
+            eyebrow="Work item link"
+            title="This worktree is not linked to a work item"
+            tone="cyan"
+          />
+        )}
 
       </div>
     </ScrollArea>

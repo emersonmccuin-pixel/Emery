@@ -504,10 +504,7 @@ fn delete_document(state: &AppState, args: DeleteDocumentArgs) -> AppResult<()> 
     }
 }
 
-fn resolve_project(
-    state: &AppState,
-    selection: ProjectSelectionArgs,
-) -> AppResult<ProjectRecord> {
+fn resolve_project(state: &AppState, selection: ProjectSelectionArgs) -> AppResult<ProjectRecord> {
     if let Some(project_id) = selection.project_id {
         return state.get_project(project_id);
     }

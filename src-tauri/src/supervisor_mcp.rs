@@ -2,13 +2,13 @@ use crate::db::{DocumentRecord, ProjectRecord, WorkItemRecord, WorktreeRecord};
 use crate::error::{AppError, AppErrorCode, AppResult};
 use crate::session_api::ProjectSessionTarget;
 use crate::supervisor_api::{
-    AckAgentMessagesApiInput, AgentInboxApiInput, AgentMessageListOutput,
-    CleanupWorktreeInput, CreateProjectDocumentInput, CreateProjectWorkItemInput,
-    LaunchProjectWorktreeAgentInput, ListAgentMessagesApiInput, ListProjectDocumentsInput,
-    ListProjectWorkItemsInput, ListProjectWorktreesInput,
-    PinWorktreeInput, ProjectCallSignTarget, ProjectDocumentTarget, ProjectWorkItemTarget,
-    ReconcileProjectTrackerInput, SendAgentMessageApiInput, UpdateProjectDocumentInput,
-    UpdateProjectWorkItemInput, WorkItemDetailOutput, WorktreeLaunchOutput,
+    AckAgentMessagesApiInput, AgentInboxApiInput, AgentMessageListOutput, CleanupWorktreeInput,
+    CreateProjectDocumentInput, CreateProjectWorkItemInput, LaunchProjectWorktreeAgentInput,
+    ListAgentMessagesApiInput, ListProjectDocumentsInput, ListProjectWorkItemsInput,
+    ListProjectWorktreesInput, PinWorktreeInput, ProjectCallSignTarget, ProjectDocumentTarget,
+    ProjectWorkItemTarget, ReconcileProjectTrackerInput, SendAgentMessageApiInput,
+    UpdateProjectDocumentInput, UpdateProjectWorkItemInput, WorkItemDetailOutput,
+    WorktreeLaunchOutput,
 };
 use reqwest::blocking::Client;
 use serde::de::DeserializeOwned;
@@ -92,7 +92,11 @@ impl SupervisorMcpClient {
         let client = Client::builder()
             .timeout(MCP_REQUEST_TIMEOUT)
             .build()
-            .map_err(|error| AppError::internal(format!("failed to build Project Commander MCP client: {error}")))?;
+            .map_err(|error| {
+                AppError::internal(format!(
+                    "failed to build Project Commander MCP client: {error}"
+                ))
+            })?;
 
         Ok(Self {
             client,
@@ -418,11 +422,7 @@ impl SupervisorMcpClient {
         )
     }
 
-    fn post<TRequest, TResponse>(
-        &self,
-        route: &str,
-        payload: &TRequest,
-    ) -> AppResult<TResponse>
+    fn post<TRequest, TResponse>(&self, route: &str, payload: &TRequest) -> AppResult<TResponse>
     where
         TRequest: Serialize,
         TResponse: DeserializeOwned,
@@ -440,7 +440,11 @@ impl SupervisorMcpClient {
             )
             .json(payload)
             .send()
-            .map_err(|error| AppError::supervisor(format!("failed to reach Project Commander supervisor: {error}")))?;
+            .map_err(|error| {
+                AppError::supervisor(format!(
+                    "failed to reach Project Commander supervisor: {error}"
+                ))
+            })?;
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
@@ -451,16 +455,17 @@ impl SupervisorMcpClient {
         }
 
         let envelope = response.json::<Value>().map_err(|error| {
-            AppError::internal(format!("failed to decode Project Commander supervisor response: {error}"))
+            AppError::internal(format!(
+                "failed to decode Project Commander supervisor response: {error}"
+            ))
         })?;
 
-        let data = envelope
-            .get("data")
-            .cloned()
-            .unwrap_or(Value::Null);
+        let data = envelope.get("data").cloned().unwrap_or(Value::Null);
 
         serde_json::from_value::<TResponse>(data).map_err(|error| {
-            AppError::internal(format!("failed to decode Project Commander supervisor response data: {error}"))
+            AppError::internal(format!(
+                "failed to decode Project Commander supervisor response data: {error}"
+            ))
         })
     }
 }
@@ -565,14 +570,11 @@ fn handle_message(client: &SupervisorMcpClient, message: Value) -> AppResult<Opt
     }
 }
 
-fn call_tool(
-    client: &SupervisorMcpClient,
-    tool_name: &str,
-    arguments: Value,
-) -> AppResult<Value> {
+fn call_tool(client: &SupervisorMcpClient, tool_name: &str, arguments: Value) -> AppResult<Value> {
     match tool_name {
-        "current_project" => Ok(serde_json::to_value(client.current_project()?)
-            .map_err(|error| AppError::internal(format!("failed to encode current project result: {error}")))?),
+        "current_project" => Ok(serde_json::to_value(client.current_project()?).map_err(
+            |error| AppError::internal(format!("failed to encode current project result: {error}")),
+        )?),
         "list_work_items" => {
             let status = arguments
                 .get("status")
@@ -612,10 +614,15 @@ fn call_tool(
             let detail = match (id, call_sign) {
                 (Some(id), _) => client.get_work_item(id)?,
                 (None, Some(ref cs)) => client.get_work_item_by_call_sign(cs)?,
-                (None, None) => return Err(AppError::invalid_input("get_work_item requires either 'id' or 'callSign'")),
+                (None, None) => {
+                    return Err(AppError::invalid_input(
+                        "get_work_item requires either 'id' or 'callSign'",
+                    ))
+                }
             };
-            Ok(serde_json::to_value(detail)
-                .map_err(|error| AppError::internal(format!("failed to encode work item result: {error}")))?)
+            Ok(serde_json::to_value(detail).map_err(|error| {
+                AppError::internal(format!("failed to encode work item result: {error}"))
+            })?)
         }
         "create_work_item" => Ok(serde_json::to_value(client.create_work_item(
             read_required_string(&arguments, "title")?,
@@ -624,28 +631,38 @@ fn call_tool(
             read_optional_string(&arguments, "status"),
             read_optional_i64(&arguments, "parentWorkItemId"),
         )?)
-        .map_err(|error| AppError::internal(format!("failed to encode created work item: {error}")))?),
+        .map_err(|error| {
+            AppError::internal(format!("failed to encode created work item: {error}"))
+        })?),
         "update_work_item" => {
             let id = read_optional_i64(&arguments, "id");
             let call_sign = read_optional_string(&arguments, "callSign");
             let resolved_id = match (id, call_sign) {
                 (Some(id), _) => id,
                 (None, Some(ref cs)) => client.get_work_item_by_call_sign(cs)?.work_item.id,
-                (None, None) => return Err(AppError::invalid_input("update_work_item requires either 'id' or 'callSign'")),
+                (None, None) => {
+                    return Err(AppError::invalid_input(
+                        "update_work_item requires either 'id' or 'callSign'",
+                    ))
+                }
             };
-            Ok(serde_json::to_value(client.update_work_item(
-                resolved_id,
-                read_optional_string(&arguments, "title"),
-                read_optional_string(&arguments, "body"),
-                read_optional_string(&arguments, "itemType"),
-                read_optional_string(&arguments, "status"),
-                read_optional_i64(&arguments, "parentWorkItemId"),
-                arguments
-                    .get("clearParent")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-            )?)
-            .map_err(|error| AppError::internal(format!("failed to encode updated work item: {error}")))?)
+            Ok(serde_json::to_value(
+                client.update_work_item(
+                    resolved_id,
+                    read_optional_string(&arguments, "title"),
+                    read_optional_string(&arguments, "body"),
+                    read_optional_string(&arguments, "itemType"),
+                    read_optional_string(&arguments, "status"),
+                    read_optional_i64(&arguments, "parentWorkItemId"),
+                    arguments
+                        .get("clearParent")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                )?,
+            )
+            .map_err(|error| {
+                AppError::internal(format!("failed to encode updated work item: {error}"))
+            })?)
         }
         "close_work_item" => {
             let id = read_optional_i64(&arguments, "id");
@@ -653,10 +670,17 @@ fn call_tool(
             let resolved_id = match (id, call_sign) {
                 (Some(id), _) => id,
                 (None, Some(ref cs)) => client.get_work_item_by_call_sign(cs)?.work_item.id,
-                (None, None) => return Err(AppError::invalid_input("close_work_item requires either 'id' or 'callSign'")),
+                (None, None) => {
+                    return Err(AppError::invalid_input(
+                        "close_work_item requires either 'id' or 'callSign'",
+                    ))
+                }
             };
-            Ok(serde_json::to_value(client.close_work_item(resolved_id)?)
-                .map_err(|error| AppError::internal(format!("failed to encode closed work item: {error}")))?)
+            Ok(
+                serde_json::to_value(client.close_work_item(resolved_id)?).map_err(|error| {
+                    AppError::internal(format!("failed to encode closed work item: {error}"))
+                })?,
+            )
         }
         "list_documents" => {
             let docs: Vec<Value> = client
@@ -677,7 +701,9 @@ fn call_tool(
             read_optional_string(&arguments, "body"),
             read_optional_i64(&arguments, "workItemId"),
         )?)
-        .map_err(|error| AppError::internal(format!("failed to encode created document: {error}")))?),
+        .map_err(|error| {
+            AppError::internal(format!("failed to encode created document: {error}"))
+        })?),
         "update_document" => Ok(serde_json::to_value(
             client.update_document(
                 read_required_i64(&arguments, "id")?,
@@ -690,19 +716,31 @@ fn call_tool(
                     .unwrap_or(false),
             )?,
         )
-        .map_err(|error| AppError::internal(format!("failed to encode updated document: {error}")))?),
+        .map_err(|error| {
+            AppError::internal(format!("failed to encode updated document: {error}"))
+        })?),
         "delete_document" => Ok(client.delete_document(read_required_i64(&arguments, "id")?)?),
         "list_worktrees" => Ok(json!({
             "worktrees": client.list_worktrees()?
         })),
         "launch_worktree_agent" => {
-            let mut value = serde_json::to_value(client.launch_worktree_agent(
-                read_required_i64(&arguments, "workItemId")?,
-                read_optional_i64(&arguments, "launchProfileId"),
-                arguments.get("model").and_then(|v| v.as_str()).map(String::from),
-                arguments.get("executionMode").and_then(|v| v.as_str()).map(String::from),
-            )?)
-            .map_err(|error| AppError::internal(format!("failed to encode launched worktree agent: {error}")))?;
+            let mut value = serde_json::to_value(
+                client.launch_worktree_agent(
+                    read_required_i64(&arguments, "workItemId")?,
+                    read_optional_i64(&arguments, "launchProfileId"),
+                    arguments
+                        .get("model")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                    arguments
+                        .get("executionMode")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
+                )?,
+            )
+            .map_err(|error| {
+                AppError::internal(format!("failed to encode launched worktree agent: {error}"))
+            })?;
             // Strip session.output — it can be 200k+ chars for long-running sessions.
             // Callers receive output via terminal-output events; they don't need it here.
             if let Some(session) = value.get_mut("session").and_then(Value::as_object_mut) {
@@ -711,19 +749,30 @@ fn call_tool(
             }
             Ok(value)
         }
-        "cleanup_worktree" => Ok(serde_json::to_value(client.cleanup_worktree(
-            read_required_i64(&arguments, "worktreeId")?,
-            arguments.get("force").and_then(|v| v.as_bool()).unwrap_or(false),
-        )?)
-        .map_err(|error| AppError::internal(format!("failed to encode cleaned-up worktree: {error}")))?),
-        "pin_worktree" => Ok(serde_json::to_value(client.pin_worktree(
-            read_required_i64(&arguments, "worktreeId")?,
-            arguments
-                .get("pinned")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true),
-        )?)
-        .map_err(|error| AppError::internal(format!("failed to encode pinned worktree: {error}")))?),
+        "cleanup_worktree" => Ok(serde_json::to_value(
+            client.cleanup_worktree(
+                read_required_i64(&arguments, "worktreeId")?,
+                arguments
+                    .get("force")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
+            )?,
+        )
+        .map_err(|error| {
+            AppError::internal(format!("failed to encode cleaned-up worktree: {error}"))
+        })?),
+        "pin_worktree" => Ok(serde_json::to_value(
+            client.pin_worktree(
+                read_required_i64(&arguments, "worktreeId")?,
+                arguments
+                    .get("pinned")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true),
+            )?,
+        )
+        .map_err(|error| {
+            AppError::internal(format!("failed to encode pinned worktree: {error}"))
+        })?),
         "terminate_session" => {
             match client.terminate_session(read_required_i64(&arguments, "worktreeId")?) {
                 Ok(_) => Ok(json!({ "status": "terminated", "message": "Session terminated" })),
@@ -747,8 +796,9 @@ fn call_tool(
                 read_optional_string(&arguments, "status"),
                 read_optional_i64(&arguments, "limit").or(Some(50)),
             )?;
-            Ok(serde_json::to_value(result)
-                .map_err(|error| AppError::internal(format!("failed to encode message list: {error}")))?)
+            Ok(serde_json::to_value(result).map_err(|error| {
+                AppError::internal(format!("failed to encode message list: {error}"))
+            })?)
         }
         "get_messages" => {
             let mark_as_read = arguments
@@ -773,9 +823,16 @@ fn call_tool(
             Ok(value)
         }
         "reconcile_inbox" => Ok(client.reconcile_inbox()?),
-        "reconcile_tracker" => Ok(serde_json::to_value(client.reconcile_tracker()?)
-            .map_err(|error| AppError::internal(format!("failed to encode reconcile tracker result: {error}")))?),
-        _ => Err(AppError::invalid_input(format!("unknown tool: {tool_name}"))),
+        "reconcile_tracker" => Ok(serde_json::to_value(client.reconcile_tracker()?).map_err(
+            |error| {
+                AppError::internal(format!(
+                    "failed to encode reconcile tracker result: {error}"
+                ))
+            },
+        )?),
+        _ => Err(AppError::invalid_input(format!(
+            "unknown tool: {tool_name}"
+        ))),
     }
 }
 
@@ -1248,9 +1305,11 @@ fn read_message(reader: &mut impl BufRead) -> AppResult<Option<Value>> {
 
     loop {
         first_line.clear();
-        let bytes_read = reader
-            .read_line(&mut first_line)
-            .map_err(|error| AppError::io(format!("failed to read Project Commander MCP input: {error}")))?;
+        let bytes_read = reader.read_line(&mut first_line).map_err(|error| {
+            AppError::io(format!(
+                "failed to read Project Commander MCP input: {error}"
+            ))
+        })?;
 
         if bytes_read == 0 {
             return Ok(None);
@@ -1264,27 +1323,29 @@ fn read_message(reader: &mut impl BufRead) -> AppResult<Option<Value>> {
     let trimmed = first_line.trim_end_matches(['\r', '\n']);
 
     if trimmed.starts_with('{') || trimmed.starts_with('[') {
-        return serde_json::from_str(trimmed)
-            .map(Some)
-            .map_err(|error| AppError::internal(format!("failed to decode Project Commander MCP JSON line: {error}")));
+        return serde_json::from_str(trimmed).map(Some).map_err(|error| {
+            AppError::internal(format!(
+                "failed to decode Project Commander MCP JSON line: {error}"
+            ))
+        });
     }
 
     let mut content_length = None;
 
     if let Some(value) = trimmed.strip_prefix("Content-Length:") {
-        content_length = Some(
-            value
-                .trim()
-                .parse::<usize>()
-                .map_err(|error| AppError::io(format!("invalid Content-Length header: {error}")))?,
-        );
+        content_length =
+            Some(value.trim().parse::<usize>().map_err(|error| {
+                AppError::io(format!("invalid Content-Length header: {error}"))
+            })?);
     }
 
     loop {
         let mut line = String::new();
-        let bytes_read = reader
-            .read_line(&mut line)
-            .map_err(|error| AppError::io(format!("failed to read Project Commander MCP header: {error}")))?;
+        let bytes_read = reader.read_line(&mut line).map_err(|error| {
+            AppError::io(format!(
+                "failed to read Project Commander MCP header: {error}"
+            ))
+        })?;
 
         if bytes_read == 0 {
             return Ok(None);
@@ -1297,36 +1358,44 @@ fn read_message(reader: &mut impl BufRead) -> AppResult<Option<Value>> {
         }
 
         if let Some(value) = trimmed.strip_prefix("Content-Length:") {
-            content_length = Some(
-                value
-                    .trim()
-                    .parse::<usize>()
-                    .map_err(|error| AppError::io(format!("invalid Content-Length header: {error}")))?,
-            );
+            content_length = Some(value.trim().parse::<usize>().map_err(|error| {
+                AppError::io(format!("invalid Content-Length header: {error}"))
+            })?);
         }
     }
 
     let content_length =
         content_length.ok_or_else(|| AppError::io("missing Content-Length header"))?;
     let mut payload = vec![0_u8; content_length];
-    reader
-        .read_exact(&mut payload)
-        .map_err(|error| AppError::io(format!("failed to read Project Commander MCP payload: {error}")))?;
+    reader.read_exact(&mut payload).map_err(|error| {
+        AppError::io(format!(
+            "failed to read Project Commander MCP payload: {error}"
+        ))
+    })?;
 
-    serde_json::from_slice(&payload)
-        .map(Some)
-        .map_err(|error| AppError::internal(format!("failed to decode Project Commander MCP payload: {error}")))
+    serde_json::from_slice(&payload).map(Some).map_err(|error| {
+        AppError::internal(format!(
+            "failed to decode Project Commander MCP payload: {error}"
+        ))
+    })
 }
 
 fn write_message(writer: &mut impl Write, message: &Value) -> AppResult<()> {
-    let raw = serde_json::to_string(message)
-        .map_err(|error| AppError::internal(format!("failed to encode Project Commander MCP response: {error}")))?;
+    let raw = serde_json::to_string(message).map_err(|error| {
+        AppError::internal(format!(
+            "failed to encode Project Commander MCP response: {error}"
+        ))
+    })?;
 
     writer
         .write_all(raw.as_bytes())
         .and_then(|_| writer.write_all(b"\n"))
         .and_then(|_| writer.flush())
-        .map_err(|error| AppError::io(format!("failed to write Project Commander MCP response: {error}")))
+        .map_err(|error| {
+            AppError::io(format!(
+                "failed to write Project Commander MCP response: {error}"
+            ))
+        })
 }
 
 fn read_required_string(arguments: &Value, key: &str) -> AppResult<String> {
@@ -1380,4 +1449,3 @@ fn strip_inbox_response_fields(value: &mut Value) {
         }
     }
 }
-

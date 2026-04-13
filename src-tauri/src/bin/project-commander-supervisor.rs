@@ -3,7 +3,7 @@ use project_commander_lib::db::{
     AgentSignalRecord, AppState, AppendSessionEventInput, CreateDocumentInput,
     CreateLaunchProfileInput, CreateProjectInput, CreateWorkItemInput, DocumentRecord,
     EmitAgentSignalInput, ListAgentMessagesFilter, ReparentRequest, RespondToAgentSignalInput,
-    SendAgentMessageInput, SessionRecord, UpdateAppSettingsInput, UpdateDocumentInput,
+    SendAgentMessageInput, SessionRecord, StorageInfo, UpdateAppSettingsInput, UpdateDocumentInput,
     UpdateLaunchProfileInput, UpdateProjectInput, UpdateWorkItemInput, UpsertWorktreeRecordInput,
     WorkItemRecord, WorktreeRecord,
 };
@@ -15,18 +15,18 @@ use project_commander_lib::session_api::{
 };
 use project_commander_lib::session_host::{now_timestamp_string, SessionRegistry};
 use project_commander_lib::supervisor_api::{
-    AckAgentMessagesApiInput, AgentInboxApiInput, AgentSignalTarget,
-    CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget, CleanupRepairOutput,
-    CleanupWorktreeInput, ClearProjectWorktreesInput, CreateProjectDocumentInput,
-    CreateProjectWorkItemInput, DirectAgentInput, EmitAgentSignalInput as ApiEmitAgentSignalInput,
-    EnsureProjectWorktreeInput, LaunchProfileTarget, LaunchProjectWorktreeAgentInput,
-    ListAgentMessagesApiInput, ListAgentSignalsInput, ListCleanupCandidatesInput,
-    ListProjectDocumentsInput, ListProjectSessionEventsInput, ListProjectSessionsInput,
-    ListProjectWorkItemsInput, ListProjectWorktreesInput, ProjectCallSignTarget, ProjectDocumentTarget,
-    ProjectSessionRecordTarget, ProjectWorkItemTarget, ProjectWorktreeTarget, PinWorktreeInput,
+    AckAgentMessagesApiInput, AgentInboxApiInput, AgentSignalTarget, CleanupActionOutput,
+    CleanupCandidate, CleanupCandidateTarget, CleanupRepairOutput, CleanupWorktreeInput,
+    ClearProjectWorktreesInput, CreateProjectDocumentInput, CreateProjectWorkItemInput,
+    DirectAgentInput, EmitAgentSignalInput as ApiEmitAgentSignalInput, EnsureProjectWorktreeInput,
+    LaunchProfileTarget, LaunchProjectWorktreeAgentInput, ListAgentMessagesApiInput,
+    ListAgentSignalsInput, ListCleanupCandidatesInput, ListProjectDocumentsInput,
+    ListProjectSessionEventsInput, ListProjectSessionsInput, ListProjectWorkItemsInput,
+    ListProjectWorktreesInput, PinWorktreeInput, ProjectCallSignTarget, ProjectDocumentTarget,
+    ProjectSessionRecordTarget, ProjectWorkItemTarget, ProjectWorktreeTarget,
     ReconcileProjectTrackerInput, RepairCleanupInput,
-    RespondToAgentSignalInput as ApiRespondToAgentSignalInput,
-    SendAgentMessageApiInput, UpdateProjectDocumentInput,
+    RespondToAgentSignalInput as ApiRespondToAgentSignalInput, SendAgentMessageApiInput,
+    SessionCrashReport, SessionRecoveryDetails, UpdateProjectDocumentInput,
     UpdateProjectWorkItemInput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
 use project_commander_lib::supervisor_mcp::run_supervisor_mcp_stdio_with_session;
@@ -35,9 +35,9 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -49,6 +49,7 @@ const CLEANUP_KIND_RUNTIME_ARTIFACT: &str = "runtime_artifact";
 const CLEANUP_KIND_STALE_MANAGED_WORKTREE_DIR: &str = "stale_managed_worktree_dir";
 const CLEANUP_KIND_STALE_WORKTREE_RECORD: &str = "stale_worktree_record";
 const CLEANUP_KIND_STALE_DONE_WORKTREE: &str = "stale_done_worktree";
+const SUPERVISOR_SLOW_ROUTE_MS: f64 = 500.0;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -162,12 +163,8 @@ impl From<&str> for RouteError {
 }
 
 fn init_file_logger(db_path: &Path) -> Result<PathBuf, String> {
-    let log_dir = db_path
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join("logs");
-    std::fs::create_dir_all(&log_dir)
-        .map_err(|e| format!("failed to create log dir: {e}"))?;
+    let log_dir = db_path.parent().unwrap_or(Path::new(".")).join("logs");
+    std::fs::create_dir_all(&log_dir).map_err(|e| format!("failed to create log dir: {e}"))?;
     let log_file = log_dir.join("supervisor.log");
 
     // Rotate: if log exceeds 5 MB, move to .prev
@@ -240,7 +237,11 @@ fn run() -> Result<(), String> {
 fn run_server(db_path: PathBuf, runtime_file: PathBuf) -> Result<(), String> {
     let log_file = init_file_logger(&db_path)?;
     log::info!("supervisor starting — log file: {}", log_file.display());
-    log::info!("db: {} | runtime: {}", db_path.display(), runtime_file.display());
+    log::info!(
+        "db: {} | runtime: {}",
+        db_path.display(),
+        runtime_file.display()
+    );
 
     let removed_runtime_artifacts = cleanup_stale_runtime_artifacts(&runtime_file)?;
     let state = AppState::from_database_path(db_path).map_err(|error| error.to_string())?;
@@ -256,14 +257,16 @@ fn run_server(db_path: PathBuf, runtime_file: PathBuf) -> Result<(), String> {
         .get_app_settings()
         .map_err(|error| error.to_string())?;
     let repaired_cleanup = if startup_settings.auto_repair_safe_cleanup_on_startup {
-        Some(repair_cleanup_candidates(
-            &state,
-            &RequestContext {
-                source: "supervisor_startup".to_string(),
-                session_id: None,
-            },
+        Some(
+            repair_cleanup_candidates(
+                &state,
+                &RequestContext {
+                    source: "supervisor_startup".to_string(),
+                    session_id: None,
+                },
+            )
+            .map_err(|error| error.message)?,
         )
-        .map_err(|error| error.message)?)
     } else {
         None
     };
@@ -337,7 +340,14 @@ fn run_server(db_path: PathBuf, runtime_file: PathBuf) -> Result<(), String> {
     let shutdown = Arc::new(AtomicBool::new(false));
 
     for request in server.incoming_requests() {
-        if let Err(error) = handle_request(request, &runtime, &state, &sessions, &crash_manifest, Arc::clone(&shutdown)) {
+        if let Err(error) = handle_request(
+            request,
+            &runtime,
+            &state,
+            &sessions,
+            &crash_manifest,
+            Arc::clone(&shutdown),
+        ) {
             log::error!("request handler error: {error}");
         }
         if shutdown.load(Ordering::Relaxed) {
@@ -369,8 +379,27 @@ fn handle_request(
     }
 
     let context = build_request_context(&request);
+    let method = format!("{:?}", request.method());
+    let route = request
+        .url()
+        .split('?')
+        .next()
+        .unwrap_or_default()
+        .to_string();
+    let started_at = Instant::now();
+    let result = route_request(
+        &mut request,
+        runtime,
+        state,
+        sessions,
+        crash_manifest,
+        &context,
+        &shutdown,
+    );
+    let duration_ms = started_at.elapsed().as_secs_f64() * 1000.0;
+    log_route_result(&method, &route, &context, duration_ms, &result);
 
-    match route_request(&mut request, runtime, state, sessions, crash_manifest, &context, &shutdown) {
+    match result {
         Ok(payload) => respond_json(request, 200, &payload),
         Err(error) => respond_json(
             request,
@@ -380,6 +409,64 @@ fn handle_request(
                 "error": error.message,
                 "code": error.code,
             }),
+        ),
+    }
+}
+
+fn log_route_result(
+    method: &str,
+    route: &str,
+    context: &RequestContext,
+    duration_ms: f64,
+    result: &Result<Value, RouteError>,
+) {
+    let session_id = context
+        .session_id
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "none".to_string());
+
+    match result {
+        Ok(_) if duration_ms >= SUPERVISOR_SLOW_ROUTE_MS => log::warn!(
+            target: "perf",
+            "supervisor_route={} method={} source={} session_id={} status=ok slow=true duration_ms={:.2}",
+            route,
+            method,
+            context.source,
+            session_id,
+            duration_ms
+        ),
+        Ok(_) => log::info!(
+            target: "perf",
+            "supervisor_route={} method={} source={} session_id={} status=ok duration_ms={:.2}",
+            route,
+            method,
+            context.source,
+            session_id,
+            duration_ms
+        ),
+        Err(error) if error.status >= 500 => log::error!(
+            target: "perf",
+            "supervisor_route={} method={} source={} session_id={} status=error http_status={} code={:?} duration_ms={:.2} message={}",
+            route,
+            method,
+            context.source,
+            session_id,
+            error.status,
+            error.code,
+            duration_ms,
+            error.message
+        ),
+        Err(error) => log::warn!(
+            target: "perf",
+            "supervisor_route={} method={} source={} session_id={} status=error http_status={} code={:?} duration_ms={:.2} message={}",
+            route,
+            method,
+            context.source,
+            session_id,
+            error.status,
+            error.code,
+            duration_ms,
+            error.message
         ),
     }
 }
@@ -406,13 +493,13 @@ fn route_request(
         .map_err(|error| {
             RouteError::internal(format!("failed to encode health response: {error}"))
         }),
-        (&Method::Post, "/bootstrap") => serde_json::to_value(
-            state.bootstrap().map_err(RouteError::from)?,
-        )
-        .map(|data| json!({ "ok": true, "data": data }))
-        .map_err(|error| {
-            RouteError::internal(format!("failed to encode bootstrap response: {error}"))
-        }),
+        (&Method::Post, "/bootstrap") => {
+            serde_json::to_value(state.bootstrap().map_err(RouteError::from)?)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode bootstrap response: {error}"))
+                })
+        }
         (&Method::Post, "/settings/update") => {
             let input = read_json::<UpdateAppSettingsInput>(request)?;
             serde_json::to_value(state.update_app_settings(input).map_err(RouteError::from)?)
@@ -425,7 +512,9 @@ fn route_request(
             let input = read_json::<ProjectSessionTarget>(request)?;
             serde_json::to_value(sessions.snapshot(input).map_err(RouteError::from)?)
                 .map(|data| json!({ "ok": true, "data": data }))
-                .map_err(|error| RouteError::internal(format!("failed to encode session snapshot: {error}")))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode session snapshot: {error}"))
+                })
         }
         (&Method::Post, "/session/poll") => {
             let input = read_json::<SessionPollInput>(request)?;
@@ -449,9 +538,14 @@ fn route_request(
         }
         (&Method::Post, "/session/list") => {
             let input = read_json::<ListProjectSessionsInput>(request)?;
-            let sessions = state
-                .list_session_records(input.project_id)
-                .map_err(RouteError::from)?;
+            let sessions = match input.limit {
+                Some(limit) => state
+                    .list_session_records_limited(input.project_id, limit)
+                    .map_err(RouteError::from)?,
+                None => state
+                    .list_session_records(input.project_id)
+                    .map_err(RouteError::from)?,
+            };
 
             serde_json::to_value(sessions)
                 .map(|data| json!({ "ok": true, "data": data }))
@@ -515,6 +609,16 @@ fn route_request(
                     ))
                 })
         }
+        (&Method::Post, "/session/recovery-details") => {
+            let input = read_json::<ProjectSessionRecordTarget>(request)?;
+            serde_json::to_value(load_session_recovery_details(state, input)?)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!(
+                        "failed to encode session recovery details: {error}"
+                    ))
+                })
+        }
         (&Method::Post, "/cleanup/list") => {
             let _ = read_json::<ListCleanupCandidatesInput>(request)?;
             let candidates = list_cleanup_candidates(state).map_err(RouteError::from)?;
@@ -529,7 +633,9 @@ fn route_request(
             let input = read_json::<CleanupCandidateTarget>(request)?;
             serde_json::to_value(remove_cleanup_candidate(state, context, input)?)
                 .map(|data| json!({ "ok": true, "data": data }))
-                .map_err(|error| RouteError::internal(format!("failed to encode cleanup removal: {error}")))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode cleanup removal: {error}"))
+                })
         }
         (&Method::Post, "/cleanup/repair-all") => {
             let _ = read_json::<RepairCleanupInput>(request)?;
@@ -553,13 +659,11 @@ fn route_request(
         }
         (&Method::Post, "/project/current") => {
             let input = read_json::<ProjectSessionTarget>(request)?;
-            serde_json::to_value(
-                state.get_project(input.project_id)?,
-            )
-            .map(|data| json!({ "ok": true, "data": data }))
-            .map_err(|error| {
-                RouteError::internal(format!("failed to encode current project: {error}"))
-            })
+            serde_json::to_value(state.get_project(input.project_id)?)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode current project: {error}"))
+                })
         }
         (&Method::Post, "/project/create") => {
             let input = read_json::<CreateProjectInput>(request)?;
@@ -601,9 +705,7 @@ fn route_request(
         }
         (&Method::Post, "/work-item/list") => {
             let input = read_json::<ListProjectWorkItemsInput>(request)?;
-            state
-                .get_project(input.project_id)
-                ?;
+            state.get_project(input.project_id)?;
             let mut items = state
                 .list_work_items(input.project_id)
                 .map_err(RouteError::from)?;
@@ -782,9 +884,7 @@ fn route_request(
         (&Method::Post, "/work-item/delete") => {
             let input = read_json::<ProjectWorkItemTarget>(request)?;
             let work_item = require_work_item_for_project(state, input.project_id, input.id)?;
-            state
-                .delete_work_item(input.id)
-                .map_err(RouteError::from)?;
+            state.delete_work_item(input.id).map_err(RouteError::from)?;
             append_project_event(
                 state,
                 context,
@@ -798,9 +898,7 @@ fn route_request(
         }
         (&Method::Post, "/document/list") => {
             let input = read_json::<ListProjectDocumentsInput>(request)?;
-            state
-                .get_project(input.project_id)
-                ?;
+            state.get_project(input.project_id)?;
 
             if let Some(work_item_id) = input.work_item_id {
                 let _ = require_work_item_for_project(state, input.project_id, work_item_id)?;
@@ -829,7 +927,9 @@ fn route_request(
             serde_json::to_value(profile)
                 .map(|data| json!({ "ok": true, "data": data }))
                 .map_err(|error| {
-                    RouteError::internal(format!("failed to encode created launch profile: {error}"))
+                    RouteError::internal(format!(
+                        "failed to encode created launch profile: {error}"
+                    ))
                 })
         }
         (&Method::Post, "/launch-profile/update") => {
@@ -841,7 +941,9 @@ fn route_request(
             serde_json::to_value(profile)
                 .map(|data| json!({ "ok": true, "data": data }))
                 .map_err(|error| {
-                    RouteError::internal(format!("failed to encode updated launch profile: {error}"))
+                    RouteError::internal(format!(
+                        "failed to encode updated launch profile: {error}"
+                    ))
                 })
         }
         (&Method::Post, "/launch-profile/delete") => {
@@ -922,9 +1024,7 @@ fn route_request(
         (&Method::Post, "/document/delete") => {
             let input = read_json::<ProjectDocumentTarget>(request)?;
             let document = require_document_for_project(state, input.project_id, input.id)?;
-            state
-                .delete_document(input.id)
-                .map_err(RouteError::from)?;
+            state.delete_document(input.id).map_err(RouteError::from)?;
             append_project_event(
                 state,
                 context,
@@ -970,8 +1070,7 @@ fn route_request(
         }
         (&Method::Post, "/worktree/launch-agent") => {
             let input = read_json::<LaunchProjectWorktreeAgentInput>(request)?;
-            let launched =
-                launch_worktree_agent(state, sessions, runtime, context, input)?;
+            let launched = launch_worktree_agent(state, sessions, runtime, context, input)?;
             append_project_event(
                 state,
                 context,
@@ -985,12 +1084,20 @@ fn route_request(
             serde_json::to_value(launched)
                 .map(|data| json!({ "ok": true, "data": data }))
                 .map_err(|error| {
-                    RouteError::internal(format!("failed to encode launched worktree agent: {error}"))
+                    RouteError::internal(format!(
+                        "failed to encode launched worktree agent: {error}"
+                    ))
                 })
         }
         (&Method::Post, "/worktree/remove") => {
             let input = read_json::<ProjectWorktreeTarget>(request)?;
-            let removed = remove_project_worktree(state, sessions, input.project_id, input.worktree_id, false)?;
+            let removed = remove_project_worktree(
+                state,
+                sessions,
+                input.project_id,
+                input.worktree_id,
+                false,
+            )?;
             append_project_event(
                 state,
                 context,
@@ -1043,7 +1150,13 @@ fn route_request(
         }
         (&Method::Post, "/worktree/cleanup") => {
             let input = read_json::<CleanupWorktreeInput>(request)?;
-            let removed = cleanup_project_worktree(state, sessions, input.project_id, input.worktree_id, input.force)?;
+            let removed = cleanup_project_worktree(
+                state,
+                sessions,
+                input.project_id,
+                input.worktree_id,
+                input.force,
+            )?;
             append_project_event(
                 state,
                 context,
@@ -1062,7 +1175,8 @@ fn route_request(
         }
         (&Method::Post, "/worktree/pin") => {
             let input = read_json::<PinWorktreeInput>(request)?;
-            let worktree = pin_project_worktree(state, input.project_id, input.worktree_id, input.pinned)?;
+            let worktree =
+                pin_project_worktree(state, input.project_id, input.worktree_id, input.pinned)?;
             append_project_event(
                 state,
                 context,
@@ -1081,10 +1195,20 @@ fn route_request(
         }
         (&Method::Post, "/signal/emit") => {
             let input = read_json::<ApiEmitAgentSignalInput>(request)?;
-            let signal = emit_agent_signal(state, sessions, context, input.project_id, &input.signal_type, &input.message, input.context_json.as_deref())?;
+            let signal = emit_agent_signal(
+                state,
+                sessions,
+                context,
+                input.project_id,
+                &input.signal_type,
+                &input.message,
+                input.context_json.as_deref(),
+            )?;
             serde_json::to_value(&signal)
                 .map(|data| json!({ "ok": true, "data": data }))
-                .map_err(|error| RouteError::internal(format!("failed to encode emitted signal: {error}")))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode emitted signal: {error}"))
+                })
         }
         (&Method::Post, "/signal/list") => {
             let input = read_json::<ListAgentSignalsInput>(request)?;
@@ -1098,11 +1222,7 @@ fn route_request(
                 }
             }
             let signals = state
-                .list_agent_signals(
-                    input.project_id,
-                    input.worktree_id,
-                    input.status.as_deref(),
-                )
+                .list_agent_signals(input.project_id, input.worktree_id, input.status.as_deref())
                 .map_err(RouteError::from)?;
             Ok(json!({ "ok": true, "data": { "signals": signals } }))
         }
@@ -1117,10 +1237,19 @@ fn route_request(
         }
         (&Method::Post, "/signal/respond") => {
             let input = read_json::<ApiRespondToAgentSignalInput>(request)?;
-            let signal = respond_to_agent_signal(state, sessions, context, input.project_id, input.id, &input.response)?;
+            let signal = respond_to_agent_signal(
+                state,
+                sessions,
+                context,
+                input.project_id,
+                input.id,
+                &input.response,
+            )?;
             serde_json::to_value(&signal)
                 .map(|data| json!({ "ok": true, "data": data }))
-                .map_err(|error| RouteError::internal(format!("failed to encode responded signal: {error}")))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode responded signal: {error}"))
+                })
         }
         (&Method::Post, "/signal/acknowledge") => {
             let input = read_json::<AgentSignalTarget>(request)?;
@@ -1138,11 +1267,20 @@ fn route_request(
             );
             serde_json::to_value(&signal)
                 .map(|data| json!({ "ok": true, "data": data }))
-                .map_err(|error| RouteError::internal(format!("failed to encode acknowledged signal: {error}")))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode acknowledged signal: {error}"))
+                })
         }
         (&Method::Post, "/agent/direct") => {
             let input = read_json::<DirectAgentInput>(request)?;
-            direct_agent(state, sessions, context, input.project_id, input.worktree_id, &input.message)?;
+            direct_agent(
+                state,
+                sessions,
+                context,
+                input.project_id,
+                input.worktree_id,
+                &input.message,
+            )?;
             Ok(json!({ "ok": true }))
         }
         (&Method::Post, "/message/send") => {
@@ -1150,7 +1288,9 @@ fn route_request(
             let result = handle_message_send(state, sessions, context, input)?;
             serde_json::to_value(&result)
                 .map(|data| json!({ "ok": true, "data": data }))
-                .map_err(|error| RouteError::internal(format!("failed to encode sent message: {error}")))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode sent message: {error}"))
+                })
         }
         (&Method::Post, "/message/list") => {
             let input = read_json::<ListAgentMessagesApiInput>(request)?;
@@ -1174,7 +1314,14 @@ fn route_request(
                 .agent_name
                 .unwrap_or_else(|| resolve_agent_name_from_context(state, context));
             let messages = state
-                .get_agent_inbox(input.project_id, &agent_name, input.unread_only, input.from_agent, input.message_type, input.limit)
+                .get_agent_inbox(
+                    input.project_id,
+                    &agent_name,
+                    input.unread_only,
+                    input.from_agent,
+                    input.message_type,
+                    input.limit,
+                )
                 .map_err(RouteError::from)?;
             Ok(json!({ "ok": true, "data": { "messages": messages } }))
         }
@@ -1195,18 +1342,16 @@ fn route_request(
             shutdown.store(true, Ordering::Relaxed);
             Ok(json!({ "ok": true, "data": null }))
         }
-        (&Method::Get, "/crash-recovery-manifest") => {
-            match crash_manifest {
-                Some(manifest) => serde_json::to_value(manifest)
-                    .map(|data| json!({ "ok": true, "data": data }))
-                    .map_err(|error| {
-                        RouteError::internal(format!(
-                            "failed to encode crash recovery manifest: {error}"
-                        ))
-                    }),
-                None => Ok(json!({ "ok": true, "data": null })),
-            }
-        }
+        (&Method::Get, "/crash-recovery-manifest") => match crash_manifest {
+            Some(manifest) => serde_json::to_value(manifest)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!(
+                        "failed to encode crash recovery manifest: {error}"
+                    ))
+                }),
+            None => Ok(json!({ "ok": true, "data": null })),
+        },
         (&Method::Post, "/tracker/reconcile") => {
             let input = read_json::<ReconcileProjectTrackerInput>(request)?;
             reconcile_tracker_body(state, sessions, input.project_id)
@@ -1220,9 +1365,7 @@ fn require_work_item_for_project(
     project_id: i64,
     work_item_id: i64,
 ) -> Result<WorkItemRecord, RouteError> {
-    let work_item = state
-        .get_work_item(work_item_id)
-        ?;
+    let work_item = state.get_work_item(work_item_id)?;
 
     if work_item.project_id != project_id {
         return Err(RouteError::not_found(format!(
@@ -1239,16 +1382,24 @@ fn reconcile_tracker_body(
     project_id: i64,
 ) -> Result<Value, RouteError> {
     let project = state.get_project(project_id)?;
-    let prefix = project.work_item_prefix.as_deref().unwrap_or("PROJECT").to_string();
+    let prefix = project
+        .work_item_prefix
+        .as_deref()
+        .unwrap_or("PROJECT")
+        .to_string();
 
-    let all_items = state.list_work_items(project_id).map_err(RouteError::from)?;
+    let all_items = state
+        .list_work_items(project_id)
+        .map_err(RouteError::from)?;
 
     // Find tracker (sequence_number == 0, no parent)
     let tracker = all_items
         .iter()
         .find(|item| item.sequence_number == 0 && item.parent_work_item_id.is_none())
         .ok_or_else(|| {
-            RouteError::not_found(format!("{prefix}-0 tracker not found for project {project_id}"))
+            RouteError::not_found(format!(
+                "{prefix}-0 tracker not found for project {project_id}"
+            ))
         })?
         .clone();
 
@@ -1259,7 +1410,10 @@ fn reconcile_tracker_body(
     let mut children_map: HashMap<i64, Vec<WorkItemRecord>> = HashMap::new();
     for item in &all_items {
         if let Some(parent_id) = item.parent_work_item_id {
-            children_map.entry(parent_id).or_default().push(item.clone());
+            children_map
+                .entry(parent_id)
+                .or_default()
+                .push(item.clone());
         }
     }
     for children in children_map.values_mut() {
@@ -1572,9 +1726,7 @@ fn require_worktree_for_project(
     project_id: i64,
     worktree_id: i64,
 ) -> Result<WorktreeRecord, RouteError> {
-    let worktree = state
-        .get_worktree(worktree_id)
-        ?;
+    let worktree = state.get_worktree(worktree_id)?;
 
     if worktree.project_id != project_id {
         return Err(RouteError::not_found(format!(
@@ -1590,9 +1742,7 @@ fn ensure_project_worktree(
     project_id: i64,
     work_item_id: i64,
 ) -> Result<WorktreeRecord, RouteError> {
-    let project = state
-        .get_project(project_id)
-        ?;
+    let project = state.get_project(project_id)?;
     let work_item = require_work_item_for_project(state, project_id, work_item_id)?;
 
     let existing = state
@@ -1601,9 +1751,7 @@ fn ensure_project_worktree(
     let branch_name = existing
         .as_ref()
         .map(|record| record.branch_name.clone())
-        .unwrap_or_else(|| {
-            build_worktree_branch_name(&work_item.call_sign, &work_item.title)
-        });
+        .unwrap_or_else(|| build_worktree_branch_name(&work_item.call_sign, &work_item.title));
     let worktree_path = existing
         .as_ref()
         .map(|record| PathBuf::from(&record.worktree_path))
@@ -1670,35 +1818,92 @@ fn launch_worktree_agent(
     context: &RequestContext,
     input: LaunchProjectWorktreeAgentInput,
 ) -> Result<WorktreeLaunchOutput, RouteError> {
-    let _project = state
-        .get_project(input.project_id)
-        ?;
-    let _work_item = require_work_item_for_project(state, input.project_id, input.work_item_id)?;
-    let worktree = ensure_project_worktree(state, input.project_id, input.work_item_id)?;
-    let launch_profile_id = resolve_worktree_launch_profile_id(
-        state,
-        context.session_id,
-        input.launch_profile_id,
-    )?;
-    let session = sessions
-        .launch(
-            LaunchSessionInput {
-                project_id: input.project_id,
-                worktree_id: Some(worktree.id),
-                launch_profile_id,
-                cols: 120,
-                rows: 32,
-                startup_prompt: None,
-                model: input.model,
-                execution_mode: input.execution_mode,
-            },
-            state,
-            runtime,
-            &context.source,
-        )
-        .map_err(RouteError::from)?;
+    let started_at = Instant::now();
+    let requested_launch_profile_id = input.launch_profile_id;
+    let requested_model = input.model.clone().unwrap_or_else(|| "default".to_string());
+    let requested_execution_mode = input
+        .execution_mode
+        .clone()
+        .unwrap_or_else(|| "default".to_string());
 
-    Ok(WorktreeLaunchOutput { worktree, session })
+    log::info!(
+        "worktree agent launch requested — project_id={} work_item_id={} requested_launch_profile_id={} source={} source_session_id={} model={} execution_mode={}",
+        input.project_id,
+        input.work_item_id,
+        requested_launch_profile_id
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "default".to_string()),
+        context.source,
+        context
+            .session_id
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none".to_string()),
+        requested_model,
+        requested_execution_mode
+    );
+
+    let result: Result<WorktreeLaunchOutput, RouteError> = (|| {
+        let _project = state.get_project(input.project_id)?;
+        let _work_item =
+            require_work_item_for_project(state, input.project_id, input.work_item_id)?;
+        let worktree = ensure_project_worktree(state, input.project_id, input.work_item_id)?;
+        let launch_profile_id =
+            resolve_worktree_launch_profile_id(state, context.session_id, input.launch_profile_id)?;
+        let session = sessions
+            .launch(
+                LaunchSessionInput {
+                    project_id: input.project_id,
+                    worktree_id: Some(worktree.id),
+                    launch_profile_id,
+                    cols: 120,
+                    rows: 32,
+                    startup_prompt: None,
+                    resume_session_id: None,
+                    model: input.model,
+                    execution_mode: input.execution_mode,
+                },
+                state,
+                runtime,
+                &context.source,
+            )
+            .map_err(RouteError::from)?;
+
+        Ok(WorktreeLaunchOutput { worktree, session })
+    })();
+
+    let duration_ms = started_at.elapsed().as_secs_f64() * 1000.0;
+    match &result {
+        Ok(output) if duration_ms >= SUPERVISOR_SLOW_ROUTE_MS => log::warn!(
+            target: "perf",
+            "worktree_agent_launch status=ok slow=true duration_ms={:.2} project_id={} work_item_id={} worktree_id={} session_id={} source={}",
+            duration_ms,
+            input.project_id,
+            input.work_item_id,
+            output.worktree.id,
+            output.session.session_id,
+            context.source
+        ),
+        Ok(output) => log::info!(
+            "worktree agent launch completed — project_id={} work_item_id={} worktree_id={} session_id={} duration_ms={:.2} source={}",
+            input.project_id,
+            input.work_item_id,
+            output.worktree.id,
+            output.session.session_id,
+            duration_ms,
+            context.source
+        ),
+        Err(error) => log::error!(
+            "worktree agent launch failed — project_id={} work_item_id={} duration_ms={:.2} source={} code={:?} message={}",
+            input.project_id,
+            input.work_item_id,
+            duration_ms,
+            context.source,
+            error.code,
+            error.message
+        ),
+    }
+
+    result
 }
 
 fn resolve_worktree_launch_profile_id(
@@ -1707,16 +1912,12 @@ fn resolve_worktree_launch_profile_id(
     requested_launch_profile_id: Option<i64>,
 ) -> Result<i64, RouteError> {
     if let Some(launch_profile_id) = requested_launch_profile_id {
-        state
-            .get_launch_profile(launch_profile_id)
-            ?;
+        state.get_launch_profile(launch_profile_id)?;
         return Ok(launch_profile_id);
     }
 
     if let Some(source_session_id) = source_session_id {
-        let source_session = state
-            .get_session_record(source_session_id)
-            ?;
+        let source_session = state.get_session_record(source_session_id)?;
 
         if let Some(launch_profile_id) = source_session.launch_profile_id {
             return Ok(launch_profile_id);
@@ -1733,7 +1934,9 @@ fn resolve_worktree_launch_profile_id(
         .launch_profiles
         .first()
         .map(|profile| profile.id)
-        .ok_or_else(|| RouteError::bad_request("no launch profile is available for worktree launch"))
+        .ok_or_else(|| {
+            RouteError::bad_request("no launch profile is available for worktree launch")
+        })
 }
 
 fn latest_session_record_for_worktree(
@@ -1807,7 +2010,12 @@ fn remove_worktree_path_artifacts(
     if is_git_worktree_path(worktree_path) {
         run_git_command(
             project_git_root,
-            &["worktree", "remove", "--force", &worktree_path.display().to_string()],
+            &[
+                "worktree",
+                "remove",
+                "--force",
+                &worktree_path.display().to_string(),
+            ],
         )?;
     } else if path_is_within(worktree_root, worktree_path) {
         let metadata = fs::metadata(worktree_path).map_err(|error| {
@@ -1855,9 +2063,7 @@ fn remove_project_worktree(
     worktree_id: i64,
     allow_interrupted: bool,
 ) -> Result<WorktreeRecord, RouteError> {
-    let project = state
-        .get_project(project_id)
-        ?;
+    let project = state.get_project(project_id)?;
     let worktree = require_worktree_for_project(state, project_id, worktree_id)?;
     ensure_worktree_lifecycle_allowed(
         state,
@@ -2052,8 +2258,7 @@ fn write_to_claude_mailbox(
 
         let serialized = serde_json::to_string_pretty(&inbox)
             .map_err(|e| format!("failed to serialize inbox: {e}"))?;
-        fs::write(&inbox_path, serialized)
-            .map_err(|e| format!("failed to write inbox: {e}"))?;
+        fs::write(&inbox_path, serialized).map_err(|e| format!("failed to write inbox: {e}"))?;
 
         Ok(())
     })();
@@ -2185,9 +2390,8 @@ fn handle_message_send(
         &msg,
     );
 
-    serde_json::to_value(&msg).map_err(|error| {
-        RouteError::internal(format!("failed to encode agent message: {error}"))
-    })
+    serde_json::to_value(&msg)
+        .map_err(|error| RouteError::internal(format!("failed to encode agent message: {error}")))
 }
 
 fn handle_message_ack(
@@ -2372,9 +2576,7 @@ fn recreate_project_worktree(
     project_id: i64,
     worktree_id: i64,
 ) -> Result<WorktreeRecord, RouteError> {
-    let project = state
-        .get_project(project_id)
-        ?;
+    let project = state.get_project(project_id)?;
     let worktree = require_worktree_for_project(state, project_id, worktree_id)?;
     ensure_worktree_lifecycle_allowed(
         state,
@@ -2398,9 +2600,7 @@ fn recreate_project_worktree(
 
 fn clear_project_worktrees(state: &AppState, project_id: i64) -> Result<usize, RouteError> {
     let project = state.get_project(project_id)?;
-    let worktrees = state
-        .list_worktrees(project_id)
-        .map_err(RouteError::from)?;
+    let worktrees = state.list_worktrees(project_id).map_err(RouteError::from)?;
     let project_git_root = resolve_git_root(&project.root_path)?;
     let worktree_root = PathBuf::from(state.storage().app_data_dir).join("worktrees");
     let mut cleared = 0_usize;
@@ -2443,13 +2643,9 @@ fn terminate_orphaned_session(
     context: &RequestContext,
     input: ProjectSessionRecordTarget,
 ) -> Result<project_commander_lib::db::SessionRecord, RouteError> {
-    state
-        .get_project(input.project_id)
-        ?;
+    state.get_project(input.project_id)?;
 
-    let session = state
-        .get_session_record(input.session_id)
-        ?;
+    let session = state.get_session_record(input.session_id)?;
 
     if session.project_id != input.project_id {
         return Err(RouteError::not_found(format!(
@@ -2464,6 +2660,17 @@ fn terminate_orphaned_session(
             input.session_id
         )));
     }
+
+    let started_at = Instant::now();
+    log::info!(
+        "orphan cleanup requested — project_id={} session_id={} worktree_id={:?} process_id={:?} root={} source={}",
+        session.project_id,
+        session.id,
+        session.worktree_id,
+        session.process_id,
+        session.root_path,
+        context.source
+    );
 
     append_supervisor_session_event(
         state,
@@ -2516,6 +2723,16 @@ fn terminate_orphaned_session(
                             }),
                         );
 
+                        log::error!(
+                            "orphan cleanup failed — project_id={} session_id={} worktree_id={:?} process_id={:?} duration_ms={:.2} source={} reason=timeout_waiting_for_exit",
+                            session.project_id,
+                            session.id,
+                            session.worktree_id,
+                            session.process_id,
+                            started_at.elapsed().as_secs_f64() * 1000.0,
+                            context.source
+                        );
+
                         return Err(RouteError::internal(format!(
                             "timed out waiting for orphaned session #{} to exit",
                             session.id
@@ -2544,6 +2761,17 @@ fn terminate_orphaned_session(
                                 "requestedBy": context.source,
                                 "error": error,
                             }),
+                        );
+
+                        log::error!(
+                            "orphan cleanup failed — project_id={} session_id={} worktree_id={:?} process_id={:?} duration_ms={:.2} source={} error={}",
+                            session.project_id,
+                            session.id,
+                            session.worktree_id,
+                            session.process_id,
+                            started_at.elapsed().as_secs_f64() * 1000.0,
+                            context.source,
+                            error
                         );
 
                         return Err(RouteError::internal(format!(
@@ -2614,7 +2842,345 @@ fn terminate_orphaned_session(
         }),
     );
 
+    let duration_ms = started_at.elapsed().as_secs_f64() * 1000.0;
+    if duration_ms >= SUPERVISOR_SLOW_ROUTE_MS {
+        log::warn!(
+            target: "perf",
+            "orphan_cleanup status=ok slow=true duration_ms={:.2} project_id={} session_id={} final_state={} process_was_alive={} source={}",
+            duration_ms,
+            updated.project_id,
+            updated.id,
+            updated.state,
+            process_was_alive,
+            context.source
+        );
+    } else {
+        log::info!(
+            "orphan cleanup completed — project_id={} session_id={} final_state={} process_was_alive={} duration_ms={:.2} source={}",
+            updated.project_id,
+            updated.id,
+            updated.state,
+            process_was_alive,
+            duration_ms,
+            context.source
+        );
+    }
+
     Ok(updated)
+}
+
+#[derive(Default)]
+struct ParsedCrashSections {
+    headline: Option<String>,
+    last_activity: Option<String>,
+    startup_prompt: Option<String>,
+    last_output: Option<String>,
+    bun_report_url: Option<String>,
+}
+
+fn session_output_log_path(storage: &StorageInfo, session_id: i64) -> PathBuf {
+    PathBuf::from(&storage.app_data_dir)
+        .join("session-output")
+        .join(format!("{session_id}.log"))
+}
+
+fn session_crash_report_path(storage: &StorageInfo, session_id: i64) -> PathBuf {
+    PathBuf::from(&storage.app_data_dir)
+        .join("crash-reports")
+        .join(format!("{session_id}.json"))
+}
+
+fn first_non_empty_line(value: &str) -> Option<String> {
+    value
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn extract_bun_report_url(value: &str) -> Option<String> {
+    value
+        .split_whitespace()
+        .find(|part| part.starts_with("https://bun.report/"))
+        .map(ToOwned::to_owned)
+}
+
+fn collect_section(lines: &[String]) -> Option<String> {
+    let joined = lines.join("\n").trim().to_string();
+    (!joined.is_empty()).then_some(joined)
+}
+
+fn parse_crash_sections(error: &str) -> ParsedCrashSections {
+    let mut parsed = ParsedCrashSections {
+        headline: first_non_empty_line(error),
+        bun_report_url: extract_bun_report_url(error),
+        ..ParsedCrashSections::default()
+    };
+    let mut last_activity = Vec::new();
+    let mut startup_prompt = Vec::new();
+    let mut last_output = Vec::new();
+    let mut section = "";
+
+    for line in error.lines() {
+        let trimmed = line.trim_end();
+        if trimmed == "--- last activity ---" {
+            section = "last_activity";
+            continue;
+        }
+        if trimmed == "--- startup prompt ---" {
+            section = "startup_prompt";
+            continue;
+        }
+        if trimmed.starts_with("--- last output") {
+            section = "last_output";
+            continue;
+        }
+
+        match section {
+            "last_activity" => last_activity.push(trimmed.to_string()),
+            "startup_prompt" => startup_prompt.push(trimmed.to_string()),
+            "last_output" => last_output.push(trimmed.to_string()),
+            _ => {}
+        }
+    }
+
+    parsed.last_activity = collect_section(&last_activity);
+    parsed.startup_prompt = collect_section(&startup_prompt);
+    parsed.last_output = collect_section(&last_output);
+    if parsed.bun_report_url.is_none() {
+        parsed.bun_report_url = parsed
+            .last_output
+            .as_deref()
+            .and_then(extract_bun_report_url);
+    }
+
+    parsed
+}
+
+fn strip_ansi_escapes(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                while let Some(&next) = chars.peek() {
+                    chars.next();
+                    if next.is_ascii_alphabetic() || next == '~' {
+                        break;
+                    }
+                }
+            } else if chars.peek() == Some(&']') {
+                chars.next();
+                while let Some(&next) = chars.peek() {
+                    chars.next();
+                    if next == '\x07' {
+                        break;
+                    }
+                    if next == '\x1b' && chars.peek() == Some(&'\\') {
+                        chars.next();
+                        break;
+                    }
+                }
+            } else {
+                chars.next();
+            }
+        } else {
+            output.push(ch);
+        }
+    }
+    output
+}
+
+fn trim_to_last_chars(value: &str, max_chars: usize) -> String {
+    let total = value.chars().count();
+    if total <= max_chars {
+        return value.to_string();
+    }
+
+    let tail: String = value
+        .chars()
+        .skip(total.saturating_sub(max_chars))
+        .collect();
+    format!("…{tail}")
+}
+
+fn read_log_tail(path: &Path, max_chars: usize) -> Option<String> {
+    let raw = fs::read_to_string(path).ok()?;
+    let clean = strip_ansi_escapes(&raw);
+    let trimmed = clean.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(trim_to_last_chars(trimmed, max_chars))
+}
+
+fn load_persisted_session_crash_report(
+    storage: &StorageInfo,
+    session_id: i64,
+) -> Option<SessionCrashReport> {
+    let path = session_crash_report_path(storage, session_id);
+    let raw = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<SessionCrashReport>(&raw).ok()
+}
+
+fn latest_session_exit_error(state: &AppState, session_id: i64) -> Option<String> {
+    state
+        .list_session_events_for_session(session_id, 12)
+        .ok()?
+        .into_iter()
+        .find(|event| event.event_type == "session.exited")
+        .and_then(|event| serde_json::from_str::<Value>(&event.payload_json).ok())
+        .and_then(|payload| {
+            payload
+                .get("error")
+                .and_then(|value| value.as_str())
+                .map(ToOwned::to_owned)
+        })
+}
+
+fn build_fallback_session_crash_report(
+    state: &AppState,
+    session: &SessionRecord,
+) -> Option<SessionCrashReport> {
+    let storage = state.storage();
+    let output_log_path = session_output_log_path(&storage, session.id);
+    let crash_report_path = session_crash_report_path(&storage, session.id);
+    let error = latest_session_exit_error(state, session.id);
+    let parsed = error
+        .as_deref()
+        .map(parse_crash_sections)
+        .unwrap_or_default();
+    let last_output = parsed
+        .last_output
+        .clone()
+        .or_else(|| read_log_tail(&output_log_path, 4_000));
+    let headline = parsed
+        .headline
+        .clone()
+        .or_else(|| last_output.as_deref().and_then(first_non_empty_line))
+        .or_else(|| {
+            session
+                .exit_code
+                .map(|code| format!("session exited with code {code}"))
+        });
+    let startup_prompt = (!session.startup_prompt.trim().is_empty())
+        .then(|| session.startup_prompt.clone())
+        .or(parsed.startup_prompt.clone());
+    let bun_report_url = parsed
+        .bun_report_url
+        .clone()
+        .or_else(|| error.as_deref().and_then(extract_bun_report_url));
+
+    if error.is_none() && last_output.is_none() && session.state != "failed" {
+        return None;
+    }
+
+    Some(SessionCrashReport {
+        session_id: session.id,
+        project_id: session.project_id,
+        worktree_id: session.worktree_id,
+        launch_profile_id: session.launch_profile_id,
+        profile_label: session.profile_label.clone(),
+        root_path: session.root_path.clone(),
+        started_at: session.started_at.clone(),
+        ended_at: session.ended_at.clone(),
+        exit_code: session.exit_code,
+        exit_success: session.exit_success,
+        error,
+        headline,
+        last_activity: parsed.last_activity,
+        startup_prompt,
+        last_output,
+        output_log_path: output_log_path
+            .is_file()
+            .then(|| output_log_path.display().to_string()),
+        crash_report_path: crash_report_path
+            .is_file()
+            .then(|| crash_report_path.display().to_string()),
+        bun_report_url,
+    })
+}
+
+fn hydrate_session_crash_report(
+    storage: &StorageInfo,
+    session: &SessionRecord,
+    report: &mut SessionCrashReport,
+) {
+    let output_log_path = session_output_log_path(storage, session.id);
+    let crash_report_path = session_crash_report_path(storage, session.id);
+
+    if report.launch_profile_id.is_none() {
+        report.launch_profile_id = session.launch_profile_id;
+    }
+    if report.ended_at.is_none() {
+        report.ended_at = session.ended_at.clone();
+    }
+    if report.exit_code.is_none() {
+        report.exit_code = session.exit_code;
+    }
+    if report.exit_success.is_none() {
+        report.exit_success = session.exit_success;
+    }
+    if report.startup_prompt.is_none() && !session.startup_prompt.trim().is_empty() {
+        report.startup_prompt = Some(session.startup_prompt.clone());
+    }
+    if report.output_log_path.is_none() && output_log_path.is_file() {
+        report.output_log_path = Some(output_log_path.display().to_string());
+    }
+    if report.crash_report_path.is_none() && crash_report_path.is_file() {
+        report.crash_report_path = Some(crash_report_path.display().to_string());
+    }
+    if report.last_output.is_none() {
+        report.last_output = read_log_tail(&output_log_path, 4_000);
+    }
+    if report.headline.is_none() {
+        report.headline = report
+            .error
+            .as_deref()
+            .and_then(first_non_empty_line)
+            .or_else(|| report.last_output.as_deref().and_then(first_non_empty_line));
+    }
+    if report.bun_report_url.is_none() {
+        report.bun_report_url = report
+            .error
+            .as_deref()
+            .and_then(extract_bun_report_url)
+            .or_else(|| {
+                report
+                    .last_output
+                    .as_deref()
+                    .and_then(extract_bun_report_url)
+            });
+    }
+}
+
+fn load_session_recovery_details(
+    state: &AppState,
+    input: ProjectSessionRecordTarget,
+) -> Result<SessionRecoveryDetails, RouteError> {
+    state.get_project(input.project_id)?;
+    let session = state.get_session_record(input.session_id)?;
+
+    if session.project_id != input.project_id {
+        return Err(RouteError::not_found(format!(
+            "session #{} is not part of project #{}",
+            input.session_id, input.project_id
+        )));
+    }
+
+    let storage = state.storage();
+    let mut crash_report = load_persisted_session_crash_report(&storage, session.id)
+        .or_else(|| build_fallback_session_crash_report(state, &session));
+
+    if let Some(report) = &mut crash_report {
+        hydrate_session_crash_report(&storage, &session, report);
+    }
+
+    Ok(SessionRecoveryDetails {
+        session,
+        crash_report,
+    })
 }
 
 fn cleanup_stale_runtime_artifacts(runtime_file: &Path) -> Result<Vec<PathBuf>, String> {
@@ -2676,11 +3242,22 @@ fn repair_cleanup_candidates(
     context: &RequestContext,
 ) -> Result<CleanupRepairOutput, RouteError> {
     let candidates = list_cleanup_candidates(state).map_err(RouteError::from)?;
+    log::info!(
+        "repair cleanup requested — candidate_count={} source={}",
+        candidates.len(),
+        context.source
+    );
     let mut actions = Vec::with_capacity(candidates.len());
 
     for candidate in candidates {
         actions.push(apply_cleanup_candidate(state, context, candidate)?);
     }
+
+    log::info!(
+        "repair cleanup completed — repaired_count={} source={}",
+        actions.len(),
+        context.source
+    );
 
     Ok(CleanupRepairOutput { actions })
 }
@@ -2710,125 +3287,189 @@ fn apply_cleanup_candidate(
     candidate: CleanupCandidate,
 ) -> Result<CleanupActionOutput, RouteError> {
     let candidate_path = PathBuf::from(&candidate.path);
+    let candidate_kind = candidate.kind.clone();
+    let candidate_path_text = candidate.path.clone();
+    let candidate_project_id = candidate.project_id;
+    let candidate_worktree_id = candidate.worktree_id;
+    let started_at = Instant::now();
 
-    match candidate.kind.as_str() {
-        CLEANUP_KIND_RUNTIME_ARTIFACT => {
-            let runtime_root = PathBuf::from(state.storage().app_data_dir).join("runtime");
-            remove_cleanup_path(&runtime_root, &candidate_path)?;
-        }
-        CLEANUP_KIND_STALE_MANAGED_WORKTREE_DIR => {
-            let worktree_root = PathBuf::from(state.storage().app_data_dir).join("worktrees");
-            remove_cleanup_path(&worktree_root, &candidate_path)?;
+    log::info!(
+        "cleanup candidate apply requested — kind={} path={} project_id={:?} worktree_id={:?} source={}",
+        candidate_kind,
+        candidate_path_text,
+        candidate_project_id,
+        candidate_worktree_id,
+        context.source
+    );
 
-            if let Some(parent) = candidate_path.parent() {
-                remove_empty_ancestor_dirs(&worktree_root, parent)?;
+    let result = (|| {
+        match candidate.kind.as_str() {
+            CLEANUP_KIND_RUNTIME_ARTIFACT => {
+                let runtime_root = PathBuf::from(state.storage().app_data_dir).join("runtime");
+                remove_cleanup_path(&runtime_root, &candidate_path)?;
             }
-        }
-        CLEANUP_KIND_STALE_WORKTREE_RECORD => {
-            let project_id = candidate.project_id.ok_or_else(|| {
-                RouteError::internal(
-                    "stale worktree record candidate is missing project id".to_string(),
-                )
-            })?;
-            let worktree_id = candidate.worktree_id.ok_or_else(|| {
-                RouteError::internal(
-                    "stale worktree record candidate is missing worktree id".to_string(),
-                )
-            })?;
-            let worktree = require_worktree_for_project(state, project_id, worktree_id)?;
+            CLEANUP_KIND_STALE_MANAGED_WORKTREE_DIR => {
+                let worktree_root = PathBuf::from(state.storage().app_data_dir).join("worktrees");
+                remove_cleanup_path(&worktree_root, &candidate_path)?;
 
-            state
-                .delete_worktree(worktree_id)
-                .map_err(RouteError::from)?;
-            append_project_audit_event(
-                state,
-                project_id,
-                "worktree.record_reconciled",
-                "worktree",
-                worktree_id,
-                &context.source,
-                &json!({
-                    "kind": candidate.kind,
-                    "path": candidate.path,
-                    "projectId": project_id,
-                    "worktreeId": worktree_id,
-                    "branchName": worktree.branch_name,
-                    "workItemId": worktree.work_item_id,
-                    "reason": candidate.reason,
-                }),
-            );
-        }
-        CLEANUP_KIND_STALE_DONE_WORKTREE => {
-            let project_id = candidate.project_id.ok_or_else(|| {
-                RouteError::internal(
-                    "stale done worktree candidate is missing project id".to_string(),
-                )
-            })?;
-            let worktree_id = candidate.worktree_id.ok_or_else(|| {
-                RouteError::internal(
-                    "stale done worktree candidate is missing worktree id".to_string(),
-                )
-            })?;
-            let worktree = require_worktree_for_project(state, project_id, worktree_id)?;
+                if let Some(parent) = candidate_path.parent() {
+                    remove_empty_ancestor_dirs(&worktree_root, parent)?;
+                }
+            }
+            CLEANUP_KIND_STALE_WORKTREE_RECORD => {
+                let project_id = candidate.project_id.ok_or_else(|| {
+                    RouteError::internal(
+                        "stale worktree record candidate is missing project id".to_string(),
+                    )
+                })?;
+                let worktree_id = candidate.worktree_id.ok_or_else(|| {
+                    RouteError::internal(
+                        "stale worktree record candidate is missing worktree id".to_string(),
+                    )
+                })?;
+                let worktree = require_worktree_for_project(state, project_id, worktree_id)?;
 
-            // Re-verify safety conditions at apply time (defense in depth).
-            if worktree.has_uncommitted_changes {
+                state
+                    .delete_worktree(worktree_id)
+                    .map_err(RouteError::from)?;
+                append_project_audit_event(
+                    state,
+                    project_id,
+                    "worktree.record_reconciled",
+                    "worktree",
+                    worktree_id,
+                    &context.source,
+                    &json!({
+                        "kind": candidate.kind,
+                        "path": candidate.path,
+                        "projectId": project_id,
+                        "worktreeId": worktree_id,
+                        "branchName": worktree.branch_name,
+                        "workItemId": worktree.work_item_id,
+                        "reason": candidate.reason,
+                    }),
+                );
+            }
+            CLEANUP_KIND_STALE_DONE_WORKTREE => {
+                let project_id = candidate.project_id.ok_or_else(|| {
+                    RouteError::internal(
+                        "stale done worktree candidate is missing project id".to_string(),
+                    )
+                })?;
+                let worktree_id = candidate.worktree_id.ok_or_else(|| {
+                    RouteError::internal(
+                        "stale done worktree candidate is missing worktree id".to_string(),
+                    )
+                })?;
+                let worktree = require_worktree_for_project(state, project_id, worktree_id)?;
+
+                // Re-verify safety conditions at apply time (defense in depth).
+                if worktree.has_uncommitted_changes {
+                    return Err(RouteError::bad_request(format!(
+                        "worktree #{worktree_id} has uncommitted changes; skipping auto-cleanup"
+                    )));
+                }
+                if worktree.has_unmerged_commits {
+                    return Err(RouteError::bad_request(format!(
+                        "worktree #{worktree_id} has unmerged commits; skipping auto-cleanup"
+                    )));
+                }
+
+                let project = state.get_project(project_id)?;
+                let project_git_root = resolve_git_root(&project.root_path)?;
+                let worktree_root = PathBuf::from(state.storage().app_data_dir).join("worktrees");
+
+                remove_worktree_path_artifacts(
+                    &project_git_root,
+                    &worktree_root,
+                    Path::new(&worktree.worktree_path),
+                )?;
+
+                // Best-effort branch deletion: -d (not -D) refuses unmerged branches.
+                let _ =
+                    run_git_command(&project_git_root, &["branch", "-d", &worktree.branch_name]);
+
+                state
+                    .delete_worktree(worktree_id)
+                    .map_err(RouteError::from)?;
+                append_project_audit_event(
+                    state,
+                    project_id,
+                    "worktree.auto_cleaned",
+                    "worktree",
+                    worktree_id,
+                    &context.source,
+                    &json!({
+                        "kind": candidate.kind,
+                        "path": candidate.path,
+                        "projectId": project_id,
+                        "worktreeId": worktree_id,
+                        "branchName": worktree.branch_name,
+                        "workItemId": worktree.work_item_id,
+                        "reason": candidate.reason,
+                    }),
+                );
+            }
+            _ => {
                 return Err(RouteError::bad_request(format!(
-                    "worktree #{worktree_id} has uncommitted changes; skipping auto-cleanup"
-                )));
+                    "unsupported cleanup candidate kind: {}",
+                    candidate.kind
+                )))
             }
-            if worktree.has_unmerged_commits {
-                return Err(RouteError::bad_request(format!(
-                    "worktree #{worktree_id} has unmerged commits; skipping auto-cleanup"
-                )));
-            }
-
-            let project = state.get_project(project_id)?;
-            let project_git_root = resolve_git_root(&project.root_path)?;
-            let worktree_root = PathBuf::from(state.storage().app_data_dir).join("worktrees");
-
-            remove_worktree_path_artifacts(
-                &project_git_root,
-                &worktree_root,
-                Path::new(&worktree.worktree_path),
-            )?;
-
-            // Best-effort branch deletion: -d (not -D) refuses unmerged branches.
-            let _ = run_git_command(&project_git_root, &["branch", "-d", &worktree.branch_name]);
-
-            state
-                .delete_worktree(worktree_id)
-                .map_err(RouteError::from)?;
-            append_project_audit_event(
-                state,
-                project_id,
-                "worktree.auto_cleaned",
-                "worktree",
-                worktree_id,
-                &context.source,
-                &json!({
-                    "kind": candidate.kind,
-                    "path": candidate.path,
-                    "projectId": project_id,
-                    "worktreeId": worktree_id,
-                    "branchName": worktree.branch_name,
-                    "workItemId": worktree.work_item_id,
-                    "reason": candidate.reason,
-                }),
-            );
         }
-        _ => {
-            return Err(RouteError::bad_request(format!(
-                "unsupported cleanup candidate kind: {}",
-                candidate.kind
-            )))
-        }
+
+        Ok(CleanupActionOutput {
+            removed: true,
+            candidate,
+        })
+    })();
+
+    let duration_ms = started_at.elapsed().as_secs_f64() * 1000.0;
+    match &result {
+        Ok(_) if duration_ms >= SUPERVISOR_SLOW_ROUTE_MS => log::warn!(
+            target: "perf",
+            "cleanup_candidate status=ok slow=true duration_ms={:.2} kind={} path={} project_id={:?} worktree_id={:?} source={}",
+            duration_ms,
+            candidate_kind,
+            candidate_path_text,
+            candidate_project_id,
+            candidate_worktree_id,
+            context.source
+        ),
+        Ok(_) => log::info!(
+            "cleanup candidate applied — kind={} path={} project_id={:?} worktree_id={:?} duration_ms={:.2} source={}",
+            candidate_kind,
+            candidate_path_text,
+            candidate_project_id,
+            candidate_worktree_id,
+            duration_ms,
+            context.source
+        ),
+        Err(error) if error.status >= 500 => log::error!(
+            "cleanup candidate failed — kind={} path={} project_id={:?} worktree_id={:?} duration_ms={:.2} source={} code={:?} message={}",
+            candidate_kind,
+            candidate_path_text,
+            candidate_project_id,
+            candidate_worktree_id,
+            duration_ms,
+            context.source,
+            error.code,
+            error.message
+        ),
+        Err(error) => log::warn!(
+            "cleanup candidate failed — kind={} path={} project_id={:?} worktree_id={:?} duration_ms={:.2} source={} code={:?} message={}",
+            candidate_kind,
+            candidate_path_text,
+            candidate_project_id,
+            candidate_worktree_id,
+            duration_ms,
+            context.source,
+            error.code,
+            error.message
+        ),
     }
 
-    Ok(CleanupActionOutput {
-        removed: true,
-        candidate,
-    })
+    result
 }
 
 fn collect_runtime_cleanup_candidates(state: &AppState) -> Result<Vec<CleanupCandidate>, String> {
@@ -2953,8 +3594,7 @@ fn collect_stale_worktree_record_candidates(
     state: &AppState,
 ) -> Result<Vec<CleanupCandidate>, String> {
     let projects = state.list_projects().map_err(|error| error.to_string())?;
-    let (protected_worktree_ids, protected_paths) =
-        collect_protected_worktree_state(state)?;
+    let (protected_worktree_ids, protected_paths) = collect_protected_worktree_state(state)?;
     let mut candidates = Vec::new();
 
     for project in projects {
@@ -3746,16 +4386,18 @@ fn build_crash_recovery_manifest(
                 match state.get_worktree(worktree_id) {
                     Ok(worktree) => affected_worktrees.push(worktree),
                     Err(error) => {
-                        log::warn!("failed to load worktree {worktree_id} for crash manifest: {error}");
+                        log::warn!(
+                            "failed to load worktree {worktree_id} for crash manifest: {error}"
+                        );
                     }
                 }
             }
         }
     }
 
-    let affected_work_items = state
-        .list_in_progress_work_items()
-        .map_err(|error| format!("failed to load in-progress work items for crash manifest: {error}"))?;
+    let affected_work_items = state.list_in_progress_work_items().map_err(|error| {
+        format!("failed to load in-progress work items for crash manifest: {error}")
+    })?;
 
     Ok(CrashRecoveryManifest {
         was_crash: true,
@@ -3973,8 +4615,15 @@ mod tests {
 
             for _ in 0..request_count {
                 let request = server.recv().expect("test route request should arrive");
-                handle_request(request, &runtime_for_thread, &state, &sessions)
-                    .expect("test route should be handled");
+                handle_request(
+                    request,
+                    &runtime_for_thread,
+                    &state,
+                    &sessions,
+                    &None,
+                    Arc::new(AtomicBool::new(false)),
+                )
+                .expect("test route should be handled");
             }
         });
 
@@ -3986,13 +4635,24 @@ mod tests {
         Client::new()
     }
 
-    fn unwrap_envelope<T: serde::de::DeserializeOwned>(response: reqwest::blocking::Response, context: &str) -> T {
-        let body: serde_json::Value = response.json().expect(&format!("{context}: should decode JSON"));
-        let data = body.get("data").expect(&format!("{context}: should have 'data' field")).clone();
+    fn unwrap_envelope<T: serde::de::DeserializeOwned>(
+        response: reqwest::blocking::Response,
+        context: &str,
+    ) -> T {
+        let body: serde_json::Value = response
+            .json()
+            .expect(&format!("{context}: should decode JSON"));
+        let data = body
+            .get("data")
+            .expect(&format!("{context}: should have 'data' field"))
+            .clone();
         serde_json::from_value(data).expect(&format!("{context}: should decode inner data"))
     }
 
-    fn unwrap_envelope_list<T: serde::de::DeserializeOwned>(response: reqwest::blocking::Response, context: &str) -> Vec<T> {
+    fn unwrap_envelope_list<T: serde::de::DeserializeOwned>(
+        response: reqwest::blocking::Response,
+        context: &str,
+    ) -> Vec<T> {
         unwrap_envelope::<Vec<T>>(response, context)
     }
 
@@ -4099,7 +4759,8 @@ mod tests {
             .expect("worktree remove request should succeed")
             .error_for_status()
             .expect("worktree remove route should return success");
-        let removed = unwrap_envelope::<WorktreeRecord>(removed, "worktree remove response should decode");
+        let removed =
+            unwrap_envelope::<WorktreeRecord>(removed, "worktree remove response should decode");
 
         handle
             .join()
@@ -4140,6 +4801,7 @@ mod tests {
                 process_id: None,
                 supervisor_pid: None,
                 provider: "test_provider".to_string(),
+                provider_session_id: None,
                 profile_label: "Interrupted".to_string(),
                 root_path: worktree.worktree_path.clone(),
                 state: "interrupted".to_string(),
@@ -4211,6 +4873,7 @@ mod tests {
                 process_id: None,
                 supervisor_pid: None,
                 provider: "test_provider".to_string(),
+                provider_session_id: None,
                 profile_label: "Interrupted".to_string(),
                 root_path: worktree.worktree_path.clone(),
                 state: "interrupted".to_string(),
@@ -4232,7 +4895,10 @@ mod tests {
             .expect("worktree recreate request should succeed")
             .error_for_status()
             .expect("worktree recreate route should return success");
-        let recreated = unwrap_envelope::<WorktreeRecord>(recreated, "worktree recreate response should decode");
+        let recreated = unwrap_envelope::<WorktreeRecord>(
+            recreated,
+            "worktree recreate response should decode",
+        );
 
         handle
             .join()
@@ -4276,7 +4942,8 @@ mod tests {
             .expect("project create request should succeed")
             .error_for_status()
             .expect("project create route should return success");
-        let created_project = unwrap_envelope::<ProjectRecord>(created_project, "project create response");
+        let created_project =
+            unwrap_envelope::<ProjectRecord>(created_project, "project create response");
 
         let updated_project = client
             .post(supervisor_url(&runtime, "/project/update"))
@@ -4291,7 +4958,8 @@ mod tests {
             .expect("project update request should succeed")
             .error_for_status()
             .expect("project update route should return success");
-        let updated_project = unwrap_envelope::<ProjectRecord>(updated_project, "project update response");
+        let updated_project =
+            unwrap_envelope::<ProjectRecord>(updated_project, "project update response");
 
         let created_profile = client
             .post(supervisor_url(&runtime, "/launch-profile/create"))
@@ -4307,7 +4975,10 @@ mod tests {
             .expect("launch profile create request should succeed")
             .error_for_status()
             .expect("launch profile create route should return success");
-        let created_profile = unwrap_envelope::<LaunchProfileRecord>(created_profile, "launch profile create response");
+        let created_profile = unwrap_envelope::<LaunchProfileRecord>(
+            created_profile,
+            "launch profile create response",
+        );
 
         let updated_profile = client
             .post(supervisor_url(&runtime, "/launch-profile/update"))
@@ -4324,7 +4995,10 @@ mod tests {
             .expect("launch profile update request should succeed")
             .error_for_status()
             .expect("launch profile update route should return success");
-        let updated_profile = unwrap_envelope::<LaunchProfileRecord>(updated_profile, "launch profile update response");
+        let updated_profile = unwrap_envelope::<LaunchProfileRecord>(
+            updated_profile,
+            "launch profile update response",
+        );
 
         let updated_settings = client
             .post(supervisor_url(&runtime, "/settings/update"))
@@ -4338,7 +5012,8 @@ mod tests {
             .expect("app settings update request should succeed")
             .error_for_status()
             .expect("app settings update route should return success");
-        let updated_settings = unwrap_envelope::<AppSettings>(updated_settings, "app settings update response");
+        let updated_settings =
+            unwrap_envelope::<AppSettings>(updated_settings, "app settings update response");
 
         client
             .post(supervisor_url(&runtime, "/launch-profile/delete"))
@@ -4384,7 +5059,10 @@ mod tests {
             .launch_profiles
             .iter()
             .any(|profile| profile.id == created_profile.id));
-        assert_eq!(updated_settings.default_launch_profile_id, Some(updated_profile.id));
+        assert_eq!(
+            updated_settings.default_launch_profile_id,
+            Some(updated_profile.id)
+        );
         assert!(updated_settings.auto_repair_safe_cleanup_on_startup);
         assert_eq!(settings.default_launch_profile_id, None);
         assert!(settings.auto_repair_safe_cleanup_on_startup);
@@ -4436,12 +5114,11 @@ mod tests {
 
         assert_eq!(status, reqwest::StatusCode::CONFLICT);
         assert_eq!(body.get("code").and_then(Value::as_str), Some("conflict"));
-        assert!(
-            body.get("error")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .contains("already exists")
-        );
+        assert!(body
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("already exists"));
     }
 
     #[test]
@@ -4474,13 +5151,15 @@ mod tests {
             .expect("invalid work item route server should stop cleanly");
 
         assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
-        assert_eq!(body.get("code").and_then(Value::as_str), Some("invalid_input"));
-        assert!(
-            body.get("error")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .contains("work item type must be")
+        assert_eq!(
+            body.get("code").and_then(Value::as_str),
+            Some("invalid_input")
         );
+        assert!(body
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("work item type must be"));
     }
 
     #[test]
@@ -4496,6 +5175,7 @@ mod tests {
                 process_id: None,
                 supervisor_pid: None,
                 provider: "test_provider".to_string(),
+                provider_session_id: None,
                 profile_label: "Recovery Session".to_string(),
                 root_path: harness.project_root.display().to_string(),
                 state: "running".to_string(),
@@ -4543,6 +5223,7 @@ mod tests {
                 process_id: Some(i64::from(std::process::id())),
                 supervisor_pid: Some(999999),
                 provider: "test_provider".to_string(),
+                provider_session_id: None,
                 profile_label: "Orphaned Session".to_string(),
                 root_path: harness.project_root.display().to_string(),
                 state: "running".to_string(),
@@ -4622,6 +5303,7 @@ mod tests {
                 process_id: None,
                 supervisor_pid: None,
                 provider: "test_provider".to_string(),
+                provider_session_id: None,
                 profile_label: "Protected Worktree Session".to_string(),
                 root_path: protected_path.display().to_string(),
                 state: "orphaned".to_string(),
@@ -4642,7 +5324,10 @@ mod tests {
             .expect("cleanup candidate request should succeed")
             .error_for_status()
             .expect("cleanup candidate route should return success");
-        let candidates = unwrap_envelope_list::<CleanupCandidate>(candidates, "cleanup candidate response should decode");
+        let candidates = unwrap_envelope_list::<CleanupCandidate>(
+            candidates,
+            "cleanup candidate response should decode",
+        );
 
         let removed = client
             .post(supervisor_url(&runtime, "/cleanup/remove"))
@@ -4656,7 +5341,10 @@ mod tests {
             .expect("cleanup remove request should succeed")
             .error_for_status()
             .expect("cleanup remove route should return success");
-        let removed = unwrap_envelope::<CleanupActionOutput>(removed, "cleanup remove response should decode");
+        let removed = unwrap_envelope::<CleanupActionOutput>(
+            removed,
+            "cleanup remove response should decode",
+        );
 
         handle
             .join()
@@ -4703,7 +5391,10 @@ mod tests {
             .expect("cleanup candidate request should succeed")
             .error_for_status()
             .expect("cleanup candidate route should return success");
-        let candidates = unwrap_envelope_list::<CleanupCandidate>(candidates, "cleanup candidate response should decode");
+        let candidates = unwrap_envelope_list::<CleanupCandidate>(
+            candidates,
+            "cleanup candidate response should decode",
+        );
 
         let removed = client
             .post(supervisor_url(&runtime, "/cleanup/remove"))
@@ -4717,7 +5408,10 @@ mod tests {
             .expect("cleanup remove request should succeed")
             .error_for_status()
             .expect("cleanup remove route should return success");
-        let removed = unwrap_envelope::<CleanupActionOutput>(removed, "cleanup remove response should decode");
+        let removed = unwrap_envelope::<CleanupActionOutput>(
+            removed,
+            "cleanup remove response should decode",
+        );
 
         handle
             .join()
@@ -4760,6 +5454,7 @@ mod tests {
                 process_id: Some(i64::from(child.id())),
                 supervisor_pid: Some(123456),
                 provider: "test_provider".to_string(),
+                provider_session_id: None,
                 profile_label: "Orphan Cleanup Session".to_string(),
                 root_path: harness.project_root.display().to_string(),
                 state: "orphaned".to_string(),
@@ -4778,12 +5473,16 @@ mod tests {
             .header("x-project-commander-source", "integration_test")
             .json(&ListProjectSessionsInput {
                 project_id: project.id,
+                limit: None,
             })
             .send()
             .expect("orphaned session list request should succeed")
             .error_for_status()
             .expect("orphaned session list route should return success");
-        let orphaned = unwrap_envelope_list::<SessionRecord>(orphaned, "orphaned session list response should decode");
+        let orphaned = unwrap_envelope_list::<SessionRecord>(
+            orphaned,
+            "orphaned session list response should decode",
+        );
 
         let terminated = client
             .post(supervisor_url(&runtime, "/session/orphaned-terminate"))
@@ -4797,7 +5496,10 @@ mod tests {
             .expect("orphaned session terminate request should succeed")
             .error_for_status()
             .expect("orphaned session terminate route should return success");
-        let terminated = unwrap_envelope::<SessionRecord>(terminated, "orphaned session terminate response should decode");
+        let terminated = unwrap_envelope::<SessionRecord>(
+            terminated,
+            "orphaned session terminate response should decode",
+        );
 
         handle
             .join()
@@ -4846,7 +5548,8 @@ mod tests {
             .expect("bootstrap request should succeed")
             .error_for_status()
             .expect("bootstrap route should return success");
-        let bootstrap = unwrap_envelope::<BootstrapData>(bootstrap, "bootstrap response should decode");
+        let bootstrap =
+            unwrap_envelope::<BootstrapData>(bootstrap, "bootstrap response should decode");
 
         handle
             .join()
@@ -4878,6 +5581,7 @@ mod tests {
             cols: 120,
             rows: 32,
             startup_prompt: None,
+            resume_session_id: None,
             model: None,
             execution_mode: None,
         };
@@ -4994,6 +5698,7 @@ mod tests {
                     cols: 120,
                     rows: 32,
                     startup_prompt: None,
+                    resume_session_id: None,
                     model: None,
                     execution_mode: None,
                 },

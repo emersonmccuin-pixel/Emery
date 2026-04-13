@@ -2,6 +2,11 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import type { DocumentRecord, ProjectRecord, WorkItemRecord } from '../types'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
+import {
+  PanelBanner,
+  PanelEmptyState,
+  PanelLoadingState,
+} from './ui/panel-state'
 import { ScrollArea } from './ui/scroll-area'
 import { Trash2 } from 'lucide-react'
 
@@ -51,6 +56,7 @@ function DocumentsPanel({
     () => documents.find((document) => document.id === selectedDocumentId) ?? documents[0] ?? null,
     [documents, selectedDocumentId],
   )
+  const hasDocuments = documents.length > 0
 
   useEffect(() => {
     setSelectedDocumentId(documents[0]?.id ?? null)
@@ -159,6 +165,8 @@ function DocumentsPanel({
         </Button>
       </div>
 
+      {error ? <PanelBanner className="border-x-0 border-t-0" message={error} /> : null}
+
       <div className="flex-1 overflow-hidden">
         {isCreateOpen ? (
           <ScrollArea className="h-full">
@@ -233,10 +241,36 @@ function DocumentsPanel({
             <div className="w-1/3 border-r border-hud-cyan/20 bg-black/30">
               <ScrollArea className="h-full">
                 <div className="p-1.5 space-y-0.5">
-                  {documents.length === 0 ? (
-                    <div className="text-center py-8 px-2 italic text-muted-foreground text-[10px]">
-                      No documents.
-                    </div>
+                  {!hasDocuments ? (
+                    isLoading ? (
+                      <PanelLoadingState
+                        className="m-2 min-h-[14rem]"
+                        compact
+                        detail="Fetching project documents and linked work item references."
+                        eyebrow="Knowledge base"
+                        title="Loading documents"
+                        tone="cyan"
+                      />
+                    ) : (
+                      <PanelEmptyState
+                        action={
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-8 border-hud-green/40 text-[9px] font-black uppercase tracking-[0.18em] text-hud-green hover:border-hud-green/70 hover:bg-hud-green/10"
+                            onClick={() => setIsCreateOpen(true)}
+                          >
+                            Add First Document
+                          </Button>
+                        }
+                        className="m-2 min-h-[14rem]"
+                        compact
+                        detail="Capture architecture notes, reference material, and project-specific operator context."
+                        eyebrow="Knowledge base"
+                        title="No documents yet"
+                        tone="green"
+                      />
+                    )
                   ) : (
                     documents.map((doc) => (
                       <button
@@ -344,16 +378,27 @@ function DocumentsPanel({
                   </div>
                 </ScrollArea>
               ) : (
-                <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-                  <p className="text-[9px] uppercase tracking-widest">Select document to inspect</p>
+                <div className="flex h-full items-center justify-center p-4">
+                  <PanelEmptyState
+                    className="w-full max-w-lg"
+                    compact
+                    detail={
+                      hasDocuments
+                        ? 'Select a document from the left rail to inspect and edit its contents.'
+                        : 'Create the first document to build a project knowledge base.'
+                    }
+                    eyebrow="Knowledge base"
+                    title={
+                      hasDocuments ? 'Select a document to inspect' : 'No documents yet'
+                    }
+                    tone={hasDocuments ? 'cyan' : 'green'}
+                  />
                 </div>
               )}
             </div>
           </div>
         )}
       </div>
-
-      {error ? <p className="px-3 py-1 bg-destructive/20 text-destructive text-[9px]">{error}</p> : null}
     </div>
   )
 }

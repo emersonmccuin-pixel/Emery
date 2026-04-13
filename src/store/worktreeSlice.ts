@@ -1,5 +1,6 @@
 import type { StateCreator } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
+import { withPerfSpan } from '../perf'
 import type { WorktreeRecord } from '../types'
 import { sortWorktrees } from '../worktrees'
 import type { AppStore, WorktreeSlice } from './types'
@@ -13,13 +14,18 @@ export const createWorktreeSlice: StateCreator<AppStore, [], [], WorktreeSlice> 
   activeWorktreeActionId: null,
   activeWorktreeActionKind: null,
   worktreeRequestId: 0,
+  isLoadingWorktrees: false,
 
   refreshWorktrees: async (projectId) => {
     const requestId = get().worktreeRequestId + 1
-    set({ worktreeRequestId: requestId })
+    set({ worktreeRequestId: requestId, isLoadingWorktrees: true })
 
     try {
-      const items = await invoke<WorktreeRecord[]>('list_worktrees', { projectId })
+      const items = await withPerfSpan(
+        'worktree_refresh',
+        { projectId, requestId },
+        () => invoke<WorktreeRecord[]>('list_worktrees', { projectId }),
+      )
 
       if (requestId !== get().worktreeRequestId) {
         return items
@@ -28,11 +34,15 @@ export const createWorktreeSlice: StateCreator<AppStore, [], [], WorktreeSlice> 
       const nextWorktrees = sortWorktrees(items)
       set((state) => ({
         worktrees: areWorktreeListsEqual(state.worktrees, nextWorktrees) ? state.worktrees : nextWorktrees,
+        isLoadingWorktrees: false,
       }))
       return items
     } catch (error) {
       if (requestId === get().worktreeRequestId) {
-        set({ sessionError: getErrorMessage(error, 'Failed to load worktrees.') })
+        set({
+          worktreeError: getErrorMessage(error, 'Failed to load worktrees.'),
+          isLoadingWorktrees: false,
+        })
       }
       return []
     }

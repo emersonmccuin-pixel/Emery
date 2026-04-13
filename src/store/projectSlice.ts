@@ -1,6 +1,7 @@
 import type { StateCreator } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
+import { startTrackedPerfSpan, withPerfSpan } from '../perf'
 
 import type {
   AppSettings,
@@ -75,11 +76,16 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
 
   bootstrap: async () => {
     try {
-      const [, bootstrap, storage] = await Promise.all([
-        invoke<string>('health_check'),
-        invoke<BootstrapData>('bootstrap_app_state'),
-        invoke<StorageInfo>('get_storage_info'),
-      ])
+      const [, bootstrap, storage] = await withPerfSpan(
+        'bootstrap_state',
+        {},
+        () =>
+          Promise.all([
+            invoke<string>('health_check'),
+            invoke<BootstrapData>('bootstrap_app_state'),
+            invoke<StorageInfo>('get_storage_info'),
+          ]),
+      )
 
       set((state) => ({
         storageInfo: storage,
@@ -102,6 +108,14 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
   },
 
   selectProject: (projectId) => {
+    const state = get()
+    const project = state.projects.find((candidate) => candidate.id === projectId) ?? null
+
+    startTrackedPerfSpan('project-switch', 'project_switch', {
+      projectId,
+      projectName: project?.name ?? 'unknown',
+    })
+
     set({
       selectedProjectId: projectId,
       selectedTerminalWorktreeId: null,
@@ -114,8 +128,6 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
       selectedHistorySessionId: null,
     })
 
-    const state = get()
-    const project = state.projects.find((p) => p.id === projectId)
     if (project) {
       set({
         editProjectName: project.name,
@@ -216,7 +228,16 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
             ? null
             : state.sessionError,
       }))
-      get().invalidateProjectContext()
+      await get().refreshSelectedProjectData([
+        'documents',
+        'worktrees',
+        'liveSessions',
+        'sessionSnapshot',
+        'history',
+        'orphanedSessions',
+        'cleanupCandidates',
+        'workItems',
+      ])
     } catch (error) {
       set({ projectUpdateError: getErrorMessage(error, 'Failed to update project.') })
     } finally {

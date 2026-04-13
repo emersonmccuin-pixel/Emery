@@ -1,6 +1,6 @@
 use crate::db::{
-    AgentMessageRecord, AgentSignalRecord, DocumentRecord, SessionEventRecord,
-    SessionRecord, WorkItemRecord, WorktreeRecord,
+    AgentMessageRecord, AgentSignalRecord, DocumentRecord, SessionEventRecord, SessionRecord,
+    WorkItemRecord, WorktreeRecord,
 };
 use crate::session_api::SessionSnapshot;
 use serde::{Deserialize, Serialize};
@@ -13,6 +13,36 @@ pub struct CrashRecoveryManifest {
     pub orphaned_sessions: Vec<SessionRecord>,
     pub affected_worktrees: Vec<WorktreeRecord>,
     pub affected_work_items: Vec<WorkItemRecord>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionCrashReport {
+    pub session_id: i64,
+    pub project_id: i64,
+    pub worktree_id: Option<i64>,
+    pub launch_profile_id: Option<i64>,
+    pub profile_label: String,
+    pub root_path: String,
+    pub started_at: String,
+    pub ended_at: Option<String>,
+    pub exit_code: Option<i64>,
+    pub exit_success: Option<bool>,
+    pub error: Option<String>,
+    pub headline: Option<String>,
+    pub last_activity: Option<String>,
+    pub startup_prompt: Option<String>,
+    pub last_output: Option<String>,
+    pub output_log_path: Option<String>,
+    pub crash_report_path: Option<String>,
+    pub bun_report_url: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionRecoveryDetails {
+    pub session: SessionRecord,
+    pub crash_report: Option<SessionCrashReport>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -121,6 +151,7 @@ pub struct ProjectDocumentTarget {
 #[serde(rename_all = "camelCase")]
 pub struct ListProjectSessionsInput {
     pub project_id: i64,
+    pub limit: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize)]

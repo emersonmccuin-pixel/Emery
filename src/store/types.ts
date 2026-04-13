@@ -8,6 +8,7 @@ import type {
   ProjectRecord,
   SessionEventRecord,
   SessionRecord,
+  SessionRecoveryDetails,
   SessionSnapshot,
   StorageInfo,
   TerminalExitEvent,
@@ -64,9 +65,34 @@ export type UpdateDocumentInput = {
 
 export type LaunchSessionOptions = {
   startupPrompt?: string
+  resumeSessionId?: string | null
   launchProfileId?: number | null
   worktreeId?: number | null
   worktree?: WorktreeRecord | null
+  attachSnapshot?: boolean
+  activateTerminal?: boolean
+}
+
+export type ResumeSessionRecordOptions = {
+  openTarget?: boolean
+  attachSnapshot?: boolean
+  activateTerminal?: boolean
+  successMessage?: string | null
+}
+
+export type SessionAutoRestartStatus = 'countdown' | 'restarting' | 'blocked'
+
+export type SessionAutoRestartEntry = {
+  projectId: number
+  worktreeId: number | null
+  status: SessionAutoRestartStatus
+  headline: string
+  restartAt: number | null
+  recentCrashCount: number
+  failedSessionId: number | null
+  replacementSessionId: number | null
+  blockedReason: string | null
+  exitCode: number | null
 }
 
 export type ProjectSlice = {
@@ -154,6 +180,7 @@ export type SessionSlice = {
   terminalPromptDraft: TerminalPromptDraft | null
   agentPromptMessage: string | null
   terminatedSessions: Set<string>
+  sessionAutoRestart: Record<string, SessionAutoRestartEntry>
 
   setTerminalPromptDraft: (value: TerminalPromptDraft | null) => void
 
@@ -162,8 +189,13 @@ export type SessionSlice = {
   refreshSelectedSessionSnapshot: () => Promise<SessionSnapshot | null>
   launchSession: (options?: LaunchSessionOptions) => Promise<SessionSnapshot | null>
   stopSession: () => Promise<void>
-  resumeSessionRecord: (record: SessionRecord) => Promise<void>
+  resumeSessionRecord: (
+    record: SessionRecord,
+    options?: ResumeSessionRecordOptions,
+  ) => Promise<SessionSnapshot | null>
   handleSessionExit: (event: TerminalExitEvent) => void
+  cancelSessionAutoRestart: (projectId: number, worktreeId: number | null) => void
+  restartSessionTargetNow: (projectId: number, worktreeId: number | null) => Promise<void>
   selectMainTerminal: () => void
   selectWorktreeTerminal: (worktreeId: number) => void
   sendAgentStartupPrompt: () => Promise<void>
@@ -185,6 +217,8 @@ export type WorkItemSlice = {
 
   setIsDocumentsManagerOpen: (value: boolean) => void
 
+  refreshWorkItems: (projectId: number) => Promise<WorkItemRecord[]>
+  refreshDocuments: (projectId: number) => Promise<DocumentRecord[]>
   loadWorkItems: (projectId: number) => Promise<void>
   loadDocuments: (projectId: number) => Promise<void>
   createWorkItem: (input: CreateWorkItemInput) => Promise<void>
@@ -204,6 +238,7 @@ export type WorktreeSlice = {
   activeWorktreeActionId: number | null
   activeWorktreeActionKind: 'remove' | 'recreate' | 'cleanup' | 'pin' | null
   worktreeRequestId: number
+  isLoadingWorktrees: boolean
 
   refreshWorktrees: (projectId: number) => Promise<WorktreeRecord[]>
   upsertTrackedWorktree: (worktree: WorktreeRecord) => void
@@ -244,19 +279,33 @@ export type HistorySlice = {
 }
 
 export type RecoveryResult = 'pending' | 'resumed' | 'skipped' | 'failed'
+export type RecoveryDetailsStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 export type RecoverySlice = {
   crashManifest: CrashRecoveryManifest | null
   recoveryInProgress: boolean
   recoveryResults: Record<number, RecoveryResult>
+  sessionRecoveryDetails: Record<number, SessionRecoveryDetails>
+  sessionRecoveryStatus: Record<number, RecoveryDetailsStatus>
 
   loadCrashManifest: () => Promise<void>
   dismissRecovery: () => void
   skipSession: (sessionId: number) => void
-  continueSession: (sessionId: number) => void
+  fetchSessionRecoveryDetails: (projectId: number, sessionId: number) => Promise<SessionRecoveryDetails | null>
+  continueSession: (sessionId: number) => Promise<void>
 }
 
 export type AppSettingsTab = 'appearance' | 'accounts' | 'defaults' | 'diagnostics'
+
+export type ProjectRefreshTarget =
+  | 'workItems'
+  | 'documents'
+  | 'worktrees'
+  | 'liveSessions'
+  | 'sessionSnapshot'
+  | 'history'
+  | 'orphanedSessions'
+  | 'cleanupCandidates'
 
 export type UiSlice = {
   activeView: WorkspaceView
@@ -266,7 +315,6 @@ export type UiSlice = {
   isAgentGuideOpen: boolean
   isAppSettingsOpen: boolean
   appSettingsInitialTab: AppSettingsTab
-  contextRefreshKey: number
 
   setActiveView: (value: WorkspaceView) => void
   setActiveThemeId: (id: string) => void
@@ -275,7 +323,7 @@ export type UiSlice = {
   setIsAgentGuideOpen: (value: boolean) => void
   openAppSettings: (tab?: AppSettingsTab) => void
   closeAppSettings: () => void
-  invalidateProjectContext: () => void
+  refreshSelectedProjectData: (targets: ProjectRefreshTarget[]) => Promise<void>
 }
 
 export type AppStore = ProjectSlice &

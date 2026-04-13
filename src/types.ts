@@ -116,6 +116,7 @@ export type WorktreeRecord = {
   pinned: boolean
   isCleanupEligible: boolean
   pendingSignalCount: number
+  agentName: string
   sessionSummary: string
   createdAt: string
   updatedAt: string
@@ -145,6 +146,7 @@ export type SessionRecord = {
   processId?: number | null
   supervisorPid?: number | null
   provider: string
+  providerSessionId?: string | null
   profileLabel: string
   rootPath: string
   state: string
@@ -164,6 +166,32 @@ export type CrashRecoveryManifest = {
   orphanedSessions: SessionRecord[]
   affectedWorktrees: WorktreeRecord[]
   affectedWorkItems: WorkItemRecord[]
+}
+
+export type SessionCrashReport = {
+  sessionId: number
+  projectId: number
+  worktreeId?: number | null
+  launchProfileId?: number | null
+  profileLabel: string
+  rootPath: string
+  startedAt: string
+  endedAt?: string | null
+  exitCode?: number | null
+  exitSuccess?: boolean | null
+  error?: string | null
+  headline?: string | null
+  lastActivity?: string | null
+  startupPrompt?: string | null
+  lastOutput?: string | null
+  outputLogPath?: string | null
+  crashReportPath?: string | null
+  bunReportUrl?: string | null
+}
+
+export type SessionRecoveryDetails = {
+  session: SessionRecord
+  crashReport?: SessionCrashReport | null
 }
 
 export type SessionEventRecord = {

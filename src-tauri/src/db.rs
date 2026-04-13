@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -173,6 +173,7 @@ pub struct SessionRecord {
     pub process_id: Option<i64>,
     pub supervisor_pid: Option<i64>,
     pub provider: String,
+    pub provider_session_id: Option<String>,
     pub profile_label: String,
     pub root_path: String,
     pub state: String,
@@ -350,6 +351,7 @@ pub struct CreateSessionRecordInput {
     pub process_id: Option<i64>,
     pub supervisor_pid: Option<i64>,
     pub provider: String,
+    pub provider_session_id: Option<String>,
     pub profile_label: String,
     pub root_path: String,
     pub state: String,
@@ -421,9 +423,9 @@ impl AppState {
     }
 
     pub fn from_database_path(database_path: PathBuf) -> AppResult<Self> {
-        let db_dir = database_path
-            .parent()
-            .ok_or_else(|| AppError::invalid_input("database path must include a parent directory"))?;
+        let db_dir = database_path.parent().ok_or_else(|| {
+            AppError::invalid_input("database path must include a parent directory")
+        })?;
         let app_data_dir = db_dir.parent().unwrap_or(db_dir);
 
         Self::new(StorageInfo {
@@ -474,10 +476,7 @@ impl AppState {
                 "true",
             )?;
         } else {
-            delete_app_setting(
-                &connection,
-                APP_SETTING_AUTO_REPAIR_SAFE_CLEANUP_ON_STARTUP,
-            )?;
+            delete_app_setting(&connection, APP_SETTING_AUTO_REPAIR_SAFE_CLEANUP_ON_STARTUP)?;
         }
 
         Ok(load_app_settings(&connection)?)
@@ -530,15 +529,13 @@ impl AppState {
         let connection = self.connect()?;
         let existing_project = load_project_by_id(&connection, input.id)?;
         let (resolved_root_path, _) = resolve_project_registration_root(&input.root_path)?;
-        let duplicate = load_projects(&connection)?
-            .into_iter()
-            .find(|project| {
-                project.id != input.id
-                    && project_paths_match(
-                        Path::new(&project.root_path),
-                        Path::new(&resolved_root_path),
-                    )
-            });
+        let duplicate = load_projects(&connection)?.into_iter().find(|project| {
+            project.id != input.id
+                && project_paths_match(
+                    Path::new(&project.root_path),
+                    Path::new(&resolved_root_path),
+                )
+        });
 
         if duplicate.is_some() {
             return Err(AppError::conflict(
@@ -571,9 +568,7 @@ impl AppState {
         let env_json = normalize_env_json(&input.env_json)?;
 
         if label.is_empty() {
-            return Err(AppError::invalid_input(
-                "launch profile label is required",
-            ));
+            return Err(AppError::invalid_input("launch profile label is required"));
         }
 
         if executable.is_empty() {
@@ -621,9 +616,7 @@ impl AppState {
         let env_json = normalize_env_json(&input.env_json)?;
 
         if label.is_empty() {
-            return Err(AppError::invalid_input(
-                "launch profile label is required",
-            ));
+            return Err(AppError::invalid_input("launch profile label is required"));
         }
 
         if executable.is_empty() {
@@ -723,7 +716,8 @@ impl AppState {
 
         let connection = self.connect()?;
         let project = self.get_project(input.project_id)?;
-        let project_prefix = ensure_project_work_item_prefix(&connection, project.id, &project.name)?;
+        let project_prefix =
+            ensure_project_work_item_prefix(&connection, project.id, &project.name)?;
         let identifier = assign_next_work_item_identifier(
             &connection,
             input.project_id,
@@ -1130,12 +1124,13 @@ impl AppState {
                     process_id,
                     supervisor_pid,
                     provider,
+                    provider_session_id,
                     profile_label,
                     root_path,
                     state,
                     startup_prompt,
                     started_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     input.project_id,
                     input.launch_profile_id,
@@ -1143,6 +1138,7 @@ impl AppState {
                     input.process_id,
                     input.supervisor_pid,
                     input.provider,
+                    input.provider_session_id,
                     input.profile_label,
                     input.root_path,
                     input.state,
@@ -1347,7 +1343,12 @@ impl AppState {
     ) -> AppResult<Vec<AgentSignalRecord>> {
         let connection = self.connect()?;
         self.get_project(project_id)?;
-        Ok(load_agent_signals(&connection, project_id, worktree_id, status)?)
+        Ok(load_agent_signals(
+            &connection,
+            project_id,
+            worktree_id,
+            status,
+        )?)
     }
 
     pub fn get_agent_signal(&self, id: i64, project_id: i64) -> AppResult<AgentSignalRecord> {
@@ -1369,9 +1370,7 @@ impl AppState {
         let signal = self.get_agent_signal(input.id, input.project_id)?;
 
         if signal.status == "responded" {
-            return Err(AppError::conflict(
-                "signal has already been responded to",
-            ));
+            return Err(AppError::conflict("signal has already been responded to"));
         }
 
         let response = input.response.trim().to_string();
@@ -1544,7 +1543,8 @@ impl AppState {
             .query_map(params_ref.as_slice(), map_agent_message_record)
             .map_err(|error| format!("failed to query agent messages: {error}"))?;
 
-        Ok(rows.collect::<Result<Vec<_>, _>>()
+        Ok(rows
+            .collect::<Result<Vec<_>, _>>()
             .map_err(|error| format!("failed to map agent messages: {error}"))?)
     }
 
@@ -1597,15 +1597,12 @@ impl AppState {
             .query_map(params_ref.as_slice(), map_agent_message_record)
             .map_err(|error| format!("failed to query agent inbox: {error}"))?;
 
-        Ok(rows.collect::<Result<Vec<_>, _>>()
+        Ok(rows
+            .collect::<Result<Vec<_>, _>>()
             .map_err(|error| format!("failed to map agent inbox: {error}"))?)
     }
 
-    pub fn ack_agent_messages(
-        &self,
-        project_id: i64,
-        message_ids: &[i64],
-    ) -> AppResult<()> {
+    pub fn ack_agent_messages(&self, project_id: i64, message_ids: &[i64]) -> AppResult<()> {
         if message_ids.is_empty() {
             return Ok(());
         }
@@ -1692,13 +1689,28 @@ impl AppState {
     pub fn list_session_records(&self, project_id: i64) -> AppResult<Vec<SessionRecord>> {
         let connection = self.connect()?;
         self.get_project(project_id)?;
-        Ok(load_session_records_by_project_id(&connection, project_id)?)
+        Ok(load_session_records_by_project_id(
+            &connection,
+            project_id,
+            None,
+        )?)
     }
 
-    pub fn list_orphaned_session_records(
+    pub fn list_session_records_limited(
         &self,
         project_id: i64,
+        limit: usize,
     ) -> AppResult<Vec<SessionRecord>> {
+        let connection = self.connect()?;
+        self.get_project(project_id)?;
+        Ok(load_session_records_by_project_id(
+            &connection,
+            project_id,
+            Some(limit),
+        )?)
+    }
+
+    pub fn list_orphaned_session_records(&self, project_id: i64) -> AppResult<Vec<SessionRecord>> {
         let connection = self.connect()?;
         self.get_project(project_id)?;
         Ok(load_orphaned_session_records_by_project_id(
@@ -1719,7 +1731,25 @@ impl AppState {
     ) -> AppResult<Vec<SessionEventRecord>> {
         let connection = self.connect()?;
         self.get_project(project_id)?;
-        Ok(load_session_events_by_project_id(&connection, project_id, limit)?)
+        Ok(load_session_events_by_project_id(
+            &connection,
+            project_id,
+            limit,
+        )?)
+    }
+
+    pub fn list_session_events_for_session(
+        &self,
+        session_id: i64,
+        limit: usize,
+    ) -> AppResult<Vec<SessionEventRecord>> {
+        let connection = self.connect()?;
+        self.get_session_record(session_id)?;
+        Ok(load_session_events_by_session_id(
+            &connection,
+            session_id,
+            limit,
+        )?)
     }
 
     pub fn reconcile_orphaned_running_sessions(&self) -> AppResult<Vec<SessionRecord>> {
@@ -1808,8 +1838,7 @@ fn open_connection(database_path: &Path) -> Result<Connection, String> {
 }
 
 const APP_SETTING_DEFAULT_LAUNCH_PROFILE_ID: &str = "default_launch_profile_id";
-const APP_SETTING_AUTO_REPAIR_SAFE_CLEANUP_ON_STARTUP: &str =
-    "auto_repair_safe_cleanup_on_startup";
+const APP_SETTING_AUTO_REPAIR_SAFE_CLEANUP_ON_STARTUP: &str = "auto_repair_safe_cleanup_on_startup";
 const APP_SETTING_CLEAN_SHUTDOWN: &str = "clean_shutdown";
 
 fn migrate(connection: &Connection) -> Result<(), String> {
@@ -1893,6 +1922,7 @@ fn migrate(connection: &Connection) -> Result<(), String> {
               process_id INTEGER,
               supervisor_pid INTEGER,
               provider TEXT NOT NULL,
+              provider_session_id TEXT,
               profile_label TEXT NOT NULL,
               root_path TEXT NOT NULL,
               state TEXT NOT NULL,
@@ -1951,11 +1981,23 @@ fn migrate(connection: &Connection) -> Result<(), String> {
             CREATE INDEX IF NOT EXISTS idx_sessions_project_id
               ON sessions(project_id);
 
+            CREATE INDEX IF NOT EXISTS idx_sessions_project_recent
+              ON sessions(project_id, started_at DESC, id DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_sessions_project_state_recent
+              ON sessions(project_id, state, started_at DESC, id DESC);
+
             CREATE INDEX IF NOT EXISTS idx_session_events_project_id
               ON session_events(project_id);
 
             CREATE INDEX IF NOT EXISTS idx_session_events_session_id
               ON session_events(session_id);
+
+            CREATE INDEX IF NOT EXISTS idx_session_events_project_recent
+              ON session_events(project_id, id DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_session_events_session_recent
+              ON session_events(session_id, id DESC);
 
             CREATE INDEX IF NOT EXISTS idx_agent_signals_project_id
               ON agent_signals(project_id);
@@ -2011,8 +2053,14 @@ fn migrate(connection: &Connection) -> Result<(), String> {
     ensure_column_exists(connection, "work_items", "call_sign", "TEXT")?;
     ensure_column_exists(connection, "sessions", "process_id", "INTEGER")?;
     ensure_column_exists(connection, "sessions", "supervisor_pid", "INTEGER")?;
+    ensure_column_exists(connection, "sessions", "provider_session_id", "TEXT")?;
     ensure_column_exists(connection, "sessions", "last_heartbeat_at", "TEXT")?;
-    ensure_column_exists(connection, "worktrees", "pinned", "INTEGER NOT NULL DEFAULT 0")?;
+    ensure_column_exists(
+        connection,
+        "worktrees",
+        "pinned",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
     connection
         .execute_batch(
             "
@@ -2057,22 +2105,23 @@ fn seed_defaults(connection: &Connection) -> Result<(), String> {
 }
 
 fn load_app_settings(connection: &Connection) -> Result<AppSettings, String> {
-    let default_launch_profile_id = load_app_setting(connection, APP_SETTING_DEFAULT_LAUNCH_PROFILE_ID)?
-        .map(|raw| {
-            raw.parse::<i64>().map_err(|error| {
-                format!(
+    let default_launch_profile_id =
+        load_app_setting(connection, APP_SETTING_DEFAULT_LAUNCH_PROFILE_ID)?
+            .map(|raw| {
+                raw.parse::<i64>().map_err(|error| {
+                    format!(
                     "failed to parse app setting {APP_SETTING_DEFAULT_LAUNCH_PROFILE_ID}: {error}"
                 )
+                })
             })
-        })
-        .transpose()?;
-    let auto_repair_safe_cleanup_on_startup = load_app_setting(
-        connection,
-        APP_SETTING_AUTO_REPAIR_SAFE_CLEANUP_ON_STARTUP,
-    )?
-    .map(|raw| parse_bool_app_setting(APP_SETTING_AUTO_REPAIR_SAFE_CLEANUP_ON_STARTUP, &raw))
-    .transpose()?
-    .unwrap_or(false);
+            .transpose()?;
+    let auto_repair_safe_cleanup_on_startup =
+        load_app_setting(connection, APP_SETTING_AUTO_REPAIR_SAFE_CLEANUP_ON_STARTUP)?
+            .map(|raw| {
+                parse_bool_app_setting(APP_SETTING_AUTO_REPAIR_SAFE_CLEANUP_ON_STARTUP, &raw)
+            })
+            .transpose()?
+            .unwrap_or(false);
 
     let default_launch_profile_id = match default_launch_profile_id {
         Some(profile_id) => {
@@ -2136,7 +2185,9 @@ fn parse_bool_app_setting(key: &str, raw: &str) -> Result<bool, String> {
     match raw {
         "true" | "1" => Ok(true),
         "false" | "0" => Ok(false),
-        _ => Err(format!("invalid boolean value for app setting {key}: {raw}")),
+        _ => Err(format!(
+            "invalid boolean value for app setting {key}: {raw}"
+        )),
     }
 }
 
@@ -2503,6 +2554,10 @@ fn load_worktrees_by_project_id(
     connection: &Connection,
     project_id: i64,
 ) -> Result<Vec<WorktreeRecord>, String> {
+    let project = load_project_by_id(connection, project_id)?;
+    let project_root = PathBuf::from(project.root_path);
+    let pending_signal_counts =
+        load_pending_signal_counts_for_project_worktrees(connection, project_id)?;
     let mut statement = connection
         .prepare(
             "
@@ -2531,11 +2586,25 @@ fn load_worktrees_by_project_id(
         .query_map([project_id], map_worktree_record_base)
         .map_err(|error| format!("failed to load worktrees: {error}"))?;
 
-    rows.collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("failed to map worktrees: {error}"))?
+    let records = rows
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to map worktrees: {error}"))?;
+    let unmerged_branches = load_unmerged_worktree_branches(
+        &project_root,
+        records.iter().map(|record| record.branch_name.as_str()),
+    );
+    let records = records
         .into_iter()
-        .map(|record| enrich_worktree_record(connection, record))
-        .collect()
+        .map(|record| {
+            enrich_worktree_record(
+                pending_signal_counts.get(&record.id).copied().unwrap_or(0),
+                unmerged_branches.contains(record.branch_name.as_str()),
+                record,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    Ok(records)
 }
 
 fn load_worktree_by_id(connection: &Connection, id: i64) -> Result<WorktreeRecord, String> {
@@ -2562,13 +2631,37 @@ fn load_worktree_by_id(connection: &Connection, id: i64) -> Result<WorktreeRecor
             [id],
             map_worktree_record_base,
         )
-        .and_then(|record| enrich_worktree_record(connection, record).map_err(|error| {
-            rusqlite::Error::FromSqlConversionFailure(
-                0,
-                rusqlite::types::Type::Text,
-                Box::new(std::io::Error::new(std::io::ErrorKind::Other, error)),
+        .and_then(|record| {
+            let project_root = load_project_by_id(connection, record.project_id)
+                .map(|project| PathBuf::from(project.root_path))
+                .map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::new(std::io::ErrorKind::Other, error)),
+                    )
+                })?;
+            let has_unmerged_commits = load_unmerged_worktree_branches(
+                &project_root,
+                std::iter::once(record.branch_name.as_str()),
             )
-        }))
+            .contains(record.branch_name.as_str());
+
+            let pending_signal_count = count_pending_signals_for_worktree(connection, record.id)
+                .map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::new(std::io::ErrorKind::Other, error)),
+                    )
+                })?;
+
+            Ok(enrich_worktree_record(
+                pending_signal_count,
+                has_unmerged_commits,
+                record,
+            ))
+        })
         .map_err(|error| format!("failed to load worktree: {error}"))
 }
 
@@ -2604,46 +2697,73 @@ fn load_worktree_by_project_and_work_item(
         .map_err(|error| format!("failed to load worktree for work item: {error}"))?;
 
     record
-        .map(|worktree| enrich_worktree_record(connection, worktree))
+        .map(|worktree| {
+            let project_root = load_project_by_id(connection, worktree.project_id)
+                .map(|project| PathBuf::from(project.root_path))?;
+            let has_unmerged_commits = load_unmerged_worktree_branches(
+                &project_root,
+                std::iter::once(worktree.branch_name.as_str()),
+            )
+            .contains(worktree.branch_name.as_str());
+            let pending_signal_count = count_pending_signals_for_worktree(connection, worktree.id)?;
+            Ok(enrich_worktree_record(
+                pending_signal_count,
+                has_unmerged_commits,
+                worktree,
+            ))
+        })
         .transpose()
 }
 
 fn load_session_records_by_project_id(
     connection: &Connection,
     project_id: i64,
+    limit: Option<usize>,
 ) -> Result<Vec<SessionRecord>, String> {
+    let mut sql = String::from(
+        "
+        SELECT
+          id,
+          project_id,
+          launch_profile_id,
+          worktree_id,
+          process_id,
+          supervisor_pid,
+          provider,
+          provider_session_id,
+          profile_label,
+          root_path,
+          state,
+          '' AS startup_prompt,
+          started_at,
+          ended_at,
+          exit_code,
+          exit_success,
+          created_at,
+          updated_at,
+          last_heartbeat_at
+        FROM sessions
+        WHERE project_id = ?1
+        ORDER BY started_at DESC, id DESC
+        ",
+    );
+
+    if limit.is_some() {
+        sql.push_str(" LIMIT ?2");
+    }
+
     let mut statement = connection
-        .prepare(
-            "
-            SELECT
-              id,
-              project_id,
-              launch_profile_id,
-              worktree_id,
-              process_id,
-              supervisor_pid,
-              provider,
-              profile_label,
-              root_path,
-              state,
-              startup_prompt,
-              started_at,
-              ended_at,
-              exit_code,
-              exit_success,
-              created_at,
-              updated_at,
-              last_heartbeat_at
-            FROM sessions
-            WHERE project_id = ?1
-            ORDER BY started_at DESC, id DESC
-            ",
-        )
+        .prepare(&sql)
         .map_err(|error| format!("failed to prepare session query: {error}"))?;
 
-    let rows = statement
-        .query_map([project_id], |row| map_session_record(row))
-        .map_err(|error| format!("failed to load sessions: {error}"))?;
+    let rows = match limit {
+        Some(limit) => {
+            let limit = i64::try_from(limit.max(1)).map_err(|_| "session limit is too large")?;
+            statement.query_map(params![project_id, limit], map_session_record)
+        }
+        None => statement.query_map([project_id], map_session_record),
+    }
+    .map_err(|error| format!("failed to load sessions: {error}"))?;
 
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|error| format!("failed to map sessions: {error}"))
@@ -2661,10 +2781,11 @@ fn load_running_session_records(connection: &Connection) -> Result<Vec<SessionRe
               process_id,
               supervisor_pid,
               provider,
+              provider_session_id,
               profile_label,
               root_path,
               state,
-              startup_prompt,
+              '' AS startup_prompt,
               started_at,
               ended_at,
               exit_code,
@@ -2702,10 +2823,11 @@ fn load_orphaned_session_records_by_project_id(
               process_id,
               supervisor_pid,
               provider,
+              provider_session_id,
               profile_label,
               root_path,
               state,
-              startup_prompt,
+              '' AS startup_prompt,
               started_at,
               ended_at,
               exit_code,
@@ -2740,6 +2862,7 @@ fn load_session_record_by_id(connection: &Connection, id: i64) -> Result<Session
               process_id,
               supervisor_pid,
               provider,
+              provider_session_id,
               profile_label,
               root_path,
               state,
@@ -2804,6 +2927,43 @@ fn load_session_events_by_project_id(
         .map_err(|error| format!("failed to map session events: {error}"))
 }
 
+fn load_session_events_by_session_id(
+    connection: &Connection,
+    session_id: i64,
+    limit: usize,
+) -> Result<Vec<SessionEventRecord>, String> {
+    let limit = i64::try_from(limit.max(1)).map_err(|_| "session event limit is too large")?;
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT
+              id,
+              project_id,
+              session_id,
+              event_type,
+              entity_type,
+              entity_id,
+              source,
+              payload_json,
+              created_at
+            FROM session_events
+            WHERE session_id = ?1
+            ORDER BY id DESC
+            LIMIT ?2
+            ",
+        )
+        .map_err(|error| format!("failed to prepare session event query: {error}"))?;
+
+    let rows = statement
+        .query_map(params![session_id, limit], |row| {
+            map_session_event_record(row)
+        })
+        .map_err(|error| format!("failed to load session events: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to map session events: {error}"))
+}
+
 fn load_session_event_by_id(
     connection: &Connection,
     id: i64,
@@ -2839,17 +2999,18 @@ fn map_session_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRecord
         process_id: row.get(4)?,
         supervisor_pid: row.get(5)?,
         provider: row.get(6)?,
-        profile_label: row.get(7)?,
-        root_path: row.get(8)?,
-        state: row.get(9)?,
-        startup_prompt: row.get(10)?,
-        started_at: row.get(11)?,
-        ended_at: row.get(12)?,
-        exit_code: row.get(13)?,
-        exit_success: row.get(14)?,
-        created_at: row.get(15)?,
-        updated_at: row.get(16)?,
-        last_heartbeat_at: row.get(17)?,
+        provider_session_id: row.get(7)?,
+        profile_label: row.get(8)?,
+        root_path: row.get(9)?,
+        state: row.get(10)?,
+        startup_prompt: row.get(11)?,
+        started_at: row.get(12)?,
+        ended_at: row.get(13)?,
+        exit_code: row.get(14)?,
+        exit_success: row.get(15)?,
+        created_at: row.get(16)?,
+        updated_at: row.get(17)?,
+        last_heartbeat_at: row.get(18)?,
     })
 }
 
@@ -2901,22 +3062,21 @@ fn map_worktree_record_base(row: &rusqlite::Row<'_>) -> rusqlite::Result<Worktre
 }
 
 fn enrich_worktree_record(
-    connection: &Connection,
+    pending_signal_count: i64,
+    has_unmerged_commits: bool,
     mut record: WorktreeRecord,
-) -> Result<WorktreeRecord, String> {
-    let project = load_project_by_id(connection, record.project_id)?;
+) -> WorktreeRecord {
     let worktree_path = Path::new(&record.worktree_path);
+    let path_available = worktree_path.is_dir();
 
-    record.path_available = worktree_path.is_dir();
+    record.path_available = path_available;
     record.has_uncommitted_changes = worktree_has_uncommitted_changes(worktree_path);
-    record.has_unmerged_commits =
-        worktree_has_unmerged_commits(Path::new(&project.root_path), worktree_path);
-    record.session_summary = worktree_session_summary(connection, &record)?;
+    record.has_unmerged_commits = path_available && has_unmerged_commits;
+    record.session_summary = worktree_session_summary(&record);
     record.is_cleanup_eligible = !record.pinned;
-    record.pending_signal_count =
-        count_pending_signals_for_worktree(connection, record.id).unwrap_or(0);
+    record.pending_signal_count = pending_signal_count;
 
-    Ok(record)
+    record
 }
 
 fn map_session_event_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionEventRecord> {
@@ -3035,6 +3195,34 @@ fn count_pending_signals_for_worktree(
         })
 }
 
+fn load_pending_signal_counts_for_project_worktrees(
+    connection: &Connection,
+    project_id: i64,
+) -> Result<HashMap<i64, i64>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT worktree_id, COUNT(*)
+             FROM agent_signals
+             WHERE project_id = ?1
+               AND worktree_id IS NOT NULL
+               AND status = 'pending'
+             GROUP BY worktree_id",
+        )
+        .map_err(|error| {
+            format!("failed to prepare pending worktree signal counts query: {error}")
+        })?;
+
+    let rows = statement
+        .query_map([project_id], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|error| format!("failed to load pending worktree signal counts: {error}"))?;
+
+    rows.collect::<Result<HashMap<_, _>, _>>().map_err(|error| {
+        format!("failed to map pending worktree signal counts for project #{project_id}: {error}")
+    })
+}
+
 fn map_agent_message_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentMessageRecord> {
     Ok(AgentMessageRecord {
         id: row.get(0)?,
@@ -3110,15 +3298,13 @@ fn ensure_project_registration(
 
     let (resolved_root_path, _git_initialized) = resolve_project_registration_root(root_path)?;
 
-    if let Some(existing) = load_projects(connection)?
-        .into_iter()
-        .find(|project| {
-            project_paths_match(Path::new(&project.root_path), Path::new(&resolved_root_path))
-        })
-    {
-        return Ok(ProjectRegistrationResult {
-            project: existing,
-        });
+    if let Some(existing) = load_projects(connection)?.into_iter().find(|project| {
+        project_paths_match(
+            Path::new(&project.root_path),
+            Path::new(&resolved_root_path),
+        )
+    }) {
+        return Ok(ProjectRegistrationResult { project: existing });
     }
 
     let prefix = match custom_prefix {
@@ -3171,8 +3357,9 @@ fn resolve_project_registration_root(root_path: &str) -> Result<(String, bool), 
     }
 
     initialize_git_repo(project_root)?;
-    let git_root = try_resolve_git_root(project_root)?
-        .ok_or_else(|| "project root did not resolve to a git repository after git init".to_string())?;
+    let git_root = try_resolve_git_root(project_root)?.ok_or_else(|| {
+        "project root did not resolve to a git repository after git init".to_string()
+    })?;
 
     Ok((git_root.display().to_string(), true))
 }
@@ -3292,7 +3479,8 @@ fn backfill_project_work_item_prefixes(connection: &Connection) -> Result<(), St
             continue;
         }
 
-        let prefix = generate_project_work_item_prefix(connection, &project_name, Some(project_id))?;
+        let prefix =
+            generate_project_work_item_prefix(connection, &project_name, Some(project_id))?;
         connection
             .execute(
                 "UPDATE projects SET work_item_prefix = ?1 WHERE id = ?2",
@@ -3539,7 +3727,9 @@ fn reconcile_work_item_identifiers(connection: &Connection) -> Result<(), String
                     ",
                     params![parent_sequence_number, call_sign, work_item_id],
                 )
-                .map_err(|error| format!("failed to reconcile top-level work item identifiers: {error}"))?;
+                .map_err(|error| {
+                    format!("failed to reconcile top-level work item identifiers: {error}")
+                })?;
 
             let mut child_statement = connection
                 .prepare(
@@ -3550,12 +3740,16 @@ fn reconcile_work_item_identifiers(connection: &Connection) -> Result<(), String
                     ORDER BY child_number ASC, id ASC
                     ",
                 )
-                .map_err(|error| format!("failed to prepare child work item reconcile query: {error}"))?;
+                .map_err(|error| {
+                    format!("failed to prepare child work item reconcile query: {error}")
+                })?;
             let child_ids = child_statement
                 .query_map([work_item_id], |row| row.get::<_, i64>(0))
                 .map_err(|error| format!("failed to load child work item reconcile rows: {error}"))?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| format!("failed to decode child work item reconcile rows: {error}"))?;
+                .map_err(|error| {
+                    format!("failed to decode child work item reconcile rows: {error}")
+                })?;
 
             for (index, child_id) in child_ids.into_iter().enumerate() {
                 let child_number = i64::try_from(index + 1)
@@ -3570,9 +3764,16 @@ fn reconcile_work_item_identifiers(connection: &Connection) -> Result<(), String
                             call_sign = ?3
                         WHERE id = ?4
                         ",
-                        params![parent_sequence_number, child_number, child_call_sign, child_id],
+                        params![
+                            parent_sequence_number,
+                            child_number,
+                            child_call_sign,
+                            child_id
+                        ],
                     )
-                    .map_err(|error| format!("failed to reconcile child work item identifiers: {error}"))?;
+                    .map_err(|error| {
+                        format!("failed to reconcile child work item identifiers: {error}")
+                    })?;
             }
         }
     }
@@ -3627,9 +3828,7 @@ fn ensure_project_tracker_work_item(
 /// Backfills {NS}-0 tracker work items for all projects that don't have one.
 fn backfill_project_tracker_work_items(connection: &Connection) -> Result<(), String> {
     let mut statement = connection
-        .prepare(
-            "SELECT id, name, COALESCE(work_item_prefix, '') FROM projects ORDER BY id ASC",
-        )
+        .prepare("SELECT id, name, COALESCE(work_item_prefix, '') FROM projects ORDER BY id ASC")
         .map_err(|error| format!("failed to prepare project tracker backfill query: {error}"))?;
 
     let projects = statement
@@ -3659,7 +3858,9 @@ fn project_paths_match(left: &Path, right: &Path) -> bool {
         normalize_path_for_matching(left),
         normalize_path_for_matching(right),
     ) {
-        (Ok(left), Ok(right)) => normalized_path_match_key(&left) == normalized_path_match_key(&right),
+        (Ok(left), Ok(right)) => {
+            normalized_path_match_key(&left) == normalized_path_match_key(&right)
+        }
         _ => false,
     }
 }
@@ -3731,50 +3932,44 @@ fn is_scratch_untracked_entry(porcelain_line: &str) -> bool {
     false
 }
 
-fn worktree_has_unmerged_commits(project_root: &Path, worktree_path: &Path) -> bool {
-    if !project_root.is_dir() || !worktree_path.is_dir() {
-        return false;
+fn load_unmerged_worktree_branches<'a, I>(project_root: &Path, branch_names: I) -> HashSet<String>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    if !project_root.is_dir() {
+        return HashSet::new();
     }
 
-    let project_head = match git_rev_parse(project_root, "HEAD") {
-        Some(value) => value,
-        None => return false,
-    };
-    let worktree_head = match git_rev_parse(worktree_path, "HEAD") {
-        Some(value) => value,
-        None => return false,
-    };
+    let target_branches = branch_names
+        .into_iter()
+        .map(str::trim)
+        .filter(|branch_name| !branch_name.is_empty())
+        .collect::<HashSet<_>>();
 
-    if project_head == worktree_head {
-        return false;
+    if target_branches.is_empty() {
+        return HashSet::new();
     }
 
     git_command()
         .arg("-C")
         .arg(project_root)
-        .args(["merge-base", "--is-ancestor", &worktree_head, &project_head])
-        .status()
-        .map(|status| !status.success())
-        .unwrap_or(false)
-}
-
-fn git_rev_parse(path: &Path, revision: &str) -> Option<String> {
-    git_command()
-        .arg("-C")
-        .arg(path)
-        .args(["rev-parse", revision])
+        .args(["branch", "--format=%(refname:short)", "--no-merged", "HEAD"])
         .output()
         .ok()
         .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-        .filter(|value| !value.is_empty())
+        .map(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(str::trim)
+                .filter(|branch_name| target_branches.contains(branch_name))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
-fn worktree_session_summary(
-    _connection: &Connection,
-    worktree: &WorktreeRecord,
-) -> Result<String, String> {
-    Ok(short_summary_text(&worktree.work_item_title, 6))
+fn worktree_session_summary(worktree: &WorktreeRecord) -> String {
+    short_summary_text(&worktree.work_item_title, 6)
 }
 
 fn normalize_work_item_type(value: &str) -> Result<String, String> {
@@ -3791,7 +3986,9 @@ fn normalize_work_item_status(value: &str) -> Result<String, String> {
 
     match normalized.as_str() {
         "backlog" | "in_progress" | "blocked" | "parked" | "done" => Ok(normalized),
-        _ => Err("work item status must be backlog, in_progress, blocked, parked, or done".to_string()),
+        _ => Err(
+            "work item status must be backlog, in_progress, blocked, parked, or done".to_string(),
+        ),
     }
 }
 
@@ -4106,16 +4303,12 @@ mod tests {
                 .expect("work_items index rows should decode")
         };
 
-        assert!(
-            indexes
-                .iter()
-                .any(|index_name| index_name == "idx_work_items_parent_work_item_id")
-        );
-        assert!(
-            indexes
-                .iter()
-                .any(|index_name| index_name == "idx_work_items_call_sign")
-        );
+        assert!(indexes
+            .iter()
+            .any(|index_name| index_name == "idx_work_items_parent_work_item_id"));
+        assert!(indexes
+            .iter()
+            .any(|index_name| index_name == "idx_work_items_call_sign"));
 
         drop(connection);
         let _ = fs::remove_file(database_path);
@@ -4210,6 +4403,84 @@ mod tests {
             })
             .expect("project rename should succeed");
         assert_eq!(renamed.name, "Alpha Control");
+    }
+
+    #[test]
+    fn session_history_lists_are_recent_limited_and_omit_startup_prompts() {
+        let harness = TestHarness::new("session-history-limits");
+        let project_root = harness.create_project_root("history");
+        let project = harness.create_project("History Node", &project_root);
+
+        let first = harness
+            .state
+            .create_session_record(CreateSessionRecordInput {
+                project_id: project.id,
+                launch_profile_id: None,
+                worktree_id: None,
+                process_id: Some(101),
+                supervisor_pid: Some(201),
+                provider: "claude".to_string(),
+                provider_session_id: Some("session-first".to_string()),
+                profile_label: "Default".to_string(),
+                root_path: project_root.display().to_string(),
+                state: "terminated".to_string(),
+                startup_prompt: "first startup prompt".to_string(),
+                started_at: "1712769601".to_string(),
+            })
+            .expect("first session should be created");
+        let second = harness
+            .state
+            .create_session_record(CreateSessionRecordInput {
+                project_id: project.id,
+                launch_profile_id: None,
+                worktree_id: None,
+                process_id: Some(102),
+                supervisor_pid: Some(202),
+                provider: "claude".to_string(),
+                provider_session_id: Some("session-second".to_string()),
+                profile_label: "Default".to_string(),
+                root_path: project_root.display().to_string(),
+                state: "terminated".to_string(),
+                startup_prompt: "second startup prompt".to_string(),
+                started_at: "1712769602".to_string(),
+            })
+            .expect("second session should be created");
+        let third = harness
+            .state
+            .create_session_record(CreateSessionRecordInput {
+                project_id: project.id,
+                launch_profile_id: None,
+                worktree_id: None,
+                process_id: Some(103),
+                supervisor_pid: Some(203),
+                provider: "claude".to_string(),
+                provider_session_id: Some("session-third".to_string()),
+                profile_label: "Default".to_string(),
+                root_path: project_root.display().to_string(),
+                state: "terminated".to_string(),
+                startup_prompt: "third startup prompt".to_string(),
+                started_at: "1712769603".to_string(),
+            })
+            .expect("third session should be created");
+
+        let limited = harness
+            .state
+            .list_session_records_limited(project.id, 2)
+            .expect("recent sessions should list");
+        assert_eq!(limited.len(), 2);
+        assert_eq!(limited[0].id, third.id);
+        assert_eq!(limited[1].id, second.id);
+        assert!(limited
+            .iter()
+            .all(|record| record.startup_prompt.is_empty()));
+        assert_eq!(limited[0].provider_session_id.as_deref(), Some("session-third"));
+        assert_eq!(limited[1].provider_session_id.as_deref(), Some("session-second"));
+
+        let full = harness
+            .state
+            .get_session_record(first.id)
+            .expect("full session record should still load");
+        assert_eq!(full.startup_prompt, "first startup prompt");
     }
 
     #[test]
@@ -4571,13 +4842,11 @@ mod tests {
             .state
             .delete_document(document.id)
             .expect("document should delete");
-        assert!(
-            harness
-                .state
-                .list_documents(alpha.id)
-                .expect("documents should list after delete")
-                .is_empty()
-        );
+        assert!(harness
+            .state
+            .list_documents(alpha.id)
+            .expect("documents should list after delete")
+            .is_empty());
         assert_eq!(
             harness
                 .state

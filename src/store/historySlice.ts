@@ -1,5 +1,7 @@
 import type { StateCreator } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
+import { withPerfSpan } from '../perf'
+import { buildRecoveryStartupPrompt, hasNativeSessionResume } from '../sessionHistory'
 import type {
   CleanupActionOutput,
   CleanupCandidate,
@@ -8,7 +10,14 @@ import type {
   SessionRecord,
 } from '../types'
 import type { AppStore, HistorySlice } from './types'
-import { getErrorMessage, SESSION_EVENT_HISTORY_LIMIT } from './utils'
+import {
+  areCleanupCandidateListsEqual,
+  areSessionEventListsEqual,
+  areSessionRecordListsEqual,
+  getErrorMessage,
+  SESSION_EVENT_HISTORY_LIMIT,
+  SESSION_RECORD_HISTORY_LIMIT,
+} from './utils'
 
 export const createHistorySlice: StateCreator<AppStore, [], [], HistorySlice> = (set, get) => ({
   sessionRecords: [],
@@ -26,11 +35,29 @@ export const createHistorySlice: StateCreator<AppStore, [], [], HistorySlice> = 
 
   refreshSessionHistory: async (projectId) => {
     try {
-      const history = await invoke<SessionHistoryOutput>('get_session_history', {
-        projectId,
-        eventLimit: SESSION_EVENT_HISTORY_LIMIT,
-      })
-      set({ sessionRecords: history.sessions, sessionEvents: history.events })
+      const history = await withPerfSpan(
+        'session_history_refresh',
+        { projectId, eventLimit: SESSION_EVENT_HISTORY_LIMIT },
+        () =>
+          invoke<SessionHistoryOutput>('get_session_history', {
+            projectId,
+            eventLimit: SESSION_EVENT_HISTORY_LIMIT,
+            sessionLimit: SESSION_RECORD_HISTORY_LIMIT,
+          }),
+      )
+      set((state) => ({
+        sessionRecords: areSessionRecordListsEqual(state.sessionRecords, history.sessions)
+          ? state.sessionRecords
+          : history.sessions,
+        sessionEvents: areSessionEventListsEqual(state.sessionEvents, history.events)
+          ? state.sessionEvents
+          : history.events,
+        selectedHistorySessionId:
+          state.selectedHistorySessionId !== null &&
+          !history.sessions.some((record) => record.id === state.selectedHistorySessionId)
+            ? null
+            : state.selectedHistorySessionId,
+      }))
     } catch (error) {
       set({ historyError: getErrorMessage(error, 'Failed to load session history.') })
     }
@@ -39,7 +66,11 @@ export const createHistorySlice: StateCreator<AppStore, [], [], HistorySlice> = 
   refreshOrphanedSessions: async (projectId) => {
     try {
       const records = await invoke<SessionRecord[]>('list_orphaned_sessions', { projectId })
-      set({ orphanedSessions: records })
+      set((state) => ({
+        orphanedSessions: areSessionRecordListsEqual(state.orphanedSessions, records)
+          ? state.orphanedSessions
+          : records,
+      }))
       return records
     } catch (error) {
       set({ historyError: getErrorMessage(error, 'Failed to load orphaned sessions.') })
@@ -50,7 +81,11 @@ export const createHistorySlice: StateCreator<AppStore, [], [], HistorySlice> = 
   refreshCleanupCandidates: async () => {
     try {
       const candidates = await invoke<CleanupCandidate[]>('list_cleanup_candidates')
-      set({ cleanupCandidates: candidates })
+      set((state) => ({
+        cleanupCandidates: areCleanupCandidateListsEqual(state.cleanupCandidates, candidates)
+          ? state.cleanupCandidates
+          : candidates,
+      }))
       return candidates
     } catch (error) {
       set({ historyError: getErrorMessage(error, 'Failed to load cleanup candidates.') })
@@ -62,11 +97,30 @@ export const createHistorySlice: StateCreator<AppStore, [], [], HistorySlice> = 
     set({ historyError: null, isLoadingHistory: true })
 
     try {
-      const history = await invoke<SessionHistoryOutput>('get_session_history', {
-        projectId,
-        eventLimit: SESSION_EVENT_HISTORY_LIMIT,
-      })
-      set({ sessionRecords: history.sessions, sessionEvents: history.events, isLoadingHistory: false })
+      const history = await withPerfSpan(
+        'session_history_load',
+        { projectId, eventLimit: SESSION_EVENT_HISTORY_LIMIT },
+        () =>
+          invoke<SessionHistoryOutput>('get_session_history', {
+            projectId,
+            eventLimit: SESSION_EVENT_HISTORY_LIMIT,
+            sessionLimit: SESSION_RECORD_HISTORY_LIMIT,
+          }),
+      )
+      set((state) => ({
+        sessionRecords: areSessionRecordListsEqual(state.sessionRecords, history.sessions)
+          ? state.sessionRecords
+          : history.sessions,
+        sessionEvents: areSessionEventListsEqual(state.sessionEvents, history.events)
+          ? state.sessionEvents
+          : history.events,
+        selectedHistorySessionId:
+          state.selectedHistorySessionId !== null &&
+          !history.sessions.some((record) => record.id === state.selectedHistorySessionId)
+            ? null
+            : state.selectedHistorySessionId,
+        isLoadingHistory: false,
+      }))
     } catch (error) {
       set({
         historyError: getErrorMessage(error, 'Failed to load session history.'),
@@ -78,7 +132,11 @@ export const createHistorySlice: StateCreator<AppStore, [], [], HistorySlice> = 
   loadOrphanedSessions: async (projectId) => {
     try {
       const records = await invoke<SessionRecord[]>('list_orphaned_sessions', { projectId })
-      set({ orphanedSessions: records })
+      set((state) => ({
+        orphanedSessions: areSessionRecordListsEqual(state.orphanedSessions, records)
+          ? state.orphanedSessions
+          : records,
+      }))
     } catch (error) {
       set({ historyError: getErrorMessage(error, 'Failed to load orphaned sessions.') })
     }
@@ -87,7 +145,11 @@ export const createHistorySlice: StateCreator<AppStore, [], [], HistorySlice> = 
   loadCleanupCandidates: async () => {
     try {
       const candidates = await invoke<CleanupCandidate[]>('list_cleanup_candidates')
-      set({ cleanupCandidates: candidates })
+      set((state) => ({
+        cleanupCandidates: areCleanupCandidateListsEqual(state.cleanupCandidates, candidates)
+          ? state.cleanupCandidates
+          : candidates,
+      }))
     } catch (error) {
       set({ historyError: getErrorMessage(error, 'Failed to load cleanup candidates.') })
     }
@@ -124,12 +186,14 @@ export const createHistorySlice: StateCreator<AppStore, [], [], HistorySlice> = 
         sessionId,
       })
 
-      await Promise.all([
-        get().refreshOrphanedSessions(selectedProject.id),
-        get().refreshCleanupCandidates(),
-        get().refreshSessionHistory(selectedProject.id),
+      await get().refreshSelectedProjectData([
+        'history',
+        'orphanedSessions',
+        'cleanupCandidates',
+        'worktrees',
+        'liveSessions',
+        'sessionSnapshot',
       ])
-      get().invalidateProjectContext()
       set({
         agentPromptMessage:
           record.state === 'terminated'
@@ -151,6 +215,11 @@ export const createHistorySlice: StateCreator<AppStore, [], [], HistorySlice> = 
       return
     }
 
+    const details = await get().fetchSessionRecoveryDetails(selectedProject.id, record.id)
+    const recoverySession = details?.session ?? record
+    const shouldResumeSavedSession = hasNativeSessionResume(recoverySession)
+    const startupPrompt = shouldResumeSavedSession ? undefined : buildRecoveryStartupPrompt(details)
+
     set({ sessionError: null, activeOrphanSessionId: record.id })
 
     try {
@@ -159,26 +228,34 @@ export const createHistorySlice: StateCreator<AppStore, [], [], HistorySlice> = 
         sessionId: record.id,
       })
 
-      await Promise.all([
-        get().refreshOrphanedSessions(selectedProject.id),
-        get().refreshCleanupCandidates(),
-        get().refreshSessionHistory(selectedProject.id),
+      await get().refreshSelectedProjectData([
+        'history',
+        'orphanedSessions',
+        'cleanupCandidates',
+        'worktrees',
+        'liveSessions',
+        'sessionSnapshot',
       ])
 
       get().openSessionTarget(record)
       set({ terminalPromptDraft: null, selectedHistorySessionId: record.id })
 
       const replacement = await get().launchSession({
-        launchProfileId: record.launchProfileId ?? state.selectedLaunchProfileId,
-        worktreeId: record.worktreeId ?? null,
+        launchProfileId: recoverySession.launchProfileId ?? state.selectedLaunchProfileId,
+        worktreeId: recoverySession.worktreeId ?? null,
+        startupPrompt,
+        resumeSessionId: shouldResumeSavedSession ? recoverySession.providerSessionId : undefined,
       })
 
-      get().invalidateProjectContext()
       set({
         agentPromptMessage: replacement
-          ? `Supervisor ${
-              cleaned.state === 'terminated' ? 'terminated' : 'reconciled'
-            } orphaned session #${record.id} and launched a replacement terminal.`
+          ? shouldResumeSavedSession
+            ? `Supervisor ${
+                cleaned.state === 'terminated' ? 'terminated' : 'reconciled'
+              } orphaned session #${record.id} and resumed its saved Claude conversation.`
+            : `Supervisor ${
+                cleaned.state === 'terminated' ? 'terminated' : 'reconciled'
+              } orphaned session #${record.id} and launched a replacement terminal.`
           : cleaned.state === 'terminated'
             ? `Supervisor terminated orphaned session #${record.id}.`
             : `Supervisor reconciled orphaned session #${record.id}.`,
@@ -203,9 +280,9 @@ export const createHistorySlice: StateCreator<AppStore, [], [], HistorySlice> = 
 
       await Promise.all([
         selectedProject ? get().refreshOrphanedSessions(selectedProject.id) : Promise.resolve([]),
+        selectedProject ? get().refreshWorktrees(selectedProject.id) : Promise.resolve([]),
         get().refreshCleanupCandidates(),
       ])
-      get().invalidateProjectContext()
       set({
         agentPromptMessage:
           result.candidate.kind === 'runtime_artifact'
@@ -232,9 +309,9 @@ export const createHistorySlice: StateCreator<AppStore, [], [], HistorySlice> = 
 
       await Promise.all([
         selectedProject ? get().refreshOrphanedSessions(selectedProject.id) : Promise.resolve([]),
+        selectedProject ? get().refreshWorktrees(selectedProject.id) : Promise.resolve([]),
         get().refreshCleanupCandidates(),
       ])
-      get().invalidateProjectContext()
       set({
         agentPromptMessage:
           result.actions.length === 0

@@ -7,6 +7,7 @@ use crate::session_api::{
     LaunchSessionInput, ProjectSessionTarget, ResizeSessionInput, SessionInput, SessionPollInput,
     SessionPollOutput, SessionSnapshot, SupervisorRuntimeInfo,
 };
+use crate::supervisor_api::SessionCrashReport;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
 use serde_json::json;
@@ -23,6 +24,11 @@ use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 const MAX_OUTPUT_BUFFER_BYTES: usize = 200_000;
+
+enum ClaudeLaunchMode {
+    Fresh { provider_session_id: String },
+    Resume { provider_session_id: String },
+}
 
 #[derive(Clone)]
 pub struct SessionRegistry {
@@ -92,10 +98,7 @@ impl SessionTargetKey {
 }
 
 impl SessionRegistry {
-    pub fn snapshot(
-        &self,
-        target: ProjectSessionTarget,
-    ) -> AppResult<Option<SessionSnapshot>> {
+    pub fn snapshot(&self, target: ProjectSessionTarget) -> AppResult<Option<SessionSnapshot>> {
         let session = {
             let sessions = self
                 .sessions
@@ -110,10 +113,7 @@ impl SessionRegistry {
         Ok(session.map(|session| session.snapshot()))
     }
 
-    pub fn poll_output(
-        &self,
-        input: SessionPollInput,
-    ) -> AppResult<Option<SessionPollOutput>> {
+    pub fn poll_output(&self, input: SessionPollInput) -> AppResult<Option<SessionPollOutput>> {
         let session = {
             let sessions = self
                 .sessions
@@ -159,6 +159,15 @@ impl SessionRegistry {
 
         if let Some(existing) = self.get_session(&target_key)? {
             if existing.is_running() {
+                log::info!(
+                    "session reattached — session_id={} project_id={} worktree_id={:?} profile={} root={} requested_by={}",
+                    existing.session_record_id,
+                    existing.project_id,
+                    existing.worktree_id,
+                    existing.profile_label,
+                    existing.root_path,
+                    source
+                );
                 try_append_session_event(
                     app_state,
                     existing.project_id,
@@ -205,12 +214,72 @@ impl SessionRegistry {
             .filter(|prompt| !prompt.is_empty())
             .map(ToOwned::to_owned)
             .unwrap_or_default();
+        let resume_session_id = input
+            .resume_session_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
         let launch_root_path = worktree
             .as_ref()
             .map(|record| record.worktree_path.clone())
             .unwrap_or_else(|| project.root_path.clone());
+        let claude_launch_mode = match profile.provider.as_str() {
+            "claude_code" => Some(match resume_session_id.clone() {
+                Some(provider_session_id) => ClaudeLaunchMode::Resume {
+                    provider_session_id,
+                },
+                None => ClaudeLaunchMode::Fresh {
+                    provider_session_id: generate_uuid_v4(),
+                },
+            }),
+            _ => None,
+        };
+        let provider_session_id = claude_launch_mode
+            .as_ref()
+            .map(|mode| match mode {
+                ClaudeLaunchMode::Fresh {
+                    provider_session_id,
+                }
+                | ClaudeLaunchMode::Resume {
+                    provider_session_id,
+                } => provider_session_id.clone(),
+            });
+        let launch_mode = match claude_launch_mode {
+            Some(ClaudeLaunchMode::Resume { .. }) => "resume",
+            _ => "fresh",
+        };
+        let is_resume_launch = launch_mode == "resume";
+        let startup_prompt = if is_resume_launch {
+            String::new()
+        } else {
+            startup_prompt
+        };
+
+        log::info!(
+            "session launch requested — project_id={} worktree_id={:?} launch_profile_id={} profile={} root={} requested_by={} launch_mode={} provider_session_id={} has_startup_prompt={} model={} execution_mode={}",
+            input.project_id,
+            input.worktree_id,
+            input.launch_profile_id,
+            profile.label,
+            launch_root_path,
+            source,
+            launch_mode,
+            provider_session_id.as_deref().unwrap_or("none"),
+            !startup_prompt.is_empty() && !is_resume_launch,
+            input.model.as_deref().unwrap_or("default"),
+            input.execution_mode.as_deref().unwrap_or("default")
+        );
 
         if !Path::new(&launch_root_path).is_dir() {
+            log::warn!(
+                "session launch rejected — project_id={} worktree_id={:?} launch_profile_id={} root={} requested_by={} reason=missing_root",
+                input.project_id,
+                input.worktree_id,
+                input.launch_profile_id,
+                launch_root_path,
+                source
+            );
             return Err(if worktree.is_some() {
                 AppError::not_found(
                     "selected worktree path no longer exists. Recreate the worktree before launching.",
@@ -239,6 +308,7 @@ impl SessionRegistry {
             process_id: None,
             supervisor_pid: None,
             provider: profile.provider.clone(),
+            provider_session_id: provider_session_id.clone(),
             profile_label: profile.label.clone(),
             root_path: launch_root_path.clone(),
             state: "running".to_string(),
@@ -254,12 +324,25 @@ impl SessionRegistry {
             &app_state.storage(),
             supervisor_runtime,
             (!startup_prompt.is_empty()).then_some(startup_prompt.as_str()),
+            session_record.provider_session_id.as_deref(),
+            is_resume_launch,
             session_record.id,
             input.model.as_deref(),
             input.execution_mode.as_deref(),
         ) {
             Ok(command) => command,
             Err(error) => {
+                log::error!(
+                    "session launch failed — stage=build_command project_id={} worktree_id={:?} launch_profile_id={} session_id={} profile={} root={} requested_by={} error={}",
+                    project.id,
+                    input.worktree_id,
+                    profile.id,
+                    session_record.id,
+                    profile.label,
+                    launch_root_path,
+                    source,
+                    error
+                );
                 let ended_at = now_timestamp_string();
                 let _ = app_state.finish_session_record(FinishSessionRecordInput {
                     id: session_record.id,
@@ -281,6 +364,8 @@ impl SessionRegistry {
                         "worktreeId": input.worktree_id,
                         "launchProfileId": profile.id,
                         "profileLabel": profile.label,
+                        "providerSessionId": provider_session_id.clone(),
+                        "launchMode": launch_mode,
                         "rootPath": launch_root_path.clone(),
                         "endedAt": ended_at,
                         "error": error.clone(),
@@ -293,6 +378,17 @@ impl SessionRegistry {
         let child = match pair.slave.spawn_command(command) {
             Ok(child) => child,
             Err(error) => {
+                log::error!(
+                    "session launch failed — stage=spawn_command project_id={} worktree_id={:?} launch_profile_id={} session_id={} profile={} root={} requested_by={} error={}",
+                    project.id,
+                    input.worktree_id,
+                    profile.id,
+                    session_record.id,
+                    profile.label,
+                    launch_root_path,
+                    source,
+                    error
+                );
                 let ended_at = now_timestamp_string();
                 let _ = app_state.finish_session_record(FinishSessionRecordInput {
                     id: session_record.id,
@@ -314,6 +410,8 @@ impl SessionRegistry {
                         "worktreeId": input.worktree_id,
                         "launchProfileId": profile.id,
                         "profileLabel": profile.label,
+                        "providerSessionId": provider_session_id.clone(),
+                        "launchMode": launch_mode,
                         "rootPath": launch_root_path.clone(),
                         "endedAt": ended_at,
                         "error": error.to_string(),
@@ -344,6 +442,18 @@ impl SessionRegistry {
                 supervisor_pid: Some(i64::from(supervisor_runtime.pid)),
             })
         {
+            log::error!(
+                "session launch failed — stage=persist_runtime_metadata project_id={} worktree_id={:?} launch_profile_id={} session_id={} profile={} root={} requested_by={} process_id={:?} error={}",
+                project.id,
+                input.worktree_id,
+                profile.id,
+                session_record.id,
+                profile.label,
+                launch_root_path,
+                source,
+                process_id,
+                error
+            );
             let ended_at = now_timestamp_string();
             let _ = app_state.finish_session_record(FinishSessionRecordInput {
                 id: session_record.id,
@@ -364,10 +474,12 @@ impl SessionRegistry {
                     "projectId": project.id,
                     "worktreeId": input.worktree_id,
                     "launchProfileId": profile.id,
-                    "profileLabel": profile.label,
-                    "rootPath": launch_root_path.clone(),
-                    "endedAt": ended_at,
-                    "error": error,
+                        "profileLabel": profile.label,
+                        "providerSessionId": provider_session_id.clone(),
+                        "launchMode": launch_mode,
+                        "rootPath": launch_root_path.clone(),
+                        "endedAt": ended_at,
+                        "error": error,
                     "requestedBy": source,
                 }),
             );
@@ -427,6 +539,8 @@ impl SessionRegistry {
                 "launchProfileId": profile.id,
                 "profileLabel": session.profile_label.clone(),
                 "provider": profile.provider,
+                "providerSessionId": session_record.provider_session_id.clone(),
+                "launchMode": launch_mode,
                 "rootPath": launch_root_path,
                 "processId": process_id,
                 "supervisorPid": supervisor_runtime.pid,
@@ -437,11 +551,14 @@ impl SessionRegistry {
         );
 
         log::info!(
-            "session #{} launched — profile={} root={} pid={:?}",
+            "session launched — session_id={} project_id={} worktree_id={:?} profile={} root={} pid={:?} requested_by={}",
             session_record.id,
+            session.project_id,
+            session.worktree_id,
             session.profile_label,
             session.root_path,
-            process_id
+            process_id,
+            source
         );
 
         spawn_output_thread(Arc::clone(&session), reader);
@@ -470,14 +587,12 @@ impl SessionRegistry {
             .lock()
             .map_err(|_| "failed to access session writer".to_string())?;
 
-        writer
-            .write_all(input.data.as_bytes())
-            .map_err(|error| AppError::supervisor(format!("failed to write to session: {error}")))?;
-        writer
-            .flush()
-            .map_err(|error| {
-                AppError::supervisor(format!("failed to flush session input: {error}"))
-            })
+        writer.write_all(input.data.as_bytes()).map_err(|error| {
+            AppError::supervisor(format!("failed to write to session: {error}"))
+        })?;
+        writer.flush().map_err(|error| {
+            AppError::supervisor(format!("failed to flush session input: {error}"))
+        })
     }
 
     pub fn resize(&self, input: ResizeSessionInput) -> AppResult<()> {
@@ -507,6 +622,14 @@ impl SessionRegistry {
         source: &str,
     ) -> AppResult<()> {
         let session = self.get_running_session(&target)?;
+        log::info!(
+            "session terminate requested — session_id={} project_id={} worktree_id={:?} root={} requested_by={}",
+            session.session_record_id,
+            session.project_id,
+            session.worktree_id,
+            session.root_path,
+            source
+        );
         let mut killer = session
             .killer
             .lock()
@@ -563,6 +686,14 @@ impl SessionRegistry {
                     }),
                 );
 
+                log::error!(
+                    "session terminate failed — session_id={} project_id={} worktree_id={:?} requested_by={} error={}",
+                    session.session_record_id,
+                    session.project_id,
+                    session.worktree_id,
+                    source,
+                    error
+                );
                 Err(error)
             })
             .map_err(|error| AppError::supervisor(format!("failed to terminate session: {error}")))?;
@@ -582,13 +713,18 @@ impl SessionRegistry {
             Some("terminated by supervisor"),
         );
 
+        log::info!(
+            "session terminated by supervisor — session_id={} project_id={} worktree_id={:?} requested_by={}",
+            session.session_record_id,
+            session.project_id,
+            session.worktree_id,
+            source
+        );
+
         Ok(())
     }
 
-    fn get_session(
-        &self,
-        target_key: &SessionTargetKey,
-    ) -> AppResult<Option<Arc<HostedSession>>> {
+    fn get_session(&self, target_key: &SessionTargetKey) -> AppResult<Option<Arc<HostedSession>>> {
         let sessions = self
             .sessions
             .lock()
@@ -597,13 +733,12 @@ impl SessionRegistry {
         Ok(sessions.get(target_key).cloned())
     }
 
-    fn get_running_session(
-        &self,
-        target: &ProjectSessionTarget,
-    ) -> AppResult<Arc<HostedSession>> {
+    fn get_running_session(&self, target: &ProjectSessionTarget) -> AppResult<Arc<HostedSession>> {
         let session = self
             .get_session(&SessionTargetKey::from_target(target))?
-            .ok_or_else(|| AppError::not_found(build_missing_session_message(target.worktree_id)))?;
+            .ok_or_else(|| {
+                AppError::not_found(build_missing_session_message(target.worktree_id))
+            })?;
 
         if session.is_running() {
             Ok(session)
@@ -617,7 +752,11 @@ impl SessionRegistry {
 
 impl HostedSession {
     fn snapshot(&self) -> SessionSnapshot {
-        let exit_state = self.exit_state.lock().map(|state| state.clone()).unwrap_or(None);
+        let exit_state = self
+            .exit_state
+            .lock()
+            .map(|state| state.clone())
+            .unwrap_or(None);
         let (output, output_cursor) = self
             .output_state
             .lock()
@@ -641,14 +780,20 @@ impl HostedSession {
     }
 
     fn poll_output(&self, offset: usize) -> SessionPollOutput {
-        let exit_state = self.exit_state.lock().map(|state| state.clone()).unwrap_or(None);
+        let exit_state = self
+            .exit_state
+            .lock()
+            .map(|state| state.clone())
+            .unwrap_or(None);
         let (data, next_offset, reset) = self
             .output_state
             .lock()
             .map(|state| {
                 if offset < state.start_offset
                     || offset > state.end_offset
-                    || !state.buffer.is_char_boundary(offset.saturating_sub(state.start_offset))
+                    || !state
+                        .buffer
+                        .is_char_boundary(offset.saturating_sub(state.start_offset))
                 {
                     (state.buffer.clone(), state.end_offset, true)
                 } else {
@@ -687,7 +832,11 @@ impl HostedSession {
                 if exit_state.is_some() {
                     false
                 } else {
-                    *exit_state = Some(ExitState { exit_code, success, error });
+                    *exit_state = Some(ExitState {
+                        exit_code,
+                        success,
+                        error,
+                    });
                     true
                 }
             }
@@ -749,7 +898,10 @@ impl HostedSession {
     }
 
     fn current_exit_state(&self) -> Option<ExitState> {
-        self.exit_state.lock().map(|state| state.clone()).unwrap_or(None)
+        self.exit_state
+            .lock()
+            .map(|state| state.clone())
+            .unwrap_or(None)
     }
 }
 
@@ -768,6 +920,8 @@ fn build_launch_command(
     storage: &crate::db::StorageInfo,
     supervisor_runtime: &SupervisorRuntimeInfo,
     startup_prompt: Option<&str>,
+    provider_session_id: Option<&str>,
+    resume_existing_session: bool,
     session_record_id: i64,
     model: Option<&str>,
     execution_mode: Option<&str>,
@@ -781,6 +935,8 @@ fn build_launch_command(
             storage,
             supervisor_runtime,
             startup_prompt,
+            provider_session_id,
+            resume_existing_session,
             session_record_id,
             model,
             execution_mode,
@@ -795,6 +951,8 @@ fn build_launch_command(
         storage,
         supervisor_runtime,
         startup_prompt,
+        provider_session_id,
+        resume_existing_session,
         session_record_id,
         execution_mode,
     )
@@ -808,6 +966,8 @@ fn build_claude_launch_command(
     storage: &crate::db::StorageInfo,
     supervisor_runtime: &SupervisorRuntimeInfo,
     startup_prompt: Option<&str>,
+    provider_session_id: Option<&str>,
+    resume_existing_session: bool,
     session_record_id: i64,
     model: Option<&str>,
     execution_mode: Option<&str>,
@@ -836,6 +996,11 @@ fn build_claude_launch_command(
         command.arg(model);
     }
 
+    let provider_session_id = provider_session_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Claude launch requires a provider session id".to_string())?;
+
     let mcp_config_json = build_project_commander_mcp_config_json(
         project,
         worktree,
@@ -844,13 +1009,20 @@ fn build_claude_launch_command(
     )?;
     command.arg(format!("--mcp-config={mcp_config_json}"));
     command.arg("--strict-mcp-config");
-    command.arg("--append-system-prompt");
-    command.arg(build_claude_bridge_system_prompt(
-        project,
-        worktree,
-        launch_root_path,
-        execution_mode,
-    ));
+    if resume_existing_session {
+        command.arg("--resume");
+        command.arg(provider_session_id);
+    } else {
+        command.arg("--session-id");
+        command.arg(provider_session_id);
+        command.arg("--append-system-prompt");
+        command.arg(build_claude_bridge_system_prompt(
+            project,
+            worktree,
+            launch_root_path,
+            execution_mode,
+        ));
+    }
 
     // Enable Claude Code teammate mailbox for reliable dispatcher ↔ agent messaging.
     // Worktree agents use their work item call sign as the agent name;
@@ -860,7 +1032,7 @@ fn build_claude_launch_command(
             Some(wt) => wt.work_item_call_sign.replace('.', "-"),
             None => "dispatcher".to_string(),
         };
-        let agent_id = generate_agent_uuid();
+        let agent_id = generate_uuid_v4();
         command.arg("--agent-id");
         command.arg(&agent_id);
         command.arg("--agent-name");
@@ -869,19 +1041,21 @@ fn build_claude_launch_command(
         command.arg("project-commander");
     }
 
-    if let Some(prompt) = startup_prompt {
-        let normalized_prompt = normalize_prompt_for_launch(prompt);
+    if !resume_existing_session {
+        if let Some(prompt) = startup_prompt {
+            let normalized_prompt = normalize_prompt_for_launch(prompt);
 
-        if !normalized_prompt.is_empty() {
-            command.arg(normalized_prompt);
+            if !normalized_prompt.is_empty() {
+                command.arg(normalized_prompt);
+            }
         }
     }
 
     Ok(command)
 }
 
-/// Generate a UUID v4 string for use as a Claude Code agent ID.
-fn generate_agent_uuid() -> String {
+/// Generate a UUID v4 string for use as a Claude Code session or agent ID.
+fn generate_uuid_v4() -> String {
     use rand::RngCore;
 
     let mut bytes = [0_u8; 16];
@@ -909,6 +1083,8 @@ fn build_wrapped_launch_command(
     storage: &crate::db::StorageInfo,
     _supervisor_runtime: &SupervisorRuntimeInfo,
     startup_prompt: Option<&str>,
+    _provider_session_id: Option<&str>,
+    _resume_existing_session: bool,
     session_record_id: i64,
     execution_mode: Option<&str>,
 ) -> Result<CommandBuilder, String> {
@@ -1193,10 +1369,7 @@ fn build_claude_bridge_system_prompt(
     launch_root_path: &str,
     execution_mode: Option<&str>,
 ) -> String {
-    let namespace = project
-        .work_item_prefix
-        .as_deref()
-        .unwrap_or("PROJECT");
+    let namespace = project.work_item_prefix.as_deref().unwrap_or("PROJECT");
     let tracker_call_sign = format!("{namespace}-0");
 
     let mut prompt = format!(
@@ -1527,6 +1700,12 @@ fn session_output_log_path(storage: &StorageInfo, session_record_id: i64) -> std
         .join(format!("{session_record_id}.log"))
 }
 
+fn session_crash_report_path(storage: &StorageInfo, session_record_id: i64) -> std::path::PathBuf {
+    PathBuf::from(&storage.app_data_dir)
+        .join("crash-reports")
+        .join(format!("{session_record_id}.json"))
+}
+
 fn flush_session_output_log(log_path: &std::path::Path, data: &[u8]) {
     match std::fs::OpenOptions::new()
         .create(true)
@@ -1538,7 +1717,10 @@ fn flush_session_output_log(log_path: &std::path::Path, data: &[u8]) {
             let _ = file.flush();
         }
         Err(error) => {
-            log::warn!("failed to write session output log {}: {error}", log_path.display());
+            log::warn!(
+                "failed to write session output log {}: {error}",
+                log_path.display()
+            );
             return;
         }
     }
@@ -1620,10 +1802,7 @@ fn spawn_exit_watch_thread(session: Arc<HostedSession>, app_state: AppState) {
                             detail.push_str("\n--- last output (30 lines) ---\n");
                             detail.push_str(&tail);
                         }
-                        log::error!(
-                            "session #{} crashed — {detail}",
-                            session.session_record_id
-                        );
+                        log::error!("session #{} crashed — {detail}", session.session_record_id);
                         Some(detail)
                     } else {
                         log::info!(
@@ -1694,7 +1873,11 @@ fn last_output_lines(session: &HostedSession, max_lines: usize) -> Option<String
     let lines: Vec<&str> = clean.lines().collect();
     let start = lines.len().saturating_sub(max_lines);
     let tail = lines[start..].join("\n");
-    if tail.trim().is_empty() { None } else { Some(tail) }
+    if tail.trim().is_empty() {
+        None
+    } else {
+        Some(tail)
+    }
 }
 
 fn strip_ansi_escapes(input: &str) -> String {
@@ -1716,7 +1899,9 @@ fn strip_ansi_escapes(input: &str) -> String {
                 chars.next();
                 while let Some(&next) = chars.peek() {
                     chars.next();
-                    if next == '\x07' { break; }
+                    if next == '\x07' {
+                        break;
+                    }
                     if next == '\x1b' && chars.peek() == Some(&'\\') {
                         chars.next();
                         break;
@@ -1751,6 +1936,95 @@ fn last_activity_snapshot(session: &HostedSession) -> String {
         .lock()
         .map(|a| a.clone())
         .unwrap_or_else(|_| "unknown".to_string())
+}
+
+fn first_non_empty_line(value: &str) -> Option<String> {
+    value
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn extract_bun_report_url(value: &str) -> Option<String> {
+    value
+        .split_whitespace()
+        .find(|part| part.starts_with("https://bun.report/"))
+        .map(ToOwned::to_owned)
+}
+
+fn build_session_crash_report(
+    session: &HostedSession,
+    exit_code: u32,
+    success: bool,
+    error: Option<&str>,
+) -> Option<SessionCrashReport> {
+    if success {
+        return None;
+    }
+
+    let output_log_path = session_output_log_path(&session.storage, session.session_record_id);
+    let crash_report_path = session_crash_report_path(&session.storage, session.session_record_id);
+    let last_output = last_output_lines(session, 120);
+    let last_activity = Some(last_activity_snapshot(session));
+    let startup_prompt =
+        (!session.startup_prompt.trim().is_empty()).then(|| session.startup_prompt.clone());
+    let headline = error
+        .and_then(first_non_empty_line)
+        .or_else(|| last_output.as_deref().and_then(first_non_empty_line))
+        .or_else(|| Some(format!("session exited with code {exit_code}")));
+    let bun_report_url = error
+        .and_then(extract_bun_report_url)
+        .or_else(|| last_output.as_deref().and_then(extract_bun_report_url));
+
+    Some(SessionCrashReport {
+        session_id: session.session_record_id,
+        project_id: session.project_id,
+        worktree_id: session.worktree_id,
+        launch_profile_id: Some(session.launch_profile_id),
+        profile_label: session.profile_label.clone(),
+        root_path: session.root_path.clone(),
+        started_at: session.started_at.clone(),
+        ended_at: None,
+        exit_code: Some(i64::from(exit_code)),
+        exit_success: Some(success),
+        error: error.map(ToOwned::to_owned),
+        headline,
+        last_activity,
+        startup_prompt,
+        last_output,
+        output_log_path: Some(output_log_path.display().to_string()),
+        crash_report_path: Some(crash_report_path.display().to_string()),
+        bun_report_url,
+    })
+}
+
+fn persist_session_crash_report(session: &HostedSession, report: &SessionCrashReport) {
+    let path = session_crash_report_path(&session.storage, session.session_record_id);
+
+    if let Some(parent) = path.parent() {
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            log::warn!(
+                "failed to create crash report directory {}: {error}",
+                parent.display()
+            );
+            return;
+        }
+    }
+
+    match serde_json::to_vec_pretty(report) {
+        Ok(raw) => {
+            if let Err(error) = std::fs::write(&path, raw) {
+                log::warn!("failed to write crash report {}: {error}", path.display());
+            }
+        }
+        Err(error) => {
+            log::warn!(
+                "failed to serialize crash report for session #{}: {error}",
+                session.session_record_id
+            );
+        }
+    }
 }
 
 /// Map Windows exit codes to human-readable reasons.
@@ -1863,6 +2137,13 @@ fn persist_session_exit(
 ) {
     let ended_at = now_timestamp_string();
     let state = state_override.unwrap_or(if success { "exited" } else { "failed" });
+    let mut crash_report = build_session_crash_report(session, exit_code, success, error);
+
+    if let Some(report) = &mut crash_report {
+        report.ended_at = Some(ended_at.clone());
+        persist_session_crash_report(session, report);
+    }
+
     let finish_input = FinishSessionRecordInput {
         id: session.session_record_id,
         state: state.to_string(),
@@ -1951,7 +2232,7 @@ fn try_taskkill(pid: Option<u32>) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{ProjectRecord, StorageInfo, WorktreeRecord};
+    use crate::db::{LaunchProfileRecord, ProjectRecord, StorageInfo, WorktreeRecord};
     use crate::session_api::SupervisorRuntimeInfo;
     use serde_json::Value;
     use std::fs;
@@ -1986,16 +2267,23 @@ mod tests {
 
     impl Drop for TemporaryHelperBinary {
         fn drop(&mut self) {
-            if self.created {
-                let _ = fs::remove_file(&self.path);
-            }
+            // Keep the helper marker in place for the full test process.
+            // Multiple tests may build commands concurrently against the same
+            // helper path, so deleting it in one test can race another test.
+            let _ = (&self.path, self.created);
         }
     }
 
-    #[test]
-    fn build_project_commander_mcp_config_binds_project_worktree_and_session_context() {
-        let helper = TemporaryHelperBinary::create("project-commander-supervisor");
-        let project = ProjectRecord {
+    fn argv_strings(command: &CommandBuilder) -> Vec<String> {
+        command
+            .get_argv()
+            .iter()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    fn test_project_record() -> ProjectRecord {
+        ProjectRecord {
             id: 11,
             name: "Commander".to_string(),
             root_path: "E:\\repo".to_string(),
@@ -2006,16 +2294,19 @@ mod tests {
             document_count: 0,
             session_count: 0,
             work_item_prefix: Some("CMDR".to_string()),
-        };
-        let worktree = WorktreeRecord {
+        }
+    }
+
+    fn test_worktree_record(project_id: i64) -> WorktreeRecord {
+        WorktreeRecord {
             id: 22,
-            project_id: project.id,
+            project_id,
             work_item_id: 33,
             work_item_call_sign: "COMMANDER-33".to_string(),
-            work_item_title: "Fix MCP attach".to_string(),
+            work_item_title: "Fix bridge".to_string(),
             work_item_status: "in_progress".to_string(),
-            branch_name: "pc/commander-33-fix-mcp-attach".to_string(),
-            short_branch_name: "commander-33-fix-mcp-attach".to_string(),
+            branch_name: "pc/commander-33-fix-bridge".to_string(),
+            short_branch_name: "commander-33-fix-bridge".to_string(),
             worktree_path: "E:\\worktrees\\commander-33".to_string(),
             path_available: true,
             has_uncommitted_changes: false,
@@ -2024,16 +2315,48 @@ mod tests {
             is_cleanup_eligible: false,
             pending_signal_count: 0,
             agent_name: "COMMANDER-33".to_string(),
-            session_summary: "Fix MCP attach".to_string(),
+            session_summary: "Fix bridge".to_string(),
             created_at: "now".to_string(),
             updated_at: "now".to_string(),
-        };
-        let runtime = SupervisorRuntimeInfo {
+        }
+    }
+
+    fn test_claude_profile() -> LaunchProfileRecord {
+        LaunchProfileRecord {
+            id: 77,
+            label: "Claude Code".to_string(),
+            provider: "claude_code".to_string(),
+            executable: "claude".to_string(),
+            args: "--dangerously-skip-permissions".to_string(),
+            env_json: "{}".to_string(),
+            created_at: "now".to_string(),
+            updated_at: "now".to_string(),
+        }
+    }
+
+    fn test_storage() -> StorageInfo {
+        StorageInfo {
+            app_data_dir: "E:\\app-data".to_string(),
+            db_dir: "E:\\app-data\\db".to_string(),
+            db_path: "E:\\app-data\\db\\project-commander.sqlite3".to_string(),
+        }
+    }
+
+    fn test_runtime() -> SupervisorRuntimeInfo {
+        SupervisorRuntimeInfo {
             port: 43123,
             token: "test-token".to_string(),
             pid: 999,
             started_at: "now".to_string(),
-        };
+        }
+    }
+
+    #[test]
+    fn build_project_commander_mcp_config_binds_project_worktree_and_session_context() {
+        let helper = TemporaryHelperBinary::create("project-commander-supervisor");
+        let project = test_project_record();
+        let worktree = test_worktree_record(project.id);
+        let runtime = test_runtime();
 
         let config_json =
             build_project_commander_mcp_config_json(&project, Some(&worktree), &runtime, 44)
@@ -2072,44 +2395,9 @@ mod tests {
 
     #[test]
     fn build_project_commander_env_script_includes_worktree_fields() {
-        let project = ProjectRecord {
-            id: 11,
-            name: "Commander".to_string(),
-            root_path: "E:\\repo".to_string(),
-            root_available: true,
-            created_at: "now".to_string(),
-            updated_at: "now".to_string(),
-            work_item_count: 0,
-            document_count: 0,
-            session_count: 0,
-            work_item_prefix: Some("CMDR".to_string()),
-        };
-        let worktree = WorktreeRecord {
-            id: 22,
-            project_id: project.id,
-            work_item_id: 33,
-            work_item_call_sign: "COMMANDER-33".to_string(),
-            work_item_title: "Fix bridge".to_string(),
-            work_item_status: "in_progress".to_string(),
-            branch_name: "pc/commander-33-fix-bridge".to_string(),
-            short_branch_name: "commander-33-fix-bridge".to_string(),
-            worktree_path: "E:\\worktrees\\commander-33".to_string(),
-            path_available: true,
-            has_uncommitted_changes: false,
-            has_unmerged_commits: true,
-            pinned: false,
-            is_cleanup_eligible: false,
-            pending_signal_count: 0,
-            agent_name: "COMMANDER-33".to_string(),
-            session_summary: "Fix bridge".to_string(),
-            created_at: "now".to_string(),
-            updated_at: "now".to_string(),
-        };
-        let storage = StorageInfo {
-            app_data_dir: "E:\\app-data".to_string(),
-            db_dir: "E:\\app-data\\db".to_string(),
-            db_path: "E:\\app-data\\db\\project-commander.sqlite3".to_string(),
-        };
+        let project = test_project_record();
+        let worktree = test_worktree_record(project.id);
+        let storage = test_storage();
 
         let script = build_project_commander_env_script(
             &project,
@@ -2133,5 +2421,93 @@ mod tests {
             .contains("$env:PROJECT_COMMANDER_WORKTREE_BRANCH = 'pc/commander-33-fix-bridge';"));
         assert!(script.contains("$env:PROJECT_COMMANDER_WORKTREE_WORK_ITEM_ID = '33';"));
         assert!(script.contains("$env:PROJECT_COMMANDER_WORKTREE_WORK_ITEM_TITLE = 'Fix bridge';"));
+    }
+
+    #[test]
+    fn build_claude_launch_command_assigns_stable_session_id_for_fresh_sessions() {
+        let helper = TemporaryHelperBinary::create("project-commander-supervisor");
+        let project = test_project_record();
+        let worktree = test_worktree_record(project.id);
+        let profile = test_claude_profile();
+        let storage = test_storage();
+        let runtime = test_runtime();
+
+        let command = build_claude_launch_command(
+            &project,
+            Some(&worktree),
+            &worktree.worktree_path,
+            &profile,
+            &storage,
+            &runtime,
+            Some("inspect the repo state"),
+            Some("session-uuid-123"),
+            false,
+            44,
+            None,
+            Some("build"),
+        )
+        .expect("fresh Claude launch command should build");
+        let argv = argv_strings(&command);
+
+        assert_eq!(argv.first().map(String::as_str), Some("claude"));
+        assert!(argv.contains(&"--session-id".to_string()));
+        assert!(argv.contains(&"session-uuid-123".to_string()));
+        assert!(!argv.contains(&"--resume".to_string()));
+        assert!(argv.contains(&"--append-system-prompt".to_string()));
+        assert!(argv.contains(&"inspect the repo state".to_string()));
+        assert_eq!(
+            command
+                .get_env("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS")
+                .map(|value| value.to_string_lossy().into_owned()),
+            Some("1".to_string())
+        );
+
+        let mcp_config_arg = argv
+            .iter()
+            .find(|value| value.starts_with("--mcp-config="))
+            .expect("fresh Claude launch should include an MCP config");
+        let mcp_config_json = mcp_config_arg
+            .strip_prefix("--mcp-config=")
+            .expect("MCP config arg should carry a JSON payload");
+        let mcp_config: Value =
+            serde_json::from_str(mcp_config_json).expect("MCP config should decode as JSON");
+        assert_eq!(
+            mcp_config["mcpServers"]["project-commander"]["command"].as_str(),
+            Some(helper.path.display().to_string().as_str())
+        );
+    }
+
+    #[test]
+    fn build_claude_launch_command_uses_resume_without_replaying_startup_prompt() {
+        let _helper = TemporaryHelperBinary::create("project-commander-supervisor");
+        let project = test_project_record();
+        let worktree = test_worktree_record(project.id);
+        let profile = test_claude_profile();
+        let storage = test_storage();
+        let runtime = test_runtime();
+
+        let command = build_claude_launch_command(
+            &project,
+            Some(&worktree),
+            &worktree.worktree_path,
+            &profile,
+            &storage,
+            &runtime,
+            Some("do not replay this"),
+            Some("session-uuid-456"),
+            true,
+            45,
+            None,
+            Some("build"),
+        )
+        .expect("resume Claude launch command should build");
+        let argv = argv_strings(&command);
+
+        assert_eq!(argv.first().map(String::as_str), Some("claude"));
+        assert!(argv.contains(&"--resume".to_string()));
+        assert!(argv.contains(&"session-uuid-456".to_string()));
+        assert!(!argv.contains(&"--session-id".to_string()));
+        assert!(!argv.contains(&"--append-system-prompt".to_string()));
+        assert!(!argv.contains(&"do not replay this".to_string()));
     }
 }

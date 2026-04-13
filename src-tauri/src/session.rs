@@ -8,21 +8,18 @@ use crate::error::{AppError, AppErrorCode, AppResult};
 use crate::session_api::{
     LaunchSessionInput, ProjectSessionTarget, ResizeSessionInput, SessionInput, SessionPollInput,
     SessionPollOutput, SessionSnapshot, SupervisorHealth, SupervisorRuntimeInfo, TerminalExitEvent,
-    TerminalOutputEvent,
-    SUPERVISOR_PROTOCOL_VERSION,
-    TERMINAL_EXIT_EVENT, TERMINAL_OUTPUT_EVENT,
+    TerminalOutputEvent, SUPERVISOR_PROTOCOL_VERSION, TERMINAL_EXIT_EVENT, TERMINAL_OUTPUT_EVENT,
 };
 use crate::session_host::{now_timestamp_string, resolve_helper_binary_path};
 use crate::supervisor_api::{
     CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget, CleanupRepairOutput,
     CleanupWorktreeInput, CrashRecoveryManifest, CreateProjectDocumentInput,
     CreateProjectWorkItemInput, EnsureProjectWorktreeInput, LaunchProfileTarget,
-    LaunchProjectWorktreeAgentInput, WorktreeLaunchOutput, ListCleanupCandidatesInput,
-    ListProjectDocumentsInput, ListProjectSessionEventsInput, ListProjectSessionsInput,
-    ListProjectWorkItemsInput, ListProjectWorktreesInput, PinWorktreeInput,
-    ProjectDocumentTarget, ProjectSessionRecordTarget, ProjectWorkItemTarget,
-    ProjectWorktreeTarget, RepairCleanupInput, UpdateProjectDocumentInput,
-    UpdateProjectWorkItemInput,
+    LaunchProjectWorktreeAgentInput, ListCleanupCandidatesInput, ListProjectDocumentsInput,
+    ListProjectSessionEventsInput, ListProjectSessionsInput, ListProjectWorkItemsInput,
+    ListProjectWorktreesInput, PinWorktreeInput, ProjectDocumentTarget, ProjectSessionRecordTarget,
+    ProjectWorkItemTarget, ProjectWorktreeTarget, RepairCleanupInput, SessionRecoveryDetails,
+    UpdateProjectDocumentInput, UpdateProjectWorkItemInput, WorktreeLaunchOutput,
 };
 use reqwest::blocking::Client;
 use reqwest::StatusCode;
@@ -195,17 +192,11 @@ impl SupervisorClient {
         )
     }
 
-    pub fn create_work_item(
-        &self,
-        input: CreateProjectWorkItemInput,
-    ) -> AppResult<WorkItemRecord> {
+    pub fn create_work_item(&self, input: CreateProjectWorkItemInput) -> AppResult<WorkItemRecord> {
         self.request_json("work-item/create", &input)
     }
 
-    pub fn update_work_item(
-        &self,
-        input: UpdateProjectWorkItemInput,
-    ) -> AppResult<WorkItemRecord> {
+    pub fn update_work_item(&self, input: UpdateProjectWorkItemInput) -> AppResult<WorkItemRecord> {
         self.request_json("work-item/update", &input)
     }
 
@@ -227,17 +218,11 @@ impl SupervisorClient {
         )
     }
 
-    pub fn create_document(
-        &self,
-        input: CreateProjectDocumentInput,
-    ) -> AppResult<DocumentRecord> {
+    pub fn create_document(&self, input: CreateProjectDocumentInput) -> AppResult<DocumentRecord> {
         self.request_json("document/create", &input)
     }
 
-    pub fn update_document(
-        &self,
-        input: UpdateProjectDocumentInput,
-    ) -> AppResult<DocumentRecord> {
+    pub fn update_document(&self, input: UpdateProjectDocumentInput) -> AppResult<DocumentRecord> {
         self.request_json("document/update", &input)
     }
 
@@ -253,11 +238,7 @@ impl SupervisorClient {
         self.request_json("worktree/list", &ListProjectWorktreesInput { project_id })
     }
 
-    pub fn ensure_worktree(
-        &self,
-        project_id: i64,
-        work_item_id: i64,
-    ) -> AppResult<WorktreeRecord> {
+    pub fn ensure_worktree(&self, project_id: i64, work_item_id: i64) -> AppResult<WorktreeRecord> {
         self.request_json(
             "worktree/ensure",
             &EnsureProjectWorktreeInput {
@@ -337,13 +318,36 @@ impl SupervisorClient {
     }
 
     pub fn list_session_records(&self, project_id: i64) -> AppResult<Vec<SessionRecord>> {
-        self.request_json("session/list", &ListProjectSessionsInput { project_id })
+        self.request_json(
+            "session/list",
+            &ListProjectSessionsInput {
+                project_id,
+                limit: None,
+            },
+        )
+    }
+
+    pub fn list_session_records_limited(
+        &self,
+        project_id: i64,
+        limit: usize,
+    ) -> AppResult<Vec<SessionRecord>> {
+        self.request_json(
+            "session/list",
+            &ListProjectSessionsInput {
+                project_id,
+                limit: Some(limit),
+            },
+        )
     }
 
     pub fn list_orphaned_sessions(&self, project_id: i64) -> AppResult<Vec<SessionRecord>> {
         self.request_json(
             "session/orphaned-list",
-            &ListProjectSessionsInput { project_id },
+            &ListProjectSessionsInput {
+                project_id,
+                limit: None,
+            },
         )
     }
 
@@ -359,6 +363,20 @@ impl SupervisorClient {
                 session_id,
             },
             SUPERVISOR_LONG_REQUEST_TIMEOUT,
+        )
+    }
+
+    pub fn get_session_recovery_details(
+        &self,
+        project_id: i64,
+        session_id: i64,
+    ) -> AppResult<SessionRecoveryDetails> {
+        self.request_json(
+            "session/recovery-details",
+            &ProjectSessionRecordTarget {
+                project_id,
+                session_id,
+            },
         )
     }
 
@@ -404,8 +422,11 @@ impl SupervisorClient {
     }
 
     pub fn delete_launch_profile(&self, id: i64) -> AppResult<()> {
-        self.request_json::<_, serde_json::Value>("launch-profile/delete", &LaunchProfileTarget { id })
-            .map(|_| ())
+        self.request_json::<_, serde_json::Value>(
+            "launch-profile/delete",
+            &LaunchProfileTarget { id },
+        )
+        .map(|_| ())
     }
 
     pub fn list_session_events(
@@ -635,7 +656,10 @@ impl SupervisorClient {
             )))
         })?;
 
-        let data = envelope.get("data").cloned().unwrap_or(serde_json::Value::Null);
+        let data = envelope
+            .get("data")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         serde_json::from_value::<TResponse>(data).map_err(|error| {
             RequestFailure::Retryable(AppError::supervisor(format!(
                 "failed to decode supervisor GET response data: {error}"
@@ -742,7 +766,10 @@ impl SupervisorClient {
             )))
         })?;
 
-        let data = envelope.get("data").cloned().unwrap_or(serde_json::Value::Null);
+        let data = envelope
+            .get("data")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         serde_json::from_value::<TResponse>(data).map_err(|error| {
             RequestFailure::Retryable(AppError::supervisor(format!(
                 "failed to decode supervisor response data: {error}"
@@ -815,7 +842,10 @@ impl SupervisorClient {
         let envelope: serde_json::Value = response
             .json()
             .map_err(|error| format!("failed to decode supervisor health response: {error}"))?;
-        let data = envelope.get("data").cloned().unwrap_or(serde_json::Value::Null);
+        let data = envelope
+            .get("data")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         let health: SupervisorHealth = serde_json::from_value(data)
             .map_err(|error| format!("failed to decode supervisor health data: {error}"))?;
 

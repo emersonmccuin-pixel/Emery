@@ -3,13 +3,39 @@ import { flushSync } from 'react-dom'
 import { invoke } from '@tauri-apps/api/core'
 import type {
   DocumentRecord,
+  ProjectRecord,
   SessionSnapshot,
   WorkItemRecord,
   WorkItemStatus,
   WorktreeLaunchOutput,
 } from '../types'
 import type { AppStore, WorkItemSlice } from './types'
-import { getErrorMessage, sortDocuments, sortWorkItems } from './utils'
+import {
+  areDocumentListsEqual,
+  areWorkItemListsEqual,
+  getErrorMessage,
+  sortDocuments,
+  sortWorkItems,
+} from './utils'
+
+function syncProjectCount(
+  projects: ProjectRecord[],
+  projectId: number,
+  field: 'workItemCount' | 'documentCount',
+  value: number,
+) {
+  let changed = false
+  const nextProjects = projects.map((project) => {
+    if (project.id !== projectId || project[field] === value) {
+      return project
+    }
+
+    changed = true
+    return { ...project, [field]: value }
+  })
+
+  return changed ? nextProjects : projects
+}
 
 export const createWorkItemSlice: StateCreator<AppStore, [], [], WorkItemSlice> = (set, get) => ({
   workItems: [],
@@ -23,18 +49,57 @@ export const createWorkItemSlice: StateCreator<AppStore, [], [], WorkItemSlice> 
 
   setIsDocumentsManagerOpen: (value) => set({ isDocumentsManagerOpen: value }),
 
+  refreshWorkItems: async (projectId) => {
+    try {
+      const items = await invoke<WorkItemRecord[]>('list_work_items', { projectId })
+      const nextWorkItems = sortWorkItems(items)
+
+      set((state) => ({
+        workItems: areWorkItemListsEqual(state.workItems, nextWorkItems)
+          ? state.workItems
+          : nextWorkItems,
+        projects: syncProjectCount(state.projects, projectId, 'workItemCount', items.length),
+      }))
+
+      return nextWorkItems
+    } catch (error) {
+      set({ workItemError: getErrorMessage(error, 'Failed to load work items.') })
+      return []
+    }
+  },
+
+  refreshDocuments: async (projectId) => {
+    try {
+      const items = await invoke<DocumentRecord[]>('list_documents', { projectId })
+      const nextDocuments = sortDocuments(items)
+
+      set((state) => ({
+        documents: areDocumentListsEqual(state.documents, nextDocuments)
+          ? state.documents
+          : nextDocuments,
+        projects: syncProjectCount(state.projects, projectId, 'documentCount', items.length),
+      }))
+
+      return nextDocuments
+    } catch (error) {
+      set({ documentError: getErrorMessage(error, 'Failed to load documents.') })
+      return []
+    }
+  },
+
   loadWorkItems: async (projectId) => {
     set({ isLoadingWorkItems: true, workItemError: null })
 
     try {
       const items = await invoke<WorkItemRecord[]>('list_work_items', { projectId })
+      const nextWorkItems = sortWorkItems(items)
 
       set((state) => ({
-        workItems: sortWorkItems(items),
+        workItems: areWorkItemListsEqual(state.workItems, nextWorkItems)
+          ? state.workItems
+          : nextWorkItems,
         isLoadingWorkItems: false,
-        projects: state.projects.map((p) =>
-          p.id === projectId ? { ...p, workItemCount: items.length } : p,
-        ),
+        projects: syncProjectCount(state.projects, projectId, 'workItemCount', items.length),
       }))
     } catch (error) {
       set({
@@ -49,13 +114,14 @@ export const createWorkItemSlice: StateCreator<AppStore, [], [], WorkItemSlice> 
 
     try {
       const items = await invoke<DocumentRecord[]>('list_documents', { projectId })
+      const nextDocuments = sortDocuments(items)
 
       set((state) => ({
-        documents: sortDocuments(items),
+        documents: areDocumentListsEqual(state.documents, nextDocuments)
+          ? state.documents
+          : nextDocuments,
         isLoadingDocuments: false,
-        projects: state.projects.map((p) =>
-          p.id === projectId ? { ...p, documentCount: items.length } : p,
-        ),
+        projects: syncProjectCount(state.projects, projectId, 'documentCount', items.length),
       }))
     } catch (error) {
       set({
@@ -89,7 +155,6 @@ export const createWorkItemSlice: StateCreator<AppStore, [], [], WorkItemSlice> 
 
       set((s) => ({ workItems: sortWorkItems([item, ...s.workItems]) }))
       get().adjustProjectWorkItemCount(selectedProject.id, 1)
-      get().invalidateProjectContext()
     } catch (error) {
       set({ workItemError: getErrorMessage(error, 'Failed to create work item.') })
       throw error
@@ -121,7 +186,7 @@ export const createWorkItemSlice: StateCreator<AppStore, [], [], WorkItemSlice> 
       set((s) => ({
         workItems: sortWorkItems(s.workItems.map((w) => (w.id === item.id ? item : w))),
       }))
-      get().invalidateProjectContext()
+      await get().refreshSelectedProjectData(['worktrees'])
     } catch (error) {
       set({ workItemError: getErrorMessage(error, 'Failed to update work item.') })
       throw error
@@ -146,7 +211,7 @@ export const createWorkItemSlice: StateCreator<AppStore, [], [], WorkItemSlice> 
         documents: s.documents.map((d) => (d.workItemId === id ? { ...d, workItemId: null } : d)),
       }))
       get().adjustProjectWorkItemCount(selectedProject.id, -1)
-      get().invalidateProjectContext()
+      await get().refreshSelectedProjectData(['worktrees'])
     } catch (error) {
       set({ workItemError: getErrorMessage(error, 'Failed to delete work item.') })
       throw error
@@ -175,7 +240,6 @@ export const createWorkItemSlice: StateCreator<AppStore, [], [], WorkItemSlice> 
 
       set((s) => ({ documents: sortDocuments([document, ...s.documents]) }))
       get().adjustProjectDocumentCount(selectedProject.id, 1)
-      get().invalidateProjectContext()
     } catch (error) {
       set({ documentError: getErrorMessage(error, 'Failed to create document.') })
       throw error
@@ -207,7 +271,6 @@ export const createWorkItemSlice: StateCreator<AppStore, [], [], WorkItemSlice> 
       set((s) => ({
         documents: sortDocuments(s.documents.map((d) => (d.id === document.id ? document : d))),
       }))
-      get().invalidateProjectContext()
     } catch (error) {
       set({ documentError: getErrorMessage(error, 'Failed to update document.') })
       throw error
@@ -228,7 +291,6 @@ export const createWorkItemSlice: StateCreator<AppStore, [], [], WorkItemSlice> 
       await invoke('delete_document', { input: { projectId: selectedProject.id, id } })
       set((s) => ({ documents: s.documents.filter((d) => d.id !== id) }))
       get().adjustProjectDocumentCount(selectedProject.id, -1)
-      get().invalidateProjectContext()
     } catch (error) {
       set({ documentError: getErrorMessage(error, 'Failed to delete document.') })
       throw error

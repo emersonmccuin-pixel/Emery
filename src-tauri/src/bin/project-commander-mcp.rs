@@ -91,7 +91,8 @@ fn handle_message(state: &AppState, message: Value) -> AppResult<Option<Value>> 
             }
         }))),
         "tools/call" => {
-            let response_id = id.ok_or_else(|| AppError::invalid_input("tools/call request missing id"))?;
+            let response_id =
+                id.ok_or_else(|| AppError::invalid_input("tools/call request missing id"))?;
             let result = handle_tool_call(state, params);
 
             match result {
@@ -211,7 +212,9 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
                 && args.parent_work_item_id.is_none()
                 && !clear_parent
             {
-                return Err(AppError::invalid_input("no changes provided for work item update"));
+                return Err(AppError::invalid_input(
+                    "no changes provided for work item update",
+                ));
             }
 
             let work_item = state.update_work_item(UpdateWorkItemInput {
@@ -290,7 +293,9 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
                 && args.work_item_id.is_none()
                 && !args.clear_work_item
             {
-                return Err(AppError::invalid_input("no changes provided for document update"));
+                return Err(AppError::invalid_input(
+                    "no changes provided for document update",
+                ));
             }
 
             let work_item_id = if args.clear_work_item {
@@ -702,12 +707,9 @@ fn read_message(reader: &mut impl BufRead) -> AppResult<Option<Value>> {
         }
 
         if let Some(value) = trimmed.strip_prefix("Content-Length:") {
-            content_length = Some(
-                value
-                    .trim()
-                    .parse::<usize>()
-                    .map_err(|error| AppError::io(format!("invalid Content-Length header: {error}")))?,
-            );
+            content_length = Some(value.trim().parse::<usize>().map_err(|error| {
+                AppError::io(format!("invalid Content-Length header: {error}"))
+            })?);
         }
     }
 

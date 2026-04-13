@@ -1,5 +1,25 @@
 # Project Commander — House Rules for Claude
 
+## Start Here
+
+Before making non-trivial changes, read:
+
+1. `A_PLUS_TRACKER.md`
+2. `AGENTS.md`
+3. `docs/a-plus-delivery.md`
+4. `docs/refresh-architecture.md` if the change touches refresh or runtime invalidation
+5. `docs/observability.md` if the change touches supervisor/runtime behavior
+
+The app is currently at an `A+` baseline. Claude work should preserve that bar, not just make the requested change pass locally.
+
+## A+ Guardrails
+
+- Do not reintroduce broad polling, global refresh fan-out, or avoidable store churn.
+- Do not collapse the modular workspace-shell structure back into large orchestration components.
+- Do not bypass the shared async-state patterns in `src/components/ui/panel-state.tsx`.
+- Do not remove or weaken existing performance budgets, smoke coverage, repo-health checks, or observability on hot paths.
+- Keep `A_PLUS_TRACKER.md` and the relevant docs in sync when the quality contract changes.
+
 ## UI Conventions
 
 ### Tabs

@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionEventRecord, SessionRecord } from './types'
 import {
+  buildRecoveryStartupPrompt,
   filterEventsForSession,
   getLatestSessionForTarget,
+  hasNativeSessionResume,
   isRecoverableSession,
   parseTimestamp,
+  getSessionRecoveryHeadline,
   summarizeEventPayload,
 } from './sessionHistory'
 
@@ -17,6 +20,7 @@ function createSessionRecord(overrides: Partial<SessionRecord> = {}): SessionRec
     processId: 500,
     supervisorPid: 900,
     provider: 'claude_code',
+    providerSessionId: null,
     profileLabel: 'Claude Code / YOLO',
     rootPath: 'E:\\Projects\\Commander',
     state: 'terminated',
@@ -79,9 +83,28 @@ describe('getLatestSessionForTarget', () => {
 
 describe('session recovery helpers', () => {
   it('marks interrupted and orphaned sessions as recoverable', () => {
+    expect(isRecoverableSession(createSessionRecord({ state: 'failed' }))).toBe(true)
     expect(isRecoverableSession(createSessionRecord({ state: 'interrupted' }))).toBe(true)
     expect(isRecoverableSession(createSessionRecord({ state: 'orphaned' }))).toBe(true)
     expect(isRecoverableSession(createSessionRecord({ state: 'terminated' }))).toBe(false)
+  })
+
+  it('detects when a saved Claude session can be resumed directly', () => {
+    expect(
+      hasNativeSessionResume(
+        createSessionRecord({ provider: 'claude_code', providerSessionId: 'abc-123' }),
+      ),
+    ).toBe(true)
+    expect(
+      hasNativeSessionResume(
+        createSessionRecord({ provider: 'claude_code', providerSessionId: '   ' }),
+      ),
+    ).toBe(false)
+    expect(
+      hasNativeSessionResume(
+        createSessionRecord({ provider: 'custom_provider', providerSessionId: 'abc-123' }),
+      ),
+    ).toBe(false)
   })
 
   it('extracts the most useful payload summary for the history feed', () => {
@@ -95,6 +118,17 @@ describe('session recovery helpers', () => {
     ).toBe('Fix recovery banner')
   })
 
+  it('prefers the first line of an error payload for crash summaries', () => {
+    expect(
+      summarizeEventPayload(
+        createSessionEvent({
+          payloadJson:
+            '{"error":"exit code 3: path not found\\n--- last output (30 lines) ---\\npanic(main thread): Segmentation fault"}',
+        }),
+      ),
+    ).toBe('exit code 3: path not found')
+  })
+
   it('filters event history to a selected session', () => {
     const events = [
       createSessionEvent({ id: 1, sessionId: 1 }),
@@ -104,5 +138,32 @@ describe('session recovery helpers', () => {
 
     expect(filterEventsForSession(events, 2).map((event) => event.id)).toEqual([2])
     expect(filterEventsForSession(events, null).map((event) => event.id)).toEqual([1, 2, 3])
+  })
+
+  it('builds a recovery prompt that includes crash context and the original prompt', () => {
+    const details = {
+      session: createSessionRecord({
+        id: 42,
+        state: 'failed',
+        startupPrompt: 'Ship the dispatcher refactor.',
+      }),
+      crashReport: {
+        sessionId: 42,
+        projectId: 10,
+        profileLabel: 'Claude Code / YOLO',
+        rootPath: 'E:\\Projects\\Commander',
+        startedAt: '1712769600',
+        headline: 'panic(main thread): Segmentation fault at address 0x18',
+        lastActivity: 'user input: screenshot.png',
+        lastOutput: 'panic(main thread): Segmentation fault at address 0x18',
+      },
+    }
+
+    expect(getSessionRecoveryHeadline(details)).toBe(
+      'panic(main thread): Segmentation fault at address 0x18',
+    )
+    expect(buildRecoveryStartupPrompt(details)).toContain('Project Commander recovery handoff')
+    expect(buildRecoveryStartupPrompt(details)).toContain('Original startup prompt')
+    expect(buildRecoveryStartupPrompt(details)).toContain('screenshot.png')
   })
 })

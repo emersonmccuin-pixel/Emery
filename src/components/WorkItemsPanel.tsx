@@ -3,7 +3,13 @@ import type { ProjectRecord, WorkItemRecord, WorkItemStatus, WorkItemType } from
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Badge } from './ui/badge'
+import {
+  PanelBanner,
+  PanelEmptyState,
+  PanelLoadingState,
+} from './ui/panel-state'
 import { ScrollArea } from './ui/scroll-area'
+import { VirtualList } from './ui/virtual-list'
 import { Play, Trash2 } from 'lucide-react'
 
 const WORK_ITEM_TYPES: WorkItemType[] = ['bug', 'task', 'feature', 'note']
@@ -133,6 +139,13 @@ function WorkItemsPanel({
     selectedWorkItem && selectedWorkItem.parentWorkItemId !== null
       ? workItems.find((item) => item.id === selectedWorkItem.parentWorkItemId) ?? null
       : null
+  const hasWorkItems = workItems.length > 0
+  const hasVisibleWorkItems = filteredWorkItems.length > 0
+  const hasActiveFilters =
+    searchQuery.trim().length > 0 ||
+    typeFilter.size > 0 ||
+    statusFilter.size > 0 ||
+    parentOnly
 
   useEffect(() => {
     setSelectedWorkItemId(workItems[0]?.id ?? null)
@@ -237,6 +250,14 @@ function WorkItemsPanel({
     }
   }
 
+  const clearFilters = () => {
+    setSearchQuery('')
+    setTypeFilter(new Set())
+    setStatusFilter(new Set())
+    setParentOnly(false)
+    setSortKey('call_sign')
+  }
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex items-center justify-between border-b border-border bg-card/50 px-3 py-2">
@@ -256,6 +277,8 @@ function WorkItemsPanel({
           {isCreateOpen ? 'CLOSE' : 'ADD ITEM'}
         </Button>
       </div>
+
+      {error ? <PanelBanner className="border-x-0 border-t-0" message={error} /> : null}
 
       {isCreateOpen ? (
         <ScrollArea className="flex-1">
@@ -448,45 +471,103 @@ function WorkItemsPanel({
               </div>
             </div>
 
-            <ScrollArea className="flex-1">
-              <div className="space-y-1 p-2">
-                {filteredWorkItems.length === 0 ? (
-                  <div className="px-4 py-12 text-center text-xs italic text-muted-foreground">
-                    No work items match the current filters.
-                  </div>
+            <VirtualList
+              className="flex-1"
+              emptyState={
+                isLoading && !hasWorkItems ? (
+                  <PanelLoadingState
+                    className="m-3 min-h-[16rem]"
+                    compact
+                    detail="Fetching the current project backlog and recent work item metadata."
+                    eyebrow="Backlog"
+                    title="Loading work items"
+                    tone="cyan"
+                  />
                 ) : (
-                  filteredWorkItems.map((item) => (
-                    <button
-                      key={item.id}
-                      className={`w-full border border-transparent p-3 text-left transition-all ${
-                        item.id === selectedWorkItem?.id ? 'bg-primary/10 border-primary/20' : 'hover:bg-muted/30'
-                      }`}
-                      type="button"
-                      onClick={() => setSelectedWorkItemId(item.id)}
-                    >
-                      <div className="mb-2 flex items-start justify-between gap-2">
-                        <div>
-                          <p className="text-[10px] font-black tracking-widest text-hud-cyan">
-                            {item.callSign}
-                          </p>
-                          <p className="mt-1 text-[11px] font-bold leading-snug">{item.title}</p>
-                        </div>
-                        <Badge
-                          variant={item.status === 'parked' ? 'offline' : 'default'}
-                          className={`h-4 text-[8px]${item.status === 'parked' ? ' text-amber-400 border-amber-400/40 bg-amber-400/10' : ''}`}
+                  <PanelEmptyState
+                    action={
+                      hasActiveFilters ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 border-hud-cyan/40 text-[9px] font-black uppercase tracking-[0.18em] text-hud-cyan hover:border-hud-cyan/70 hover:bg-hud-cyan/10"
+                          onClick={clearFilters}
                         >
-                          {formatStatusLabel(item.status)}
-                        </Badge>
+                          Clear Filters
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 border-hud-green/40 text-[9px] font-black uppercase tracking-[0.18em] text-hud-green hover:border-hud-green/70 hover:bg-hud-green/10"
+                          onClick={() => setIsCreateOpen(true)}
+                        >
+                          Add First Item
+                        </Button>
+                      )
+                    }
+                    className="m-3 min-h-[16rem]"
+                    compact
+                    detail={
+                      hasActiveFilters
+                        ? 'The current search or filter set hides every work item in this project.'
+                        : 'Create the first work item to drive isolated worktree execution and cleanup.'
+                    }
+                    eyebrow="Backlog"
+                    title={
+                      hasActiveFilters
+                        ? 'No work items match the current view'
+                        : 'No work items yet'
+                    }
+                    tone={hasActiveFilters ? 'cyan' : 'green'}
+                  />
+                )
+              }
+              estimateSize={() => 84}
+              getItemKey={(item) => item.id}
+              items={filteredWorkItems}
+              overscan={10}
+              renderItem={(item, index) => (
+                <div
+                  className={`px-2 ${index === 0 ? 'pt-2' : ''} ${
+                    index === filteredWorkItems.length - 1 ? 'pb-2' : 'pb-1'
+                  }`}
+                >
+                  <button
+                    className={`w-full border border-transparent p-3 text-left transition-all ${
+                      item.id === selectedWorkItem?.id
+                        ? 'bg-primary/10 border-primary/20'
+                        : 'hover:bg-muted/30'
+                    }`}
+                    type="button"
+                    onClick={() => setSelectedWorkItemId(item.id)}
+                  >
+                    <div className="mb-2 flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-[10px] font-black tracking-widest text-hud-cyan">
+                          {item.callSign}
+                        </p>
+                        <p className="mt-1 text-[11px] font-bold leading-snug">{item.title}</p>
                       </div>
-                      <div className="flex items-center justify-between text-[9px] uppercase tracking-widest opacity-70">
-                        <span>{item.itemType}</span>
-                        <span>{item.parentWorkItemId === null ? 'Parent' : 'Child'}</span>
-                      </div>
-                    </button>
-                  ))
-                )}
-              </div>
-            </ScrollArea>
+                      <Badge
+                        variant={item.status === 'parked' ? 'offline' : 'default'}
+                        className={`h-4 text-[8px]${
+                          item.status === 'parked'
+                            ? ' text-amber-400 border-amber-400/40 bg-amber-400/10'
+                            : ''
+                        }`}
+                      >
+                        {formatStatusLabel(item.status)}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center justify-between text-[9px] uppercase tracking-widest opacity-70">
+                      <span>{item.itemType}</span>
+                      <span>{item.parentWorkItemId === null ? 'Parent' : 'Child'}</span>
+                    </div>
+                  </button>
+                </div>
+              )}
+            />
           </div>
 
           <div className="flex-1 bg-hud-cyan/10">
@@ -616,15 +697,42 @@ function WorkItemsPanel({
                 </div>
               </ScrollArea>
             ) : (
-              <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
-                <p className="text-[10px] uppercase tracking-widest">Select a work item to inspect</p>
+              <div className="flex h-full items-center justify-center p-6">
+                <PanelEmptyState
+                  action={
+                    !hasVisibleWorkItems && hasActiveFilters ? (
+                      <Button
+                        variant="outline"
+                        className="h-9 border-hud-cyan/40 text-[10px] font-black uppercase tracking-[0.18em] text-hud-cyan hover:border-hud-cyan/70 hover:bg-hud-cyan/10"
+                        onClick={clearFilters}
+                      >
+                        Clear Filters
+                      </Button>
+                    ) : undefined
+                  }
+                  className="w-full max-w-xl"
+                  detail={
+                    !hasWorkItems
+                      ? 'Create the first work item to start building an actionable backlog.'
+                      : !hasVisibleWorkItems
+                        ? 'The current filters hide every work item. Clear them to restore the backlog.'
+                        : 'Choose a work item from the backlog rail to inspect its details and launch a worktree.'
+                  }
+                  eyebrow="Backlog detail"
+                  title={
+                    !hasWorkItems
+                      ? 'No work items yet'
+                      : !hasVisibleWorkItems
+                        ? 'No work item is visible'
+                        : 'Select a work item to inspect'
+                  }
+                  tone={!hasWorkItems ? 'green' : 'cyan'}
+                />
               </div>
             )}
           </div>
         </div>
       )}
-
-      {error ? <p className="bg-destructive/20 px-3 py-1 text-[10px] text-destructive">{error}</p> : null}
     </div>
   )
 }

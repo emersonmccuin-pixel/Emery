@@ -25,7 +25,7 @@ function persistThemeId(id: string): void {
 const initialThemeId = loadPersistedThemeId()
 applyTheme(getTheme(initialThemeId))
 
-export const createUiSlice: StateCreator<AppStore, [], [], UiSlice> = (set) => ({
+export const createUiSlice: StateCreator<AppStore, [], [], UiSlice> = (set, get) => ({
   activeView: 'terminal',
   activeThemeId: initialThemeId,
   isProjectRailCollapsed: false,
@@ -33,7 +33,6 @@ export const createUiSlice: StateCreator<AppStore, [], [], UiSlice> = (set) => (
   isAgentGuideOpen: false,
   isAppSettingsOpen: false,
   appSettingsInitialTab: 'appearance',
-  contextRefreshKey: 0,
 
   setActiveView: (value) => set({ activeView: value }),
   setActiveThemeId: (id) => {
@@ -51,6 +50,39 @@ export const createUiSlice: StateCreator<AppStore, [], [], UiSlice> = (set) => (
       appSettingsInitialTab: tab ?? 'appearance',
     }),
   closeAppSettings: () => set({ isAppSettingsOpen: false }),
-  invalidateProjectContext: () =>
-    set((state) => ({ contextRefreshKey: state.contextRefreshKey + 1 })),
+  refreshSelectedProjectData: async (targets) => {
+    const state = get()
+    const selectedProjectId = state.selectedProjectId
+
+    if (selectedProjectId === null || targets.length === 0) {
+      return
+    }
+
+    const uniqueTargets = [...new Set(targets)]
+
+    await Promise.all(
+      uniqueTargets.map((target) => {
+        switch (target) {
+          case 'workItems':
+            return state.refreshWorkItems(selectedProjectId)
+          case 'documents':
+            return state.refreshDocuments(selectedProjectId)
+          case 'worktrees':
+            return state.refreshWorktrees(selectedProjectId)
+          case 'liveSessions':
+            return state.refreshLiveSessions(selectedProjectId)
+          case 'sessionSnapshot':
+            return state.refreshSelectedSessionSnapshot()
+          case 'history':
+            return state.refreshSessionHistory(selectedProjectId)
+          case 'orphanedSessions':
+            return state.refreshOrphanedSessions(selectedProjectId)
+          case 'cleanupCandidates':
+            return state.refreshCleanupCandidates()
+          default:
+            return Promise.resolve()
+        }
+      }),
+    )
+  },
 })

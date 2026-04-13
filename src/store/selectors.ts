@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow'
 import { getLatestSessionForTarget, isRecoverableSession } from '../sessionHistory'
 import { mergeWorktreesForProject } from '../worktrees'
 import { useAppStore } from './store'
@@ -25,10 +26,9 @@ export function useSelectedWorktree() {
 }
 
 export function useVisibleWorktrees() {
-  const selectedProjectId = useAppStore((s) => s.selectedProjectId)
-  const worktrees = useAppStore((s) => s.worktrees)
-  const stagedWorktrees = useAppStore((s) => s.stagedWorktrees)
-  return mergeWorktreesForProject(selectedProjectId, worktrees, stagedWorktrees)
+  return useAppStore(
+    useShallow((s) => mergeWorktreesForProject(s.selectedProjectId, s.worktrees, s.stagedWorktrees)),
+  )
 }
 
 export function useBridgeReady() {
@@ -86,13 +86,11 @@ export function useBlockedWorkItemCount() {
 }
 
 export function useRecentDocuments() {
-  const documents = useAppStore((s) => s.documents)
-  return documents.slice(0, 4)
+  return useAppStore(useShallow((s) => s.documents.slice(0, 4)))
 }
 
 export function useInterruptedSessionRecords() {
-  const sessionRecords = useAppStore((s) => s.sessionRecords)
-  return sessionRecords.filter((r) => r.state === 'interrupted')
+  return useAppStore(useShallow((s) => s.sessionRecords.filter((r) => r.state === 'interrupted')))
 }
 
 export function useCleanupCategories() {
@@ -126,11 +124,11 @@ export function useRecoveryActionCount() {
 }
 
 export function useRecoverableSessionCount() {
-  const interruptedCount = useAppStore(
-    (s) => s.sessionRecords.filter((r) => r.state === 'interrupted').length,
+  const recoverableCount = useAppStore(
+    (s) => s.sessionRecords.filter((r) => r.state === 'failed' || r.state === 'interrupted').length,
   )
   const orphanedCount = useAppStore((s) => s.orphanedSessions.length)
-  return interruptedCount + orphanedCount
+  return recoverableCount + orphanedCount
 }
 
 export function useSelectedTargetHistoryRecord() {

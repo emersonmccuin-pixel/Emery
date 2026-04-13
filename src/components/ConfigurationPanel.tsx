@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { PanelBanner, PanelEmptyState, PanelLoadingState } from '@/components/ui/panel-state'
 import { useAppStore, useSelectedProject } from '../store'
 
 type ConfigurationTab = 'general' | 'claude' | 'agents_md'
@@ -14,9 +15,13 @@ function ConfigurationPanel() {
 
   if (!selectedProject) {
     return (
-      <div className="empty-state empty-state--rail">
-        Select a project to configure.
-      </div>
+      <PanelEmptyState
+        className="min-h-[24rem]"
+        detail="Select a project before editing repository bindings or project instruction files."
+        eyebrow="Configuration"
+        title="No project selected"
+        tone="cyan"
+      />
     )
   }
 
@@ -242,21 +247,31 @@ function ProjectFileEditor({
 
       <p className="stack-form__note">{description}</p>
 
-      {error ? <p className="form-error">{error}</p> : null}
+      {error ? <PanelBanner className="mb-4" message={error} /> : null}
       {message ? (
         <p className="stack-form__note settings-banner settings-banner--success">
           {message}
         </p>
       ) : null}
 
-      <textarea
-        className="w-full min-h-[360px] font-mono text-[11px] bg-black/60 border border-hud-cyan/30 rounded p-3 text-hud-cyan/90 outline-none focus:border-hud-cyan"
-        value={contents}
-        disabled={isLoading}
-        spellCheck={false}
-        onChange={(event) => setContents(event.target.value)}
-        placeholder={isLoading ? 'Loading...' : `# ${filename}\n`}
-      />
+      {isLoading && !contents ? (
+        <PanelLoadingState
+          className="min-h-[22rem]"
+          detail="Reading the project instruction file from the selected repository root."
+          eyebrow={eyebrow}
+          title={`Loading ${filename}`}
+          tone="cyan"
+        />
+      ) : (
+        <textarea
+          className="w-full min-h-[360px] rounded border border-hud-cyan/30 bg-black/60 p-3 font-mono text-[11px] text-hud-cyan/90 outline-none focus:border-hud-cyan"
+          value={contents}
+          disabled={isLoading}
+          spellCheck={false}
+          onChange={(event) => setContents(event.target.value)}
+          placeholder={`# ${filename}\n`}
+        />
+      )}
     </article>
   )
 }

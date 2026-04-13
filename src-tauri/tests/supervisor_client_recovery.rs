@@ -286,6 +286,7 @@ fn supervisor_client_recovers_after_supervisor_process_is_killed() {
         .create_project(CreateProjectInput {
             name: "Recovered Project".to_string(),
             root_path: harness.project_root.display().to_string(),
+            work_item_prefix: None,
         })
         .expect("client should recover and create project");
     let second_runtime = harness.runtime_info();
@@ -304,6 +305,7 @@ fn project_create_initializes_git_and_reuses_existing_repo_root_identity() {
         .create_project(CreateProjectInput {
             name: "Identity Project".to_string(),
             root_path: harness.project_root.display().to_string(),
+            work_item_prefix: None,
         })
         .expect("project should be created");
     let nested_folder = harness.project_root.join("src").join("nested");
@@ -313,6 +315,7 @@ fn project_create_initializes_git_and_reuses_existing_repo_root_identity() {
         .create_project(CreateProjectInput {
             name: "Identity Project Duplicate".to_string(),
             root_path: nested_folder.display().to_string(),
+            work_item_prefix: None,
         })
         .expect("existing project should be returned for the same repository root");
     let normalize_path = |value: String| value.replace("\\\\?\\", "").to_ascii_lowercase();
@@ -337,6 +340,7 @@ fn supervisor_client_assigns_flat_and_dotted_work_item_call_signs() {
         .create_project(CreateProjectInput {
             name: "Steve".to_string(),
             root_path: harness.project_root.display().to_string(),
+            work_item_prefix: None,
         })
         .expect("project should be created");
 
@@ -395,6 +399,7 @@ fn supervisor_restart_reconciles_orphaned_running_sessions_before_serving_reques
         .create_project(CreateProjectInput {
             name: "Recovered Session Project".to_string(),
             root_path: harness.project_root.display().to_string(),
+            work_item_prefix: None,
         })
         .expect("project create should succeed");
 
@@ -406,6 +411,7 @@ fn supervisor_restart_reconciles_orphaned_running_sessions_before_serving_reques
             process_id: None,
             supervisor_pid: None,
             provider: "test_provider".to_string(),
+            provider_session_id: None,
             profile_label: "Orphaned Session".to_string(),
             root_path: harness.project_root.display().to_string(),
             state: "running".to_string(),
@@ -463,6 +469,7 @@ fn supervisor_restart_marks_running_sessions_orphaned_when_recorded_child_pid_st
         .create_project(CreateProjectInput {
             name: "Orphaned Session Project".to_string(),
             root_path: harness.project_root.display().to_string(),
+            work_item_prefix: None,
         })
         .expect("project create should succeed");
 
@@ -474,6 +481,7 @@ fn supervisor_restart_marks_running_sessions_orphaned_when_recorded_child_pid_st
             process_id: Some(i64::from(std::process::id())),
             supervisor_pid: Some(i64::from(first_runtime.pid)),
             provider: "test_provider".to_string(),
+            provider_session_id: None,
             profile_label: "Maybe Orphaned Session".to_string(),
             root_path: harness.project_root.display().to_string(),
             state: "running".to_string(),
@@ -523,6 +531,7 @@ fn supervisor_client_lists_and_removes_stale_managed_worktree_cleanup_candidates
         .create_project(CreateProjectInput {
             name: "Cleanup Candidate Project".to_string(),
             root_path: harness.project_root.display().to_string(),
+            work_item_prefix: None,
         })
         .expect("project create should succeed");
     let worktree_root = harness
@@ -542,6 +551,7 @@ fn supervisor_client_lists_and_removes_stale_managed_worktree_cleanup_candidates
             process_id: None,
             supervisor_pid: Some(777777),
             provider: "test_provider".to_string(),
+            provider_session_id: None,
             profile_label: "Protected Worktree Session".to_string(),
             root_path: protected_path.display().to_string(),
             state: "orphaned".to_string(),
@@ -598,6 +608,7 @@ fn supervisor_client_repairs_all_safe_cleanup_items() {
         .create_project(CreateProjectInput {
             name: "Repair All Cleanup Project".to_string(),
             root_path: harness.project_root.display().to_string(),
+            work_item_prefix: None,
         })
         .expect("project create should succeed");
     let work_item = app_state
@@ -682,6 +693,7 @@ fn supervisor_startup_auto_repairs_safe_cleanup_items_when_enabled() {
         .create_project(CreateProjectInput {
             name: "Startup Auto Repair Project".to_string(),
             root_path: harness.project_root.display().to_string(),
+            work_item_prefix: None,
         })
         .expect("project create should succeed");
     let work_item = app_state
@@ -694,7 +706,9 @@ fn supervisor_startup_auto_repairs_safe_cleanup_items_when_enabled() {
             status: "backlog".to_string(),
         })
         .expect("work item should be created");
-    let stale_record_path = harness.root_dir.join("startup-auto-repair-missing-worktree");
+    let stale_record_path = harness
+        .root_dir
+        .join("startup-auto-repair-missing-worktree");
     let stale_worktree_dir = harness
         .managed_worktree_root()
         .join("startup-auto-repair-project")
@@ -761,6 +775,7 @@ fn supervisor_client_lists_and_terminates_live_orphaned_sessions() {
         .create_project(CreateProjectInput {
             name: "Orphan Cleanup Project".to_string(),
             root_path: harness.project_root.display().to_string(),
+            work_item_prefix: None,
         })
         .expect("project create should succeed");
     let child = TemporaryChildProcess::spawn();
@@ -773,6 +788,7 @@ fn supervisor_client_lists_and_terminates_live_orphaned_sessions() {
             process_id: Some(i64::from(child.id())),
             supervisor_pid: Some(999999),
             provider: "test_provider".to_string(),
+            provider_session_id: None,
             profile_label: "Cleanup Me".to_string(),
             root_path: harness.project_root.display().to_string(),
             state: "orphaned".to_string(),
@@ -834,6 +850,7 @@ fn supervisor_client_reconciles_missing_orphaned_sessions() {
         .create_project(CreateProjectInput {
             name: "Missing Orphan Project".to_string(),
             root_path: harness.project_root.display().to_string(),
+            work_item_prefix: None,
         })
         .expect("project create should succeed");
 
@@ -845,6 +862,7 @@ fn supervisor_client_reconciles_missing_orphaned_sessions() {
             process_id: None,
             supervisor_pid: Some(888888),
             provider: "test_provider".to_string(),
+            provider_session_id: None,
             profile_label: "Gone Already".to_string(),
             root_path: harness.project_root.display().to_string(),
             state: "orphaned".to_string(),

@@ -9,6 +9,31 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   clearScreen: false,
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) {
+            return undefined
+          }
+
+          if (id.includes('@xterm') || id.includes('xterm')) {
+            return 'terminal-vendor'
+          }
+
+          if (id.includes('@tauri-apps')) {
+            return 'tauri-vendor'
+          }
+
+          if (id.includes('@tanstack/react-virtual')) {
+            return 'virtualizer-vendor'
+          }
+
+          return 'vendor'
+        },
+      },
+    },
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

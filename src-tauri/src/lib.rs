@@ -12,20 +12,24 @@ use db::{
     UpdateLaunchProfileInput, UpdateProjectInput, WorkItemRecord, WorktreeRecord,
 };
 use error::AppResult;
+use serde::Serialize;
 use session::SupervisorClient;
 use session_api::{
     LaunchSessionInput, ProjectSessionTarget, ResizeSessionInput, SessionInput, SessionSnapshot,
 };
-use serde::Serialize;
 use std::fs;
+use std::time::Instant;
 use supervisor_api::{
     CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget, CleanupRepairOutput,
     CrashRecoveryManifest, CreateProjectDocumentInput, CreateProjectWorkItemInput,
     EnsureProjectWorktreeInput, LaunchProjectWorktreeAgentInput, PinWorktreeInput,
     ProjectDocumentTarget, ProjectWorkItemTarget, ProjectWorktreeTarget, SessionHistoryOutput,
-    UpdateProjectDocumentInput, UpdateProjectWorkItemInput, WorktreeLaunchOutput,
+    SessionRecoveryDetails, UpdateProjectDocumentInput, UpdateProjectWorkItemInput,
+    WorktreeLaunchOutput,
 };
 use tauri::{AppHandle, Manager, State};
+
+const TAURI_SLOW_COMMAND_MS: f64 = 500.0;
 
 fn ensure_storage_dirs(app: &AppHandle) -> AppResult<StorageInfo> {
     let app_data_dir = app
@@ -51,6 +55,35 @@ fn health_check() -> String {
     "Rust runtime connected.".to_string()
 }
 
+fn timed_command<T, F>(name: &str, detail: impl Into<String>, operation: F) -> AppResult<T>
+where
+    F: FnOnce() -> AppResult<T>,
+{
+    let detail = detail.into();
+    let started_at = Instant::now();
+    let result = operation();
+    let duration_ms = started_at.elapsed().as_secs_f64() * 1000.0;
+
+    match &result {
+        Ok(_) if duration_ms >= TAURI_SLOW_COMMAND_MS => log::warn!(
+            target: "perf",
+            "tauri_command={name} status=ok slow=true duration_ms={duration_ms:.2} {detail}"
+        ),
+        Ok(_) => log::info!(
+            target: "perf",
+            "tauri_command={name} status=ok duration_ms={duration_ms:.2} {detail}"
+        ),
+        Err(error) => log::warn!(
+            target: "perf",
+            "tauri_command={name} status=error duration_ms={duration_ms:.2} code={:?} message={} {detail}",
+            error.code,
+            error.message
+        ),
+    }
+
+    result
+}
+
 #[tauri::command]
 fn get_storage_info(state: State<SupervisorClient>) -> StorageInfo {
     state.storage()
@@ -58,7 +91,7 @@ fn get_storage_info(state: State<SupervisorClient>) -> StorageInfo {
 
 #[tauri::command]
 fn bootstrap_app_state(state: State<SupervisorClient>) -> AppResult<BootstrapData> {
-    state.bootstrap()
+    timed_command("bootstrap_app_state", "phase=startup", || state.bootstrap())
 }
 
 #[tauri::command]
@@ -128,7 +161,18 @@ fn launch_project_session(
     session_state: State<SupervisorClient>,
     app_handle: AppHandle,
 ) -> AppResult<SessionSnapshot> {
-    session_state.launch(input, &app_handle)
+    let detail = format!(
+        "project_id={} worktree_id={} launch_profile_id={}",
+        input.project_id,
+        input
+            .worktree_id
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "null".to_string()),
+        input.launch_profile_id
+    );
+    timed_command("launch_project_session", detail, || {
+        session_state.launch(input, &app_handle)
+    })
 }
 
 #[tauri::command]
@@ -143,7 +187,11 @@ fn resize_session(input: ResizeSessionInput, state: State<SupervisorClient>) -> 
 
 #[tauri::command]
 fn terminate_session(project_id: i64, state: State<SupervisorClient>) -> AppResult<()> {
-    state.terminate(project_id)
+    timed_command(
+        "terminate_session",
+        format!("project_id={project_id}"),
+        || state.terminate(project_id),
+    )
 }
 
 #[tauri::command]
@@ -152,10 +200,22 @@ fn terminate_session_target(
     worktree_id: Option<i64>,
     state: State<SupervisorClient>,
 ) -> AppResult<()> {
-    state.terminate_target(ProjectSessionTarget {
-        project_id,
-        worktree_id,
-    })
+    timed_command(
+        "terminate_session_target",
+        format!(
+            "project_id={} worktree_id={}",
+            project_id,
+            worktree_id
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "null".to_string())
+        ),
+        || {
+            state.terminate_target(ProjectSessionTarget {
+                project_id,
+                worktree_id,
+            })
+        },
+    )
 }
 
 #[tauri::command]
@@ -163,7 +223,11 @@ fn list_live_sessions(
     project_id: i64,
     state: State<SupervisorClient>,
 ) -> AppResult<Vec<SessionSnapshot>> {
-    state.list_live_sessions(project_id)
+    timed_command(
+        "list_live_sessions",
+        format!("project_id={project_id}"),
+        || state.list_live_sessions(project_id),
+    )
 }
 
 #[tauri::command]
@@ -171,7 +235,11 @@ fn list_work_items(
     project_id: i64,
     state: State<SupervisorClient>,
 ) -> AppResult<Vec<WorkItemRecord>> {
-    state.list_work_items(project_id)
+    timed_command(
+        "list_work_items",
+        format!("project_id={project_id}"),
+        || state.list_work_items(project_id),
+    )
 }
 
 #[tauri::command]
@@ -191,10 +259,7 @@ fn update_work_item(
 }
 
 #[tauri::command]
-fn delete_work_item(
-    input: ProjectWorkItemTarget,
-    state: State<SupervisorClient>,
-) -> AppResult<()> {
+fn delete_work_item(input: ProjectWorkItemTarget, state: State<SupervisorClient>) -> AppResult<()> {
     state.delete_work_item(input.project_id, input.id)
 }
 
@@ -203,7 +268,9 @@ fn list_documents(
     project_id: i64,
     state: State<SupervisorClient>,
 ) -> AppResult<Vec<DocumentRecord>> {
-    state.list_documents(project_id)
+    timed_command("list_documents", format!("project_id={project_id}"), || {
+        state.list_documents(project_id)
+    })
 }
 
 #[tauri::command]
@@ -223,10 +290,7 @@ fn update_document(
 }
 
 #[tauri::command]
-fn delete_document(
-    input: ProjectDocumentTarget,
-    state: State<SupervisorClient>,
-) -> AppResult<()> {
+fn delete_document(input: ProjectDocumentTarget, state: State<SupervisorClient>) -> AppResult<()> {
     state.delete_document(input.project_id, input.id)
 }
 
@@ -235,7 +299,9 @@ fn list_worktrees(
     project_id: i64,
     state: State<SupervisorClient>,
 ) -> AppResult<Vec<WorktreeRecord>> {
-    state.list_worktrees(project_id)
+    timed_command("list_worktrees", format!("project_id={project_id}"), || {
+        state.list_worktrees(project_id)
+    })
 }
 
 #[tauri::command]
@@ -243,7 +309,13 @@ fn ensure_worktree(
     input: EnsureProjectWorktreeInput,
     state: State<SupervisorClient>,
 ) -> AppResult<WorktreeRecord> {
-    state.ensure_worktree(input.project_id, input.work_item_id)
+    let detail = format!(
+        "project_id={} work_item_id={}",
+        input.project_id, input.work_item_id
+    );
+    timed_command("ensure_worktree", detail, || {
+        state.ensure_worktree(input.project_id, input.work_item_id)
+    })
 }
 
 #[tauri::command]
@@ -252,7 +324,18 @@ fn launch_worktree_agent(
     state: State<SupervisorClient>,
     app_handle: tauri::AppHandle,
 ) -> AppResult<WorktreeLaunchOutput> {
-    state.launch_worktree_agent(input, &app_handle)
+    let detail = format!(
+        "project_id={} work_item_id={} launch_profile_id={}",
+        input.project_id,
+        input.work_item_id,
+        input
+            .launch_profile_id
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "default".to_string())
+    );
+    timed_command("launch_worktree_agent", detail, || {
+        state.launch_worktree_agent(input, &app_handle)
+    })
 }
 
 #[tauri::command]
@@ -260,7 +343,13 @@ fn remove_worktree(
     input: ProjectWorktreeTarget,
     state: State<SupervisorClient>,
 ) -> AppResult<WorktreeRecord> {
-    state.remove_worktree(input.project_id, input.worktree_id)
+    let detail = format!(
+        "project_id={} worktree_id={}",
+        input.project_id, input.worktree_id
+    );
+    timed_command("remove_worktree", detail, || {
+        state.remove_worktree(input.project_id, input.worktree_id)
+    })
 }
 
 #[tauri::command]
@@ -268,7 +357,13 @@ fn recreate_worktree(
     input: ProjectWorktreeTarget,
     state: State<SupervisorClient>,
 ) -> AppResult<WorktreeRecord> {
-    state.recreate_worktree(input.project_id, input.worktree_id)
+    let detail = format!(
+        "project_id={} worktree_id={}",
+        input.project_id, input.worktree_id
+    );
+    timed_command("recreate_worktree", detail, || {
+        state.recreate_worktree(input.project_id, input.worktree_id)
+    })
 }
 
 #[tauri::command]
@@ -276,7 +371,13 @@ fn cleanup_worktree(
     input: ProjectWorktreeTarget,
     state: State<SupervisorClient>,
 ) -> AppResult<WorktreeRecord> {
-    state.cleanup_worktree(input.project_id, input.worktree_id)
+    let detail = format!(
+        "project_id={} worktree_id={}",
+        input.project_id, input.worktree_id
+    );
+    timed_command("cleanup_worktree", detail, || {
+        state.cleanup_worktree(input.project_id, input.worktree_id)
+    })
 }
 
 #[tauri::command]
@@ -284,19 +385,44 @@ fn pin_worktree(
     input: PinWorktreeInput,
     state: State<SupervisorClient>,
 ) -> AppResult<WorktreeRecord> {
-    state.pin_worktree(input.project_id, input.worktree_id, input.pinned)
+    let detail = format!(
+        "project_id={} worktree_id={} pinned={}",
+        input.project_id, input.worktree_id, input.pinned
+    );
+    timed_command("pin_worktree", detail, || {
+        state.pin_worktree(input.project_id, input.worktree_id, input.pinned)
+    })
 }
 
 #[tauri::command]
 fn get_session_history(
     project_id: i64,
     event_limit: Option<usize>,
+    session_limit: Option<usize>,
     state: State<SupervisorClient>,
 ) -> AppResult<SessionHistoryOutput> {
-    Ok(SessionHistoryOutput {
-        sessions: state.list_session_records(project_id)?,
-        events: state.list_session_events(project_id, event_limit.unwrap_or(120))?,
-    })
+    timed_command(
+        "get_session_history",
+        format!(
+            "project_id={} event_limit={} session_limit={}",
+            project_id,
+            event_limit
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "default".to_string()),
+            session_limit
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "default".to_string())
+        ),
+        || {
+            Ok(SessionHistoryOutput {
+                sessions: match session_limit {
+                    Some(limit) => state.list_session_records_limited(project_id, limit)?,
+                    None => state.list_session_records(project_id)?,
+                },
+                events: state.list_session_events(project_id, event_limit.unwrap_or(120))?,
+            })
+        },
+    )
 }
 
 #[tauri::command]
@@ -304,7 +430,11 @@ fn list_orphaned_sessions(
     project_id: i64,
     state: State<SupervisorClient>,
 ) -> AppResult<Vec<SessionRecord>> {
-    state.list_orphaned_sessions(project_id)
+    timed_command(
+        "list_orphaned_sessions",
+        format!("project_id={project_id}"),
+        || state.list_orphaned_sessions(project_id),
+    )
 }
 
 #[tauri::command]
@@ -313,14 +443,31 @@ fn terminate_orphaned_session(
     session_id: i64,
     state: State<SupervisorClient>,
 ) -> AppResult<SessionRecord> {
-    state.terminate_orphaned_session(project_id, session_id)
+    timed_command(
+        "terminate_orphaned_session",
+        format!("project_id={} session_id={}", project_id, session_id),
+        || state.terminate_orphaned_session(project_id, session_id),
+    )
 }
 
 #[tauri::command]
-fn list_cleanup_candidates(
+fn get_session_recovery_details(
+    project_id: i64,
+    session_id: i64,
     state: State<SupervisorClient>,
-) -> AppResult<Vec<CleanupCandidate>> {
-    state.list_cleanup_candidates()
+) -> AppResult<SessionRecoveryDetails> {
+    timed_command(
+        "get_session_recovery_details",
+        format!("project_id={} session_id={}", project_id, session_id),
+        || state.get_session_recovery_details(project_id, session_id),
+    )
+}
+
+#[tauri::command]
+fn list_cleanup_candidates(state: State<SupervisorClient>) -> AppResult<Vec<CleanupCandidate>> {
+    timed_command("list_cleanup_candidates", "global".to_string(), || {
+        state.list_cleanup_candidates()
+    })
 }
 
 #[tauri::command]
@@ -328,19 +475,22 @@ fn remove_cleanup_candidate(
     input: CleanupCandidateTarget,
     state: State<SupervisorClient>,
 ) -> AppResult<CleanupActionOutput> {
-    state.remove_cleanup_candidate(input)
+    let detail = format!("kind={} path={}", input.kind, input.path);
+    timed_command("remove_cleanup_candidate", detail, || {
+        state.remove_cleanup_candidate(input)
+    })
 }
 
 #[tauri::command]
-fn repair_cleanup_candidates(
-    state: State<SupervisorClient>,
-) -> AppResult<CleanupRepairOutput> {
-    state.repair_cleanup_candidates()
+fn repair_cleanup_candidates(state: State<SupervisorClient>) -> AppResult<CleanupRepairOutput> {
+    timed_command("repair_cleanup_candidates", "global".to_string(), || {
+        state.repair_cleanup_candidates()
+    })
 }
 
 #[tauri::command]
 fn save_clipboard_image(base64_png: String, app_handle: AppHandle) -> AppResult<String> {
-    use base64::{Engine as _, engine::general_purpose};
+    use base64::{engine::general_purpose, Engine as _};
 
     let png_bytes = general_purpose::STANDARD
         .decode(&base64_png)
@@ -363,14 +513,15 @@ fn save_clipboard_image(base64_png: String, app_handle: AppHandle) -> AppResult<
     let filename = format!("screenshot-{timestamp}.png");
     let path = screenshots_dir.join(&filename);
 
-    fs::write(&path, &png_bytes)
-        .map_err(|e| format!("failed to write screenshot: {e}"))?;
+    fs::write(&path, &png_bytes).map_err(|e| format!("failed to write screenshot: {e}"))?;
 
     Ok(path.display().to_string())
 }
 
 #[tauri::command]
-fn get_crash_recovery_manifest(state: State<SupervisorClient>) -> AppResult<Option<CrashRecoveryManifest>> {
+fn get_crash_recovery_manifest(
+    state: State<SupervisorClient>,
+) -> AppResult<Option<CrashRecoveryManifest>> {
     state.get_crash_recovery_manifest()
 }
 
@@ -501,6 +652,7 @@ pub fn run() {
             get_session_history,
             list_orphaned_sessions,
             terminate_orphaned_session,
+            get_session_recovery_details,
             list_cleanup_candidates,
             remove_cleanup_candidate,
             repair_cleanup_candidates,

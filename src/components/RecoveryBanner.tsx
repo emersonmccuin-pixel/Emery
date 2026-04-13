@@ -2,7 +2,7 @@ import { X, AlertTriangle, Bot, Cpu, GitBranch, FileWarning } from 'lucide-react
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { CrashRecoveryManifest, SessionRecord, WorktreeRecord, WorkItemRecord } from '../types'
-import { formatTimestamp, parseTimestamp } from '../sessionHistory'
+import { formatTimestamp, hasNativeSessionResume, parseTimestamp } from '../sessionHistory'
 
 function formatRelativeTime(value?: string | null): string {
   const ts = parseTimestamp(value)
@@ -22,11 +22,23 @@ type SessionCardProps = {
   workItem: WorkItemRecord | null
   result: 'pending' | 'resumed' | 'skipped' | 'failed' | undefined
   isActive: boolean
+  resumeLabel: string
+  resumeHint: string
   onResume: () => void
   onSkip: () => void
 }
 
-function SessionCard({ session, worktree, workItem, result, isActive, onResume, onSkip }: SessionCardProps) {
+function SessionCard({
+  session,
+  worktree,
+  workItem,
+  result,
+  isActive,
+  resumeLabel,
+  resumeHint,
+  onResume,
+  onSkip,
+}: SessionCardProps) {
   const isDispatcher = session.worktreeId == null
   const isSkipped = result === 'skipped'
   const isResumed = result === 'resumed'
@@ -76,6 +88,7 @@ function SessionCard({ session, worktree, workItem, result, isActive, onResume, 
         <span className="text-[9px] text-white/50 uppercase tracking-widest">
           Heartbeat: {formatRelativeTime(session.lastHeartbeatAt)}
         </span>
+        <span className="text-[9px] text-white/50 uppercase tracking-widest">{resumeHint}</span>
         {worktree && (
           <>
             {worktree.hasUncommittedChanges ? (
@@ -104,7 +117,7 @@ function SessionCard({ session, worktree, workItem, result, isActive, onResume, 
             disabled={isActive}
             onClick={onResume}
           >
-            {isActive ? 'RESUMING...' : 'RESUME'}
+            {isActive ? 'RESUMING...' : resumeLabel}
           </Button>
           <Button
             variant="ghost"
@@ -147,6 +160,7 @@ export default function RecoveryBanner({
 }: RecoveryBannerProps) {
   const allSessions = [...manifest.interruptedSessions, ...manifest.orphanedSessions]
   const totalCount = allSessions.length
+  const hasFallbackRelaunch = allSessions.some((session) => !hasNativeSessionResume(session))
 
   function getWorktree(session: SessionRecord): WorktreeRecord | null {
     if (session.worktreeId == null) return null
@@ -175,7 +189,10 @@ export default function RecoveryBanner({
               Unclean Shutdown Detected
             </p>
             <p className="text-[9px] text-white/60 uppercase tracking-widest">
-              {totalCount} session{totalCount !== 1 ? 's' : ''} {totalCount === 1 ? 'was' : 'were'} interrupted. Choose what to resume.
+              {totalCount} session{totalCount !== 1 ? 's' : ''} {totalCount === 1 ? 'was' : 'were'} interrupted.{' '}
+              {hasFallbackRelaunch
+                ? 'Resume saved Claude sessions or relaunch older targets with crash context.'
+                : 'Resume the saved Claude sessions you want back on screen.'}
             </p>
           </div>
         </div>
@@ -193,19 +210,34 @@ export default function RecoveryBanner({
       {/* Session cards */}
       <ScrollArea className="hud-scrollarea">
         <div className="flex gap-2 pb-1" style={{ minWidth: 'min-content' }}>
-          {allSessions.map((session) => (
-            <div key={session.id} className="w-56 shrink-0">
-              <SessionCard
-                session={session}
-                worktree={getWorktree(session)}
-                workItem={getWorkItem(session)}
-                result={recoveryResults[session.id]}
-                isActive={activeSessionId === session.id}
-                onResume={() => onResume(session)}
-                onSkip={() => onSkip(session.id)}
-              />
-            </div>
-          ))}
+          {allSessions.map((session) => {
+            const nativeResume = hasNativeSessionResume(session)
+            const resumeLabel =
+              session.state === 'orphaned'
+                ? nativeResume
+                  ? 'CLEAN UP & RESUME SESSION'
+                  : 'CLEAN UP & RELAUNCH'
+                : nativeResume
+                  ? 'RESUME SESSION'
+                  : 'RELAUNCH WITH CONTEXT'
+            const resumeHint = nativeResume ? 'Saved Claude resume' : 'Fallback relaunch'
+
+            return (
+              <div key={session.id} className="w-56 shrink-0">
+                <SessionCard
+                  session={session}
+                  worktree={getWorktree(session)}
+                  workItem={getWorkItem(session)}
+                  result={recoveryResults[session.id]}
+                  isActive={activeSessionId === session.id}
+                  resumeLabel={resumeLabel}
+                  resumeHint={resumeHint}
+                  onResume={() => onResume(session)}
+                  onSkip={() => onSkip(session.id)}
+                />
+              </div>
+            )
+          })}
         </div>
       </ScrollArea>
 

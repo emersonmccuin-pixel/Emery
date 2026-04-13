@@ -1,6 +1,14 @@
 import type { StateCreator } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
 import type { SessionSnapshot } from '../types'
+import { withPerfSpan } from '../perf'
+import {
+  buildRecoveryStartupPrompt,
+  getLatestSessionForTarget,
+  hasNativeSessionResume,
+  isRecoverableSession,
+  parseTimestamp,
+} from '../sessionHistory'
 import { findWorktreeTarget } from '../worktrees'
 import type { AppStore, SessionSlice } from './types'
 import {
@@ -13,6 +21,237 @@ import {
 const terminationKey = (projectId: number, worktreeId: number | null) =>
   `${projectId}:${worktreeId ?? 'null'}`
 
+const AUTO_RESTART_DELAY_MS = 3_000
+const AUTO_RESTART_WINDOW_MS = 5 * 60_000
+const AUTO_RESTART_MAX_RECENT_FAILURES = 3
+const autoRestartTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+function clearAutoRestartTimer(key: string) {
+  const timer = autoRestartTimers.get(key)
+  if (timer !== undefined) {
+    clearTimeout(timer)
+    autoRestartTimers.delete(key)
+  }
+}
+
+function omitAutoRestartEntry<T>(source: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in source)) {
+    return source
+  }
+
+  const next = { ...source }
+  delete next[key]
+  return next
+}
+
+function latestRecoverableSessionForTarget(
+  records: AppStore['sessionRecords'],
+  worktreeId: number | null,
+) {
+  const latest = getLatestSessionForTarget(records, worktreeId)
+  return latest && isRecoverableSession(latest) ? latest : null
+}
+
+function countRecentFailuresForTarget(
+  records: AppStore['sessionRecords'],
+  worktreeId: number | null,
+  now = Date.now(),
+) {
+  return records.filter((record) => {
+    if ((record.worktreeId ?? null) !== worktreeId || !isRecoverableSession(record)) {
+      return false
+    }
+
+    const when =
+      parseTimestamp(record.endedAt) ??
+      parseTimestamp(record.updatedAt) ??
+      parseTimestamp(record.startedAt)
+
+    return when !== null && now - when <= AUTO_RESTART_WINDOW_MS
+  }).length
+}
+
+function exitHeadline(exitCode: number, error?: string | null) {
+  const summary = error?.split('\n')[0]?.trim()
+  return summary || `Session exited with code ${exitCode}.`
+}
+
+type SetSessionStore = Parameters<StateCreator<AppStore, [], [], SessionSlice>>[0]
+type GetSessionStore = Parameters<StateCreator<AppStore, [], [], SessionSlice>>[1]
+
+async function restartSessionTargetNowImpl(
+  set: SetSessionStore,
+  get: GetSessionStore,
+  projectId: number,
+  worktreeId: number | null,
+) {
+  const key = terminationKey(projectId, worktreeId)
+  clearAutoRestartTimer(key)
+
+  const state = get()
+  const entry = state.sessionAutoRestart[key]
+  const record = latestRecoverableSessionForTarget(state.sessionRecords, worktreeId)
+
+  if (!record || record.projectId !== projectId) {
+    set((current) => ({
+      sessionAutoRestart: omitAutoRestartEntry(current.sessionAutoRestart, key),
+    }))
+    return
+  }
+
+  set((current) => ({
+    sessionAutoRestart: {
+      ...current.sessionAutoRestart,
+      [key]: {
+        ...(entry ?? {
+          projectId,
+          worktreeId,
+          headline: exitHeadline(record.exitCode ?? 1),
+          recentCrashCount: 1,
+          failedSessionId: record.id,
+          replacementSessionId: null,
+          blockedReason: null,
+          exitCode: record.exitCode ?? null,
+        }),
+        status: 'restarting',
+        restartAt: null,
+        failedSessionId: record.id,
+        blockedReason: null,
+      },
+    },
+  }))
+
+  const isSelectedTarget =
+    state.selectedProjectId === projectId &&
+    (state.selectedTerminalWorktreeId ?? null) === worktreeId
+  const snapshot = await get().resumeSessionRecord(record, {
+    openTarget: false,
+    attachSnapshot: isSelectedTarget,
+    activateTerminal: isSelectedTarget && state.activeView === 'terminal',
+    successMessage: null,
+  })
+
+  if (snapshot) {
+    set((current) => ({
+      sessionError:
+        current.selectedProjectId === projectId &&
+        (current.selectedTerminalWorktreeId ?? null) === worktreeId
+          ? null
+          : current.sessionError,
+      agentPromptMessage: `Recovered ${worktreeId === null ? 'dispatcher' : 'agent'} session #${record.id} as #${snapshot.sessionId}.`,
+      sessionAutoRestart: omitAutoRestartEntry(current.sessionAutoRestart, key),
+    }))
+    return
+  }
+
+  set((current) => ({
+    sessionAutoRestart: {
+      ...current.sessionAutoRestart,
+      [key]: {
+        ...(current.sessionAutoRestart[key] ?? {
+          projectId,
+          worktreeId,
+          headline: exitHeadline(record.exitCode ?? 1),
+          recentCrashCount: 1,
+          failedSessionId: record.id,
+          replacementSessionId: null,
+          blockedReason: null,
+          exitCode: record.exitCode ?? null,
+        }),
+        status: 'blocked',
+        restartAt: null,
+        failedSessionId: record.id,
+        replacementSessionId: null,
+        blockedReason:
+          get().sessionError ?? 'Automatic restart failed. Review the crash details and resume manually.',
+      },
+    },
+  }))
+}
+
+async function scheduleSessionAutoRestartImpl(
+  set: SetSessionStore,
+  get: GetSessionStore,
+  event: Parameters<SessionSlice['handleSessionExit']>[0],
+) {
+  const worktreeId = event.worktreeId ?? null
+  const key = terminationKey(event.projectId, worktreeId)
+  const state = get()
+
+  if (state.selectedProjectId !== event.projectId) {
+    return
+  }
+
+  const record = latestRecoverableSessionForTarget(state.sessionRecords, worktreeId)
+  if (!record || record.projectId !== event.projectId) {
+    return
+  }
+
+  const recentCrashCount = countRecentFailuresForTarget(state.sessionRecords, worktreeId)
+  const headline = exitHeadline(event.exitCode, event.error)
+  const existing = state.sessionAutoRestart[key]
+
+  if (existing && existing.failedSessionId === record.id && existing.status !== 'blocked') {
+    return
+  }
+
+  if (recentCrashCount >= AUTO_RESTART_MAX_RECENT_FAILURES) {
+    clearAutoRestartTimer(key)
+    set((current) => ({
+      sessionAutoRestart: {
+        ...current.sessionAutoRestart,
+        [key]: {
+          projectId: event.projectId,
+          worktreeId,
+          status: 'blocked',
+          headline,
+          restartAt: null,
+          recentCrashCount,
+          failedSessionId: record.id,
+          replacementSessionId: null,
+          blockedReason: `Restart loop detected after ${recentCrashCount} crashes in the last 5 minutes. Auto-restart is paused for this target.`,
+          exitCode: event.exitCode,
+        },
+      },
+      sessionError:
+        current.selectedProjectId === event.projectId &&
+        (current.selectedTerminalWorktreeId ?? null) === worktreeId
+          ? 'Session crashed repeatedly. Auto-restart paused for this target.'
+          : current.sessionError,
+    }))
+    return
+  }
+
+  const restartAt = Date.now() + AUTO_RESTART_DELAY_MS
+  clearAutoRestartTimer(key)
+
+  set((current) => ({
+    sessionAutoRestart: {
+      ...current.sessionAutoRestart,
+      [key]: {
+        projectId: event.projectId,
+        worktreeId,
+        status: 'countdown',
+        headline,
+        restartAt,
+        recentCrashCount,
+        failedSessionId: record.id,
+        replacementSessionId: null,
+        blockedReason: null,
+        exitCode: event.exitCode,
+      },
+    },
+  }))
+
+  autoRestartTimers.set(
+    key,
+    setTimeout(() => {
+      autoRestartTimers.delete(key)
+      void restartSessionTargetNowImpl(set, get, event.projectId, worktreeId)
+    }, AUTO_RESTART_DELAY_MS),
+  )
+}
+
 export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = (set, get) => ({
   sessionSnapshot: null,
   liveSessionSnapshots: [],
@@ -23,6 +262,7 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
   terminalPromptDraft: null,
   agentPromptMessage: null,
   terminatedSessions: new Set<string>(),
+  sessionAutoRestart: {},
 
   setTerminalPromptDraft: (value) => set({ terminalPromptDraft: value }),
 
@@ -79,8 +319,9 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
       state.launchProfiles.find((p) => p.id === state.selectedLaunchProfileId) ??
       null
     const shouldAttachSnapshot =
-      options?.worktreeId !== undefined ||
+      options?.attachSnapshot ??
       (state.selectedTerminalWorktreeId ?? null) === targetWorktreeId
+    const shouldActivateTerminal = options?.activateTerminal ?? true
     const targetWorktree = findWorktreeTarget(
       state.worktrees,
       state.stagedWorktrees,
@@ -107,26 +348,56 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
       return null
     }
 
-    set({ sessionError: null, isLaunchingSession: true, activeView: 'terminal' })
+    set((current) => ({
+      sessionError: null,
+      isLaunchingSession: true,
+      activeView: shouldActivateTerminal ? 'terminal' : current.activeView,
+    }))
 
     try {
-      const snapshot = await invoke<SessionSnapshot>('launch_project_session', {
-        input: {
+      const snapshot = await withPerfSpan(
+        'session_launch',
+        {
           projectId: selectedProject.id,
           worktreeId: targetWorktreeId,
           launchProfileId: targetLaunchProfile.id,
-          cols: 120,
-          rows: 32,
-          startupPrompt: options?.startupPrompt,
+          target: targetWorktreeId === null ? 'project' : 'worktree',
         },
-      })
+        () =>
+          invoke<SessionSnapshot>('launch_project_session', {
+            input: {
+              projectId: selectedProject.id,
+              worktreeId: targetWorktreeId,
+              launchProfileId: targetLaunchProfile.id,
+              cols: 120,
+              rows: 32,
+              startupPrompt: options?.startupPrompt,
+              resumeSessionId: options?.resumeSessionId,
+            },
+          }),
+      )
 
       set({ selectedLaunchProfileId: targetLaunchProfile.id })
       if (shouldAttachSnapshot) {
         set({ sessionSnapshot: snapshot })
       }
-      await get().refreshLiveSessions(selectedProject.id)
-      get().invalidateProjectContext()
+      const key = terminationKey(selectedProject.id, targetWorktreeId)
+      clearAutoRestartTimer(key)
+      set((current) => ({
+        sessionError:
+          current.selectedProjectId === selectedProject.id &&
+          (current.selectedTerminalWorktreeId ?? null) === targetWorktreeId
+            ? null
+            : current.sessionError,
+        sessionAutoRestart: omitAutoRestartEntry(current.sessionAutoRestart, key),
+      }))
+      await get().refreshSelectedProjectData([
+        'liveSessions',
+        'worktrees',
+        'history',
+        'orphanedSessions',
+        'cleanupCandidates',
+      ])
       return snapshot
     } catch (error) {
       set({ sessionError: getErrorMessage(error, 'Failed to launch Claude Code.') })
@@ -177,7 +448,13 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
             !(snap.projectId === selectedProject.id && (snap.worktreeId ?? null) === targetWorktreeId),
         ),
       }))
-      get().invalidateProjectContext()
+      await get().refreshSelectedProjectData([
+        'liveSessions',
+        'worktrees',
+        'history',
+        'orphanedSessions',
+        'cleanupCandidates',
+      ])
     } catch (error) {
       const snapshot = await get().fetchSessionSnapshot(selectedProject.id, targetWorktreeId)
 
@@ -195,7 +472,13 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
               !(snap.projectId === selectedProject.id && (snap.worktreeId ?? null) === targetWorktreeId),
           ),
         }))
-        get().invalidateProjectContext()
+        await get().refreshSelectedProjectData([
+          'liveSessions',
+          'worktrees',
+          'history',
+          'orphanedSessions',
+          'cleanupCandidates',
+        ])
       } else {
         // Termination failed — session is still running, so un-mark it.
         set((s) => {
@@ -209,33 +492,57 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
     }
   },
 
-  resumeSessionRecord: async (record) => {
+  resumeSessionRecord: async (record, options) => {
     const state = get()
     const selectedProject = state.projects.find((p) => p.id === state.selectedProjectId) ?? null
 
     if (!selectedProject || record.projectId !== selectedProject.id) {
-      return
+      return null
     }
 
-    get().openSessionTarget(record)
+    const details = await get().fetchSessionRecoveryDetails(selectedProject.id, record.id)
+    const recoverySession = details?.session ?? record
+    const shouldResumeSavedSession = hasNativeSessionResume(recoverySession)
+    const startupPrompt = shouldResumeSavedSession ? undefined : buildRecoveryStartupPrompt(details)
+
+    if (options?.openTarget ?? true) {
+      get().openSessionTarget(record)
+    }
     set({ terminalPromptDraft: null, selectedHistorySessionId: record.id, sessionError: null })
 
     const snapshot = await get().launchSession({
-      launchProfileId: record.launchProfileId ?? state.selectedLaunchProfileId,
-      worktreeId: record.worktreeId ?? null,
+      launchProfileId: recoverySession.launchProfileId ?? state.selectedLaunchProfileId,
+      worktreeId: recoverySession.worktreeId ?? null,
+      startupPrompt,
+      resumeSessionId: shouldResumeSavedSession ? recoverySession.providerSessionId : undefined,
+      attachSnapshot: options?.attachSnapshot,
+      activateTerminal: options?.activateTerminal,
     })
 
     if (snapshot) {
-      set({ agentPromptMessage: `Session #${record.id} target reopened through the supervisor.` })
+      if (options?.successMessage !== null) {
+        set({
+          agentPromptMessage:
+            options?.successMessage ??
+            (shouldResumeSavedSession
+              ? `Session #${record.id} resumed from the saved Claude conversation.`
+              : startupPrompt
+                ? `Session #${record.id} relaunched with recovery context.`
+                : `Session #${record.id} target reopened through the supervisor.`),
+        })
+      }
     }
+    return snapshot
   },
 
   handleSessionExit: (event) => {
     const key = terminationKey(event.projectId, event.worktreeId ?? null)
+    let shouldScheduleRestart = false
     set((state) => {
       const wasIntentionallyTerminated = state.terminatedSessions.has(key)
       const nextTerminatedSessions = new Set(state.terminatedSessions)
       nextTerminatedSessions.delete(key)
+      shouldScheduleRestart = !event.success && !wasIntentionallyTerminated
       return {
         sessionSnapshot:
           state.sessionSnapshot &&
@@ -256,7 +563,35 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
               : `Session exited with code ${event.exitCode}.`,
       }
     })
-    get().invalidateProjectContext()
+    if (!shouldScheduleRestart) {
+      get().cancelSessionAutoRestart(event.projectId, event.worktreeId ?? null)
+    }
+    void get()
+      .refreshSelectedProjectData([
+      'liveSessions',
+      'worktrees',
+      'history',
+      'orphanedSessions',
+      'cleanupCandidates',
+    ])
+      .then(async () => {
+        if (!shouldScheduleRestart) {
+          return
+        }
+        await scheduleSessionAutoRestartImpl(set, get, event)
+      })
+  },
+
+  cancelSessionAutoRestart: (projectId, worktreeId) => {
+    const key = terminationKey(projectId, worktreeId)
+    clearAutoRestartTimer(key)
+    set((state) => ({
+      sessionAutoRestart: omitAutoRestartEntry(state.sessionAutoRestart, key),
+    }))
+  },
+
+  restartSessionTargetNow: async (projectId, worktreeId) => {
+    await restartSessionTargetNowImpl(set, get, projectId, worktreeId)
   },
 
   selectMainTerminal: () => {

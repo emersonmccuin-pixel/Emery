@@ -1,11 +1,18 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import SessionRecoveryInspector from '@/components/SessionRecoveryInspector'
+import {
+  PanelBanner,
+  PanelEmptyState,
+  PanelLoadingState,
+} from '@/components/ui/panel-state'
+import { VirtualList } from '@/components/ui/virtual-list'
 import {
   filterEventsForSession,
   formatSessionState,
   formatTimestamp,
   getSessionTargetLabel,
+  hasNativeSessionResume,
   isRecoverableSession,
   parseEventPayload,
   sanitizeEventPayload,
@@ -15,6 +22,7 @@ import type {
   ProjectRecord,
   SessionEventRecord,
   SessionRecord,
+  SessionRecoveryDetails,
   WorktreeRecord,
 } from '../types'
 
@@ -25,6 +33,8 @@ type HistoryPanelProps = {
   sessionEvents: SessionEventRecord[]
   selectedSessionId: number | null
   activeOrphanSessionId: number | null
+  selectedSessionRecoveryDetails: SessionRecoveryDetails | null
+  isLoadingSessionRecoveryDetails: boolean
   historyError: string | null
   isLoading: boolean
   onSelectSessionId: (sessionId: number | null) => void
@@ -37,6 +47,7 @@ function badgeVariantForState(state: string) {
   switch (state) {
     case 'running':
       return 'running' as const
+    case 'failed':
     case 'interrupted':
     case 'orphaned':
       return 'destructive' as const
@@ -68,12 +79,12 @@ function sessionActionLabel(record: SessionRecord) {
     return 'OPEN LIVE'
   }
 
-  if (record.state === 'interrupted') {
-    return 'RESUME'
+  if (record.state === 'failed' || record.state === 'interrupted') {
+    return hasNativeSessionResume(record) ? 'RESUME SESSION' : 'RELAUNCH'
   }
 
   if (record.state === 'orphaned') {
-    return 'RECOVER'
+    return hasNativeSessionResume(record) ? 'RECOVER & RESUME' : 'RECOVER'
   }
 
   return 'OPEN TARGET'
@@ -92,7 +103,7 @@ function SessionHistoryActions({
   onResumeSession: (record: SessionRecord) => void
   onRecoverSession: (record: SessionRecord) => void
 }) {
-  if (record.state === 'interrupted') {
+  if (record.state === 'failed' || record.state === 'interrupted') {
     return (
       <>
         <Button
@@ -158,6 +169,8 @@ function HistoryPanel({
   sessionEvents,
   selectedSessionId,
   activeOrphanSessionId,
+  selectedSessionRecoveryDetails,
+  isLoadingSessionRecoveryDetails,
   historyError,
   isLoading,
   onSelectSessionId,
@@ -171,10 +184,16 @@ function HistoryPanel({
   const interruptedCount = sessionRecords.filter((record) => record.state === 'interrupted').length
   const orphanedCount = sessionRecords.filter((record) => record.state === 'orphaned').length
   const recoverableCount = sessionRecords.filter(isRecoverableSession).length
+  const eventEmptyTitle = selectedSession
+    ? `No events for Session #${selectedSession.id}`
+    : 'No supervisor activity yet'
+  const eventEmptyDetail = selectedSession
+    ? 'This session does not have any recorded supervisor events for the active history window.'
+    : 'Launches, recoveries, cleanup actions, and route-level supervisor activity will appear here.'
 
   return (
     <section className="overview-view">
-      {historyError ? <p className="form-error">{historyError}</p> : null}
+      {historyError ? <PanelBanner className="mb-4" message={historyError} /> : null}
 
       <div className="overview-grid">
         <article className="overview-card overview-card--summary">
@@ -224,15 +243,35 @@ function HistoryPanel({
           </div>
 
           {isLoading && sessionRecords.length === 0 ? (
-            <div className="empty-state empty-state--rail">Loading session history...</div>
+            <PanelLoadingState
+              className="min-h-[32rem]"
+              detail="Reading the newest session records for this project."
+              eyebrow="Session history"
+              title="Loading recent sessions"
+              tone="cyan"
+            />
           ) : sessionRecords.length === 0 ? (
-            <div className="empty-state empty-state--rail">No session records yet.</div>
+            <PanelEmptyState
+              className="min-h-[32rem]"
+              detail="Launch the dispatcher or a worktree agent to create recoverable history for this project."
+              eyebrow="Session history"
+              title="No session records yet"
+              tone="cyan"
+            />
           ) : (
-            <ScrollArea className="h-[32rem]">
-              <div className="space-y-3 pr-3">
-                {sessionRecords.map((record) => (
+            <VirtualList
+              className="h-[32rem]"
+              estimateSize={() => 152}
+              getItemKey={(record) => record.id}
+              items={sessionRecords}
+              overscan={8}
+              renderItem={(record, index) => (
+                <div
+                  className={`pr-3 ${index === 0 ? 'pt-0' : ''} ${
+                    index === sessionRecords.length - 1 ? 'pb-0' : 'pb-3'
+                  }`}
+                >
                   <article
-                    key={record.id}
                     className={`w-full rounded border p-3 text-left transition ${
                       selectedSessionId === record.id
                         ? 'border-primary/40 bg-primary/5'
@@ -292,9 +331,9 @@ function HistoryPanel({
                       ) : null}
                     </div>
                   </article>
-                ))}
-              </div>
-            </ScrollArea>
+                </div>
+              )}
+            />
           )}
         </article>
 
@@ -311,24 +350,48 @@ function HistoryPanel({
             </Badge>
           </div>
 
-          {isLoading && filteredEvents.length === 0 ? (
-            <div className="empty-state empty-state--rail">Loading event history...</div>
-          ) : filteredEvents.length === 0 ? (
-            <div className="empty-state empty-state--rail">
-              No events match the current session filter.
-            </div>
-          ) : (
-            <ScrollArea className="h-[32rem]">
-              <div className="space-y-3 pr-3">
-                {filteredEvents.map((event) => {
-                  const payload = parseEventPayload(event.payloadJson)
-                  const previewPayload = payload ? sanitizeEventPayload(payload) : null
+          {selectedSession ? (
+            <SessionRecoveryInspector
+              className="mb-4"
+              details={selectedSessionRecoveryDetails}
+              isLoading={isLoadingSessionRecoveryDetails}
+            />
+          ) : null}
 
-                  return (
-                    <article
-                      key={event.id}
-                      className="rounded border border-border bg-card/20 p-3"
-                    >
+          {isLoading && filteredEvents.length === 0 ? (
+            <PanelLoadingState
+              className="min-h-[32rem]"
+              detail="Collecting the latest supervisor event stream."
+              eyebrow="Event history"
+              title="Loading recent events"
+              tone="magenta"
+            />
+          ) : filteredEvents.length === 0 ? (
+            <PanelEmptyState
+              className="min-h-[32rem]"
+              detail={eventEmptyDetail}
+              eyebrow="Event history"
+              title={eventEmptyTitle}
+              tone="magenta"
+            />
+          ) : (
+            <VirtualList
+              className="h-[32rem]"
+              estimateSize={() => 136}
+              getItemKey={(event) => event.id}
+              items={filteredEvents}
+              overscan={10}
+              renderItem={(event, index) => {
+                const payload = parseEventPayload(event.payloadJson)
+                const previewPayload = payload ? sanitizeEventPayload(payload) : null
+
+                return (
+                  <div
+                    className={`pr-3 ${index === 0 ? 'pt-0' : ''} ${
+                      index === filteredEvents.length - 1 ? 'pb-0' : 'pb-3'
+                    }`}
+                  >
+                    <article className="rounded border border-border bg-card/20 p-3">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="space-y-1">
                           <div className="flex flex-wrap items-center gap-2">
@@ -365,10 +428,10 @@ function HistoryPanel({
                         </details>
                       ) : null}
                     </article>
-                  )
-                })}
-              </div>
-            </ScrollArea>
+                  </div>
+                )
+              }}
+            />
           )}
         </article>
       </div>
