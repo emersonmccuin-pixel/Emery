@@ -155,6 +155,15 @@ export type SessionRecord = {
   exitSuccess?: boolean | null
   createdAt: string
   updatedAt: string
+  lastHeartbeatAt?: string | null
+}
+
+export type CrashRecoveryManifest = {
+  wasCrash: boolean
+  interruptedSessions: SessionRecord[]
+  orphanedSessions: SessionRecord[]
+  affectedWorktrees: WorktreeRecord[]
+  affectedWorkItems: WorkItemRecord[]
 }
 
 export type SessionEventRecord = {
