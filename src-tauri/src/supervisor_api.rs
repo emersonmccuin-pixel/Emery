@@ -333,3 +333,9 @@ pub struct AckAgentMessagesApiInput {
 pub struct AgentMessageListOutput {
     pub messages: Vec<AgentMessageRecord>,
 }
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReconcileProjectTrackerInput {
+    pub project_id: i64,
+}

@@ -7,7 +7,7 @@ use crate::supervisor_api::{
     LaunchProjectWorktreeAgentInput, ListAgentMessagesApiInput, ListProjectDocumentsInput,
     ListProjectWorkItemsInput, ListProjectWorktreesInput,
     PinWorktreeInput, ProjectCallSignTarget, ProjectDocumentTarget, ProjectWorkItemTarget,
-    SendAgentMessageApiInput, UpdateProjectDocumentInput,
+    ReconcileProjectTrackerInput, SendAgentMessageApiInput, UpdateProjectDocumentInput,
     UpdateProjectWorkItemInput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
 use reqwest::blocking::Client;
@@ -409,6 +409,15 @@ impl SupervisorMcpClient {
         )
     }
 
+    fn reconcile_tracker(&self) -> AppResult<WorkItemRecord> {
+        self.post(
+            "tracker/reconcile",
+            &ReconcileProjectTrackerInput {
+                project_id: self.project_id,
+            },
+        )
+    }
+
     fn post<TRequest, TResponse>(
         &self,
         route: &str,
@@ -764,6 +773,8 @@ fn call_tool(
             Ok(value)
         }
         "reconcile_inbox" => Ok(client.reconcile_inbox()?),
+        "reconcile_tracker" => Ok(serde_json::to_value(client.reconcile_tracker()?)
+            .map_err(|error| AppError::internal(format!("failed to encode reconcile tracker result: {error}")))?),
         _ => Err(AppError::invalid_input(format!("unknown tool: {tool_name}"))),
     }
 }
@@ -1173,6 +1184,16 @@ fn build_tool_definitions() -> Vec<Value> {
             },
             "_meta": {
                 "anthropic/maxResultSizeChars": 200000
+            }
+        }),
+        json!({
+            "name": "reconcile_tracker",
+            "description": "Regenerate the dynamic sections of the project tracker ({NS}-0) from current DB state. Call this at session start before reading the tracker. Preserves human-authored sections (About, Current Focus, Blockers, Key Decisions) and regenerates Epics, Top-Level Items, and Standalone from live data.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
             }
         }),
         json!({

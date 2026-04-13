@@ -24,7 +24,8 @@ use project_commander_lib::supervisor_api::{
     ListProjectDocumentsInput, ListProjectSessionEventsInput, ListProjectSessionsInput,
     ListProjectWorkItemsInput, ListProjectWorktreesInput, ProjectCallSignTarget, ProjectDocumentTarget,
     ProjectSessionRecordTarget, ProjectWorkItemTarget, ProjectWorktreeTarget, PinWorktreeInput,
-    RepairCleanupInput, RespondToAgentSignalInput as ApiRespondToAgentSignalInput,
+    ReconcileProjectTrackerInput, RepairCleanupInput,
+    RespondToAgentSignalInput as ApiRespondToAgentSignalInput,
     SendAgentMessageApiInput, UpdateProjectDocumentInput,
     UpdateProjectWorkItemInput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
@@ -32,7 +33,7 @@ use project_commander_lib::supervisor_mcp::run_supervisor_mcp_stdio_with_session
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -1203,6 +1204,10 @@ fn route_request(
                 None => Ok(json!({ "ok": true, "data": null })),
             }
         }
+        (&Method::Post, "/tracker/reconcile") => {
+            let input = read_json::<ReconcileProjectTrackerInput>(request)?;
+            reconcile_tracker_body(state, input.project_id)
+        }
         _ => Err(RouteError::not_found("route not found")),
     }
 }
@@ -1223,6 +1228,268 @@ fn require_work_item_for_project(
     }
 
     Ok(work_item)
+}
+
+fn reconcile_tracker_body(
+    state: &AppState,
+    project_id: i64,
+) -> Result<Value, RouteError> {
+    let project = state.get_project(project_id)?;
+    let prefix = project.work_item_prefix.as_deref().unwrap_or("PROJECT").to_string();
+
+    let all_items = state.list_work_items(project_id).map_err(RouteError::from)?;
+
+    // Find tracker (sequence_number == 0, no parent)
+    let tracker = all_items
+        .iter()
+        .find(|item| item.sequence_number == 0 && item.parent_work_item_id.is_none())
+        .ok_or_else(|| {
+            RouteError::not_found(format!("{prefix}-0 tracker not found for project {project_id}"))
+        })?
+        .clone();
+
+    // Parse existing body into ordered sections
+    let existing_sections = parse_tracker_sections(&tracker.body);
+
+    // Build children map: parent_id -> Vec<WorkItemRecord> sorted by child_number
+    let mut children_map: HashMap<i64, Vec<WorkItemRecord>> = HashMap::new();
+    for item in &all_items {
+        if let Some(parent_id) = item.parent_work_item_id {
+            children_map.entry(parent_id).or_default().push(item.clone());
+        }
+    }
+    for children in children_map.values_mut() {
+        children.sort_by_key(|c| c.child_number.unwrap_or(i64::MAX));
+    }
+
+    // Top-level items (no parent, not the tracker itself)
+    let mut top_level: Vec<&WorkItemRecord> = all_items
+        .iter()
+        .filter(|item| item.parent_work_item_id.is_none() && item.sequence_number != 0)
+        .collect();
+    top_level.sort_by_key(|item| item.sequence_number);
+
+    // Generate dynamic section bodies
+    let epics_body = build_epics_section(&top_level, &children_map, &prefix);
+    let top_level_items_body = build_top_level_items_section(&top_level, &children_map);
+    let standalone_body = build_standalone_section(&top_level, &children_map);
+
+    // Known generated section names to discard when preserving
+    const GENERATED_NAMES: &[&str] = &[
+        "Epics",
+        "Top-Level Items (can't nest \u{2014} have children)",
+        "Top-Level Items",
+        "Standalone",
+    ];
+    const PRESERVED_NAMES: &[&str] = &["About", "Current Focus", "Blockers", "Key Decisions"];
+
+    // Collect preserved sections (in original order) and unknown sections
+    let mut preserved: HashMap<String, String> = HashMap::new();
+    let mut unknown_sections: Vec<(String, String)> = Vec::new();
+
+    for (heading, content) in &existing_sections {
+        if PRESERVED_NAMES.contains(&heading.as_str()) {
+            preserved.insert(heading.clone(), content.clone());
+        } else if !GENERATED_NAMES.contains(&heading.as_str()) {
+            unknown_sections.push((heading.clone(), content.clone()));
+        }
+    }
+
+    // Rebuild body in canonical order
+    let mut output = String::new();
+
+    fn push_section(output: &mut String, heading: &str, content: &str) {
+        if !output.is_empty() {
+            output.push('\n');
+        }
+        output.push_str("## ");
+        output.push_str(heading);
+        output.push('\n');
+        if !content.is_empty() {
+            output.push('\n');
+            output.push_str(content);
+            if !content.ends_with('\n') {
+                output.push('\n');
+            }
+        }
+    }
+
+    // Canonical order: About, Current Focus, Epics, Top-Level Items, Standalone,
+    // Blockers, Key Decisions, any unknown sections
+    if let Some(content) = preserved.get("About") {
+        push_section(&mut output, "About", content);
+    }
+    if let Some(content) = preserved.get("Current Focus") {
+        push_section(&mut output, "Current Focus", content);
+    }
+    push_section(&mut output, "Epics", &epics_body);
+    push_section(
+        &mut output,
+        "Top-Level Items (can't nest \u{2014} have children)",
+        &top_level_items_body,
+    );
+    push_section(&mut output, "Standalone", &standalone_body);
+    if let Some(content) = preserved.get("Blockers") {
+        push_section(&mut output, "Blockers", content);
+    }
+    if let Some(content) = preserved.get("Key Decisions") {
+        push_section(&mut output, "Key Decisions", content);
+    }
+    for (heading, content) in &unknown_sections {
+        push_section(&mut output, heading, content);
+    }
+
+    let new_body = output.trim_end().to_string();
+
+    let updated = state
+        .update_work_item(UpdateWorkItemInput {
+            id: tracker.id,
+            title: tracker.title.clone(),
+            body: new_body,
+            item_type: tracker.item_type.clone(),
+            status: tracker.status.clone(),
+        })
+        .map_err(RouteError::from)?;
+
+    serde_json::to_value(updated)
+        .map(|data| json!({ "ok": true, "data": data }))
+        .map_err(|error| {
+            RouteError::internal(format!("failed to encode reconciled tracker: {error}"))
+        })
+}
+
+/// Parse a tracker body into an ordered list of (heading, content) pairs.
+/// Headings are `## ` lines; content is everything until the next heading,
+/// with leading and trailing blank lines stripped.
+fn parse_tracker_sections(body: &str) -> Vec<(String, String)> {
+    let mut sections: Vec<(String, String)> = Vec::new();
+    let mut current_heading: Option<String> = None;
+    let mut current_lines: Vec<&str> = Vec::new();
+
+    for line in body.lines() {
+        if let Some(heading) = line.strip_prefix("## ") {
+            if let Some(h) = current_heading.take() {
+                sections.push((h, trim_section_content(&current_lines)));
+                current_lines.clear();
+            }
+            current_heading = Some(heading.to_string());
+        } else {
+            current_lines.push(line);
+        }
+    }
+
+    if let Some(h) = current_heading {
+        sections.push((h, trim_section_content(&current_lines)));
+    }
+
+    sections
+}
+
+fn trim_section_content(lines: &[&str]) -> String {
+    // Drop leading blank lines
+    let start = lines
+        .iter()
+        .position(|l| !l.trim().is_empty())
+        .unwrap_or(lines.len());
+    // Drop trailing blank lines
+    let end = lines
+        .iter()
+        .rposition(|l| !l.trim().is_empty())
+        .map(|i| i + 1)
+        .unwrap_or(start);
+    lines[start..end].join("\n")
+}
+
+fn build_epics_section(
+    top_level: &[&WorkItemRecord],
+    children_map: &HashMap<i64, Vec<WorkItemRecord>>,
+    prefix: &str,
+) -> String {
+    let epics: Vec<&&WorkItemRecord> = top_level
+        .iter()
+        .filter(|item| children_map.contains_key(&item.id))
+        .collect();
+
+    if epics.is_empty() {
+        return "_No epics yet._".to_string();
+    }
+
+    let mut s = "| Epic | ID | Status | Children |\n|---|---|---|---|\n".to_string();
+    let prefix_dash = format!("{prefix}-");
+    for item in &epics {
+        let children = children_map
+            .get(&item.id)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
+        let child_signs: Vec<String> = children
+            .iter()
+            .map(|c| {
+                let short = c
+                    .call_sign
+                    .strip_prefix(&prefix_dash)
+                    .unwrap_or(&c.call_sign)
+                    .to_string();
+                if c.status == "done" {
+                    format!("{short} (done)")
+                } else {
+                    short
+                }
+            })
+            .collect();
+        s.push_str(&format!(
+            "| {} | {} | {} | {} |\n",
+            item.title,
+            item.call_sign,
+            item.status,
+            child_signs.join(", ")
+        ));
+    }
+    s.trim_end_matches('\n').to_string()
+}
+
+fn build_top_level_items_section(
+    top_level: &[&WorkItemRecord],
+    children_map: &HashMap<i64, Vec<WorkItemRecord>>,
+) -> String {
+    let active: Vec<&&WorkItemRecord> = top_level
+        .iter()
+        .filter(|item| children_map.contains_key(&item.id) && item.status != "done")
+        .collect();
+
+    if active.is_empty() {
+        return "_No active items with children._".to_string();
+    }
+
+    active
+        .iter()
+        .map(|item| {
+            format!(
+                "- {}: {} ({}, has children)",
+                item.call_sign, item.title, item.status
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn build_standalone_section(
+    top_level: &[&WorkItemRecord],
+    children_map: &HashMap<i64, Vec<WorkItemRecord>>,
+) -> String {
+    let standalone: Vec<&&WorkItemRecord> = top_level
+        .iter()
+        .filter(|item| !children_map.contains_key(&item.id) && item.status != "done")
+        .collect();
+
+    if standalone.is_empty() {
+        return "_No standalone items._".to_string();
+    }
+
+    standalone
+        .iter()
+        .map(|item| format!("- {}: {} ({})", item.call_sign, item.title, item.status))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn require_document_for_project(
