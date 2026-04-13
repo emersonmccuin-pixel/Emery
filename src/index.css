@@ -87,13 +87,8 @@
   background-image:
     /* Radial color splashes visible between panels */
     radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
-    radial-gradient(ellipse 500px 500px at 90% 80%, var(--bg-gradient-2), transparent),
-    radial-gradient(ellipse 400px 300px at 50% 50%, var(--bg-gradient-3), transparent),
-    radial-gradient(ellipse 300px 400px at 80% 15%, var(--bg-gradient-4), transparent),
-    /* Grid overlay */
-    linear-gradient(rgba(var(--bg-grid-color), var(--bg-grid-opacity)) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(var(--bg-grid-color), var(--bg-grid-opacity)) 1px, transparent 1px);
-  background-size: 100% 100%, 100% 100%, 100% 100%, 100% 100%, 32px 32px, 32px 32px;
+    radial-gradient(ellipse 500px 500px at 90% 80%, var(--bg-gradient-2), transparent);
+  background-size: 100% 100%, 100% 100%;
   color: var(--foreground);
 }
 

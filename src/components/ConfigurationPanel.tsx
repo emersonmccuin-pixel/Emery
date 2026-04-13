@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useAppStore, useSelectedProject } from '../store'
 
-type ConfigurationTab = 'general' | 'agents' | 'claude' | 'agents_md'
+type ConfigurationTab = 'general' | 'claude' | 'agents_md'
 
 function ConfigurationPanel() {
   const selectedProject = useSelectedProject()
@@ -29,7 +29,6 @@ function ConfigurationPanel() {
       <nav className="workspace-tabs--shell flex items-center h-10 px-4 shrink-0">
         <TabsList>
           <TabsTrigger value="general">General</TabsTrigger>
-          <TabsTrigger value="agents">Agents</TabsTrigger>
           <TabsTrigger value="claude">CLAUDE.md</TabsTrigger>
           <TabsTrigger value="agents_md">AGENTS.md</TabsTrigger>
         </TabsList>
@@ -37,9 +36,6 @@ function ConfigurationPanel() {
       <div className="flex-1 min-h-0 overflow-auto scrollbar-thin p-6">
         <TabsContent value="general">
           <GeneralTab />
-        </TabsContent>
-        <TabsContent value="agents">
-          <AgentsTab />
         </TabsContent>
         <TabsContent value="claude">
           <ProjectFileEditor
@@ -156,23 +152,6 @@ function GeneralTab() {
           </Button>
         </div>
       </form>
-    </article>
-  )
-}
-
-function AgentsTab() {
-  return (
-    <article className="overview-card">
-      <div className="overview-card__header">
-        <div>
-          <p className="panel__eyebrow">Project agents</p>
-          <strong>Roster</strong>
-        </div>
-      </div>
-      <p className="stack-form__note">
-        Project-scoped agent configuration is coming soon. Agents defined here
-        will be available inside this project's sessions.
-      </p>
     </article>
   )
 }
