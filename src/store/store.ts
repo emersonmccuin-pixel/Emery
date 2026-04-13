@@ -6,6 +6,7 @@ import { createWorkItemSlice } from './workItemSlice'
 import { createWorktreeSlice } from './worktreeSlice'
 import { createHistorySlice } from './historySlice'
 import { createUiSlice } from './uiSlice'
+import { createRecoverySlice } from './recoverySlice'
 
 export const useAppStore = create<AppStore>()((...args) => ({
   ...createProjectSlice(...args),
@@ -14,4 +15,5 @@ export const useAppStore = create<AppStore>()((...args) => ({
   ...createWorktreeSlice(...args),
   ...createHistorySlice(...args),
   ...createUiSlice(...args),
+  ...createRecoverySlice(...args),
 }))

@@ -15,11 +15,12 @@ use crate::session_api::{
 use crate::session_host::{now_timestamp_string, resolve_helper_binary_path};
 use crate::supervisor_api::{
     CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget, CleanupRepairOutput,
-    CleanupWorktreeInput, CreateProjectDocumentInput, CreateProjectWorkItemInput, EnsureProjectWorktreeInput,
-    LaunchProfileTarget, LaunchProjectWorktreeAgentInput, WorktreeLaunchOutput,
-    ListCleanupCandidatesInput, ListProjectDocumentsInput, ListProjectSessionEventsInput,
-    ListProjectSessionsInput, ListProjectWorkItemsInput, ListProjectWorktreesInput,
-    PinWorktreeInput, ProjectDocumentTarget, ProjectSessionRecordTarget, ProjectWorkItemTarget,
+    CleanupWorktreeInput, CrashRecoveryManifest, CreateProjectDocumentInput,
+    CreateProjectWorkItemInput, EnsureProjectWorktreeInput, LaunchProfileTarget,
+    LaunchProjectWorktreeAgentInput, WorktreeLaunchOutput, ListCleanupCandidatesInput,
+    ListProjectDocumentsInput, ListProjectSessionEventsInput, ListProjectSessionsInput,
+    ListProjectWorkItemsInput, ListProjectWorktreesInput, PinWorktreeInput,
+    ProjectDocumentTarget, ProjectSessionRecordTarget, ProjectWorkItemTarget,
     ProjectWorktreeTarget, RepairCleanupInput, UpdateProjectDocumentInput,
     UpdateProjectWorkItemInput,
 };
@@ -538,6 +539,10 @@ impl SupervisorClient {
         }
     }
 
+    pub fn get_crash_recovery_manifest(&self) -> AppResult<Option<CrashRecoveryManifest>> {
+        self.get_json("crash-recovery-manifest")
+    }
+
     fn poll_output(
         &self,
         target: ProjectSessionTarget,
@@ -551,6 +556,91 @@ impl SupervisorClient {
                 offset,
             },
         )
+    }
+
+    fn get_json<TResponse>(&self, route: &str) -> AppResult<TResponse>
+    where
+        TResponse: DeserializeOwned,
+    {
+        for attempt in 0..2 {
+            let runtime = self.ensure_runtime()?;
+
+            match self.send_get(&runtime, route) {
+                Ok(value) => return Ok(value),
+                Err(RequestFailure::Fatal(message)) => return Err(message),
+                Err(RequestFailure::Retryable(message)) if attempt == 1 => return Err(message),
+                Err(RequestFailure::Retryable(_)) => {
+                    self.invalidate_runtime();
+                }
+            }
+        }
+
+        Err(AppError::supervisor("supervisor GET request failed"))
+    }
+
+    fn send_get<TResponse>(
+        &self,
+        runtime: &SupervisorRuntimeInfo,
+        route: &str,
+    ) -> Result<TResponse, RequestFailure>
+    where
+        TResponse: DeserializeOwned,
+    {
+        let url = format!("http://127.0.0.1:{}/{}", runtime.port, route);
+        let response = self
+            .inner
+            .http_client
+            .get(&url)
+            .timeout(SUPERVISOR_REQUEST_TIMEOUT)
+            .header("x-project-commander-token", &runtime.token)
+            .header("x-project-commander-source", SUPERVISOR_REQUEST_SOURCE)
+            .send()
+            .map_err(|error| {
+                if error.is_connect() || error.is_timeout() {
+                    RequestFailure::Retryable(AppError::supervisor(format!(
+                        "failed to reach Project Commander supervisor: {error}"
+                    )))
+                } else {
+                    RequestFailure::Fatal(AppError::supervisor(format!(
+                        "Project Commander supervisor GET request failed: {error}"
+                    )))
+                }
+            })?;
+
+        let status = response.status();
+
+        if !status.is_success() {
+            let raw_message = response
+                .text()
+                .unwrap_or_else(|_| "Project Commander supervisor returned an error".to_string());
+            let app_error = serde_json::from_str::<ErrorResponse>(&raw_message)
+                .map(|payload| match payload.code {
+                    Some(code) => AppError::new(code, payload.error),
+                    None => AppError::from_status(status.as_u16(), payload.error),
+                })
+                .unwrap_or_else(|_| AppError::from_status(status.as_u16(), raw_message));
+
+            return Err(
+                if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+                    RequestFailure::Retryable(app_error)
+                } else {
+                    RequestFailure::Fatal(app_error)
+                },
+            );
+        }
+
+        let envelope: serde_json::Value = response.json().map_err(|error| {
+            RequestFailure::Retryable(AppError::supervisor(format!(
+                "failed to decode supervisor GET response: {error}"
+            )))
+        })?;
+
+        let data = envelope.get("data").cloned().unwrap_or(serde_json::Value::Null);
+        serde_json::from_value::<TResponse>(data).map_err(|error| {
+            RequestFailure::Retryable(AppError::supervisor(format!(
+                "failed to decode supervisor GET response data: {error}"
+            )))
+        })
     }
 
     fn request_json<TRequest, TResponse>(

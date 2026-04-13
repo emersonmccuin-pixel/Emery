@@ -7,6 +7,16 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CrashRecoveryManifest {
+    pub was_crash: bool,
+    pub interrupted_sessions: Vec<SessionRecord>,
+    pub orphaned_sessions: Vec<SessionRecord>,
+    pub affected_worktrees: Vec<WorktreeRecord>,
+    pub affected_work_items: Vec<WorkItemRecord>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorkItemDetailOutput {
     pub work_item: WorkItemRecord,
     pub linked_documents: Vec<DocumentRecord>,

@@ -31,7 +31,9 @@ function App() {
 
   // Bootstrap
   useEffect(() => {
-    useAppStore.getState().bootstrap()
+    void useAppStore.getState().bootstrap().then(() => {
+      void useAppStore.getState().loadCrashManifest()
+    })
   }, [])
 
   // Terminal exit listener
