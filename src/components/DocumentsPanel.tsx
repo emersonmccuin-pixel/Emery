@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import type { DocumentRecord, ProjectRecord, WorkItemRecord } from '../types'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
+import { MarkdownEditor } from './ui/markdown-editor'
 import {
   PanelBanner,
   PanelEmptyState,
@@ -208,15 +209,14 @@ function DocumentsPanel({
                     </select>
                   </label>
 
-                  <label className="field">
+                  <div className="field">
                     <span className="text-[9px] uppercase text-muted-foreground">Content</span>
-                    <textarea
-                      className="w-full bg-background border border-hud-cyan/25 rounded p-3 font-mono text-xs leading-relaxed focus:ring-1 focus:ring-hud-cyan/40 outline-none min-h-[150px]"
+                    <MarkdownEditor
                       value={createBody}
-                      onChange={(event) => setCreateBody(event.target.value)}
-                      placeholder="Architecture notes, reference material, etc..."
+                      onChange={setCreateBody}
+                      className="min-h-[150px]"
                     />
-                  </label>
+                  </div>
                 </div>
 
                 <div className="flex gap-2">
@@ -347,15 +347,14 @@ function DocumentsPanel({
                         </div>
                       </div>
 
-                      <label className="field">
+                      <div className="field">
                         <span className="text-[9px] uppercase text-muted-foreground">Content</span>
-                        <textarea 
-                          rows={12} 
-                          className="w-full bg-black/50 border border-hud-green/20 rounded p-3 font-mono text-xs leading-relaxed focus:ring-1 focus:ring-hud-cyan/30 outline-none min-h-[250px]"
-                          value={editBody} 
-                          onChange={(event) => setEditBody(event.target.value)} 
+                        <MarkdownEditor
+                          value={editBody}
+                          onChange={setEditBody}
+                          className="min-h-[250px]"
                         />
-                      </label>
+                      </div>
 
                       <div className="flex justify-between border-t border-border/50 pt-4">
                         <Button

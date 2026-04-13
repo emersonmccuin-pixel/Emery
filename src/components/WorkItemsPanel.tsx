@@ -10,6 +10,7 @@ import {
 } from './ui/panel-state'
 import { ScrollArea } from './ui/scroll-area'
 import { VirtualList } from './ui/virtual-list'
+import { MarkdownEditor } from './ui/markdown-editor'
 import { Play, Trash2 } from 'lucide-react'
 
 const WORK_ITEM_TYPES: WorkItemType[] = ['bug', 'task', 'feature', 'note']
@@ -354,15 +355,14 @@ function WorkItemsPanel({
                 </label>
               </div>
 
-              <label className="field">
+              <div className="field">
                 <span className="text-[10px] uppercase text-muted-foreground">Description / Context</span>
-                <textarea
-                  className="min-h-[140px] w-full rounded border border-hud-cyan/25 bg-background p-3 font-mono text-xs leading-relaxed outline-none focus:ring-1 focus:ring-hud-cyan/40"
+                <MarkdownEditor
                   value={createBody}
-                  onChange={(event) => setCreateBody(event.target.value)}
-                  placeholder="Constraints, expected behavior, and useful context..."
+                  onChange={setCreateBody}
+                  className="min-h-[140px]"
                 />
-              </label>
+              </div>
 
               <div className="flex gap-3">
                 <Button
@@ -660,15 +660,13 @@ function WorkItemsPanel({
                       </div>
                     </div>
 
-                    <label className="field">
+                    <div className="field">
                       <span className="text-[10px] uppercase text-muted-foreground">Requirements & Notes</span>
-                      <textarea
-                        rows={14}
-                        className="w-full rounded border border-hud-green/20 bg-black/50 p-4 font-mono text-xs leading-relaxed outline-none focus:ring-1 focus:ring-hud-cyan/30"
+                      <MarkdownEditor
                         value={editBody}
-                        onChange={(event) => setEditBody(event.target.value)}
+                        onChange={setEditBody}
                       />
-                    </label>
+                    </div>
 
                     <div className="flex justify-between border-t border-border/50 pt-6">
                       <Button

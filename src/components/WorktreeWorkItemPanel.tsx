@@ -3,6 +3,7 @@ import { Pin, PinOff } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { MarkdownEditor } from '@/components/ui/markdown-editor'
 import { PanelEmptyState } from '@/components/ui/panel-state'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useAppStore } from '../store'
@@ -241,9 +242,7 @@ function WorktreeWorkItemPanel({ worktree }: Props) {
               Work Item Body
             </p>
             <div className="rounded border border-hud-cyan/20 bg-black/40 p-4">
-              <pre className="text-[11px] text-white/75 leading-relaxed whitespace-pre-wrap font-mono break-words">
-                {workItem.body}
-              </pre>
+              <MarkdownEditor value={workItem.body} onChange={() => {}} readonly />
             </div>
           </article>
         ) : workItem ? (
