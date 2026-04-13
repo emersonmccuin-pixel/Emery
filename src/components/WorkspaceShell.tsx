@@ -1,8 +1,7 @@
-import { Suspense, useState, type FormEvent } from 'react'
+import { Suspense, useState } from 'react'
 import { Settings, Plus, ChevronLeft, ChevronRight, X, Pin, PinOff } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import DocumentsPanel from './DocumentsPanel'
@@ -13,6 +12,7 @@ import AppSettingsPanel from './AppSettingsPanel'
 import WorkItemsPanel from './WorkItemsPanel'
 import WorktreeWorkItemPanel from './WorktreeWorkItemPanel'
 import RecoveryBanner from './RecoveryBanner'
+import CreateProjectModal from './CreateProjectModal'
 import {
   formatSessionState,
   formatTimestamp,
@@ -95,15 +95,11 @@ function WorkspaceShell() {
   const isLoadingHistory = useAppStore((s) => s.isLoadingHistory)
   const worktreeError = useAppStore((s) => s.worktreeError)
   const worktreeMessage = useAppStore((s) => s.worktreeMessage)
-  const projectName = useAppStore((s) => s.projectName)
-  const projectRootPath = useAppStore((s) => s.projectRootPath)
-  const projectError = useAppStore((s) => s.projectError)
   const isProjectCreateOpen = useAppStore((s) => s.isProjectCreateOpen)
   const isDocumentsManagerOpen = useAppStore((s) => s.isDocumentsManagerOpen)
   const activeView = useAppStore((s) => s.activeView)
   const isProjectRailCollapsed = useAppStore((s) => s.isProjectRailCollapsed)
   const isSessionRailCollapsed = useAppStore((s) => s.isSessionRailCollapsed)
-  const isCreatingProject = useAppStore((s) => s.isCreatingProject)
   const isLaunchingSession = useAppStore((s) => s.isLaunchingSession)
   const isStoppingSession = useAppStore((s) => s.isStoppingSession)
   const isLoadingWorkItems = useAppStore((s) => s.isLoadingWorkItems)
@@ -117,10 +113,7 @@ function WorkspaceShell() {
 
   // Actions (stable references — never cause re-renders)
   const {
-    setProjectError,
     setSelectedLaunchProfileId,
-    setProjectName,
-    setProjectRootPath,
     startCreateProject,
     cancelCreateProject,
     setIsDocumentsManagerOpen,
@@ -133,8 +126,6 @@ function WorkspaceShell() {
     selectWorktreeTerminal,
     openHistoryForSession,
     openSessionTarget,
-    browseForProjectFolder,
-    submitProject,
     launchWorkspaceGuide,
     stopSession,
     resumeSessionRecord,
@@ -285,90 +276,6 @@ function WorkspaceShell() {
                 </div>
               </ScrollArea>
 
-              {isProjectCreateOpen && projects.length > 0 ? (
-                <div className="border-t border-hud-cyan/30 p-4">
-                  <form
-                    className="space-y-3"
-                    onSubmit={(event) =>
-                      void submitProject(event as FormEvent<HTMLFormElement>)
-                    }
-                  >
-                    <div>
-                      <p className="text-[9px] font-black uppercase tracking-[0.2em] text-hud-cyan mb-1">
-                        New Project
-                      </p>
-                      <p className="text-[9px] uppercase tracking-widest opacity-60">
-                        Register a root path with the supervisor.
-                      </p>
-                    </div>
-
-                    <label className="field">
-                      <span className="text-[9px] uppercase tracking-widest opacity-50">
-                        Name
-                      </span>
-                      <Input
-                        value={projectName}
-                        onChange={(event) => setProjectName(event.target.value)}
-                        placeholder="Project name"
-                        className="hud-input h-8 text-[11px]"
-                      />
-                    </label>
-
-                    <label className="field">
-                      <span className="text-[9px] uppercase tracking-widest opacity-50">
-                        Root Folder
-                      </span>
-                      <div className="flex gap-2">
-                        <Input
-                          value={projectRootPath}
-                          onChange={(event) => setProjectRootPath(event.target.value)}
-                          placeholder="E:\\Projects\\Example"
-                          className="hud-input h-8 flex-1 text-[11px]"
-                        />
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          type="button"
-                          className="h-8 text-[9px] font-black uppercase tracking-widest hud-button--cyan"
-                          onClick={() =>
-                            browseForProjectFolder(setProjectRootPath, setProjectError)
-                          }
-                        >
-                          Browse
-                        </Button>
-                      </div>
-                    </label>
-
-                    {projectError ? (
-                      <p className="text-[9px] font-bold uppercase tracking-widest text-destructive">
-                        {projectError}
-                      </p>
-                    ) : null}
-
-                    <div className="flex gap-2">
-                      <Button
-                        variant="default"
-                        size="sm"
-                        type="submit"
-                        disabled={isCreatingProject}
-                        className="h-8 flex-1 text-[9px] font-black uppercase tracking-widest bg-hud-cyan text-black hover:bg-hud-cyan/90"
-                      >
-                        {isCreatingProject ? 'CREATING...' : 'CREATE'}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        type="button"
-                        className="h-8 text-[9px] font-black uppercase tracking-widest border-hud-cyan/30 text-hud-cyan/70 hover:border-hud-cyan/50"
-                        onClick={() => cancelCreateProject()}
-                      >
-                        Cancel
-                      </Button>
-                    </div>
-                  </form>
-                </div>
-              ) : null}
-
               <div className="p-4 border-t border-hud-cyan/30">
                 <Button variant="ghost" className="w-full justify-start h-8 text-[10px] uppercase tracking-widest hover:text-hud-cyan" onClick={() => openAppSettings()}>
                   <Settings size={12} className="mr-2" />
@@ -393,78 +300,6 @@ function WorkspaceShell() {
               <Button variant="outline" className="mt-8 hud-button--cyan" onClick={() => startCreateProject()}>
                 INITIATE NEW PROJECT
               </Button>
-              {isProjectCreateOpen ? (
-                <form
-                  className="mt-8 w-full max-w-md space-y-4 rounded-lg border border-hud-cyan/40 bg-black/50 p-6 text-left"
-                  onSubmit={(event) =>
-                    void submitProject(event as FormEvent<HTMLFormElement>)
-                  }
-                >
-                  <label className="field">
-                    <span className="text-[9px] uppercase tracking-widest opacity-50">
-                      Project Name
-                    </span>
-                    <Input
-                      value={projectName}
-                      onChange={(event) => setProjectName(event.target.value)}
-                      placeholder="Project name"
-                      className="hud-input h-9 text-[11px]"
-                    />
-                  </label>
-
-                  <label className="field">
-                    <span className="text-[9px] uppercase tracking-widest opacity-50">
-                      Root Folder
-                    </span>
-                    <div className="flex gap-2">
-                      <Input
-                        value={projectRootPath}
-                        onChange={(event) => setProjectRootPath(event.target.value)}
-                        placeholder="E:\\Projects\\Example"
-                        className="hud-input h-9 flex-1 text-[11px]"
-                      />
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        type="button"
-                        className="h-9 text-[9px] font-black uppercase tracking-widest hud-button--cyan"
-                        onClick={() =>
-                          browseForProjectFolder(setProjectRootPath, setProjectError)
-                        }
-                      >
-                        Browse
-                      </Button>
-                    </div>
-                  </label>
-
-                  {projectError ? (
-                    <p className="text-[9px] font-bold uppercase tracking-widest text-destructive">
-                      {projectError}
-                    </p>
-                  ) : null}
-
-                  <div className="flex gap-2">
-                    <Button
-                      variant="default"
-                      size="sm"
-                      type="submit"
-                      disabled={isCreatingProject}
-                      className="h-9 flex-1 text-[9px] font-black uppercase tracking-widest bg-hud-cyan text-black hover:bg-hud-cyan/90"
-                    >
-                      {isCreatingProject ? 'CREATING...' : 'REGISTER PROJECT'}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      type="button"
-                      className="h-9 text-[9px] font-black uppercase tracking-widest border-hud-cyan/30 text-hud-cyan/70 hover:border-hud-cyan/50"
-                      onClick={() => cancelCreateProject()}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                </form>
-              ) : null}
             </div>
           ) : (
             <>
@@ -1576,6 +1411,8 @@ function WorkspaceShell() {
           </div>
         </div>
       ) : null}
+
+      <CreateProjectModal />
     </main>
   )
 }

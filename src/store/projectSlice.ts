@@ -389,6 +389,19 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
     }
   },
 
+  projectCreated: (project) => {
+    set((state) => ({
+      projects: [project, ...state.projects.filter((p) => p.id !== project.id)],
+      selectedProjectId: project.id,
+      selectedTerminalWorktreeId: null,
+      activeView: 'terminal',
+      isProjectCreateOpen: false,
+      projectName: '',
+      projectRootPath: '',
+      projectError: null,
+    }))
+  },
+
   adjustProjectWorkItemCount: (projectId, delta) => {
     set((state) => ({
       projects: state.projects.map((p) =>

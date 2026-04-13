@@ -16,6 +16,7 @@ use session::SupervisorClient;
 use session_api::{
     LaunchSessionInput, ProjectSessionTarget, ResizeSessionInput, SessionInput, SessionSnapshot,
 };
+use serde::Serialize;
 use std::fs;
 use supervisor_api::{
     CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget, CleanupRepairOutput,
@@ -373,6 +374,59 @@ fn get_crash_recovery_manifest(state: State<SupervisorClient>) -> AppResult<Opti
     state.get_crash_recovery_manifest()
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CheckProjectFolderResult {
+    is_git_repo: bool,
+    git_branch: Option<String>,
+    has_claude_md: bool,
+}
+
+#[tauri::command]
+fn check_project_folder(path: String) -> AppResult<CheckProjectFolderResult> {
+    let root = std::path::Path::new(&path);
+    if !root.is_dir() {
+        return Err("folder does not exist".into());
+    }
+
+    let is_git_repo;
+    let git_branch;
+
+    let toplevel_output = db::git_command()
+        .arg("-C")
+        .arg(&path)
+        .args(["rev-parse", "--show-toplevel"])
+        .output();
+
+    match toplevel_output {
+        Ok(output) if output.status.success() => {
+            is_git_repo = true;
+            let branch_output = db::git_command()
+                .arg("-C")
+                .arg(&path)
+                .args(["rev-parse", "--abbrev-ref", "HEAD"])
+                .output();
+            git_branch = branch_output
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .filter(|s| !s.is_empty());
+        }
+        _ => {
+            is_git_repo = false;
+            git_branch = None;
+        }
+    }
+
+    let has_claude_md = root.join("CLAUDE.md").is_file();
+
+    Ok(CheckProjectFolderResult {
+        is_git_repo,
+        git_branch,
+        has_claude_md,
+    })
+}
+
 const PROJECT_FILE_WHITELIST: &[&str] = &["CLAUDE.md", "AGENTS.md"];
 
 fn resolve_project_file(root_path: &str, filename: &str) -> AppResult<std::path::PathBuf> {
@@ -450,6 +504,7 @@ pub fn run() {
             list_cleanup_candidates,
             remove_cleanup_candidate,
             repair_cleanup_candidates,
+            check_project_folder,
             read_project_file,
             write_project_file,
             save_clipboard_image,

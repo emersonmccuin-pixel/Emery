@@ -214,6 +214,7 @@ pub struct BootstrapData {
 pub struct CreateProjectInput {
     pub name: String,
     pub root_path: String,
+    pub work_item_prefix: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -509,7 +510,12 @@ impl AppState {
 
     pub fn create_project(&self, input: CreateProjectInput) -> AppResult<ProjectRecord> {
         let connection = self.connect()?;
-        let result = ensure_project_registration(&connection, &input.name, &input.root_path)?;
+        let result = ensure_project_registration(
+            &connection,
+            &input.name,
+            &input.root_path,
+            input.work_item_prefix.as_deref(),
+        )?;
 
         Ok(result.project)
     }
@@ -3025,6 +3031,7 @@ fn ensure_project_registration(
     connection: &Connection,
     name: &str,
     root_path: &str,
+    custom_prefix: Option<&str>,
 ) -> Result<ProjectRegistrationResult, String> {
     let trimmed_name = name.trim();
 
@@ -3045,7 +3052,22 @@ fn ensure_project_registration(
         });
     }
 
-    let prefix = generate_project_work_item_prefix(connection, trimmed_name, None)?;
+    let prefix = match custom_prefix {
+        Some(p) if !p.trim().is_empty() => {
+            let candidate = p.trim().to_uppercase();
+            if candidate.len() > 6 {
+                return Err("namespace prefix must be at most 6 characters".to_string());
+            }
+            if !candidate.chars().all(|c| c.is_ascii_alphanumeric()) {
+                return Err("namespace prefix must contain only letters and digits".to_string());
+            }
+            if project_prefix_in_use(connection, &candidate, None)? {
+                return Err(format!("namespace prefix '{candidate}' is already in use"));
+            }
+            candidate
+        }
+        _ => generate_project_work_item_prefix(connection, trimmed_name, None)?,
+    };
 
     connection
         .execute(
@@ -3880,7 +3902,7 @@ fn process_is_alive(process_id: u32) -> bool {
     }
 }
 
-fn git_command() -> Command {
+pub(crate) fn git_command() -> Command {
     let mut command = Command::new("git");
 
     #[cfg(windows)]
@@ -3928,6 +3950,7 @@ mod tests {
                 .create_project(CreateProjectInput {
                     name: name.to_string(),
                     root_path: root_path.display().to_string(),
+                    work_item_prefix: None,
                 })
                 .expect("project should be created")
         }
