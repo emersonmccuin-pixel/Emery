@@ -108,20 +108,20 @@
 .terminal-layout {
   min-height: 0;
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr) 280px;
+  grid-template-columns: 240px minmax(100px, 1fr) 280px;
   gap: var(--panel-gap);
 }
 
 .terminal-layout--left-collapsed {
-  grid-template-columns: auto minmax(0, 1fr) 280px;
+  grid-template-columns: auto minmax(100px, 1fr) 280px;
 }
 
 .terminal-layout--right-collapsed {
-  grid-template-columns: 240px minmax(0, 1fr) auto;
+  grid-template-columns: 240px minmax(100px, 1fr) auto;
 }
 
 .terminal-layout--left-collapsed.terminal-layout--right-collapsed {
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(100px, 1fr) auto;
 }
 
 .side-rail--collapsed {
