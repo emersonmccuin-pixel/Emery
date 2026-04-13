@@ -182,6 +182,7 @@ export function buildAgentStartupPrompt(
     'Project Commander dispatcher startup context.',
     `Project: ${project.name}`,
     `Root path: ${project.rootPath}`,
+    'Use this root path for all shell commands. Do not convert to WSL-style /mnt/ paths.',
     'Project Commander MCP tools are attached to this session.',
     'You are the repository dispatcher for this project.',
     'Use the Project Commander MCP tools as the source of truth for project context, work items, documents, and focused worktree launches.',
