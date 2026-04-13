@@ -183,6 +183,7 @@ pub struct SessionRecord {
     pub exit_success: Option<bool>,
     pub created_at: String,
     pub updated_at: String,
+    pub last_heartbeat_at: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -489,6 +490,16 @@ impl AppState {
             if clean { "true" } else { "false" },
         )?;
         Ok(())
+    }
+
+    pub fn get_clean_shutdown_setting(&self) -> AppResult<Option<String>> {
+        let connection = self.connect()?;
+        Ok(load_app_setting(&connection, APP_SETTING_CLEAN_SHUTDOWN)?)
+    }
+
+    pub fn list_in_progress_work_items(&self) -> AppResult<Vec<WorkItemRecord>> {
+        let connection = self.connect()?;
+        Ok(load_in_progress_work_items(&connection)?)
     }
 
     pub fn list_projects(&self) -> AppResult<Vec<ProjectRecord>> {
@@ -2291,6 +2302,38 @@ fn load_work_item_by_id(connection: &Connection, id: i64) -> Result<WorkItemReco
         .map_err(|error| format!("failed to load work item: {error}"))
 }
 
+fn load_in_progress_work_items(connection: &Connection) -> Result<Vec<WorkItemRecord>, String> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT
+              id,
+              project_id,
+              parent_work_item_id,
+              call_sign,
+              title,
+              body,
+              item_type,
+              status,
+              sequence_number,
+              child_number,
+              created_at,
+              updated_at
+            FROM work_items
+            WHERE status = 'in_progress'
+            ORDER BY sequence_number ASC, child_number ASC, updated_at DESC, id DESC
+            ",
+        )
+        .map_err(|error| format!("failed to prepare in-progress work item query: {error}"))?;
+
+    let rows = statement
+        .query_map([], map_work_item_record)
+        .map_err(|error| format!("failed to load in-progress work items: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to map in-progress work items: {error}"))
+}
+
 fn load_documents_by_project_id(
     connection: &Connection,
     project_id: i64,
@@ -2495,7 +2538,8 @@ fn load_session_records_by_project_id(
               exit_code,
               exit_success,
               created_at,
-              updated_at
+              updated_at,
+              last_heartbeat_at
             FROM sessions
             WHERE project_id = ?1
             ORDER BY started_at DESC, id DESC
@@ -2532,7 +2576,8 @@ fn load_running_session_records(connection: &Connection) -> Result<Vec<SessionRe
               exit_code,
               exit_success,
               created_at,
-              updated_at
+              updated_at,
+              last_heartbeat_at
             FROM sessions
             WHERE state = 'running'
             ORDER BY started_at DESC, id DESC
@@ -2572,7 +2617,8 @@ fn load_orphaned_session_records_by_project_id(
               exit_code,
               exit_success,
               created_at,
-              updated_at
+              updated_at,
+              last_heartbeat_at
             FROM sessions
             WHERE project_id = ?1 AND state = 'orphaned'
             ORDER BY started_at DESC, id DESC
@@ -2609,7 +2655,8 @@ fn load_session_record_by_id(connection: &Connection, id: i64) -> Result<Session
               exit_code,
               exit_success,
               created_at,
-              updated_at
+              updated_at,
+              last_heartbeat_at
             FROM sessions
             WHERE id = ?1
             ",
@@ -2708,6 +2755,7 @@ fn map_session_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRecord
         exit_success: row.get(14)?,
         created_at: row.get(15)?,
         updated_at: row.get(16)?,
+        last_heartbeat_at: row.get(17)?,
     })
 }
 

@@ -3,9 +3,9 @@ use project_commander_lib::db::{
     AgentSignalRecord, AppState, AppendSessionEventInput, CreateDocumentInput,
     CreateLaunchProfileInput, CreateProjectInput, CreateWorkItemInput, DocumentRecord,
     EmitAgentSignalInput, ListAgentMessagesFilter, ReparentRequest, RespondToAgentSignalInput,
-    SendAgentMessageInput, UpdateAppSettingsInput, UpdateDocumentInput, UpdateLaunchProfileInput,
-    UpdateProjectInput, UpdateWorkItemInput, UpsertWorktreeRecordInput, WorkItemRecord,
-    WorktreeRecord,
+    SendAgentMessageInput, SessionRecord, UpdateAppSettingsInput, UpdateDocumentInput,
+    UpdateLaunchProfileInput, UpdateProjectInput, UpdateWorkItemInput, UpsertWorktreeRecordInput,
+    WorkItemRecord, WorktreeRecord,
 };
 use project_commander_lib::error::{AppError, AppErrorCode};
 use project_commander_lib::session::build_supervisor_runtime_info;
@@ -91,6 +91,16 @@ struct RouteError {
 struct RequestContext {
     source: String,
     session_id: Option<i64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CrashRecoveryManifest {
+    was_crash: bool,
+    interrupted_sessions: Vec<SessionRecord>,
+    orphaned_sessions: Vec<SessionRecord>,
+    affected_worktrees: Vec<WorktreeRecord>,
+    affected_work_items: Vec<WorkItemRecord>,
 }
 
 impl RouteError {
@@ -232,6 +242,11 @@ fn run_server(db_path: PathBuf, runtime_file: PathBuf) -> Result<(), String> {
 
     let removed_runtime_artifacts = cleanup_stale_runtime_artifacts(&runtime_file)?;
     let state = AppState::from_database_path(db_path).map_err(|error| error.to_string())?;
+    // Read clean_shutdown BEFORE reconciliation and before resetting it, so we
+    // can detect whether the previous run ended in a crash.
+    let previous_clean_shutdown = state
+        .get_clean_shutdown_setting()
+        .map_err(|error| error.to_string())?;
     let reconciled = state
         .reconcile_orphaned_running_sessions()
         .map_err(|error| error.to_string())?;
@@ -250,6 +265,30 @@ fn run_server(db_path: PathBuf, runtime_file: PathBuf) -> Result<(), String> {
     } else {
         None
     };
+    // Build crash recovery manifest before setting clean_shutdown=false.
+    // was_crash is true only if: previous clean_shutdown value was "false"
+    // (meaning the last run did not shut down cleanly) AND there are sessions
+    // that needed to be reconciled during this startup.
+    let was_crash = previous_clean_shutdown.as_deref() == Some("false") && !reconciled.is_empty();
+    let crash_manifest: Arc<Option<CrashRecoveryManifest>> = Arc::new(if was_crash {
+        match build_crash_recovery_manifest(&state, &reconciled) {
+            Ok(manifest) => {
+                log::warn!(
+                    "crash detected: {} interrupted, {} orphaned sessions",
+                    manifest.interrupted_sessions.len(),
+                    manifest.orphaned_sessions.len()
+                );
+                Some(manifest)
+            }
+            Err(error) => {
+                log::error!("failed to build crash recovery manifest: {error}");
+                None
+            }
+        }
+    } else {
+        None
+    });
+
     let sessions = SessionRegistry::default();
     let server = Server::http("127.0.0.1:0")
         .map_err(|error| format!("failed to bind supervisor server: {error}"))?;
@@ -296,7 +335,7 @@ fn run_server(db_path: PathBuf, runtime_file: PathBuf) -> Result<(), String> {
     let shutdown = Arc::new(AtomicBool::new(false));
 
     for request in server.incoming_requests() {
-        if let Err(error) = handle_request(request, &runtime, &state, &sessions, Arc::clone(&shutdown)) {
+        if let Err(error) = handle_request(request, &runtime, &state, &sessions, &crash_manifest, Arc::clone(&shutdown)) {
             log::error!("request handler error: {error}");
         }
         if shutdown.load(Ordering::Relaxed) {
@@ -316,6 +355,7 @@ fn handle_request(
     runtime: &SupervisorRuntimeInfo,
     state: &AppState,
     sessions: &SessionRegistry,
+    crash_manifest: &Option<CrashRecoveryManifest>,
     shutdown: Arc<AtomicBool>,
 ) -> Result<(), String> {
     if !is_authorized(&request, &runtime.token) {
@@ -328,7 +368,7 @@ fn handle_request(
 
     let context = build_request_context(&request);
 
-    match route_request(&mut request, runtime, state, sessions, &context, &shutdown) {
+    match route_request(&mut request, runtime, state, sessions, crash_manifest, &context, &shutdown) {
         Ok(payload) => respond_json(request, 200, &payload),
         Err(error) => respond_json(
             request,
@@ -347,6 +387,7 @@ fn route_request(
     runtime: &SupervisorRuntimeInfo,
     state: &AppState,
     sessions: &SessionRegistry,
+    crash_manifest: &Option<CrashRecoveryManifest>,
     context: &RequestContext,
     shutdown: &Arc<AtomicBool>,
 ) -> Result<Value, RouteError> {
@@ -1113,6 +1154,18 @@ fn route_request(
             log::info!("graceful shutdown requested via /shutdown");
             shutdown.store(true, Ordering::Relaxed);
             Ok(json!({ "ok": true, "data": null }))
+        }
+        (&Method::Get, "/crash-recovery-manifest") => {
+            match crash_manifest {
+                Some(manifest) => serde_json::to_value(manifest)
+                    .map(|data| json!({ "ok": true, "data": data }))
+                    .map_err(|error| {
+                        RouteError::internal(format!(
+                            "failed to encode crash recovery manifest: {error}"
+                        ))
+                    }),
+                None => Ok(json!({ "ok": true, "data": null })),
+            }
         }
         _ => Err(RouteError::not_found("route not found")),
     }
@@ -3181,6 +3234,51 @@ fn write_runtime_file(path: &Path, runtime: &SupervisorRuntimeInfo) -> Result<()
         .map_err(|error| format!("failed to write supervisor runtime file: {error}"))?;
     fs::rename(&temp_path, path)
         .map_err(|error| format!("failed to finalize supervisor runtime file: {error}"))
+}
+
+fn build_crash_recovery_manifest(
+    state: &AppState,
+    reconciled: &[SessionRecord],
+) -> Result<CrashRecoveryManifest, String> {
+    let interrupted_sessions: Vec<SessionRecord> = reconciled
+        .iter()
+        .filter(|s| s.state == "interrupted")
+        .cloned()
+        .collect();
+
+    let orphaned_sessions: Vec<SessionRecord> = reconciled
+        .iter()
+        .filter(|s| s.state == "orphaned")
+        .cloned()
+        .collect();
+
+    // Collect the worktrees linked to any reconciled session.
+    let mut affected_worktrees: Vec<WorktreeRecord> = Vec::new();
+    let mut seen_worktree_ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    for session in reconciled {
+        if let Some(worktree_id) = session.worktree_id {
+            if seen_worktree_ids.insert(worktree_id) {
+                match state.get_worktree(worktree_id) {
+                    Ok(worktree) => affected_worktrees.push(worktree),
+                    Err(error) => {
+                        log::warn!("failed to load worktree {worktree_id} for crash manifest: {error}");
+                    }
+                }
+            }
+        }
+    }
+
+    let affected_work_items = state
+        .list_in_progress_work_items()
+        .map_err(|error| format!("failed to load in-progress work items for crash manifest: {error}"))?;
+
+    Ok(CrashRecoveryManifest {
+        was_crash: true,
+        interrupted_sessions,
+        orphaned_sessions,
+        affected_worktrees,
+        affected_work_items,
+    })
 }
 
 #[cfg(all(test, windows))]
