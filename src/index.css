@@ -644,6 +644,9 @@
 .document-preview-card p,
 .session-card p {
   margin: 0;
+}
+
+.document-preview-card p {
   color: var(--muted);
 }
 

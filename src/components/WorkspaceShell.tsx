@@ -1463,14 +1463,9 @@ function WorkspaceShell() {
                                 </Badge>
                               ) : null}
                             </div>
-                            {worktree.workItemTitle ? (
-                              <p className="text-[10px] text-white/90 leading-snug line-clamp-2">
-                                {worktree.workItemTitle}
-                              </p>
-                            ) : null}
-                            {worktree.sessionSummary ? (
-                              <p className="text-[10px] text-white/90 leading-snug line-clamp-2 mt-0.5 italic">
-                                {worktree.sessionSummary}
+                            {(worktree.workItemTitle || worktree.sessionSummary) ? (
+                              <p className="text-[10px] text-white/70 leading-snug line-clamp-2">
+                                {worktree.workItemTitle ?? worktree.sessionSummary}
                               </p>
                             ) : null}
                           </button>
