@@ -35,9 +35,9 @@ use supervisor_api::{
     CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget, CleanupRepairOutput,
     CrashRecoveryManifest, CreateProjectDocumentInput, CreateProjectWorkItemInput,
     EnsureProjectWorktreeInput, LaunchProjectWorktreeAgentInput, PinWorktreeInput,
-    ProjectDocumentTarget, ProjectWorkItemTarget, ProjectWorktreeTarget, SessionHistoryOutput,
-    SessionRecoveryDetails, UpdateProjectDocumentInput, UpdateProjectWorkItemInput,
-    WorktreeLaunchOutput,
+    ProjectCallSignTarget, ProjectDocumentTarget, ProjectWorkItemTarget, ProjectWorktreeTarget,
+    SessionHistoryOutput, SessionRecoveryDetails, UpdateProjectDocumentInput,
+    UpdateProjectWorkItemInput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -742,6 +742,14 @@ fn delete_work_item(input: ProjectWorkItemTarget, state: State<SupervisorClient>
 }
 
 #[tauri::command]
+fn get_work_item_by_call_sign(
+    input: ProjectCallSignTarget,
+    state: State<SupervisorClient>,
+) -> AppResult<WorkItemDetailOutput> {
+    state.get_work_item_by_call_sign(&input)
+}
+
+#[tauri::command]
 fn list_documents(
     project_id: i64,
     state: State<SupervisorClient>,
@@ -1121,6 +1129,7 @@ pub fn run() {
             create_work_item,
             update_work_item,
             delete_work_item,
+            get_work_item_by_call_sign,
             list_documents,
             create_document,
             update_document,

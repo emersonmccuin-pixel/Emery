@@ -1379,9 +1379,11 @@ fn build_claude_bridge_system_prompt(
             "Persist all changes via MCP — do not just describe them in chat.\n\n",
             "If you encounter a bug in the app, build, tools, or workflow: ",
             "check list_work_items for duplicates, then ",
-            "create_work_item(itemType: 'bug') with repro steps.",
+            "create_work_item(itemType: 'bug') with repro steps.\n\n",
+            "Always reference work items by their call sign (e.g., {}-47.08) ",
+            "in your output — they become interactive hover links in the terminal.",
         ),
-        project.name, launch_root_path
+        project.name, launch_root_path, namespace
     );
 
     if let Some(worktree) = worktree {

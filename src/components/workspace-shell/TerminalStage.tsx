@@ -175,7 +175,7 @@ function TerminalStage() {
                 </div>
               }
             >
-              <LiveTerminal snapshot={sessionSnapshot} onSessionExit={handleSessionExit} />
+              <LiveTerminal snapshot={sessionSnapshot} onSessionExit={handleSessionExit} workItemPrefix={selectedProject.workItemPrefix} />
             </Suspense>
           </div>
         </div>
