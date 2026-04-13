@@ -43,6 +43,8 @@ struct HostedSession {
     profile_label: String,
     root_path: String,
     started_at: String,
+    startup_prompt: String,
+    last_activity: Mutex<String>,
     output_state: Mutex<OutputBufferState>,
     exit_state: Mutex<Option<ExitState>>,
     child: Mutex<Box<dyn portable_pty::Child + Send + Sync>>,
@@ -373,6 +375,12 @@ impl SessionRegistry {
             )));
         }
 
+        let initial_activity = if startup_prompt.is_empty() {
+            "session launched (idle)".to_string()
+        } else {
+            format!("startup prompt: {}", truncate_for_log(&startup_prompt, 200))
+        };
+
         let session = Arc::new(HostedSession {
             session_record_id: session_record.id,
             project_id: input.project_id,
@@ -381,6 +389,8 @@ impl SessionRegistry {
             profile_label: profile.label,
             root_path: launch_root_path.clone(),
             started_at,
+            startup_prompt: startup_prompt.clone(),
+            last_activity: Mutex::new(initial_activity),
             output_state: Mutex::new(OutputBufferState {
                 buffer: String::new(),
                 start_offset: 0,
@@ -443,6 +453,16 @@ impl SessionRegistry {
             project_id: input.project_id,
             worktree_id: input.worktree_id,
         })?;
+
+        // Track user/directive input as last activity for crash diagnostics
+        let clean = strip_ansi_escapes(&input.data);
+        let trimmed = clean.trim();
+        if !trimmed.is_empty() && trimmed.len() > 1 {
+            if let Ok(mut activity) = session.last_activity.lock() {
+                *activity = format!("user input: {}", truncate_for_log(trimmed, 300));
+            }
+        }
+
         let mut writer = session
             .writer
             .lock()
@@ -692,11 +712,20 @@ impl HostedSession {
         let code = status.exit_code();
         let error_detail = if !status.success() {
             let reason = describe_exit_code(code);
+            let activity = last_activity_snapshot(self);
             let mut detail = format!("exit code {code}: {reason}");
-            if let Some(tail) = last_output_lines(self, 20) {
-                detail.push_str("\n--- last output ---\n");
+            detail.push_str(&format!("\n--- last activity ---\n{activity}"));
+            if !self.startup_prompt.is_empty() {
+                detail.push_str(&format!(
+                    "\n--- startup prompt ---\n{}",
+                    truncate_for_log(&self.startup_prompt, 500)
+                ));
+            }
+            if let Some(tail) = last_output_lines(self, 30) {
+                detail.push_str("\n--- last output (30 lines) ---\n");
                 detail.push_str(&tail);
             }
+            log::error!("session #{} crashed — {detail}", self.session_record_id);
             Some(detail)
         } else {
             None
@@ -1500,9 +1529,17 @@ fn spawn_exit_watch_thread(session: Arc<HostedSession>, app_state: AppState) {
                 let code = status.exit_code();
                 let error_detail = if !status.success() {
                     let reason = describe_exit_code(code);
+                    let activity = last_activity_snapshot(&session);
                     let mut detail = format!("exit code {code}: {reason}");
-                    if let Some(tail) = last_output_lines(&session, 20) {
-                        detail.push_str("\n--- last output ---\n");
+                    detail.push_str(&format!("\n--- last activity ---\n{activity}"));
+                    if !session.startup_prompt.is_empty() {
+                        detail.push_str(&format!(
+                            "\n--- startup prompt ---\n{}",
+                            truncate_for_log(&session.startup_prompt, 500)
+                        ));
+                    }
+                    if let Some(tail) = last_output_lines(&session, 30) {
+                        detail.push_str("\n--- last output (30 lines) ---\n");
                         detail.push_str(&tail);
                     }
                     log::error!(
@@ -1603,6 +1640,26 @@ fn strip_ansi_escapes(input: &str) -> String {
         }
     }
     output
+}
+
+fn truncate_for_log(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        let mut end = max;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &s[..end])
+    }
+}
+
+fn last_activity_snapshot(session: &HostedSession) -> String {
+    session
+        .last_activity
+        .lock()
+        .map(|a| a.clone())
+        .unwrap_or_else(|_| "unknown".to_string())
 }
 
 /// Map Windows exit codes to human-readable reasons.

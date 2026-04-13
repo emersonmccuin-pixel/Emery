@@ -10,6 +10,9 @@ import {
   getErrorMessage,
 } from './utils'
 
+const terminationKey = (projectId: number, worktreeId: number | null) =>
+  `${projectId}:${worktreeId ?? 'null'}`
+
 export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = (set, get) => ({
   sessionSnapshot: null,
   liveSessionSnapshots: [],
@@ -19,6 +22,7 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
   selectedTerminalWorktreeId: null,
   terminalPromptDraft: null,
   agentPromptMessage: null,
+  terminatedSessions: new Set<string>(),
 
   setTerminalPromptDraft: (value) => set({ terminalPromptDraft: value }),
 
@@ -141,7 +145,15 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
     }
 
     const targetWorktreeId = state.selectedTerminalWorktreeId
-    set({ sessionError: null, isStoppingSession: true })
+    const key = terminationKey(selectedProject.id, targetWorktreeId)
+
+    // Mark as intentionally terminated before invoking so that any terminal-exit
+    // event that races in before the invoke response doesn't trigger an error alert.
+    set((s) => ({
+      sessionError: null,
+      isStoppingSession: true,
+      terminatedSessions: new Set([...s.terminatedSessions, key]),
+    }))
 
     try {
       await invoke('terminate_session_target', {
@@ -185,7 +197,12 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
         }))
         get().invalidateProjectContext()
       } else {
-        set({ sessionError: getErrorMessage(error, 'Failed to stop the live session.') })
+        // Termination failed — session is still running, so un-mark it.
+        set((s) => {
+          const next = new Set(s.terminatedSessions)
+          next.delete(key)
+          return { sessionError: getErrorMessage(error, 'Failed to stop the live session.'), terminatedSessions: next }
+        })
       }
     } finally {
       set({ isStoppingSession: false })
@@ -214,23 +231,31 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
   },
 
   handleSessionExit: (event) => {
-    set((state) => ({
-      sessionSnapshot:
-        state.sessionSnapshot &&
-        state.sessionSnapshot.projectId === event.projectId &&
-        (state.sessionSnapshot.worktreeId ?? null) === (event.worktreeId ?? null)
-          ? { ...state.sessionSnapshot, isRunning: false }
-          : state.sessionSnapshot,
-      liveSessionSnapshots: state.liveSessionSnapshots.filter(
-        (snap) =>
-          !(snap.projectId === event.projectId && (snap.worktreeId ?? null) === (event.worktreeId ?? null)),
-      ),
-      sessionError: event.success
-        ? state.sessionError
-        : event.error
-          ? `Session crashed — ${event.error.split('\n')[0]}`
-          : `Session exited with code ${event.exitCode}.`,
-    }))
+    const key = terminationKey(event.projectId, event.worktreeId ?? null)
+    set((state) => {
+      const wasIntentionallyTerminated = state.terminatedSessions.has(key)
+      const nextTerminatedSessions = new Set(state.terminatedSessions)
+      nextTerminatedSessions.delete(key)
+      return {
+        sessionSnapshot:
+          state.sessionSnapshot &&
+          state.sessionSnapshot.projectId === event.projectId &&
+          (state.sessionSnapshot.worktreeId ?? null) === (event.worktreeId ?? null)
+            ? { ...state.sessionSnapshot, isRunning: false }
+            : state.sessionSnapshot,
+        liveSessionSnapshots: state.liveSessionSnapshots.filter(
+          (snap) =>
+            !(snap.projectId === event.projectId && (snap.worktreeId ?? null) === (event.worktreeId ?? null)),
+        ),
+        terminatedSessions: nextTerminatedSessions,
+        sessionError:
+          event.success || wasIntentionallyTerminated
+            ? state.sessionError
+            : event.error
+              ? `Session crashed — ${event.error.split('\n')[0]}`
+              : `Session exited with code ${event.exitCode}.`,
+      }
+    })
     get().invalidateProjectContext()
   },
 
