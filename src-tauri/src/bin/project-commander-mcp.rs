@@ -1,6 +1,6 @@
 use project_commander_lib::db::{
     AppState, CreateDocumentInput, CreateWorkItemInput, DocumentRecord, ProjectRecord,
-    UpdateDocumentInput, UpdateWorkItemInput, WorkItemRecord,
+    ReparentRequest, UpdateDocumentInput, UpdateWorkItemInput, WorkItemRecord,
 };
 use project_commander_lib::error::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
@@ -163,7 +163,8 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
                 work_items.retain(|item| item.parent_work_item_id.is_none());
             }
 
-            Ok(serde_json::to_value(work_items).expect("work items should serialize"))
+            let slim: Vec<Value> = work_items.into_iter().map(slim_work_item).collect();
+            Ok(serde_json::to_value(slim).expect("work items should serialize"))
         }),
         "get_work_item" => execute_tool(|| {
             let args: GetWorkItemArgs = decode_args(arguments)?;
@@ -202,10 +203,13 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
             let existing = state.get_work_item(args.id)?;
             ensure_work_item_project(&existing, &project)?;
 
+            let clear_parent = args.clear_parent.unwrap_or(false);
             if args.title.is_none()
                 && args.body.is_none()
                 && args.item_type.is_none()
                 && args.status.is_none()
+                && args.parent_work_item_id.is_none()
+                && !clear_parent
             {
                 return Err(AppError::invalid_input("no changes provided for work item update"));
             }
@@ -217,6 +221,14 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
                 item_type: args.item_type.unwrap_or(existing.item_type),
                 status: args.status.unwrap_or(existing.status),
             })?;
+
+            let work_item = if let Some(parent_id) = args.parent_work_item_id {
+                state.reparent_work_item(work_item.id, ReparentRequest::SetParent(parent_id))?
+            } else if clear_parent {
+                state.reparent_work_item(work_item.id, ReparentRequest::Detach)?
+            } else {
+                work_item
+            };
 
             Ok(serde_json::to_value(work_item).expect("work item should serialize"))
         }),
@@ -244,7 +256,8 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
                 documents.retain(|document| document.work_item_id == Some(work_item_id));
             }
 
-            Ok(serde_json::to_value(documents).expect("documents should serialize"))
+            let slim: Vec<Value> = documents.into_iter().map(slim_document).collect();
+            Ok(serde_json::to_value(slim).expect("documents should serialize"))
         }),
         "create_document" => execute_tool(|| {
             let args: CreateDocumentArgs = decode_args(arguments)?;
@@ -361,13 +374,26 @@ fn tool_definitions() -> Vec<Value> {
         ),
         tool_definition(
             "list_work_items",
-            "List work items for the active project, optionally filtered by status.",
+            "List work items for the active project, optionally filtered by status, type, or hierarchy.",
             json_schema_object(
                 json!({
                     "status": {
                         "type": "string",
-                        "enum": ["backlog", "in_progress", "blocked", "done"],
+                        "enum": ["backlog", "in_progress", "blocked", "parked", "done"],
                         "description": "Optional status filter."
+                    },
+                    "itemType": {
+                        "type": "string",
+                        "enum": ["bug", "task", "feature", "note"],
+                        "description": "Optional item type filter."
+                    },
+                    "parentOnly": {
+                        "type": "boolean",
+                        "description": "If true, return only top-level work items (no children)."
+                    },
+                    "openOnly": {
+                        "type": "boolean",
+                        "description": "If true, exclude work items with status 'done'."
                     }
                 }),
                 vec![],
@@ -408,8 +434,12 @@ fn tool_definitions() -> Vec<Value> {
                     },
                     "status": {
                         "type": "string",
-                        "enum": ["backlog", "in_progress", "blocked", "done"],
+                        "enum": ["backlog", "in_progress", "blocked", "parked", "done"],
                         "description": "Initial work item status."
+                    },
+                    "parentWorkItemId": {
+                        "type": "integer",
+                        "description": "Optional parent work item id (creates a child work item)."
                     }
                 }),
                 vec!["title"],
@@ -418,7 +448,7 @@ fn tool_definitions() -> Vec<Value> {
         ),
         tool_definition(
             "update_work_item",
-            "Update a work item's title, body, type, or status.",
+            "Update a work item's title, body, type, status, or parent.",
             json_schema_object(
                 json!({
                     "id": {
@@ -440,8 +470,16 @@ fn tool_definitions() -> Vec<Value> {
                     },
                     "status": {
                         "type": "string",
-                        "enum": ["backlog", "in_progress", "blocked", "done"],
+                        "enum": ["backlog", "in_progress", "blocked", "parked", "done"],
                         "description": "Optional new status."
+                    },
+                    "parentWorkItemId": {
+                        "type": "integer",
+                        "description": "Optional new parent work item id."
+                    },
+                    "clearParent": {
+                        "type": "boolean",
+                        "description": "Set true to detach this work item from its parent (make it top-level)."
                     }
                 }),
                 vec!["id"],
@@ -732,6 +770,8 @@ struct UpdateWorkItemArgs {
     body: Option<String>,
     item_type: Option<String>,
     status: Option<String>,
+    parent_work_item_id: Option<i64>,
+    clear_parent: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -766,4 +806,28 @@ struct UpdateDocumentArgs {
 #[derive(Deserialize)]
 struct DeleteDocumentArgs {
     id: i64,
+}
+
+/// Strip body and metadata from a work item for list responses.
+/// Callers that need the full body should use get_work_item.
+fn slim_work_item(item: WorkItemRecord) -> Value {
+    json!({
+        "id": item.id,
+        "callSign": item.call_sign,
+        "title": item.title,
+        "status": item.status,
+        "itemType": item.item_type,
+        "parentWorkItemId": item.parent_work_item_id,
+        "childNumber": item.child_number,
+    })
+}
+
+/// Strip body and metadata from a document for list responses.
+/// Callers that need the full body should use update_document or get_work_item.
+fn slim_document(doc: DocumentRecord) -> Value {
+    json!({
+        "id": doc.id,
+        "title": doc.title,
+        "workItemId": doc.work_item_id,
+    })
 }
