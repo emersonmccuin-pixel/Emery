@@ -1,4 +1,4 @@
-import { Suspense, useState } from 'react'
+import { type ReactNode, Suspense, useState } from 'react'
 import { Settings, Plus, ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
