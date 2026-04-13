@@ -715,7 +715,7 @@ function WorkspaceShell() {
                               })()}
                             </div>
                             {(worktree.workItemTitle || worktree.sessionSummary) ? (
-                              <p className="text-[10px] text-white/70 leading-snug line-clamp-2">
+                              <p className="text-[10px] text-white/70 leading-snug line-clamp-3">
                                 {worktree.workItemTitle ?? worktree.sessionSummary}
                               </p>
                             ) : null}

@@ -439,17 +439,28 @@
 
 
 /* ── Scrollbar ── */
-.hud-scrollarea [data-radix-scroll-area-viewport] {
-  padding-right: 12px !important;
+/* Native scrollbar styling — ScrollArea is a plain div, not Radix */
+.hud-scrollarea {
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(58, 240, 224, 0.25) rgba(255, 255, 255, 0.04);
 }
 
-.hud-scrollarea [data-radix-scroll-area-scrollbar] {
-  background: rgba(255, 255, 255, 0.06) !important;
-  width: 4px !important;
+.hud-scrollarea::-webkit-scrollbar {
+  width: 4px;
 }
 
-.hud-scrollarea [data-radix-scroll-area-thumb] {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--rail-projects-tint) 50%, transparent), color-mix(in srgb, var(--center-tint) 40%, transparent)) !important;
+.hud-scrollarea::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.hud-scrollarea::-webkit-scrollbar-thumb {
+  background: rgba(58, 240, 224, 0.25);
+  border-radius: 2px;
+}
+
+.hud-scrollarea::-webkit-scrollbar-thumb:hover {
+  background: rgba(58, 240, 224, 0.45);
 }
 
 /* ── Settings ── */
