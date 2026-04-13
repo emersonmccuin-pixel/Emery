@@ -1,10 +1,9 @@
-import { type ReactNode, Suspense, useState } from 'react'
-import { Settings, Plus, ChevronLeft, ChevronRight, X, Pin, PinOff } from 'lucide-react'
+import { Suspense, useState } from 'react'
+import { Settings, Plus, ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import DocumentsPanel from './DocumentsPanel'
 import HistoryPanel from './HistoryPanel'
 import LiveTerminal from './LiveTerminal'
 import ConfigurationPanel from './ConfigurationPanel'
@@ -13,13 +12,7 @@ import WorkItemsPanel from './WorkItemsPanel'
 import WorktreeWorkItemPanel from './WorktreeWorkItemPanel'
 import RecoveryBanner from './RecoveryBanner'
 import CreateProjectModal from './CreateProjectModal'
-import {
-  formatSessionState,
-  formatTimestamp,
-  getLatestSessionForTarget,
-  getSessionTargetLabel,
-  isRecoverableSession,
-} from '../sessionHistory'
+import { formatTimestamp } from '../sessionHistory'
 import {
   useAppStore,
   useSelectedProject,
@@ -30,16 +23,10 @@ import {
   useLiveSessions,
   useWorktreeSessions,
   useOpenWorkItemCount,
-  useBlockedWorkItemCount,
-  useRecentDocuments,
-  useInterruptedSessionRecords,
-  useCleanupCategories,
-  useRecoveryActionCount,
   useRecoverableSessionCount,
   useSelectedTargetHistoryRecord,
   useHasSelectedProjectLiveSession,
   useLaunchBlockedByMissingRoot,
-  useSelectedProjectLaunchLabel,
 } from '../store'
 
 /** Truncate the namespace portion of a call sign to 6 chars for display.
@@ -60,17 +47,10 @@ function WorkspaceShell() {
   const liveSessions = useLiveSessions()
   const worktreeSessions = useWorktreeSessions()
   const openWorkItemCount = useOpenWorkItemCount()
-  const blockedWorkItemCount = useBlockedWorkItemCount()
-  const recentDocuments = useRecentDocuments()
-  const interruptedSessionRecords = useInterruptedSessionRecords()
-  const { runtimeCleanupCandidates, staleWorktreeCleanupCandidates, staleWorktreeRecordCandidates } =
-    useCleanupCategories()
-  const recoveryActionCount = useRecoveryActionCount()
   const recoverableSessionCount = useRecoverableSessionCount()
   const selectedTargetHistoryRecord = useSelectedTargetHistoryRecord()
   const hasSelectedProjectLiveSession = useHasSelectedProjectLiveSession()
   const launchBlockedByMissingRoot = useLaunchBlockedByMissingRoot()
-  const selectedProjectLaunchLabel = useSelectedProjectLaunchLabel()
 
   const projects = useAppStore((s) => s.projects)
   const selectedProjectId = useAppStore((s) => s.selectedProjectId)
@@ -85,25 +65,15 @@ function WorkspaceShell() {
   const workItems = useAppStore((s) => s.workItems)
   const workItemError = useAppStore((s) => s.workItemError)
   const documents = useAppStore((s) => s.documents)
-  const documentError = useAppStore((s) => s.documentError)
-  const orphanedSessions = useAppStore((s) => s.orphanedSessions)
   const activeOrphanSessionId = useAppStore((s) => s.activeOrphanSessionId)
-  const activeCleanupPath = useAppStore((s) => s.activeCleanupPath)
-  const activeWorktreeActionId = useAppStore((s) => s.activeWorktreeActionId)
-  const activeWorktreeActionKind = useAppStore((s) => s.activeWorktreeActionKind)
-  const isRepairingCleanup = useAppStore((s) => s.isRepairingCleanup)
   const isLoadingHistory = useAppStore((s) => s.isLoadingHistory)
-  const worktreeError = useAppStore((s) => s.worktreeError)
-  const worktreeMessage = useAppStore((s) => s.worktreeMessage)
   const isProjectCreateOpen = useAppStore((s) => s.isProjectCreateOpen)
-  const isDocumentsManagerOpen = useAppStore((s) => s.isDocumentsManagerOpen)
   const activeView = useAppStore((s) => s.activeView)
   const isProjectRailCollapsed = useAppStore((s) => s.isProjectRailCollapsed)
   const isSessionRailCollapsed = useAppStore((s) => s.isSessionRailCollapsed)
   const isLaunchingSession = useAppStore((s) => s.isLaunchingSession)
   const isStoppingSession = useAppStore((s) => s.isStoppingSession)
   const isLoadingWorkItems = useAppStore((s) => s.isLoadingWorkItems)
-  const isLoadingDocuments = useAppStore((s) => s.isLoadingDocuments)
   const startingWorkItemId = useAppStore((s) => s.startingWorkItemId)
   const launchProfiles = useAppStore((s) => s.launchProfiles)
 
@@ -116,7 +86,6 @@ function WorkspaceShell() {
     setSelectedLaunchProfileId,
     startCreateProject,
     cancelCreateProject,
-    setIsDocumentsManagerOpen,
     setActiveView,
     setSelectedHistorySessionId,
     setIsProjectRailCollapsed,
@@ -129,23 +98,13 @@ function WorkspaceShell() {
     launchWorkspaceGuide,
     stopSession,
     resumeSessionRecord,
-    terminateRecoveredSession,
     recoverOrphanedSession,
-    removeStaleArtifact,
-    repairCleanupCandidates,
-    removeWorktree,
-    recreateWorktree,
-    cleanupWorktree,
-    pinWorktree,
     copyTerminalOutput,
     handleSessionExit,
     createWorkItem,
     updateWorkItem,
     deleteWorkItem,
     startWorkItemInTerminal,
-    createDocument,
-    updateDocument,
-    deleteDocument,
     openAppSettings,
     closeAppSettings,
     dismissRecovery,
@@ -156,7 +115,6 @@ function WorkspaceShell() {
   const isAppSettingsOpen = useAppStore((s) => s.isAppSettingsOpen)
   const appSettingsInitialTab = useAppStore((s) => s.appSettingsInitialTab)
 
-  const [cleanupConfirmId, setCleanupConfirmId] = useState<number | null>(null)
   const [bannerActiveSessionId, setBannerActiveSessionId] = useState<number | null>(null)
 
   // Recovery banner handlers
@@ -194,10 +152,6 @@ function WorkspaceShell() {
   const isDispatcherRunning = liveSessions.some(
     ({ project, snapshot }) => project.id === selectedProjectId && snapshot.isRunning,
   )
-  const worktreeSnapshotById = new Map(
-    worktreeSessions.map(({ worktree, snapshot }) => [worktree.id, snapshot ?? null]),
-  )
-
   return (
     <main className="terminal-app">
       <section
@@ -311,7 +265,6 @@ function WorkspaceShell() {
                   ) : (
                     <TabsList>
                       <TabsTrigger value="terminal">CONSOLE</TabsTrigger>
-                      <TabsTrigger value="overview">OVERVIEW</TabsTrigger>
                       <TabsTrigger value="workItems">
                         BACKLOG
                         {openWorkItemCount > 0 ? (
@@ -524,7 +477,7 @@ function WorkspaceShell() {
                                   : `Primary project dispatcher is idle. Launch it at the repository root to coordinate focused work.`}
                               </p>
 
-                              <div className="grid grid-cols-2 gap-6 w-full mb-10">
+                              <div className="grid grid-cols-2 gap-6 w-full mb-6">
                                 <div className="p-4 bg-hud-green/8 border border-hud-green/35 rounded-lg flex flex-col items-center">
                                   <span className="text-[9px] uppercase tracking-widest opacity-60 mb-2">Backlog Items</span>
                                   <span className="text-xl font-black text-hud-green">{openWorkItemCount}</span>
@@ -534,6 +487,28 @@ function WorkspaceShell() {
                                   <span className="text-xl font-black text-hud-cyan">{documents.length}</span>
                                 </div>
                               </div>
+
+                              {selectedTerminalWorktreeId === null ? (
+                                <div className="w-full mb-6">
+                                  <span className="block text-[8px] uppercase tracking-widest opacity-60 mb-2">Launch Profile</span>
+                                  <select
+                                    className="w-full h-9 text-[11px] bg-black border border-hud-green/35 rounded px-3 font-bold uppercase tracking-widest text-hud-green outline-none focus:border-hud-green"
+                                    value={selectedLaunchProfileId === null ? '' : String(selectedLaunchProfileId)}
+                                    onChange={(event) =>
+                                      setSelectedLaunchProfileId(
+                                        event.target.value === '' ? null : Number(event.target.value),
+                                      )
+                                    }
+                                  >
+                                    <option value="">SELECT PROFILE</option>
+                                    {launchProfiles.map((profile) => (
+                                      <option key={profile.id} value={profile.id}>
+                                        {profile.label.toUpperCase()}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              ) : null}
 
                               <Button
                                 variant="outline"
@@ -553,628 +528,6 @@ function WorkspaceShell() {
                         </ScrollArea>
                       )}
                     </section>
-                  ) : null}
-
-                  {activeView === 'overview' ? (
-                    <ScrollArea className="flex-1 hud-scrollarea">
-                      <div className="p-6 space-y-8">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                          {/* Project Settings */}
-                          <article className="overview-card">
-                            <div className="flex justify-between items-start mb-6">
-                              <div>
-                                <p className="text-[9px] uppercase tracking-[0.2em] text-hud-cyan mb-1">Project Node</p>
-                                <h4 className="text-lg font-black tracking-widest">{selectedProject.name.toUpperCase()}</h4>
-                              </div>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-7 text-[9px] font-bold tracking-widest hud-button--cyan"
-                                onClick={() => setActiveView('configuration')}
-                              >
-                                CONFIGURE
-                              </Button>
-                            </div>
-
-                            <div className="space-y-4">
-                              <div className="flex flex-col p-3 bg-black/60 border border-hud-cyan/30 rounded">
-                                <span className="text-[8px] uppercase tracking-widest opacity-60 mb-1">Project Path</span>
-                                <code className="text-[10px] break-all text-hud-cyan/80">{selectedProject.rootPath}</code>
-                              </div>
-                              <div className="grid grid-cols-3 gap-2">
-                                <div className="p-3 bg-hud-green/5 border border-hud-green/35 rounded text-center">
-                                  <span className="block text-[8px] uppercase tracking-widest opacity-60 mb-1">Tasks</span>
-                                  <span className="text-sm font-bold text-hud-green">{openWorkItemCount}</span>
-                                </div>
-                                <div className="p-3 bg-hud-cyan/5 border border-hud-cyan/30 rounded text-center">
-                                  <span className="block text-[8px] uppercase tracking-widest opacity-60 mb-1">Docs</span>
-                                  <span className="text-sm font-bold text-hud-cyan">{documents.length}</span>
-                                </div>
-                                <div className="p-3 bg-hud-magenta/5 border border-hud-magenta/30 rounded text-center">
-                                  <span className="block text-[8px] uppercase tracking-widest opacity-60 mb-1">Alerts</span>
-                                  <span className="text-sm font-bold text-destructive">{blockedWorkItemCount}</span>
-                                </div>
-                              </div>
-                            </div>
-                          </article>
-
-                          {/* Launch Profile */}
-                          <article className="overview-card">
-                            <div className="flex justify-between items-start mb-6">
-                              <div>
-                                <p className="text-[9px] uppercase tracking-[0.2em] text-hud-green mb-1">Operator Profile</p>
-                                <h4 className="text-lg font-black tracking-widest">{selectedProjectLaunchLabel.toUpperCase()}</h4>
-                              </div>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-7 text-[9px] font-bold tracking-widest hud-button--primary"
-                                onClick={() => openAppSettings('accounts')}
-                              >
-                                EDIT
-                              </Button>
-                            </div>
-
-                            <div className="space-y-4">
-                              <select
-                                className="w-full h-9 text-[11px] bg-black border border-hud-green/35 rounded px-3 font-bold uppercase tracking-widest text-hud-green outline-none focus:border-hud-green"
-                                value={selectedLaunchProfileId === null ? '' : String(selectedLaunchProfileId)}
-                                onChange={(event) =>
-                                  setSelectedLaunchProfileId(
-                                    event.target.value === ''
-                                      ? null
-                                      : Number(event.target.value),
-                                  )
-                                }
-                              >
-                                <option value="">SELECT PROFILE</option>
-                                {launchProfiles.map((profile) => (
-                                  <option key={profile.id} value={profile.id}>
-                                    {profile.label.toUpperCase()}
-                                  </option>
-                                ))}
-                              </select>
-
-                              {selectedLaunchProfile && (
-                                <div className="p-3 bg-hud-green/5 border border-hud-green/35 rounded space-y-2">
-                                  <div className="flex justify-between items-center">
-                                    <span className="text-[8px] uppercase tracking-widest opacity-60">Exec</span>
-                                    <code className="text-[10px] text-hud-green/80">{selectedLaunchProfile.executable}</code>
-                                  </div>
-                                  <div className="flex justify-between items-center">
-                                    <span className="text-[8px] uppercase tracking-widest opacity-60">Flags</span>
-                                    <code className="text-[10px] truncate max-w-[140px] text-hud-green/80">{selectedLaunchProfile.args || 'NONE'}</code>
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          </article>
-                        </div>
-
-                        {/* Supervisor Recovery */}
-                        <article className="overview-card border-hud-magenta/40 bg-hud-magenta/5">
-                          <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
-                            <div>
-                              <p className="text-[9px] uppercase tracking-[0.2em] text-hud-magenta mb-1">System Integrity</p>
-                              <h4 className="text-lg font-black tracking-widest flex flex-wrap items-center gap-3">
-                                RECOVERY SUBSYSTEM
-                                <Badge variant="default" className="text-[9px] h-4 bg-hud-magenta/20 text-hud-magenta border-hud-magenta/40">
-                                  {recoveryActionCount} CLEANUP
-                                </Badge>
-                                {interruptedSessionRecords.length > 0 ? (
-                                  <Badge variant="destructive" className="text-[9px] h-4">
-                                    {interruptedSessionRecords.length} INTERRUPTED
-                                  </Badge>
-                                ) : null}
-                              </h4>
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-8 text-[9px] font-black uppercase tracking-widest hud-button--magenta"
-                                onClick={() => openHistoryForSession(null)}
-                              >
-                                OPEN HISTORY
-                              </Button>
-                              {recoveryActionCount > 0 && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-8 text-[9px] font-black uppercase tracking-widest hud-button--magenta"
-                                  onClick={() => void repairCleanupCandidates()}
-                                  disabled={isRepairingCleanup}
-                                >
-                                  {isRepairingCleanup ? 'REPAIRING...' : 'Clean Up'}
-                                </Button>
-                              )}
-                            </div>
-                          </div>
-
-                          {recoveryActionCount === 0 && interruptedSessionRecords.length === 0 ? (
-                            <div className="text-center py-12 border border-dashed border-hud-magenta/50 rounded-lg bg-black/40">
-                              <p className="text-[10px] text-hud-magenta/40 uppercase tracking-[0.4em] font-black">All clear</p>
-                            </div>
-                          ) : (
-                            <div className="space-y-6">
-                              {interruptedSessionRecords.length > 0 ? (
-                                <div className="space-y-3">
-                                  <span className="text-[9px] font-black uppercase tracking-[0.3em] text-hud-magenta/60">Interrupted Sessions</span>
-                                  <div className="grid grid-cols-1 gap-3">
-                                    {interruptedSessionRecords.slice(0, 4).map((session) => (
-                                      <div key={session.id} className="flex flex-wrap items-center justify-between gap-3 p-3 bg-black/60 border border-hud-magenta/40 rounded">
-                                        <div className="space-y-1">
-                                          <div className="flex flex-wrap items-center gap-2">
-                                            <span className="text-[11px] font-black tracking-widest text-hud-magenta">
-                                              NODE #{session.id}
-                                            </span>
-                                            <Badge variant="destructive" className="text-[8px] tracking-[0.2em]">
-                                              {formatSessionState(session.state)}
-                                            </Badge>
-                                          </div>
-                                          <p className="text-[9px] uppercase tracking-[0.18em] text-white/60">
-                                            {getSessionTargetLabel(session, worktrees)} // {formatTimestamp(session.startedAt)}
-                                          </p>
-                                          <p className="text-[9px] opacity-60 truncate max-w-[400px] font-mono">
-                                            {session.rootPath}
-                                          </p>
-                                        </div>
-                                        <div className="flex flex-wrap gap-2">
-                                          <Button
-                                            variant="default"
-                                            size="sm"
-                                            className="h-8 text-[9px] font-black uppercase tracking-widest bg-hud-magenta text-black hover:bg-hud-magenta/90"
-                                            onClick={() => void resumeSessionRecord(session)}
-                                          >
-                                            RESUME
-                                          </Button>
-                                          <Button
-                                            variant="outline"
-                                            size="sm"
-                                            className="h-8 text-[9px] font-black uppercase tracking-widest hud-button--magenta"
-                                            onClick={() => openHistoryForSession(session.id)}
-                                          >
-                                            EVENTS
-                                          </Button>
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              ) : null}
-
-                              {orphanedSessions.length > 0 ? (
-                                <div className="space-y-3">
-                                  <span className="text-[9px] font-black uppercase tracking-[0.3em] text-hud-magenta/60">Orphaned Sessions</span>
-                                  <div className="grid grid-cols-1 gap-3">
-                                    {orphanedSessions.map((session) => (
-                                      <div key={session.id} className="flex flex-wrap items-center justify-between gap-3 p-3 bg-black/60 border border-hud-magenta/40 rounded">
-                                        <div className="space-y-1">
-                                          <div className="flex flex-wrap items-center gap-2">
-                                            <span className="text-[11px] font-black tracking-widest text-hud-magenta">NODE #{session.id}</span>
-                                            <Badge variant="destructive" className="text-[8px] tracking-[0.2em]">
-                                              ORPHANED
-                                            </Badge>
-                                          </div>
-                                          <p className="text-[9px] uppercase tracking-[0.18em] text-white/60">
-                                            {getSessionTargetLabel(session, worktrees)} // {formatTimestamp(session.startedAt)}
-                                          </p>
-                                          <p className="text-[9px] opacity-60 truncate max-w-[400px] font-mono">{session.rootPath}</p>
-                                        </div>
-                                        <div className="flex flex-wrap gap-2">
-                                          <Button
-                                            variant="default"
-                                            size="sm"
-                                            className="h-8 text-[9px] font-black uppercase tracking-widest bg-hud-magenta text-black hover:bg-hud-magenta/90"
-                                            onClick={() => void recoverOrphanedSession(session)}
-                                            disabled={activeOrphanSessionId === session.id}
-                                          >
-                                            {activeOrphanSessionId === session.id ? 'RECOVERING...' : 'RECOVER'}
-                                          </Button>
-                                          <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            className="h-8 text-[9px] font-black tracking-widest text-hud-magenta hover:bg-hud-magenta/10"
-                                            onClick={() => void terminateRecoveredSession(session.id)}
-                                            disabled={activeOrphanSessionId === session.id}
-                                          >
-                                            PURGE
-                                          </Button>
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              ) : null}
-
-                              {runtimeCleanupCandidates.length > 0 || staleWorktreeCleanupCandidates.length > 0 || staleWorktreeRecordCandidates.length > 0 ? (
-                                <div className="space-y-3">
-                                  <span className="text-[9px] font-black uppercase tracking-[0.3em] text-hud-magenta/60">Stale Files</span>
-                                  <div className="grid grid-cols-1 gap-2">
-                                    {[...runtimeCleanupCandidates, ...staleWorktreeCleanupCandidates, ...staleWorktreeRecordCandidates].map((candidate) => (
-                                      <div key={`${candidate.kind}:${candidate.path}`} className="flex flex-wrap items-center justify-between gap-3 p-3 bg-black/60 border border-hud-magenta/40 rounded">
-                                        <div className="space-y-1">
-                                          <span className="text-[11px] font-black tracking-widest text-hud-magenta">
-                                            {candidate.kind.replace(/_/g, ' ').toUpperCase()}
-                                          </span>
-                                          <p className="text-[9px] opacity-60 truncate max-w-[400px] font-mono">
-                                            {candidate.path}
-                                          </p>
-                                          <p className="text-[9px] uppercase tracking-[0.18em] text-white/60">
-                                            {candidate.reason}
-                                          </p>
-                                        </div>
-                                        <Button
-                                          variant="ghost"
-                                          size="sm"
-                                          className="h-8 text-[9px] font-black tracking-widest text-hud-magenta hover:bg-hud-magenta/10"
-                                          onClick={() => void removeStaleArtifact(candidate)}
-                                          disabled={activeCleanupPath === candidate.path}
-                                        >
-                                          {activeCleanupPath === candidate.path ? 'PURGING...' : 'PURGE'}
-                                        </Button>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              ) : null}
-                            </div>
-                          )}
-                        </article>
-
-                        <article className="overview-card">
-                          <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
-                            <div>
-                              <p className="text-[9px] uppercase tracking-[0.2em] text-hud-magenta mb-1">
-                                Branch Runtime
-                              </p>
-                              <h4 className="text-lg font-black tracking-widest">
-                                WORKTREE REGISTRY
-                              </h4>
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              <Badge
-                                variant="offline"
-                                className="text-[9px] h-4 bg-hud-magenta/10 text-hud-magenta border-hud-magenta/30"
-                              >
-                                {worktrees.length} WORKTREES
-                              </Badge>
-                              {worktrees.some((worktree) => !worktree.pathAvailable) ? (
-                                <Badge variant="destructive" className="text-[9px] h-4">
-                                  {
-                                    worktrees.filter((worktree) => !worktree.pathAvailable)
-                                      .length
-                                  }{' '}
-                                  MISSING
-                                </Badge>
-                              ) : null}
-                            </div>
-                          </div>
-
-                          {worktreeError ? (
-                            <div className="mb-4 rounded border border-destructive/30 bg-destructive/10 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-destructive">
-                              {worktreeError}
-                            </div>
-                          ) : null}
-
-                          {worktreeMessage ? (
-                            <div className="mb-4 rounded border border-hud-green/30 bg-hud-green/10 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-hud-green">
-                              {worktreeMessage}
-                            </div>
-                          ) : null}
-
-                          {worktrees.length === 0 ? (
-                            <div className="text-center py-12 border border-dashed border-hud-magenta/50 rounded-lg bg-black/40">
-                              <p className="text-[10px] text-hud-magenta/40 uppercase tracking-[0.3em] font-black">
-                                No Managed Worktrees Yet
-                              </p>
-                            </div>
-                          ) : (
-                            <div className="grid grid-cols-1 gap-3">
-                              {worktrees.map((worktree) => {
-                                const liveSnapshot = worktreeSnapshotById.get(worktree.id)
-                                const latestSession = getLatestSessionForTarget(
-                                  sessionRecords,
-                                  worktree.id,
-                                )
-                                const recoverableSession =
-                                  latestSession && isRecoverableSession(latestSession)
-                                    ? latestSession
-                                    : null
-                                const isBusy = activeWorktreeActionId === worktree.id
-                                const isRemoving =
-                                  isBusy && activeWorktreeActionKind === 'remove'
-                                const isRecreating =
-                                  isBusy && activeWorktreeActionKind === 'recreate'
-                                const isCleaningUp =
-                                  isBusy && activeWorktreeActionKind === 'cleanup'
-                                const isPinning =
-                                  isBusy && activeWorktreeActionKind === 'pin'
-                                const removeBlocked = Boolean(
-                                  liveSnapshot?.isRunning || recoverableSession,
-                                )
-                                const recreateBlocked = Boolean(
-                                  liveSnapshot?.isRunning ||
-                                    recoverableSession?.state === 'orphaned',
-                                )
-                                const isConfirmingCleanup = cleanupConfirmId === worktree.id
-
-                                return (
-                                  <div
-                                    key={worktree.id}
-                                    className="rounded border border-hud-green/35 bg-black/50 p-4"
-                                  >
-                                    <div className="flex flex-wrap items-start justify-between gap-3">
-                                      <div className="space-y-2">
-                                        <div className="flex flex-wrap items-center gap-2">
-                                          <span className="text-[11px] font-black tracking-widest text-hud-green">
-                                            {worktree.workItemCallSign ??
-                                              (worktree.shortBranchName.length > 22
-                                                ? `${worktree.shortBranchName.slice(0, 22)}…`
-                                                : worktree.shortBranchName
-                                              ).toUpperCase()}
-                                          </span>
-                                          {selectedTerminalWorktreeId === worktree.id ? (
-                                            <Badge
-                                              variant="offline"
-                                              className="text-[8px] h-4 bg-hud-cyan/10 text-hud-cyan border-hud-cyan/30"
-                                            >
-                                              SELECTED
-                                            </Badge>
-                                          ) : null}
-                                          <Badge
-                                            variant={
-                                              liveSnapshot?.isRunning ? 'running' : 'offline'
-                                            }
-                                            className="text-[8px] h-4"
-                                          >
-                                            {liveSnapshot?.isRunning ? 'LIVE' : 'OFFLINE'}
-                                          </Badge>
-                                          {worktree.hasUncommittedChanges ? (
-                                            <Badge variant="destructive" className="text-[8px] h-4">
-                                              DIRTY
-                                            </Badge>
-                                          ) : null}
-                                          {worktree.hasUnmergedCommits ? (
-                                            <Badge
-                                              variant="offline"
-                                              className="text-[8px] h-4 bg-hud-magenta/10 text-hud-magenta border-hud-magenta/30"
-                                            >
-                                              UNMERGED
-                                            </Badge>
-                                          ) : null}
-                                          {!worktree.pathAvailable ? (
-                                            <Badge variant="destructive" className="text-[8px] h-4">
-                                              PATH MISSING
-                                            </Badge>
-                                          ) : null}
-                                          {worktree.pinned ? (
-                                            <Badge
-                                              variant="offline"
-                                              className="text-[8px] h-4 bg-hud-cyan/10 text-hud-cyan border-hud-cyan/30"
-                                            >
-                                              PINNED
-                                            </Badge>
-                                          ) : null}
-                                          {worktree.isCleanupEligible ? (
-                                            <Badge
-                                              variant="offline"
-                                              className="text-[8px] h-4 bg-hud-green/10 text-hud-green border-hud-green/30"
-                                            >
-                                              READY TO CLEAN
-                                            </Badge>
-                                          ) : null}
-                                          {(worktree.pendingSignalCount ?? 0) > 0 ? (
-                                            <Badge
-                                              variant="offline"
-                                              className="text-[8px] h-4 bg-hud-amber/10 text-hud-amber border-hud-amber/30 animate-pulse"
-                                            >
-                                              {worktree.pendingSignalCount === 1
-                                                ? '1 SIGNAL'
-                                                : `${worktree.pendingSignalCount} SIGNALS`}
-                                            </Badge>
-                                          ) : null}
-                                          {recoverableSession ? (
-                                            <Badge
-                                              variant="destructive"
-                                              className="text-[8px] h-4"
-                                            >
-                                              {formatSessionState(recoverableSession.state)}
-                                            </Badge>
-                                          ) : null}
-                                        </div>
-                                        {(worktree.workItemTitle || worktree.sessionSummary) ? (
-                                          <p className="text-[10px] text-white/80 leading-snug line-clamp-3">
-                                            {worktree.workItemTitle ?? worktree.sessionSummary}
-                                          </p>
-                                        ) : null}
-                                        <p className="text-[9px] font-mono text-white/60 break-all">
-                                          {worktree.worktreePath}
-                                        </p>
-                                        {recoverableSession ? (
-                                          <p className="text-[9px] uppercase tracking-[0.16em] text-hud-magenta/70">
-                                            Latest recoverable session: #
-                                            {recoverableSession.id} //{' '}
-                                            {formatTimestamp(recoverableSession.startedAt)}
-                                          </p>
-                                        ) : null}
-                                      </div>
-
-                                      <div className="flex flex-wrap gap-2">
-                                        <Button
-                                          variant="outline"
-                                          size="sm"
-                                          className="h-8 text-[9px] font-black uppercase tracking-widest hud-button--magenta"
-                                          onClick={() => selectWorktreeTerminal(worktree.id)}
-                                        >
-                                          OPEN
-                                        </Button>
-                                        <Button
-                                          variant="outline"
-                                          size="sm"
-                                          className="h-8 text-[9px] font-black uppercase tracking-widest hud-button--magenta"
-                                          onClick={() => void recreateWorktree(worktree)}
-                                          disabled={isBusy || recreateBlocked}
-                                        >
-                                          {isRecreating ? 'RECREATING...' : 'RECREATE'}
-                                        </Button>
-                                        {worktree.isCleanupEligible && !isConfirmingCleanup ? (
-                                          <Button
-                                            variant="outline"
-                                            size="sm"
-                                            className="h-8 text-[9px] font-black uppercase tracking-widest text-hud-green border-hud-green/40 hover:bg-hud-green/10"
-                                            onClick={() => setCleanupConfirmId(worktree.id)}
-                                            disabled={isBusy || removeBlocked}
-                                          >
-                                            {isCleaningUp ? 'CLEANING...' : 'CLEANUP'}
-                                          </Button>
-                                        ) : null}
-                                        <Button
-                                          variant="ghost"
-                                          size="sm"
-                                          className="h-8 px-2 text-white/60 hover:text-white/90 hover:bg-white/10"
-                                          title={worktree.pinned ? 'Unpin worktree' : 'Pin worktree (exclude from auto-cleanup)'}
-                                          onClick={() => void pinWorktree(worktree, !worktree.pinned)}
-                                          disabled={isBusy}
-                                        >
-                                          {isPinning ? '...' : worktree.pinned ? <PinOff size={12} /> : <Pin size={12} />}
-                                        </Button>
-                                        <Button
-                                          variant="ghost"
-                                          size="sm"
-                                          className="h-8 text-[9px] font-black uppercase tracking-widest text-destructive hover:bg-destructive/10"
-                                          onClick={() => void removeWorktree(worktree)}
-                                          disabled={isBusy || removeBlocked}
-                                        >
-                                          {isRemoving ? 'REMOVING...' : 'REMOVE'}
-                                        </Button>
-                                      </div>
-                                    </div>
-
-                                    {isConfirmingCleanup ? (
-                                      <div className="mt-3 flex flex-wrap items-center gap-2 rounded border border-hud-green/40 bg-hud-green/5 px-3 py-2">
-                                        <p className="flex-1 text-[9px] uppercase tracking-[0.16em] text-hud-green/80">
-                                          Remove worktree, delete branch, and drop DB record. This cannot be undone.
-                                        </p>
-                                        <div className="flex gap-2">
-                                          <Button
-                                            variant="outline"
-                                            size="sm"
-                                            className="h-7 text-[9px] font-black uppercase tracking-widest text-hud-green border-hud-green/40 hover:bg-hud-green/15"
-                                            onClick={() => {
-                                              setCleanupConfirmId(null)
-                                              void cleanupWorktree(worktree)
-                                            }}
-                                            disabled={isBusy}
-                                          >
-                                            CONFIRM
-                                          </Button>
-                                          <Button
-                                            variant="ghost"
-                                            size="sm"
-                                            className="h-7 text-[9px] font-black uppercase tracking-widest text-white/50 hover:text-white/80"
-                                            onClick={() => setCleanupConfirmId(null)}
-                                            disabled={isBusy}
-                                          >
-                                            CANCEL
-                                          </Button>
-                                        </div>
-                                      </div>
-                                    ) : liveSnapshot?.isRunning ? (
-                                      <p className="mt-3 text-[9px] uppercase tracking-[0.16em] text-white/45">
-                                        Stop the live worktree terminal before changing lifecycle state.
-                                      </p>
-                                    ) : recoverableSession?.state === 'orphaned' ? (
-                                      <p className="mt-3 text-[9px] uppercase tracking-[0.16em] text-white/45">
-                                        Recover or purge the orphaned session before recreating or removing this worktree.
-                                      </p>
-                                    ) : recoverableSession?.state === 'interrupted' ? (
-                                      <p className="mt-3 text-[9px] uppercase tracking-[0.16em] text-white/45">
-                                        Interrupted sessions can be recreated in place, but removal stays blocked until recovery is resolved.
-                                      </p>
-                                    ) : null}
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          )}
-                        </article>
-
-                        <article className="overview-card">
-                          <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
-                            <div>
-                              <p className="text-[9px] uppercase tracking-[0.2em] text-hud-cyan mb-1">
-                                Documents
-                              </p>
-                              <h4 className="text-lg font-black tracking-widest">
-                                PROJECT DOCUMENTS
-                              </h4>
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              <Badge
-                                variant="offline"
-                                className="text-[9px] h-4 bg-hud-cyan/10 text-hud-cyan border-hud-cyan/30"
-                              >
-                                {documents.length} DOCS
-                              </Badge>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-8 text-[9px] font-black uppercase tracking-widest hud-button--cyan"
-                                onClick={() =>
-                                  setIsDocumentsManagerOpen(!isDocumentsManagerOpen)
-                                }
-                              >
-                                {isDocumentsManagerOpen ? 'HIDE MANAGER' : 'MANAGE DOCS'}
-                              </Button>
-                            </div>
-                          </div>
-
-                          {isDocumentsManagerOpen ? (
-                            <DocumentsPanel
-                              documents={documents}
-                              error={documentError}
-                              isLoading={isLoadingDocuments}
-                              onCreate={createDocument}
-                              onDelete={deleteDocument}
-                              onUpdate={updateDocument}
-                              project={selectedProject}
-                              workItems={workItems}
-                            />
-                          ) : recentDocuments.length > 0 ? (
-                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
-                              {recentDocuments.map((document) => (
-                                <button
-                                  key={document.id}
-                                  type="button"
-                                  className="rounded border border-hud-green/35 bg-black/50 p-4 text-left transition hover:border-hud-cyan/30 hover:bg-hud-cyan/5"
-                                  onClick={() => {
-                                    setIsDocumentsManagerOpen(true)
-                                    setActiveView('overview')
-                                  }}
-                                >
-                                  <p className="text-[9px] uppercase tracking-[0.18em] text-hud-cyan/60 mb-2">
-                                    {document.workItemId ? `Work Item #${document.workItemId}` : 'Project Context'}
-                                  </p>
-                                  <h5 className="text-[11px] font-black tracking-widest truncate">
-                                    {document.title}
-                                  </h5>
-                                  <p className="mt-3 text-[10px] leading-relaxed text-white/60 line-clamp-4">
-                                    {document.body.trim() || 'No body yet.'}
-                                  </p>
-                                </button>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="text-center py-12 border border-dashed border-hud-cyan/50 rounded-lg bg-black/40">
-                              <p className="text-[10px] text-hud-cyan/40 uppercase tracking-[0.3em] font-black">
-                                No Project Documents Yet
-                              </p>
-                            </div>
-                          )}
-                        </article>
-                      </div>
-                    </ScrollArea>
                   ) : null}
 
                   {activeView === 'history' ? (

@@ -816,7 +816,6 @@
     grid-template-columns: 1fr;
   }
 
-  .overview-metric--wide,
   .overview-card--summary,
   .overview-card--full {
     grid-column: auto;
