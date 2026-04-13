@@ -36,6 +36,7 @@ use std::collections::HashSet;
 use std::fs;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::time::{Duration, Instant};
@@ -146,8 +147,52 @@ impl From<&str> for RouteError {
     }
 }
 
+fn init_file_logger(db_path: &Path) -> Result<PathBuf, String> {
+    let log_dir = db_path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("logs");
+    std::fs::create_dir_all(&log_dir)
+        .map_err(|e| format!("failed to create log dir: {e}"))?;
+    let log_file = log_dir.join("supervisor.log");
+
+    // Rotate: if log exceeds 5 MB, move to .prev
+    if let Ok(meta) = std::fs::metadata(&log_file) {
+        if meta.len() > 5_000_000 {
+            let prev = log_dir.join("supervisor.prev.log");
+            let _ = std::fs::rename(&log_file, &prev);
+        }
+    }
+
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file)
+        .map_err(|e| format!("failed to open log file: {e}"))?;
+
+    fern::Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "[{} {} {}] {}",
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+                record.level(),
+                record.target(),
+                message
+            ))
+        })
+        .level(log::LevelFilter::Info)
+        .chain(file)
+        .chain(io::stderr())
+        .apply()
+        .map_err(|e| format!("failed to init logger: {e}"))?;
+
+    Ok(log_file)
+}
+
 fn main() {
     if let Err(error) = run() {
+        log::error!("{error}");
+        log::error!("{error}");
         eprintln!("{error}");
         std::process::exit(1);
     }
@@ -179,6 +224,10 @@ fn run() -> Result<(), String> {
 }
 
 fn run_server(db_path: PathBuf, runtime_file: PathBuf) -> Result<(), String> {
+    let log_file = init_file_logger(&db_path)?;
+    log::info!("supervisor starting — log file: {}", log_file.display());
+    log::info!("db: {} | runtime: {}", db_path.display(), runtime_file.display());
+
     let removed_runtime_artifacts = cleanup_stale_runtime_artifacts(&runtime_file)?;
     let state = AppState::from_database_path(db_path).map_err(|error| error.to_string())?;
     let reconciled = state
@@ -210,14 +259,14 @@ fn run_server(db_path: PathBuf, runtime_file: PathBuf) -> Result<(), String> {
     write_runtime_file(&runtime_file, &runtime)?;
 
     if !removed_runtime_artifacts.is_empty() {
-        eprintln!(
+        log::info!(
             "removed {} stale runtime artifacts during supervisor startup",
             removed_runtime_artifacts.len()
         );
     }
 
     if !reconciled.is_empty() {
-        eprintln!(
+        log::warn!(
             "reconciled {} orphaned running sessions during supervisor startup",
             reconciled.len()
         );
@@ -225,16 +274,18 @@ fn run_server(db_path: PathBuf, runtime_file: PathBuf) -> Result<(), String> {
 
     if let Some(repaired_cleanup) = &repaired_cleanup {
         if !repaired_cleanup.actions.is_empty() {
-            eprintln!(
+            log::info!(
                 "repaired {} safe cleanup items during supervisor startup",
                 repaired_cleanup.actions.len()
             );
         }
     }
 
+    log::info!("supervisor listening on 127.0.0.1:{port}");
+
     for request in server.incoming_requests() {
         if let Err(error) = handle_request(request, &runtime, &state, &sessions) {
-            eprintln!("{error}");
+            log::error!("request handler error: {error}");
         }
     }
 
@@ -1744,7 +1795,7 @@ fn emit_agent_signal(
                 (wt_id, wi_id)
             }
             Err(e) => {
-                eprintln!("failed to resolve session #{}: {e}", session_id);
+                log::error!("failed to resolve session #{}: {e}", session_id);
                 (None, None)
             }
         }
@@ -1782,7 +1833,7 @@ fn emit_agent_signal(
     let signal_text = format!("[Agent {agent_label}] ({signal_type}): {message}");
 
     if let Err(e) = write_to_claude_mailbox("dispatcher", &agent_label, &signal_text) {
-        eprintln!("mailbox delivery to dispatcher failed: {e}");
+        log::error!("mailbox delivery to dispatcher failed: {e}");
     }
 
     Ok(signal)
@@ -1852,7 +1903,7 @@ fn respond_to_agent_signal(
         let directive = format!("[Dispatcher]: {response}");
 
         if let Err(e) = write_to_claude_mailbox(&agent_name, "dispatcher", &directive) {
-            eprintln!("mailbox delivery to agent {agent_name} failed: {e}");
+            log::error!("mailbox delivery to agent {agent_name} failed: {e}");
         }
     }
 
@@ -2781,18 +2832,18 @@ fn link_node_modules(main_root: &Path, worktree_path: &Path) {
             .output();
         match output {
             Ok(o) if o.status.success() => {}
-            Ok(o) => eprintln!(
+            Ok(o) => log::info!(
                 "[supervisor] node_modules junction failed: {}",
                 String::from_utf8_lossy(&o.stderr).trim()
             ),
-            Err(e) => eprintln!("[supervisor] node_modules junction error: {e}"),
+            Err(e) => log::error!("node_modules junction error: {e}"),
         }
     }
 
     #[cfg(not(windows))]
     {
         if let Err(e) = std::os::unix::fs::symlink(&source, &target) {
-            eprintln!("[supervisor] node_modules symlink error: {e}");
+            log::error!("node_modules symlink error: {e}");
         }
     }
 }
@@ -2869,7 +2920,7 @@ fn append_supervisor_session_event<T>(
     let payload_json = match serde_json::to_string(payload) {
         Ok(payload_json) => payload_json,
         Err(error) => {
-            eprintln!("failed to encode Project Commander session event payload: {error}");
+            log::error!("failed to encode session event payload: {error}");
             return;
         }
     };
@@ -2883,7 +2934,7 @@ fn append_supervisor_session_event<T>(
         source: source.to_string(),
         payload_json,
     }) {
-        eprintln!("failed to append Project Commander session event: {error}");
+        log::error!("failed to append session event: {error}");
     }
 }
 
@@ -2901,7 +2952,7 @@ fn append_project_audit_event<T>(
     let payload_json = match serde_json::to_string(payload) {
         Ok(payload_json) => payload_json,
         Err(error) => {
-            eprintln!("failed to encode Project Commander audit payload: {error}");
+            log::error!("failed to encode audit payload: {error}");
             return;
         }
     };
@@ -2915,7 +2966,7 @@ fn append_project_audit_event<T>(
         source: source.to_string(),
         payload_json,
     }) {
-        eprintln!("failed to append Project Commander audit event: {error}");
+        log::error!("failed to append audit event: {error}");
     }
 }
 
@@ -2937,7 +2988,7 @@ fn append_project_event<T>(
     let payload_json = match serde_json::to_string(payload) {
         Ok(payload_json) => payload_json,
         Err(error) => {
-            eprintln!("failed to encode Project Commander event payload: {error}");
+            log::error!("failed to encode event payload: {error}");
             return;
         }
     };
@@ -2951,7 +3002,7 @@ fn append_project_event<T>(
         source: context.source.clone(),
         payload_json,
     }) {
-        eprintln!("failed to append Project Commander event: {error}");
+        log::error!("failed to append event: {error}");
     }
 }
 

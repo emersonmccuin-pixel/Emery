@@ -424,6 +424,14 @@ impl SessionRegistry {
             }),
         );
 
+        log::info!(
+            "session #{} launched — profile={} root={} pid={:?}",
+            session_record.id,
+            session.profile_label,
+            session.root_path,
+            process_id
+        );
+
         spawn_output_thread(Arc::clone(&session), reader);
         spawn_exit_watch_thread(Arc::clone(&session), app_state.clone());
 
@@ -1497,8 +1505,16 @@ fn spawn_exit_watch_thread(session: Arc<HostedSession>, app_state: AppState) {
                         detail.push_str("\n--- last output ---\n");
                         detail.push_str(&tail);
                     }
+                    log::error!(
+                        "session #{} crashed — {detail}",
+                        session.session_record_id
+                    );
                     Some(detail)
                 } else {
+                    log::info!(
+                        "session #{} exited cleanly (code {code})",
+                        session.session_record_id
+                    );
                     None
                 };
                 record_session_exit(
@@ -1516,6 +1532,10 @@ fn spawn_exit_watch_thread(session: Arc<HostedSession>, app_state: AppState) {
                 std::thread::sleep(std::time::Duration::from_millis(200));
             }
             Err(error) => {
+                log::error!(
+                    "session #{} wait failed: {error}",
+                    session.session_record_id
+                );
                 record_session_exit(
                     &session,
                     &app_state,
@@ -1621,7 +1641,7 @@ fn try_append_session_event<T>(
     let payload_json = match serde_json::to_string(payload) {
         Ok(payload_json) => payload_json,
         Err(error) => {
-            eprintln!("failed to encode Project Commander event payload: {error}");
+            log::error!("failed to encode session event payload: {error}");
             return;
         }
     };
@@ -1635,7 +1655,7 @@ fn try_append_session_event<T>(
         source: source.to_string(),
         payload_json,
     }) {
-        eprintln!("failed to append Project Commander session event: {error}");
+        log::error!("failed to append session event: {error}");
     }
 }
 
@@ -1721,7 +1741,7 @@ fn persist_session_exit(
     }
 
     if let Some(error) = finish_error {
-        eprintln!("failed to finish Project Commander session record: {error}");
+        log::error!("failed to finish session record: {error}");
     }
     try_append_session_event(
         app_state,

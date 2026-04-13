@@ -454,13 +454,13 @@ pub fn run() {
             let supervisor = SupervisorClient::new(storage)?;
             app.manage(supervisor);
 
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
+            app.handle().plugin(
+                tauri_plugin_log::Builder::default()
+                    .level(log::LevelFilter::Info)
+                    .max_file_size(5_000_000) // 5 MB per log file
+                    .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
+                    .build(),
+            )?;
             Ok(())
         })
         .run(tauri::generate_context!())
