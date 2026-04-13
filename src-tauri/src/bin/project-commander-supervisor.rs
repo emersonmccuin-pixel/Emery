@@ -1100,7 +1100,7 @@ fn route_request(
                 .agent_name
                 .unwrap_or_else(|| resolve_agent_name_from_context(state, context));
             let messages = state
-                .get_agent_inbox(input.project_id, &agent_name, input.unread_only, input.limit)
+                .get_agent_inbox(input.project_id, &agent_name, input.unread_only, input.from_agent, input.message_type, input.limit)
                 .map_err(RouteError::from)?;
             Ok(json!({ "ok": true, "data": { "messages": messages } }))
         }
@@ -1779,7 +1779,7 @@ fn handle_message_ack(
         // Ack all messages for the calling agent.
         let agent_name = resolve_agent_name_from_context(state, context);
         let inbox = state
-            .get_agent_inbox(input.project_id, &agent_name, true, None)
+            .get_agent_inbox(input.project_id, &agent_name, true, None, None, None)
             .map_err(RouteError::from)?;
         inbox.into_iter().map(|m| m.id).collect::<Vec<_>>()
     } else {

@@ -297,6 +297,8 @@ pub struct AgentInboxApiInput {
     pub agent_name: Option<String>,
     #[serde(default)]
     pub unread_only: bool,
+    pub from_agent: Option<String>,
+    pub message_type: Option<String>,
     pub limit: Option<i64>,
 }
 

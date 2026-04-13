@@ -1531,12 +1531,14 @@ impl AppState {
         project_id: i64,
         agent_name: &str,
         unread_only: bool,
+        from_agent: Option<String>,
+        message_type: Option<String>,
         limit: Option<i64>,
     ) -> AppResult<Vec<AgentMessageRecord>> {
         let connection = self.connect()?;
         self.get_project(project_id)?;
 
-        let limit = limit.unwrap_or(50);
+        let limit = limit.unwrap_or(20);
         let mut sql = String::from(
             "SELECT id, project_id, session_id, from_agent, to_agent,
                     message_type, body, context_json, status,
@@ -1544,16 +1546,33 @@ impl AppState {
              FROM agent_messages
              WHERE project_id = ?1 AND to_agent = ?2",
         );
+        let mut param_index = 3u32;
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
+            vec![Box::new(project_id), Box::new(agent_name.to_string())];
+
         if unread_only {
             sql.push_str(" AND status != 'read'");
         }
-        sql.push_str(" ORDER BY id DESC LIMIT ?3");
+        if let Some(ref fa) = from_agent {
+            sql.push_str(&format!(" AND from_agent = ?{param_index}"));
+            param_values.push(Box::new(fa.clone()));
+            param_index += 1;
+        }
+        if let Some(ref mt) = message_type {
+            sql.push_str(&format!(" AND message_type = ?{param_index}"));
+            param_values.push(Box::new(mt.clone()));
+            param_index += 1;
+        }
+        sql.push_str(&format!(" ORDER BY id DESC LIMIT ?{param_index}"));
+        param_values.push(Box::new(limit));
 
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
         let mut statement = connection
             .prepare(&sql)
             .map_err(|error| format!("failed to prepare inbox query: {error}"))?;
         let rows = statement
-            .query_map(params![project_id, agent_name, limit], map_agent_message_record)
+            .query_map(params_ref.as_slice(), map_agent_message_record)
             .map_err(|error| format!("failed to query agent inbox: {error}"))?;
 
         Ok(rows.collect::<Result<Vec<_>, _>>()

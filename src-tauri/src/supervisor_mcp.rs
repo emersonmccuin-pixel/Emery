@@ -360,6 +360,8 @@ impl SupervisorMcpClient {
     fn get_inbox(
         &self,
         unread_only: bool,
+        from_agent: Option<String>,
+        message_type: Option<String>,
         limit: Option<i64>,
     ) -> AppResult<AgentMessageListOutput> {
         self.post(
@@ -368,6 +370,8 @@ impl SupervisorMcpClient {
                 project_id: self.project_id,
                 agent_name: None,
                 unread_only,
+                from_agent,
+                message_type,
                 limit,
             },
         )
@@ -699,14 +703,22 @@ fn call_tool(
                 .get("markAsRead")
                 .and_then(Value::as_bool)
                 .unwrap_or(true);
-            let limit = read_optional_i64(&arguments, "limit");
-            let result = client.get_inbox(!mark_as_read, limit)?;
+            let unread_only = arguments
+                .get("unreadOnly")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            let from_agent = read_optional_string(&arguments, "fromAgent");
+            let message_type = read_optional_string(&arguments, "messageType");
+            let limit = read_optional_i64(&arguments, "limit").or(Some(20));
+            let result = client.get_inbox(unread_only, from_agent, message_type, limit)?;
             let ids: Vec<i64> = result.messages.iter().map(|m| m.id).collect();
             if mark_as_read && !ids.is_empty() {
                 client.ack_messages(ids)?;
             }
-            Ok(serde_json::to_value(result)
-                .map_err(|error| AppError::internal(format!("failed to encode inbox: {error}")))?)
+            let mut value = serde_json::to_value(result)
+                .map_err(|error| AppError::internal(format!("failed to encode inbox: {error}")))?;
+            strip_inbox_response_fields(&mut value);
+            Ok(value)
         }
         _ => Err(AppError::invalid_input(format!("unknown tool: {tool_name}"))),
     }
@@ -1074,7 +1086,7 @@ fn build_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "list_messages",
-            "description": "List agent messages in the project, optionally filtered by sender, recipient, type, or status.",
+            "description": "Query message history for review or audit. Never marks messages as read. Use get_messages for routine inbox checks.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1097,7 +1109,7 @@ fn build_tool_definitions() -> Vec<Value> {
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Maximum number of messages to return."
+                        "description": "Maximum number of messages to return. Defaults to 50."
                     }
                 },
                 "required": [],
@@ -1109,17 +1121,29 @@ fn build_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "get_messages",
-            "description": "Check this agent's inbox. By default marks retrieved messages as read.",
+            "description": "Check this agent's inbox. Returns unread messages by default and marks them as read. Use this for routine inbox checks.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
+                    "unreadOnly": {
+                        "type": "boolean",
+                        "description": "When true (default), return only unread messages. Set to false to include already-read messages."
+                    },
                     "markAsRead": {
                         "type": "boolean",
-                        "description": "When true (default), mark returned messages as read and acknowledge them."
+                        "description": "When true (default), mark returned messages as read."
+                    },
+                    "fromAgent": {
+                        "type": "string",
+                        "description": "Optional filter by sender agent name."
+                    },
+                    "messageType": {
+                        "type": "string",
+                        "description": "Optional filter by message type (e.g. 'directive', 'complete', 'question')."
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Maximum number of messages to return."
+                        "description": "Maximum number of messages to return. Defaults to 20."
                     }
                 },
                 "required": [],
@@ -1250,6 +1274,24 @@ fn coerce_i64(value: Option<&Value>) -> Option<i64> {
         return Some(n);
     }
     v.as_str().and_then(|s| s.parse::<i64>().ok())
+}
+
+/// Strip noisy fields from get_messages inbox responses.
+/// Removes sessionId (agents don't need it) and contextJson when empty.
+fn strip_inbox_response_fields(value: &mut Value) {
+    if let Some(messages) = value.get_mut("messages").and_then(Value::as_array_mut) {
+        for msg in messages.iter_mut() {
+            if let Some(obj) = msg.as_object_mut() {
+                obj.remove("sessionId");
+                if let Some(ctx) = obj.get("contextJson") {
+                    let empty = ctx.as_str().map_or(true, |s| s.is_empty() || s == "{}");
+                    if empty {
+                        obj.remove("contextJson");
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Return a work item header for list/brief contexts — strips body and metadata.
