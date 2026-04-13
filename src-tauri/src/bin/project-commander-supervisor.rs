@@ -39,6 +39,8 @@ use std::os::windows::process::CommandExt;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
@@ -281,12 +283,29 @@ fn run_server(db_path: PathBuf, runtime_file: PathBuf) -> Result<(), String> {
         }
     }
 
+    // Mark the supervisor as not cleanly shut down. This flag will be set to
+    // true only if the /shutdown endpoint is called before the process exits.
+    // Crash detection on next startup reads this value to know whether to
+    // attempt session recovery.
+    if let Err(error) = state.set_clean_shutdown(false) {
+        log::warn!("failed to set clean_shutdown=false on startup: {error}");
+    }
+
     log::info!("supervisor listening on 127.0.0.1:{port}");
 
+    let shutdown = Arc::new(AtomicBool::new(false));
+
     for request in server.incoming_requests() {
-        if let Err(error) = handle_request(request, &runtime, &state, &sessions) {
+        if let Err(error) = handle_request(request, &runtime, &state, &sessions, Arc::clone(&shutdown)) {
             log::error!("request handler error: {error}");
         }
+        if shutdown.load(Ordering::Relaxed) {
+            break;
+        }
+    }
+
+    if let Err(error) = state.set_clean_shutdown(true) {
+        log::warn!("failed to set clean_shutdown=true on graceful exit: {error}");
     }
 
     Ok(())
@@ -297,6 +316,7 @@ fn handle_request(
     runtime: &SupervisorRuntimeInfo,
     state: &AppState,
     sessions: &SessionRegistry,
+    shutdown: Arc<AtomicBool>,
 ) -> Result<(), String> {
     if !is_authorized(&request, &runtime.token) {
         return respond_json(
@@ -308,7 +328,7 @@ fn handle_request(
 
     let context = build_request_context(&request);
 
-    match route_request(&mut request, runtime, state, sessions, &context) {
+    match route_request(&mut request, runtime, state, sessions, &context, &shutdown) {
         Ok(payload) => respond_json(request, 200, &payload),
         Err(error) => respond_json(
             request,
@@ -328,6 +348,7 @@ fn route_request(
     state: &AppState,
     sessions: &SessionRegistry,
     context: &RequestContext,
+    shutdown: &Arc<AtomicBool>,
 ) -> Result<Value, RouteError> {
     let route = request.url().split('?').next().unwrap_or_default();
 
@@ -1086,6 +1107,11 @@ fn route_request(
         (&Method::Post, "/message/ack") => {
             let input = read_json::<AckAgentMessagesApiInput>(request)?;
             handle_message_ack(state, context, input)?;
+            Ok(json!({ "ok": true, "data": null }))
+        }
+        (&Method::Post, "/shutdown") => {
+            log::info!("graceful shutdown requested via /shutdown");
+            shutdown.store(true, Ordering::Relaxed);
             Ok(json!({ "ok": true, "data": null }))
         }
         _ => Err(RouteError::not_found("route not found")),
