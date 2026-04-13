@@ -151,6 +151,7 @@ export type SessionSlice = {
   selectedTerminalWorktreeId: number | null
   terminalPromptDraft: TerminalPromptDraft | null
   agentPromptMessage: string | null
+  terminatedSessions: Set<string>
 
   setTerminalPromptDraft: (value: TerminalPromptDraft | null) => void
 
