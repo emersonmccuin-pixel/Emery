@@ -22,6 +22,7 @@ export type ProjectRecord = {
   documentCount: number
   sessionCount: number
   workItemPrefix: string | null
+  systemPrompt: string
 }
 
 export type LaunchProfileRecord = {

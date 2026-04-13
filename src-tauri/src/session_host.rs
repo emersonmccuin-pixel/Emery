@@ -1521,6 +1521,11 @@ fn build_claude_bridge_system_prompt(
         ));
     }
 
+    if !project.system_prompt.is_empty() {
+        prompt.push_str("\n\n");
+        prompt.push_str(&project.system_prompt);
+    }
+
     prompt
 }
 
@@ -2294,6 +2299,7 @@ mod tests {
             document_count: 0,
             session_count: 0,
             work_item_prefix: Some("CMDR".to_string()),
+            system_prompt: String::new(),
         }
     }
 

@@ -4953,6 +4953,7 @@ mod tests {
                 id: created_project.id,
                 name: "Commander Renamed".to_string(),
                 root_path: harness.project_root.display().to_string(),
+                system_prompt: None,
             })
             .send()
             .expect("project update request should succeed")

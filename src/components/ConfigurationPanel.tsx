@@ -8,7 +8,7 @@ import { PanelBanner, PanelEmptyState, PanelLoadingState } from '@/components/ui
 import { MarkdownEditor } from '@/components/ui/markdown-editor'
 import { useAppStore, useSelectedProject } from '../store'
 
-type ConfigurationTab = 'general' | 'claude' | 'agents_md'
+type ConfigurationTab = 'general' | 'system_prompt' | 'claude' | 'agents_md'
 
 function ConfigurationPanel() {
   const selectedProject = useSelectedProject()
@@ -35,6 +35,7 @@ function ConfigurationPanel() {
       <nav className="workspace-tabs--shell flex items-center h-10 px-4 shrink-0">
         <TabsList>
           <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger value="system_prompt">System Prompt</TabsTrigger>
           <TabsTrigger value="claude">CLAUDE.md</TabsTrigger>
           <TabsTrigger value="agents_md">AGENTS.md</TabsTrigger>
         </TabsList>
@@ -42,6 +43,9 @@ function ConfigurationPanel() {
       <div className="flex-1 min-h-0 overflow-auto scrollbar-thin p-6">
         <TabsContent value="general">
           <GeneralTab />
+        </TabsContent>
+        <TabsContent value="system_prompt">
+          <SystemPromptTab key={`sysprompt-${selectedProject.id}`} />
         </TabsContent>
         <TabsContent value="claude">
           <ProjectFileEditor
@@ -63,6 +67,100 @@ function ConfigurationPanel() {
         </TabsContent>
       </div>
     </Tabs>
+  )
+}
+
+function SystemPromptTab() {
+  const selectedProject = useSelectedProject()
+  const [contents, setContents] = useState('')
+  const [original, setOriginal] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (selectedProject) {
+      setContents(selectedProject.systemPrompt)
+      setOriginal(selectedProject.systemPrompt)
+      setError(null)
+      setMessage(null)
+    }
+  }, [selectedProject?.id, selectedProject?.systemPrompt])
+
+  if (!selectedProject) return null
+
+  const dirty = contents !== original
+
+  const save = async () => {
+    setIsSaving(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const updated = await invoke<import('../types').ProjectRecord>('update_project', {
+        input: {
+          id: selectedProject.id,
+          name: selectedProject.name,
+          rootPath: selectedProject.rootPath,
+          systemPrompt: contents,
+        },
+      })
+      useAppStore.getState().projectCreated(updated)
+      setOriginal(contents)
+      setMessage('System prompt saved.')
+    } catch (err) {
+      setError(
+        typeof err === 'string'
+          ? err
+          : (err as { message?: string })?.message ?? 'Failed to save system prompt',
+      )
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  return (
+    <article className="overview-card overview-card--full">
+      <div className="overview-card__header">
+        <div>
+          <p className="panel__eyebrow">Bridge system prompt</p>
+          <strong>System Prompt</strong>
+        </div>
+        <div className="flex items-center gap-2">
+          {dirty ? (
+            <span className="text-[9px] uppercase tracking-widest text-hud-amber">
+              Unsaved
+            </span>
+          ) : null}
+          <Button
+            variant="default"
+            type="button"
+            disabled={isSaving || !dirty}
+            onClick={() => void save()}
+          >
+            {isSaving ? 'Saving...' : 'Save'}
+          </Button>
+        </div>
+      </div>
+
+      <p className="stack-form__note">
+        Standing instructions appended to the bridge system prompt for all
+        sessions in this project. Use this for project-specific conventions,
+        bug-logging rules, or behavioral guidance.
+      </p>
+
+      {error ? <PanelBanner className="mb-4" message={error} /> : null}
+      {message ? (
+        <p className="stack-form__note settings-banner settings-banner--success">
+          {message}
+        </p>
+      ) : null}
+
+      <MarkdownEditor
+        value={contents}
+        onChange={setContents}
+        className="min-h-[360px]"
+      />
+    </article>
   )
 }
 

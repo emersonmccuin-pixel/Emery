@@ -60,6 +60,7 @@ pub struct ProjectRecord {
     pub document_count: i64,
     pub session_count: i64,
     pub work_item_prefix: Option<String>,
+    pub system_prompt: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -224,6 +225,7 @@ pub struct UpdateProjectInput {
     pub id: i64,
     pub name: String,
     pub root_path: String,
+    pub system_prompt: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -543,16 +545,30 @@ impl AppState {
             ));
         }
 
-        connection
-            .execute(
-                "UPDATE projects
-                 SET name = ?1,
-                     root_path = ?2,
-                     updated_at = CURRENT_TIMESTAMP
-                 WHERE id = ?3",
-                params![name, resolved_root_path, input.id],
-            )
-            .map_err(|error| format!("failed to update project: {error}"))?;
+        if let Some(ref system_prompt) = input.system_prompt {
+            connection
+                .execute(
+                    "UPDATE projects
+                     SET name = ?1,
+                         root_path = ?2,
+                         system_prompt = ?3,
+                         updated_at = CURRENT_TIMESTAMP
+                     WHERE id = ?4",
+                    params![name, resolved_root_path, system_prompt, input.id],
+                )
+                .map_err(|error| format!("failed to update project: {error}"))?;
+        } else {
+            connection
+                .execute(
+                    "UPDATE projects
+                     SET name = ?1,
+                         root_path = ?2,
+                         updated_at = CURRENT_TIMESTAMP
+                     WHERE id = ?3",
+                    params![name, resolved_root_path, input.id],
+                )
+                .map_err(|error| format!("failed to update project: {error}"))?;
+        }
 
         ensure_project_work_item_prefix(&connection, existing_project.id, name)?;
         Ok(load_project_by_id(&connection, input.id)?)
@@ -2061,6 +2077,12 @@ fn migrate(connection: &Connection) -> Result<(), String> {
         "pinned",
         "INTEGER NOT NULL DEFAULT 0",
     )?;
+    ensure_column_exists(
+        connection,
+        "projects",
+        "system_prompt",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
     connection
         .execute_batch(
             "
@@ -2204,7 +2226,8 @@ fn load_projects(connection: &Connection) -> Result<Vec<ProjectRecord>, String> 
               (SELECT COUNT(*) FROM work_items w WHERE w.project_id = p.id) AS work_item_count,
               (SELECT COUNT(*) FROM documents d WHERE d.project_id = p.id) AS document_count,
               (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS session_count,
-              p.work_item_prefix
+              p.work_item_prefix,
+              p.system_prompt
             FROM projects p
             ORDER BY p.updated_at DESC, p.id DESC
             ",
@@ -2225,6 +2248,7 @@ fn load_projects(connection: &Connection) -> Result<Vec<ProjectRecord>, String> 
                 document_count: row.get(6)?,
                 session_count: row.get(7)?,
                 work_item_prefix: row.get(8)?,
+                system_prompt: row.get(9)?,
             })
         })
         .map_err(|error| format!("failed to load projects: {error}"))?;
@@ -2246,7 +2270,8 @@ fn load_project_by_id(connection: &Connection, id: i64) -> Result<ProjectRecord,
               (SELECT COUNT(*) FROM work_items w WHERE w.project_id = p.id) AS work_item_count,
               (SELECT COUNT(*) FROM documents d WHERE d.project_id = p.id) AS document_count,
               (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS session_count,
-              p.work_item_prefix
+              p.work_item_prefix,
+              p.system_prompt
             FROM projects p
             WHERE p.id = ?1
             ",
@@ -2264,6 +2289,7 @@ fn load_project_by_id(connection: &Connection, id: i64) -> Result<ProjectRecord,
                     document_count: row.get(6)?,
                     session_count: row.get(7)?,
                     work_item_prefix: row.get(8)?,
+                    system_prompt: row.get(9)?,
                 })
             },
         )
@@ -4385,6 +4411,7 @@ mod tests {
                 id: beta.id,
                 name: "Beta Node".to_string(),
                 root_path: alpha_root.display().to_string(),
+                system_prompt: None,
             })
             .err()
             .expect("rebind to an existing project root should fail");
@@ -4400,6 +4427,7 @@ mod tests {
                 id: alpha.id,
                 name: "Alpha Control".to_string(),
                 root_path: alpha_root.display().to_string(),
+                system_prompt: None,
             })
             .expect("project rename should succeed");
         assert_eq!(renamed.name, "Alpha Control");
