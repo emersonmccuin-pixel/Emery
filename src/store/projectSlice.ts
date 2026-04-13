@@ -36,6 +36,7 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
 
   editProjectName: '',
   editProjectRootPath: '',
+  editProjectBaseBranch: '',
   projectUpdateError: null,
   isProjectEditorOpen: false,
   isUpdatingProject: false,
@@ -63,6 +64,7 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
   setSelectedLaunchProfileId: (value) => set({ selectedLaunchProfileId: value }),
   setEditProjectName: (value) => set({ editProjectName: value }),
   setEditProjectRootPath: (value) => set({ editProjectRootPath: value }),
+  setEditProjectBaseBranch: (value) => set({ editProjectBaseBranch: value }),
   setIsProjectEditorOpen: (value) => set({ isProjectEditorOpen: value }),
   setIsProjectCreateOpen: (value) => set({ isProjectCreateOpen: value }),
   setDefaultLaunchProfileSettingId: (value) => set({ defaultLaunchProfileSettingId: value }),
@@ -132,6 +134,7 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
       set({
         editProjectName: project.name,
         editProjectRootPath: project.rootPath,
+        editProjectBaseBranch: project.baseBranch ?? '',
         projectUpdateError: null,
         isProjectEditorOpen: !project.rootAvailable,
       })
@@ -203,7 +206,7 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
 
   submitProjectUpdate: async (event) => {
     event.preventDefault()
-    const { selectedProjectId: projectId, editProjectName, editProjectRootPath } = get()
+    const { selectedProjectId: projectId, editProjectName, editProjectRootPath, editProjectBaseBranch } = get()
 
     if (projectId === null) {
       return
@@ -213,7 +216,12 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
 
     try {
       const project = await invoke<ProjectRecord>('update_project', {
-        input: { id: projectId, name: editProjectName, rootPath: editProjectRootPath },
+        input: {
+          id: projectId,
+          name: editProjectName,
+          rootPath: editProjectRootPath,
+          baseBranch: editProjectBaseBranch || null,
+        },
       })
 
       set((state) => ({
@@ -221,6 +229,7 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
         selectedProjectId: project.id,
         editProjectName: project.name,
         editProjectRootPath: project.rootPath,
+        editProjectBaseBranch: project.baseBranch ?? '',
         isProjectEditorOpen: false,
         sessionError:
           state.sessionError ===

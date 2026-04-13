@@ -61,6 +61,7 @@ pub struct ProjectRecord {
     pub session_count: i64,
     pub work_item_prefix: Option<String>,
     pub system_prompt: String,
+    pub base_branch: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -226,6 +227,7 @@ pub struct UpdateProjectInput {
     pub name: String,
     pub root_path: String,
     pub system_prompt: Option<String>,
+    pub base_branch: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -545,30 +547,32 @@ impl AppState {
             ));
         }
 
-        if let Some(ref system_prompt) = input.system_prompt {
-            connection
-                .execute(
-                    "UPDATE projects
-                     SET name = ?1,
-                         root_path = ?2,
-                         system_prompt = ?3,
-                         updated_at = CURRENT_TIMESTAMP
-                     WHERE id = ?4",
-                    params![name, resolved_root_path, system_prompt, input.id],
-                )
-                .map_err(|error| format!("failed to update project: {error}"))?;
-        } else {
-            connection
-                .execute(
-                    "UPDATE projects
-                     SET name = ?1,
-                         root_path = ?2,
-                         updated_at = CURRENT_TIMESTAMP
-                     WHERE id = ?3",
-                    params![name, resolved_root_path, input.id],
-                )
-                .map_err(|error| format!("failed to update project: {error}"))?;
-        }
+        // Normalize empty base_branch to NULL (empty string means "auto-detect")
+        let update_base_branch = input.base_branch.is_some();
+        let base_branch: Option<&str> = input
+            .base_branch
+            .as_deref()
+            .and_then(|s| if s.trim().is_empty() { None } else { Some(s.trim()) });
+
+        connection
+            .execute(
+                "UPDATE projects
+                 SET name = ?1,
+                     root_path = ?2,
+                     system_prompt = COALESCE(?3, system_prompt),
+                     base_branch = CASE WHEN ?4 = 1 THEN ?5 ELSE base_branch END,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?6",
+                params![
+                    name,
+                    resolved_root_path,
+                    input.system_prompt,
+                    update_base_branch as i32,
+                    base_branch,
+                    input.id
+                ],
+            )
+            .map_err(|error| format!("failed to update project: {error}"))?;
 
         ensure_project_work_item_prefix(&connection, existing_project.id, name)?;
         Ok(load_project_by_id(&connection, input.id)?)
@@ -2083,6 +2087,7 @@ fn migrate(connection: &Connection) -> Result<(), String> {
         "system_prompt",
         "TEXT NOT NULL DEFAULT ''",
     )?;
+    ensure_column_exists(connection, "projects", "base_branch", "TEXT")?;
     connection
         .execute_batch(
             "
@@ -2227,7 +2232,8 @@ fn load_projects(connection: &Connection) -> Result<Vec<ProjectRecord>, String> 
               (SELECT COUNT(*) FROM documents d WHERE d.project_id = p.id) AS document_count,
               (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS session_count,
               p.work_item_prefix,
-              p.system_prompt
+              p.system_prompt,
+              p.base_branch
             FROM projects p
             ORDER BY p.updated_at DESC, p.id DESC
             ",
@@ -2249,6 +2255,7 @@ fn load_projects(connection: &Connection) -> Result<Vec<ProjectRecord>, String> 
                 session_count: row.get(7)?,
                 work_item_prefix: row.get(8)?,
                 system_prompt: row.get(9)?,
+                base_branch: row.get(10)?,
             })
         })
         .map_err(|error| format!("failed to load projects: {error}"))?;
@@ -2271,7 +2278,8 @@ fn load_project_by_id(connection: &Connection, id: i64) -> Result<ProjectRecord,
               (SELECT COUNT(*) FROM documents d WHERE d.project_id = p.id) AS document_count,
               (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS session_count,
               p.work_item_prefix,
-              p.system_prompt
+              p.system_prompt,
+              p.base_branch
             FROM projects p
             WHERE p.id = ?1
             ",
@@ -2290,6 +2298,7 @@ fn load_project_by_id(connection: &Connection, id: i64) -> Result<ProjectRecord,
                     session_count: row.get(7)?,
                     work_item_prefix: row.get(8)?,
                     system_prompt: row.get(9)?,
+                    base_branch: row.get(10)?,
                 })
             },
         )
@@ -4412,6 +4421,7 @@ mod tests {
                 name: "Beta Node".to_string(),
                 root_path: alpha_root.display().to_string(),
                 system_prompt: None,
+                base_branch: None,
             })
             .err()
             .expect("rebind to an existing project root should fail");
@@ -4428,6 +4438,7 @@ mod tests {
                 name: "Alpha Control".to_string(),
                 root_path: alpha_root.display().to_string(),
                 system_prompt: None,
+                base_branch: None,
             })
             .expect("project rename should succeed");
         assert_eq!(renamed.name, "Alpha Control");

@@ -4954,6 +4954,7 @@ mod tests {
                 name: "Commander Renamed".to_string(),
                 root_path: harness.project_root.display().to_string(),
                 system_prompt: None,
+                base_branch: None,
             })
             .send()
             .expect("project update request should succeed")
