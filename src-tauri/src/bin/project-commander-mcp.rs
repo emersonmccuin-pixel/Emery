@@ -169,7 +169,7 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
         "get_work_item" => execute_tool(|| {
             let args: GetWorkItemArgs = decode_args(arguments)?;
             let project = resolve_project(state)?;
-            let work_item = state.get_work_item(args.id)?;
+            let work_item = resolve_work_item(state, args.id, args.call_sign)?;
             ensure_work_item_project(&work_item, &project)?;
             let linked_documents = state
                 .list_documents(project.id)?
@@ -200,7 +200,7 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
         "update_work_item" => execute_tool(|| {
             let args: UpdateWorkItemArgs = decode_args(arguments)?;
             let project = resolve_project(state)?;
-            let existing = state.get_work_item(args.id)?;
+            let existing = resolve_work_item(state, args.id, args.call_sign)?;
             ensure_work_item_project(&existing, &project)?;
 
             let clear_parent = args.clear_parent.unwrap_or(false);
@@ -235,7 +235,7 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
         "close_work_item" => execute_tool(|| {
             let args: CloseWorkItemArgs = decode_args(arguments)?;
             let project = resolve_project(state)?;
-            let existing = state.get_work_item(args.id)?;
+            let existing = resolve_work_item(state, args.id, args.call_sign)?;
             ensure_work_item_project(&existing, &project)?;
             let work_item = state.update_work_item(UpdateWorkItemInput {
                 id: existing.id,
@@ -407,10 +407,14 @@ fn tool_definitions() -> Vec<Value> {
                 json!({
                     "id": {
                         "type": "integer",
-                        "description": "Work item id."
+                        "description": "Work item DB id. Use callSign instead when you have it."
+                    },
+                    "callSign": {
+                        "type": "string",
+                        "description": "Call sign (e.g. PJTCMD-56 or PJTCMD-56.01) — preferred over id."
                     }
                 }),
-                vec!["id"],
+                vec![],
             ),
             true,
         ),
@@ -453,7 +457,11 @@ fn tool_definitions() -> Vec<Value> {
                 json!({
                     "id": {
                         "type": "integer",
-                        "description": "Work item id."
+                        "description": "Work item DB id. Use callSign instead when you have it."
+                    },
+                    "callSign": {
+                        "type": "string",
+                        "description": "Call sign (e.g. PJTCMD-56 or PJTCMD-56.01) — preferred over id."
                     },
                     "title": {
                         "type": "string",
@@ -482,7 +490,7 @@ fn tool_definitions() -> Vec<Value> {
                         "description": "Set true to detach this work item from its parent (make it top-level)."
                     }
                 }),
-                vec!["id"],
+                vec![],
             ),
             false,
         ),
@@ -493,10 +501,14 @@ fn tool_definitions() -> Vec<Value> {
                 json!({
                     "id": {
                         "type": "integer",
-                        "description": "Work item id."
+                        "description": "Work item DB id. Use callSign instead when you have it."
+                    },
+                    "callSign": {
+                        "type": "string",
+                        "description": "Call sign (e.g. PJTCMD-56 or PJTCMD-56.01) — preferred over id."
                     }
                 }),
-                vec!["id"],
+                vec![],
             ),
             false,
         ),
@@ -656,6 +668,20 @@ fn ensure_work_item_project(item: &WorkItemRecord, project: &ProjectRecord) -> A
     Ok(())
 }
 
+fn resolve_work_item(
+    state: &AppState,
+    id: Option<i64>,
+    call_sign: Option<String>,
+) -> AppResult<WorkItemRecord> {
+    match (id, call_sign) {
+        (Some(id), _) => state.get_work_item(id),
+        (None, Some(ref cs)) => state.get_work_item_by_call_sign(cs),
+        (None, None) => Err(AppError::invalid_input(
+            "work item operation requires either 'id' or 'callSign'",
+        )),
+    }
+}
+
 fn read_message(reader: &mut impl BufRead) -> AppResult<Option<Value>> {
     let mut content_length = None;
 
@@ -748,8 +774,10 @@ struct ListWorkItemsArgs {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct GetWorkItemArgs {
-    id: i64,
+    id: Option<i64>,
+    call_sign: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -765,7 +793,8 @@ struct CreateWorkItemArgs {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateWorkItemArgs {
-    id: i64,
+    id: Option<i64>,
+    call_sign: Option<String>,
     title: Option<String>,
     body: Option<String>,
     item_type: Option<String>,
@@ -775,8 +804,10 @@ struct UpdateWorkItemArgs {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct CloseWorkItemArgs {
-    id: i64,
+    id: Option<i64>,
+    call_sign: Option<String>,
 }
 
 #[derive(Deserialize)]

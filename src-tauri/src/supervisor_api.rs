@@ -72,6 +72,13 @@ pub struct ProjectWorkItemTarget {
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ProjectCallSignTarget {
+    pub project_id: i64,
+    pub call_sign: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateProjectWorkItemInput {
     pub project_id: i64,
     pub title: String,

@@ -22,7 +22,7 @@ use project_commander_lib::supervisor_api::{
     EnsureProjectWorktreeInput, LaunchProfileTarget, LaunchProjectWorktreeAgentInput,
     ListAgentMessagesApiInput, ListAgentSignalsInput, ListCleanupCandidatesInput,
     ListProjectDocumentsInput, ListProjectSessionEventsInput, ListProjectSessionsInput,
-    ListProjectWorkItemsInput, ListProjectWorktreesInput, ProjectDocumentTarget,
+    ListProjectWorkItemsInput, ListProjectWorktreesInput, ProjectCallSignTarget, ProjectDocumentTarget,
     ProjectSessionRecordTarget, ProjectWorkItemTarget, ProjectWorktreeTarget, PinWorktreeInput,
     RepairCleanupInput, RespondToAgentSignalInput as ApiRespondToAgentSignalInput,
     SendAgentMessageApiInput, UpdateProjectDocumentInput,
@@ -634,6 +634,33 @@ fn route_request(
                 .map_err(RouteError::from)?
                 .into_iter()
                 .filter(|document| document.work_item_id == Some(input.id))
+                .collect::<Vec<_>>();
+
+            serde_json::to_value(WorkItemDetailOutput {
+                work_item,
+                linked_documents,
+            })
+            .map(|data| json!({ "ok": true, "data": data }))
+            .map_err(|error| {
+                RouteError::internal(format!("failed to encode work item detail: {error}"))
+            })
+        }
+        (&Method::Post, "/work-item/get-by-call-sign") => {
+            let input = read_json::<ProjectCallSignTarget>(request)?;
+            let work_item = state
+                .get_work_item_by_call_sign(&input.call_sign)
+                .map_err(RouteError::from)?;
+            if work_item.project_id != input.project_id {
+                return Err(RouteError::not_found(format!(
+                    "work item '{}' is not part of project #{}",
+                    input.call_sign, input.project_id
+                )));
+            }
+            let linked_documents = state
+                .list_documents(input.project_id)
+                .map_err(RouteError::from)?
+                .into_iter()
+                .filter(|document| document.work_item_id == Some(work_item.id))
                 .collect::<Vec<_>>();
 
             serde_json::to_value(WorkItemDetailOutput {

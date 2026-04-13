@@ -6,7 +6,7 @@ use crate::supervisor_api::{
     CleanupWorktreeInput, CreateProjectDocumentInput, CreateProjectWorkItemInput,
     LaunchProjectWorktreeAgentInput, ListAgentMessagesApiInput, ListProjectDocumentsInput,
     ListProjectWorkItemsInput, ListProjectWorktreesInput,
-    PinWorktreeInput, ProjectDocumentTarget, ProjectWorkItemTarget,
+    PinWorktreeInput, ProjectCallSignTarget, ProjectDocumentTarget, ProjectWorkItemTarget,
     SendAgentMessageApiInput, UpdateProjectDocumentInput,
     UpdateProjectWorkItemInput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
@@ -139,6 +139,16 @@ impl SupervisorMcpClient {
             &ProjectWorkItemTarget {
                 project_id: self.project_id,
                 id,
+            },
+        )
+    }
+
+    fn get_work_item_by_call_sign(&self, call_sign: &str) -> AppResult<WorkItemDetailOutput> {
+        self.post(
+            "work-item/get-by-call-sign",
+            &ProjectCallSignTarget {
+                project_id: self.project_id,
+                call_sign: call_sign.to_owned(),
             },
         )
     }
@@ -577,8 +587,14 @@ fn call_tool(
             Ok(json!({ "workItems": items }))
         }
         "get_work_item" => {
-            let id = read_required_i64(&arguments, "id")?;
-            Ok(serde_json::to_value(client.get_work_item(id)?)
+            let id = read_optional_i64(&arguments, "id");
+            let call_sign = read_optional_string(&arguments, "callSign");
+            let detail = match (id, call_sign) {
+                (Some(id), _) => client.get_work_item(id)?,
+                (None, Some(ref cs)) => client.get_work_item_by_call_sign(cs)?,
+                (None, None) => return Err(AppError::invalid_input("get_work_item requires either 'id' or 'callSign'")),
+            };
+            Ok(serde_json::to_value(detail)
                 .map_err(|error| AppError::internal(format!("failed to encode work item result: {error}")))?)
         }
         "create_work_item" => Ok(serde_json::to_value(client.create_work_item(
@@ -589,23 +605,39 @@ fn call_tool(
             read_optional_i64(&arguments, "parentWorkItemId"),
         )?)
         .map_err(|error| AppError::internal(format!("failed to encode created work item: {error}")))?),
-        "update_work_item" => Ok(serde_json::to_value(client.update_work_item(
-            read_required_i64(&arguments, "id")?,
-            read_optional_string(&arguments, "title"),
-            read_optional_string(&arguments, "body"),
-            read_optional_string(&arguments, "itemType"),
-            read_optional_string(&arguments, "status"),
-            read_optional_i64(&arguments, "parentWorkItemId"),
-            arguments
-                .get("clearParent")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-        )?)
-        .map_err(|error| AppError::internal(format!("failed to encode updated work item: {error}")))?),
-        "close_work_item" => Ok(serde_json::to_value(
-            client.close_work_item(read_required_i64(&arguments, "id")?)?,
-        )
-        .map_err(|error| AppError::internal(format!("failed to encode closed work item: {error}")))?),
+        "update_work_item" => {
+            let id = read_optional_i64(&arguments, "id");
+            let call_sign = read_optional_string(&arguments, "callSign");
+            let resolved_id = match (id, call_sign) {
+                (Some(id), _) => id,
+                (None, Some(ref cs)) => client.get_work_item_by_call_sign(cs)?.work_item.id,
+                (None, None) => return Err(AppError::invalid_input("update_work_item requires either 'id' or 'callSign'")),
+            };
+            Ok(serde_json::to_value(client.update_work_item(
+                resolved_id,
+                read_optional_string(&arguments, "title"),
+                read_optional_string(&arguments, "body"),
+                read_optional_string(&arguments, "itemType"),
+                read_optional_string(&arguments, "status"),
+                read_optional_i64(&arguments, "parentWorkItemId"),
+                arguments
+                    .get("clearParent")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            )?)
+            .map_err(|error| AppError::internal(format!("failed to encode updated work item: {error}")))?)
+        }
+        "close_work_item" => {
+            let id = read_optional_i64(&arguments, "id");
+            let call_sign = read_optional_string(&arguments, "callSign");
+            let resolved_id = match (id, call_sign) {
+                (Some(id), _) => id,
+                (None, Some(ref cs)) => client.get_work_item_by_call_sign(cs)?.work_item.id,
+                (None, None) => return Err(AppError::invalid_input("close_work_item requires either 'id' or 'callSign'")),
+            };
+            Ok(serde_json::to_value(client.close_work_item(resolved_id)?)
+                .map_err(|error| AppError::internal(format!("failed to encode closed work item: {error}")))?)
+        }
         "list_documents" => {
             let docs: Vec<Value> = client
                 .list_documents(read_optional_i64(&arguments, "workItemId"))?
@@ -779,10 +811,14 @@ fn build_tool_definitions() -> Vec<Value> {
                 "properties": {
                     "id": {
                         "type": "integer",
-                        "description": "Work item id."
+                        "description": "Work item DB id. Use callSign instead when you have it."
+                    },
+                    "callSign": {
+                        "type": "string",
+                        "description": "Call sign (e.g. PJTCMD-56 or PJTCMD-56.01) — preferred over id."
                     }
                 },
-                "required": ["id"],
+                "required": [],
                 "additionalProperties": false
             },
             "_meta": {
@@ -830,7 +866,11 @@ fn build_tool_definitions() -> Vec<Value> {
                 "properties": {
                     "id": {
                         "type": "integer",
-                        "description": "Work item id."
+                        "description": "Work item DB id. Use callSign instead when you have it."
+                    },
+                    "callSign": {
+                        "type": "string",
+                        "description": "Call sign (e.g. PJTCMD-56 or PJTCMD-56.01) — preferred over id."
                     },
                     "title": {
                         "type": "string",
@@ -859,7 +899,7 @@ fn build_tool_definitions() -> Vec<Value> {
                         "description": "Detach the item from its current parent, making it top-level. Mutually exclusive with parentWorkItemId."
                     }
                 },
-                "required": ["id"],
+                "required": [],
                 "additionalProperties": false
             }
         }),
@@ -871,10 +911,14 @@ fn build_tool_definitions() -> Vec<Value> {
                 "properties": {
                     "id": {
                         "type": "integer",
-                        "description": "Work item id."
+                        "description": "Work item DB id. Use callSign instead when you have it."
+                    },
+                    "callSign": {
+                        "type": "string",
+                        "description": "Call sign (e.g. PJTCMD-56 or PJTCMD-56.01) — preferred over id."
                     }
                 },
-                "required": ["id"],
+                "required": [],
                 "additionalProperties": false
             }
         }),

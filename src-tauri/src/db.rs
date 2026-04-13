@@ -706,6 +706,11 @@ impl AppState {
         Ok(load_work_item_by_id(&connection, id)?)
     }
 
+    pub fn get_work_item_by_call_sign(&self, call_sign: &str) -> AppResult<WorkItemRecord> {
+        let connection = self.connect()?;
+        Ok(load_work_item_by_call_sign(&connection, call_sign)?)
+    }
+
     pub fn create_work_item(&self, input: CreateWorkItemInput) -> AppResult<WorkItemRecord> {
         let title = input.title.trim();
         let body = input.body.trim();
@@ -2325,6 +2330,35 @@ fn load_work_item_by_id(connection: &Connection, id: i64) -> Result<WorkItemReco
             map_work_item_record,
         )
         .map_err(|error| format!("failed to load work item: {error}"))
+}
+
+fn load_work_item_by_call_sign(
+    connection: &Connection,
+    call_sign: &str,
+) -> Result<WorkItemRecord, String> {
+    connection
+        .query_row(
+            "
+            SELECT
+              id,
+              project_id,
+              parent_work_item_id,
+              call_sign,
+              title,
+              body,
+              item_type,
+              status,
+              sequence_number,
+              child_number,
+              created_at,
+              updated_at
+            FROM work_items
+            WHERE call_sign = ?1
+            ",
+            [call_sign],
+            map_work_item_record,
+        )
+        .map_err(|error| format!("failed to load work item by call sign: {error}"))
 }
 
 fn load_in_progress_work_items(connection: &Connection) -> Result<Vec<WorkItemRecord>, String> {
