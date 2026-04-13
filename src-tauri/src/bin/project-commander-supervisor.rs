@@ -47,6 +47,7 @@ use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 const CLEANUP_KIND_RUNTIME_ARTIFACT: &str = "runtime_artifact";
 const CLEANUP_KIND_STALE_MANAGED_WORKTREE_DIR: &str = "stale_managed_worktree_dir";
 const CLEANUP_KIND_STALE_WORKTREE_RECORD: &str = "stale_worktree_record";
+const CLEANUP_KIND_STALE_DONE_WORKTREE: &str = "stale_done_worktree";
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -2295,6 +2296,7 @@ fn list_cleanup_candidates(state: &AppState) -> Result<Vec<CleanupCandidate>, St
     let mut candidates = collect_runtime_cleanup_candidates(state)?;
     candidates.extend(collect_stale_managed_worktree_candidates(state)?);
     candidates.extend(collect_stale_worktree_record_candidates(state)?);
+    candidates.extend(collect_stale_done_worktree_candidates(state)?);
     candidates.sort_by(|left, right| {
         left.kind
             .cmp(&right.kind)
@@ -2376,6 +2378,65 @@ fn apply_cleanup_candidate(
                 state,
                 project_id,
                 "worktree.record_reconciled",
+                "worktree",
+                worktree_id,
+                &context.source,
+                &json!({
+                    "kind": candidate.kind,
+                    "path": candidate.path,
+                    "projectId": project_id,
+                    "worktreeId": worktree_id,
+                    "branchName": worktree.branch_name,
+                    "workItemId": worktree.work_item_id,
+                    "reason": candidate.reason,
+                }),
+            );
+        }
+        CLEANUP_KIND_STALE_DONE_WORKTREE => {
+            let project_id = candidate.project_id.ok_or_else(|| {
+                RouteError::internal(
+                    "stale done worktree candidate is missing project id".to_string(),
+                )
+            })?;
+            let worktree_id = candidate.worktree_id.ok_or_else(|| {
+                RouteError::internal(
+                    "stale done worktree candidate is missing worktree id".to_string(),
+                )
+            })?;
+            let worktree = require_worktree_for_project(state, project_id, worktree_id)?;
+
+            // Re-verify safety conditions at apply time (defense in depth).
+            if worktree.has_uncommitted_changes {
+                return Err(RouteError::bad_request(format!(
+                    "worktree #{worktree_id} has uncommitted changes; skipping auto-cleanup"
+                )));
+            }
+            if worktree.has_unmerged_commits {
+                return Err(RouteError::bad_request(format!(
+                    "worktree #{worktree_id} has unmerged commits; skipping auto-cleanup"
+                )));
+            }
+
+            let project = state.get_project(project_id)?;
+            let project_git_root = resolve_git_root(&project.root_path)?;
+            let worktree_root = PathBuf::from(state.storage().app_data_dir).join("worktrees");
+
+            remove_worktree_path_artifacts(
+                &project_git_root,
+                &worktree_root,
+                Path::new(&worktree.worktree_path),
+            )?;
+
+            // Best-effort branch deletion: -d (not -D) refuses unmerged branches.
+            let _ = run_git_command(&project_git_root, &["branch", "-d", &worktree.branch_name]);
+
+            state
+                .delete_worktree(worktree_id)
+                .map_err(RouteError::from)?;
+            append_project_audit_event(
+                state,
+                project_id,
+                "worktree.auto_cleaned",
                 "worktree",
                 worktree_id,
                 &context.source,
@@ -2556,6 +2617,64 @@ fn collect_stale_worktree_record_candidates(
                 reason:
                     "stored worktree record points at a missing path and is not protected by any live or orphaned session"
                         .to_string(),
+            });
+        }
+    }
+
+    Ok(candidates)
+}
+
+fn collect_stale_done_worktree_candidates(
+    state: &AppState,
+) -> Result<Vec<CleanupCandidate>, String> {
+    let projects = state.list_projects().map_err(|error| error.to_string())?;
+    let (protected_worktree_ids, _) = collect_protected_worktree_state(state)?;
+    let mut candidates = Vec::new();
+
+    for project in projects {
+        for worktree in state
+            .list_worktrees(project.id)
+            .map_err(|error| error.to_string())?
+        {
+            // Only clean up worktrees whose work item is fully done.
+            if worktree.work_item_status != "done" {
+                continue;
+            }
+
+            // Directory must still exist — the stale_worktree_record collector
+            // handles the missing-path case.
+            if !worktree.path_available {
+                continue;
+            }
+
+            // Pinned worktrees are explicitly preserved by the user.
+            if !worktree.is_cleanup_eligible {
+                continue;
+            }
+
+            // Never auto-clean a worktree with uncommitted changes.
+            if worktree.has_uncommitted_changes {
+                continue;
+            }
+
+            // Never auto-clean a worktree with unmerged commits.
+            if worktree.has_unmerged_commits {
+                continue;
+            }
+
+            // Skip worktrees protected by a running or orphaned session.
+            if protected_worktree_ids.contains(&worktree.id) {
+                continue;
+            }
+
+            candidates.push(CleanupCandidate {
+                kind: CLEANUP_KIND_STALE_DONE_WORKTREE.to_string(),
+                path: worktree.worktree_path.clone(),
+                project_id: Some(project.id),
+                worktree_id: Some(worktree.id),
+                session_id: None,
+                reason: "worktree work item is done with no active session, uncommitted changes, or unmerged commits"
+                    .to_string(),
             });
         }
     }
