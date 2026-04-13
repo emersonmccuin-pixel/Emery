@@ -767,6 +767,7 @@ fn route_request(
                 work_item.id,
                 &work_item,
             );
+            let _ = state.ack_messages_for_work_item(input.project_id, input.id);
 
             serde_json::to_value(work_item)
                 .map(|data| json!({ "ok": true, "data": data }))
@@ -1177,6 +1178,13 @@ fn route_request(
             let input = read_json::<AckAgentMessagesApiInput>(request)?;
             handle_message_ack(state, context, input)?;
             Ok(json!({ "ok": true, "data": null }))
+        }
+        (&Method::Post, "/message/reconcile-stale") => {
+            let input = read_json::<AckAgentMessagesApiInput>(request)?;
+            let marked_stale = state
+                .reconcile_stale_messages(input.project_id)
+                .map_err(RouteError::from)?;
+            Ok(json!({ "ok": true, "data": { "markedStale": marked_stale } }))
         }
         (&Method::Post, "/shutdown") => {
             log::info!("graceful shutdown requested via /shutdown");

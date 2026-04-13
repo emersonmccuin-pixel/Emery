@@ -398,6 +398,17 @@ impl SupervisorMcpClient {
         )
     }
 
+    fn reconcile_inbox(&self) -> AppResult<Value> {
+        self.post(
+            "message/reconcile-stale",
+            &AckAgentMessagesApiInput {
+                project_id: self.project_id,
+                message_ids: None,
+                all: false,
+            },
+        )
+    }
+
     fn post<TRequest, TResponse>(
         &self,
         route: &str,
@@ -752,6 +763,7 @@ fn call_tool(
             strip_inbox_response_fields(&mut value);
             Ok(value)
         }
+        "reconcile_inbox" => Ok(client.reconcile_inbox()?),
         _ => Err(AppError::invalid_input(format!("unknown tool: {tool_name}"))),
     }
 }
@@ -1195,6 +1207,16 @@ fn build_tool_definitions() -> Vec<Value> {
             },
             "_meta": {
                 "anthropic/maxResultSizeChars": 200000
+            }
+        }),
+        json!({
+            "name": "reconcile_inbox",
+            "description": "Mark all unread messages from agents whose sessions have ended as read. Call at dispatcher startup before checking your inbox to suppress noise from previous-session agents. Returns the count of messages marked stale.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": false
             }
         }),
     ]

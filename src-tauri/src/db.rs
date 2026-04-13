@@ -1639,6 +1639,41 @@ impl AppState {
         Ok(())
     }
 
+    pub fn reconcile_stale_messages(&self, project_id: i64) -> AppResult<i64> {
+        let connection = self.connect()?;
+        self.get_project(project_id)?;
+        let now = now_timestamp_string();
+        let n = connection
+            .execute(
+                "UPDATE agent_messages SET status = 'read', read_at = ?1
+                 WHERE project_id = ?2 AND status = 'sent'
+                 AND session_id IN (
+                     SELECT id FROM sessions WHERE state NOT IN ('running', 'orphaned')
+                 )",
+                params![now, project_id],
+            )
+            .map_err(|error| format!("failed to reconcile stale messages: {error}"))?;
+        Ok(n as i64)
+    }
+
+    pub fn ack_messages_for_work_item(&self, project_id: i64, work_item_id: i64) -> AppResult<()> {
+        let connection = self.connect()?;
+        let now = now_timestamp_string();
+        connection
+            .execute(
+                "UPDATE agent_messages SET status = 'read', read_at = ?1
+                 WHERE project_id = ?2 AND status = 'sent'
+                 AND session_id IN (
+                     SELECT s.id FROM sessions s
+                     JOIN worktrees w ON w.id = s.worktree_id
+                     WHERE w.work_item_id = ?3
+                 )",
+                params![now, project_id, work_item_id],
+            )
+            .map_err(|error| format!("failed to ack messages for work item: {error}"))?;
+        Ok(())
+    }
+
     pub fn mark_agent_message_delivered(&self, message_id: i64) -> AppResult<()> {
         let connection = self.connect()?;
         let now = now_timestamp_string();
