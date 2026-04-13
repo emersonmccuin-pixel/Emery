@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/lib/tauri'
 import { useAppStore, useSelectedProject } from '../store'
 import { MarkdownEditor } from '@/components/ui/markdown-editor'
 import { PanelEmptyState } from '@/components/ui/panel-state'

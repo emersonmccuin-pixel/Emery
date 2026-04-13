@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
+import { invoke } from '@/lib/tauri'
 import type { SessionSnapshot, TerminalExitEvent, TerminalOutputEvent } from '../types'
 
 type LiveTerminalProps = {

@@ -1,4 +1,5 @@
 pub mod db;
+pub mod diagnostics;
 pub mod error;
 pub mod session;
 pub mod session_api;
@@ -11,13 +12,24 @@ use db::{
     LaunchProfileRecord, ProjectRecord, SessionRecord, StorageInfo, UpdateAppSettingsInput,
     UpdateLaunchProfileInput, UpdateProjectInput, WorkItemRecord, WorktreeRecord,
 };
+use diagnostics::{
+    append_diagnostics_entries as persist_diagnostics_entries, diagnostics_log_path,
+    diagnostics_prev_log_path, enrich_diagnostics_entry,
+    export_diagnostics_bundle as build_diagnostics_bundle,
+    list_diagnostics_history as load_diagnostics_history, DiagnosticsBundleExportResult,
+    DiagnosticsRuntimeMetadata, PersistedDiagnosticsEntry,
+};
 use error::AppResult;
+use notify::{Config as NotifyConfig, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use session::SupervisorClient;
 use session_api::{
     LaunchSessionInput, ProjectSessionTarget, ResizeSessionInput, SessionInput, SessionSnapshot,
 };
 use std::fs;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 use supervisor_api::{
     CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget, CleanupRepairOutput,
@@ -27,9 +39,13 @@ use supervisor_api::{
     SessionRecoveryDetails, UpdateProjectDocumentInput, UpdateProjectWorkItemInput,
     WorktreeLaunchOutput,
 };
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 const TAURI_SLOW_COMMAND_MS: f64 = 500.0;
+const DEFAULT_DIAGNOSTICS_LOG_TAIL_CHARS: usize = 20_000;
+const MAX_DIAGNOSTICS_LOG_TAIL_CHARS: usize = 60_000;
+const DIAGNOSTICS_STREAM_EVENT: &str = "diagnostics-stream";
+const DIAGNOSTICS_LOG_STREAM_MAX_LINE_CHARS: usize = 4_000;
 
 fn ensure_storage_dirs(app: &AppHandle) -> AppResult<StorageInfo> {
     let app_data_dir = app
@@ -53,6 +69,374 @@ fn ensure_storage_dirs(app: &AppHandle) -> AppResult<StorageInfo> {
 #[tauri::command]
 fn health_check() -> String {
     "Rust runtime connected.".to_string()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DiagnosticsLogTail {
+    path: String,
+    exists: bool,
+    tail: String,
+    truncated: bool,
+    read_error: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DiagnosticsSnapshot {
+    captured_at: String,
+    app_run_id: String,
+    app_started_at: String,
+    app_data_dir: String,
+    db_dir: String,
+    db_path: String,
+    runtime_dir: String,
+    worktrees_dir: String,
+    logs_dir: String,
+    session_output_dir: String,
+    crash_reports_dir: String,
+    diagnostics_log_path: String,
+    previous_diagnostics_log_path: String,
+    supervisor_log: DiagnosticsLogTail,
+    previous_supervisor_log: DiagnosticsLogTail,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DiagnosticsStreamEvent {
+    at: String,
+    app_run_id: String,
+    event: String,
+    source: &'static str,
+    severity: &'static str,
+    summary: String,
+    path: Option<String>,
+    line: Option<String>,
+}
+
+fn trim_to_last_chars(value: &str, max_chars: usize) -> (String, bool) {
+    let total = value.chars().count();
+    if total <= max_chars {
+        return (value.to_string(), false);
+    }
+
+    let tail: String = value
+        .chars()
+        .skip(total.saturating_sub(max_chars))
+        .collect();
+    (format!("…{tail}"), true)
+}
+
+fn read_log_tail(path: &Path, max_chars: usize) -> DiagnosticsLogTail {
+    if !path.is_file() {
+        return DiagnosticsLogTail {
+            path: path.display().to_string(),
+            exists: false,
+            tail: String::new(),
+            truncated: false,
+            read_error: None,
+        };
+    }
+
+    match fs::read_to_string(path) {
+        Ok(raw) => {
+            let trimmed = raw.trim();
+            let (tail, truncated) = if trimmed.is_empty() {
+                (String::new(), false)
+            } else {
+                trim_to_last_chars(trimmed, max_chars)
+            };
+
+            DiagnosticsLogTail {
+                path: path.display().to_string(),
+                exists: true,
+                tail,
+                truncated,
+                read_error: None,
+            }
+        }
+        Err(error) => DiagnosticsLogTail {
+            path: path.display().to_string(),
+            exists: true,
+            tail: String::new(),
+            truncated: false,
+            read_error: Some(format!("failed to read {}: {error}", path.display())),
+        },
+    }
+}
+
+fn trim_to_first_chars(value: &str, max_chars: usize) -> String {
+    let total = value.chars().count();
+    if total <= max_chars {
+        return value.to_string();
+    }
+
+    let head: String = value.chars().take(max_chars.saturating_sub(1)).collect();
+    format!("{head}…")
+}
+
+fn diagnostics_severity_for_log_line(line: &str) -> &'static str {
+    let upper = line.to_ascii_uppercase();
+
+    if upper.contains(" ERROR ") || upper.contains(" STATUS=ERROR") {
+        "error"
+    } else if upper.contains(" WARN ") || line.contains("slow=true") {
+        "warn"
+    } else {
+        "info"
+    }
+}
+
+fn emit_diagnostics_stream_event(
+    app: &AppHandle,
+    storage: Option<&StorageInfo>,
+    runtime: Option<&DiagnosticsRuntimeMetadata>,
+    event: DiagnosticsStreamEvent,
+) {
+    if let (Some(storage), Some(runtime)) = (storage, runtime) {
+        let mut metadata = std::collections::HashMap::new();
+        if let Some(path) = &event.path {
+            metadata.insert("path".to_string(), serde_json::Value::String(path.clone()));
+        }
+        if let Some(line) = &event.line {
+            metadata.insert("line".to_string(), serde_json::Value::String(line.clone()));
+        }
+
+        let mut persisted_entry = PersistedDiagnosticsEntry {
+            id: format!("backend-{}-{}", event.at, rand::random::<u64>()),
+            at: event.at.clone(),
+            event: event.event.clone(),
+            source: event.source.to_string(),
+            severity: event.severity.to_string(),
+            summary: event.summary.clone(),
+            duration_ms: None,
+            metadata,
+        };
+        enrich_diagnostics_entry(&mut persisted_entry, runtime);
+
+        let _ = persist_diagnostics_entries(storage, &[persisted_entry]);
+    }
+
+    let _ = app.emit(DIAGNOSTICS_STREAM_EVENT, event);
+}
+
+fn emit_supervisor_log_event(
+    app: &AppHandle,
+    storage: Option<&StorageInfo>,
+    runtime: Option<&DiagnosticsRuntimeMetadata>,
+    path: &Path,
+    line: Option<String>,
+    summary: String,
+    severity: &'static str,
+) {
+    emit_diagnostics_stream_event(
+        app,
+        storage,
+        runtime,
+        DiagnosticsStreamEvent {
+            at: crate::session_host::now_timestamp_string(),
+            app_run_id: runtime
+                .map(|value| value.app_run_id.clone())
+                .unwrap_or_else(|| "unknown".to_string()),
+            event: "supervisor.log".to_string(),
+            source: "supervisor-log",
+            severity,
+            summary,
+            path: Some(path.display().to_string()),
+            line,
+        },
+    );
+}
+
+fn read_supervisor_log_increment(
+    path: &Path,
+    cursor: &mut u64,
+    partial_line: &mut String,
+) -> AppResult<Vec<String>> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            *cursor = 0;
+            partial_line.clear();
+            return Ok(Vec::new());
+        }
+        Err(error) => {
+            return Err(format!("failed to inspect {}: {error}", path.display()).into());
+        }
+    };
+
+    let file_len = metadata.len();
+
+    if file_len < *cursor {
+        *cursor = 0;
+        partial_line.clear();
+    }
+
+    let mut file =
+        File::open(path).map_err(|error| format!("failed to open {}: {error}", path.display()))?;
+    file.seek(SeekFrom::Start(*cursor))
+        .map_err(|error| format!("failed to seek {}: {error}", path.display()))?;
+
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+
+    *cursor = file_len;
+
+    if buffer.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let chunk = String::from_utf8_lossy(&buffer);
+    let combined = if partial_line.is_empty() {
+        chunk.to_string()
+    } else {
+        format!("{partial_line}{chunk}")
+    };
+
+    let ended_with_newline = combined.ends_with('\n');
+    let mut lines: Vec<String> = combined
+        .lines()
+        .map(|line| line.trim_end_matches('\r').to_string())
+        .collect();
+
+    if ended_with_newline {
+        partial_line.clear();
+    } else {
+        *partial_line = lines.pop().unwrap_or_default();
+    }
+
+    Ok(lines
+        .into_iter()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            (!trimmed.is_empty())
+                .then(|| trim_to_first_chars(trimmed, DIAGNOSTICS_LOG_STREAM_MAX_LINE_CHARS))
+        })
+        .collect())
+}
+
+fn spawn_supervisor_log_stream(
+    app: &AppHandle,
+    storage: &StorageInfo,
+    runtime: &DiagnosticsRuntimeMetadata,
+) {
+    let app_handle = app.clone();
+    let storage = storage.clone();
+    let runtime = runtime.clone();
+    let log_path = PathBuf::from(&storage.db_dir)
+        .join("logs")
+        .join("supervisor.log");
+    let logs_dir = log_path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from(&storage.db_dir));
+
+    let _ = fs::create_dir_all(&logs_dir);
+
+    std::thread::spawn(move || {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let watcher_result = RecommendedWatcher::new(
+            move |result| {
+                let _ = tx.send(result);
+            },
+            NotifyConfig::default(),
+        );
+
+        let mut watcher = match watcher_result {
+            Ok(watcher) => watcher,
+            Err(error) => {
+                emit_supervisor_log_event(
+                    &app_handle,
+                    Some(&storage),
+                    Some(&runtime),
+                    &log_path,
+                    None,
+                    format!("failed to start supervisor log watcher: {error}"),
+                    "error",
+                );
+                return;
+            }
+        };
+
+        if let Err(error) = watcher.watch(&logs_dir, RecursiveMode::NonRecursive) {
+            emit_supervisor_log_event(
+                &app_handle,
+                Some(&storage),
+                Some(&runtime),
+                &log_path,
+                None,
+                format!("failed to watch supervisor log directory: {error}"),
+                "error",
+            );
+            return;
+        }
+
+        let mut cursor = fs::metadata(&log_path)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
+        let mut partial_line = String::new();
+
+        while let Ok(result) = rx.recv() {
+            match result {
+                Ok(_) => {
+                    let previous_cursor = cursor;
+
+                    match read_supervisor_log_increment(&log_path, &mut cursor, &mut partial_line) {
+                        Ok(lines) => {
+                            if previous_cursor > 0 && cursor < previous_cursor {
+                                emit_supervisor_log_event(
+                                    &app_handle,
+                                    Some(&storage),
+                                    Some(&runtime),
+                                    &log_path,
+                                    None,
+                                    "supervisor log rotated or truncated; live stream cursor reset"
+                                        .to_string(),
+                                    "warn",
+                                );
+                            }
+
+                            for line in lines {
+                                let severity = diagnostics_severity_for_log_line(&line);
+                                emit_supervisor_log_event(
+                                    &app_handle,
+                                    Some(&storage),
+                                    Some(&runtime),
+                                    &log_path,
+                                    Some(line.clone()),
+                                    line,
+                                    severity,
+                                );
+                            }
+                        }
+                        Err(error) => {
+                            emit_supervisor_log_event(
+                                &app_handle,
+                                Some(&storage),
+                                Some(&runtime),
+                                &log_path,
+                                None,
+                                format!("{error}"),
+                                "error",
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    emit_supervisor_log_event(
+                        &app_handle,
+                        Some(&storage),
+                        Some(&runtime),
+                        &log_path,
+                        None,
+                        format!("supervisor log watcher error: {error}"),
+                        "error",
+                    );
+                }
+            }
+        }
+    });
 }
 
 fn timed_command<T, F>(name: &str, detail: impl Into<String>, operation: F) -> AppResult<T>
@@ -87,6 +471,100 @@ where
 #[tauri::command]
 fn get_storage_info(state: State<SupervisorClient>) -> StorageInfo {
     state.storage()
+}
+
+#[tauri::command]
+fn get_diagnostics_runtime_context(
+    state: State<DiagnosticsRuntimeMetadata>,
+) -> DiagnosticsRuntimeMetadata {
+    state.inner().clone()
+}
+
+#[tauri::command]
+fn append_diagnostics_entries(
+    entries: Vec<PersistedDiagnosticsEntry>,
+    state: State<SupervisorClient>,
+    runtime: State<DiagnosticsRuntimeMetadata>,
+) -> AppResult<()> {
+    let mut entries = entries;
+    for entry in &mut entries {
+        enrich_diagnostics_entry(entry, runtime.inner());
+    }
+    persist_diagnostics_entries(&state.storage(), &entries)
+}
+
+#[tauri::command]
+fn list_diagnostics_history(
+    limit: Option<usize>,
+    state: State<SupervisorClient>,
+) -> AppResult<Vec<PersistedDiagnosticsEntry>> {
+    load_diagnostics_history(&state.storage(), limit)
+}
+
+#[tauri::command]
+fn get_diagnostics_snapshot(
+    max_chars: Option<usize>,
+    state: State<SupervisorClient>,
+    runtime: State<DiagnosticsRuntimeMetadata>,
+) -> AppResult<DiagnosticsSnapshot> {
+    let max_chars = max_chars
+        .unwrap_or(DEFAULT_DIAGNOSTICS_LOG_TAIL_CHARS)
+        .clamp(2_000, MAX_DIAGNOSTICS_LOG_TAIL_CHARS);
+
+    timed_command(
+        "get_diagnostics_snapshot",
+        format!("max_chars={max_chars}"),
+        || {
+            let storage = state.storage();
+            let app_data_dir = Path::new(&storage.app_data_dir);
+            let runtime_dir = app_data_dir.join("runtime");
+            let worktrees_dir = app_data_dir.join("worktrees");
+            let session_output_dir = app_data_dir.join("session-output");
+            let crash_reports_dir = app_data_dir.join("crash-reports");
+            let logs_dir = Path::new(&storage.db_dir).join("logs");
+            let supervisor_log_path = logs_dir.join("supervisor.log");
+            let previous_supervisor_log_path = logs_dir.join("supervisor.prev.log");
+            let diagnostics_log_path = diagnostics_log_path(&storage);
+            let previous_diagnostics_log_path = diagnostics_prev_log_path(&storage);
+
+            Ok(DiagnosticsSnapshot {
+                captured_at: crate::session_host::now_timestamp_string(),
+                app_run_id: runtime.app_run_id.clone(),
+                app_started_at: runtime.app_started_at.clone(),
+                app_data_dir: storage.app_data_dir.clone(),
+                db_dir: storage.db_dir.clone(),
+                db_path: storage.db_path.clone(),
+                runtime_dir: runtime_dir.display().to_string(),
+                worktrees_dir: worktrees_dir.display().to_string(),
+                logs_dir: logs_dir.display().to_string(),
+                session_output_dir: session_output_dir.display().to_string(),
+                crash_reports_dir: crash_reports_dir.display().to_string(),
+                diagnostics_log_path: diagnostics_log_path.display().to_string(),
+                previous_diagnostics_log_path: previous_diagnostics_log_path.display().to_string(),
+                supervisor_log: read_log_tail(&supervisor_log_path, max_chars),
+                previous_supervisor_log: read_log_tail(&previous_supervisor_log_path, max_chars),
+            })
+        },
+    )
+}
+
+#[tauri::command]
+fn export_diagnostics_bundle(
+    destination_path: String,
+    state: State<SupervisorClient>,
+    runtime: State<DiagnosticsRuntimeMetadata>,
+) -> AppResult<DiagnosticsBundleExportResult> {
+    timed_command(
+        "export_diagnostics_bundle",
+        format!("destination_path={destination_path}"),
+        || {
+            build_diagnostics_bundle(
+                &state.storage(),
+                runtime.inner(),
+                Path::new(&destination_path),
+            )
+        },
+    )
 }
 
 #[tauri::command]
@@ -620,6 +1098,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             health_check,
             get_storage_info,
+            get_diagnostics_runtime_context,
+            append_diagnostics_entries,
+            list_diagnostics_history,
+            get_diagnostics_snapshot,
+            export_diagnostics_bundle,
             bootstrap_app_state,
             update_app_settings,
             create_project,
@@ -664,8 +1147,11 @@ pub fn run() {
         ])
         .setup(|app| {
             let storage = ensure_storage_dirs(&app.handle())?;
-            let supervisor = SupervisorClient::new(storage)?;
+            let diagnostics_runtime = DiagnosticsRuntimeMetadata::generate();
+            let supervisor = SupervisorClient::new(storage.clone())?;
+            app.manage(diagnostics_runtime.clone());
             app.manage(supervisor);
+            spawn_supervisor_log_stream(&app.handle(), &storage, &diagnostics_runtime);
 
             app.handle().plugin(
                 tauri_plugin_log::Builder::default()

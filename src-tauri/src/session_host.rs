@@ -235,16 +235,14 @@ impl SessionRegistry {
             }),
             _ => None,
         };
-        let provider_session_id = claude_launch_mode
-            .as_ref()
-            .map(|mode| match mode {
-                ClaudeLaunchMode::Fresh {
-                    provider_session_id,
-                }
-                | ClaudeLaunchMode::Resume {
-                    provider_session_id,
-                } => provider_session_id.clone(),
-            });
+        let provider_session_id = claude_launch_mode.as_ref().map(|mode| match mode {
+            ClaudeLaunchMode::Fresh {
+                provider_session_id,
+            }
+            | ClaudeLaunchMode::Resume {
+                provider_session_id,
+            } => provider_session_id.clone(),
+        });
         let launch_mode = match claude_launch_mode {
             Some(ClaudeLaunchMode::Resume { .. }) => "resume",
             _ => "fresh",

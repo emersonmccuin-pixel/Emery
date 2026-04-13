@@ -1,6 +1,6 @@
 import type { StateCreator } from 'zustand'
 import { flushSync } from 'react-dom'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/lib/tauri'
 import type {
   DocumentRecord,
   ProjectRecord,

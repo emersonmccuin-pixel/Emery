@@ -2,14 +2,25 @@ import { useEffect, useRef, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { useShallow } from 'zustand/react/shallow'
 import {
+  createDiagnosticsCorrelationId,
+  ensureDiagnosticsHistoryHydrated,
+  ensureDiagnosticsRuntimeContext,
+  recordDiagnosticsEntry,
+} from '@/diagnostics'
+import {
   cancelTrackedPerfSpan,
   failTrackedPerfSpan,
   finishTrackedPerfSpan,
   hasTrackedPerfSpan,
   startTrackedPerfSpan,
 } from './perf'
-import type { TerminalExitEvent, TerminalOutputEvent } from './types'
+import type {
+  DiagnosticsStreamPayload,
+  TerminalExitEvent,
+  TerminalOutputEvent,
+} from './types'
 import { useAppStore } from './store'
+import type { ProjectRefreshTarget } from './store/types'
 import {
   useSelectedProject,
   useSelectedLaunchProfile,
@@ -69,6 +80,13 @@ function App() {
   const visibleContextRefreshTimeoutRef = useRef<number | null>(null)
   const visibleContextRefreshInFlightRef = useRef(false)
   const visibleContextRefreshPendingRef = useRef(false)
+  const visibleContextRefreshPendingReasonRef = useRef('pending-update')
+  const visibleContextRefreshPendingIdRef = useRef('refresh-pending')
+  const activeViewLoadRef = useRef<{
+    loadId: string
+    view: string
+    startedAt: number
+  } | null>(null)
 
   const clearVisibleContextRefreshTimer = () => {
     if (visibleContextRefreshTimeoutRef.current !== null) {
@@ -77,10 +95,25 @@ function App() {
     }
   }
 
-  const refreshVisibleProjectContext = async (projectId: number) => {
+  const refreshVisibleProjectContext = async (
+    projectId: number,
+    reason: string,
+    refreshId: string,
+  ) => {
     const store = useAppStore.getState()
 
     if (store.selectedProjectId !== projectId) {
+      recordDiagnosticsEntry({
+        event: 'refresh.visible-context',
+        source: 'refresh',
+        summary: 'Visible context refresh skipped because selection changed',
+        metadata: {
+          refreshId,
+          projectId,
+          reason,
+          selectedProjectId: store.selectedProjectId,
+        },
+      })
       return
     }
 
@@ -88,25 +121,85 @@ function App() {
     const shouldRefreshWork =
       store.activeView === 'workItems' || store.activeView === 'worktreeWorkItem' || store.isAgentGuideOpen
 
-    if (shouldRefreshHistory) {
-      await store.refreshSelectedProjectData(['history', 'orphanedSessions', 'cleanupCandidates'])
+    if (!shouldRefreshHistory && !shouldRefreshWork) {
+      recordDiagnosticsEntry({
+        event: 'refresh.visible-context',
+        source: 'refresh',
+        summary: 'Visible context refresh skipped because no active surface needs it',
+        metadata: {
+          refreshId,
+          projectId,
+          reason,
+          activeView: store.activeView,
+          isAgentGuideOpen: store.isAgentGuideOpen,
+        },
+      })
       return
     }
 
-    if (shouldRefreshWork) {
-      await store.refreshSelectedProjectData(['workItems', 'documents'])
+    const targets: ProjectRefreshTarget[] = shouldRefreshHistory
+      ? ['history', 'orphanedSessions', 'cleanupCandidates']
+      : ['workItems', 'documents']
+    const startedAt = performance.now()
+
+    try {
+      await store.refreshSelectedProjectData(targets)
+      const durationMs = performance.now() - startedAt
+      recordDiagnosticsEntry({
+        event: 'refresh.visible-context',
+        source: 'refresh',
+        severity: durationMs >= 500 ? 'warn' : 'info',
+        summary: `Visible context refresh: ${targets.join(', ')}`,
+        durationMs,
+        metadata: {
+          refreshId,
+          projectId,
+          reason,
+          activeView: store.activeView,
+          targets: targets.join(', '),
+        },
+      })
+    } catch (error) {
+      const durationMs = performance.now() - startedAt
+      recordDiagnosticsEntry({
+        event: 'refresh.visible-context',
+        source: 'refresh',
+        severity: 'error',
+        summary: `Visible context refresh failed: ${targets.join(', ')}`,
+        durationMs,
+        metadata: {
+          refreshId,
+          projectId,
+          reason,
+          activeView: store.activeView,
+          targets: targets.join(', '),
+          error,
+        },
+      })
     }
   }
 
-  const runVisibleContextRefresh = (projectId: number) => {
+  const runVisibleContextRefresh = (
+    projectId: number,
+    reason: string,
+    refreshId: string,
+  ) => {
     if (visibleContextRefreshInFlightRef.current) {
       visibleContextRefreshPendingRef.current = true
+      visibleContextRefreshPendingReasonRef.current = reason
+      visibleContextRefreshPendingIdRef.current = refreshId
+      recordDiagnosticsEntry({
+        event: 'refresh.visible-context.queued',
+        source: 'refresh',
+        summary: 'Visible context refresh queued behind an in-flight run',
+        metadata: { projectId, reason, refreshId },
+      })
       return
     }
 
     visibleContextRefreshInFlightRef.current = true
 
-    void refreshVisibleProjectContext(projectId).finally(() => {
+    void refreshVisibleProjectContext(projectId, reason, refreshId).finally(() => {
       visibleContextRefreshInFlightRef.current = false
 
       if (!visibleContextRefreshPendingRef.current) {
@@ -114,27 +207,65 @@ function App() {
       }
 
       visibleContextRefreshPendingRef.current = false
-      scheduleVisibleContextRefresh(projectId)
+      scheduleVisibleContextRefresh(
+        projectId,
+        visibleContextRefreshPendingReasonRef.current,
+        0,
+        visibleContextRefreshPendingIdRef.current,
+      )
     })
   }
 
-  const scheduleVisibleContextRefresh = (projectId: number, delayMs = 1200) => {
+  const scheduleVisibleContextRefresh = (
+    projectId: number,
+    reason: string,
+    delayMs = 1200,
+    refreshId = createDiagnosticsCorrelationId('refresh'),
+  ) => {
     clearVisibleContextRefreshTimer()
+    visibleContextRefreshPendingReasonRef.current = reason
+    visibleContextRefreshPendingIdRef.current = refreshId
+
+    recordDiagnosticsEntry({
+      event: 'refresh.visible-context.schedule',
+      source: 'refresh',
+      summary: `Visible context refresh scheduled by ${reason}`,
+      metadata: {
+        refreshId,
+        projectId,
+        reason,
+        delayMs,
+      },
+    })
 
     visibleContextRefreshTimeoutRef.current = window.setTimeout(() => {
       visibleContextRefreshTimeoutRef.current = null
-      runVisibleContextRefresh(projectId)
+      runVisibleContextRefresh(projectId, reason, refreshId)
     }, delayMs)
   }
+
+  const visibleStageLoading =
+    activeView === 'history'
+      ? isLoadingHistory
+      : activeView === 'workItems' || activeView === 'worktreeWorkItem'
+        ? isLoadingWorkItems || isLoadingDocuments
+        : activeView === 'terminal'
+          ? isLoadingWorktrees
+          : false
 
   // Bootstrap
   useEffect(() => {
     let cancelled = false
 
-    startTrackedPerfSpan('app-startup', 'app_startup')
-
     void (async () => {
       try {
+        await ensureDiagnosticsRuntimeContext()
+        void ensureDiagnosticsHistoryHydrated()
+        if (cancelled) {
+          return
+        }
+
+        startTrackedPerfSpan('app-startup', 'app_startup')
         const store = useAppStore.getState()
         await store.bootstrap()
         await store.loadCrashManifest()
@@ -153,6 +284,35 @@ function App() {
     }
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+    let dispose: (() => void) | undefined
+
+    void import('./diagnosticsRuntime')
+      .then(({ installGlobalDiagnosticsRuntimeObservers }) => {
+        if (cancelled) {
+          return
+        }
+
+        dispose = installGlobalDiagnosticsRuntimeObservers()
+      })
+      .catch((error) => {
+        recordDiagnosticsEntry({
+          event: 'diagnostics.runtime-monitoring',
+          source: 'app',
+          severity: 'error',
+          summary: 'Failed to install global diagnostics monitoring',
+          metadata: { error },
+          persist: false,
+        })
+      })
+
+    return () => {
+      cancelled = true
+      dispose?.()
+    }
+  }, [])
+
   // Terminal exit listener
   useEffect(() => {
     let disposed = false
@@ -161,6 +321,21 @@ function App() {
     const bind = async () => {
       unlisten = await listen<TerminalExitEvent>('terminal-exit', (event) => {
         if (disposed) return
+        const exitEventId = createDiagnosticsCorrelationId('terminal-exit')
+        recordDiagnosticsEntry({
+          event: 'tauri.event.terminal-exit',
+          source: 'tauri-event',
+          severity: event.payload.success ? 'info' : 'warn',
+          summary: 'terminal-exit received',
+          metadata: {
+            exitEventId,
+            projectId: event.payload.projectId,
+            worktreeId: event.payload.worktreeId ?? null,
+            exitCode: event.payload.exitCode,
+            success: event.payload.success,
+            error: event.payload.error ?? null,
+          },
+        })
         useAppStore.getState().handleSessionExit(event.payload)
       })
     }
@@ -169,6 +344,89 @@ function App() {
     return () => {
       disposed = true
       unlisten?.()
+    }
+  }, [])
+
+  useEffect(() => {
+    let disposed = false
+    let unlisten: (() => void) | undefined
+
+    const bind = async () => {
+      unlisten = await listen<DiagnosticsStreamPayload>(`diagnostics-stream`, (event) => {
+        if (disposed) {
+          return
+        }
+
+        recordDiagnosticsEntry({
+          event: event.payload.event,
+          source: event.payload.source,
+          severity: event.payload.severity,
+          summary: event.payload.summary,
+          metadata: {
+            appRunId: event.payload.appRunId,
+            path: event.payload.path ?? null,
+            line: event.payload.line ?? null,
+          },
+          persist: false,
+        })
+      })
+    }
+
+    void bind()
+
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+  }, [])
+
+  useEffect(() => {
+    const handleWindowError = (event: ErrorEvent) => {
+      recordDiagnosticsEntry({
+        event: 'window.error',
+        source: 'app',
+        severity: 'error',
+        summary: event.message || 'Unhandled window error',
+        metadata: {
+          errorId: createDiagnosticsCorrelationId('window-error'),
+          filename: event.filename || null,
+          lineno: event.lineno || null,
+          colno: event.colno || null,
+          error:
+            event.error instanceof Error
+              ? event.error.stack ?? event.error.message
+              : event.error ?? null,
+        },
+      })
+    }
+
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason =
+        event.reason instanceof Error
+          ? event.reason.stack ?? event.reason.message
+          : event.reason
+
+      recordDiagnosticsEntry({
+        event: 'window.unhandledrejection',
+        source: 'app',
+        severity: 'error',
+        summary:
+          event.reason instanceof Error && event.reason.message
+            ? event.reason.message
+            : 'Unhandled promise rejection',
+        metadata: {
+          rejectionId: createDiagnosticsCorrelationId('promise-rejection'),
+          reason,
+        },
+      })
+    }
+
+    window.addEventListener('error', handleWindowError)
+    window.addEventListener('unhandledrejection', handleUnhandledRejection)
+
+    return () => {
+      window.removeEventListener('error', handleWindowError)
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection)
     }
   }, [])
 
@@ -246,6 +504,8 @@ function App() {
   useEffect(() => {
     clearVisibleContextRefreshTimer()
     visibleContextRefreshPendingRef.current = false
+    visibleContextRefreshPendingReasonRef.current = 'project-selection-change'
+    visibleContextRefreshPendingIdRef.current = 'project-selection-change'
   }, [selectedProjectId])
 
   useEffect(() => {
@@ -297,6 +557,80 @@ function App() {
   ])
 
   useEffect(() => {
+    const current = activeViewLoadRef.current
+
+    if (selectedProjectId === null || !visibleStageLoading) {
+      if (current && current.view !== activeView) {
+        recordDiagnosticsEntry({
+          event: 'ui.stage-load.cancelled',
+          source: 'perf',
+          summary: `${current.view} stage load abandoned`,
+          metadata: {
+            loadId: current.loadId,
+            view: current.view,
+            nextView: activeView,
+            projectId: selectedProjectId,
+          },
+        })
+        activeViewLoadRef.current = null
+      }
+
+      if (current && current.view === activeView) {
+        const durationMs = performance.now() - current.startedAt
+        recordDiagnosticsEntry({
+          event: 'ui.stage-load',
+          source: 'perf',
+          severity: durationMs >= 500 ? 'warn' : 'info',
+          summary: `${current.view} stage settled`,
+          durationMs,
+          metadata: {
+            loadId: current.loadId,
+            view: current.view,
+            projectId: selectedProjectId,
+          },
+        })
+        activeViewLoadRef.current = null
+      }
+
+      return
+    }
+
+    if (!current || current.view !== activeView) {
+      if (current) {
+        recordDiagnosticsEntry({
+          event: 'ui.stage-load.cancelled',
+          source: 'perf',
+          summary: `${current.view} stage load abandoned`,
+          metadata: {
+            loadId: current.loadId,
+            view: current.view,
+            nextView: activeView,
+            projectId: selectedProjectId,
+          },
+        })
+      }
+
+      const loadId = createDiagnosticsCorrelationId('stage-load')
+      activeViewLoadRef.current = {
+        loadId,
+        view: activeView,
+        startedAt: performance.now(),
+      }
+
+      recordDiagnosticsEntry({
+        event: 'ui.stage-load.start',
+        source: 'perf',
+        summary: `${activeView} stage load started`,
+        metadata: {
+          loadId,
+          view: activeView,
+          projectId: selectedProjectId,
+        },
+      })
+    }
+  }, [activeView, selectedProjectId, visibleStageLoading])
+
+  useEffect(() => {
     if (!startupBootstrapComplete) {
       return
     }
@@ -346,26 +680,63 @@ function App() {
   useEffect(() => {
     if (selectedProjectId === null) return
 
-    const reconcileRuntimeState = () => {
+    const reconcileRuntimeState = (trigger: 'focus' | 'visibility' | 'fallback-interval') => {
       const store = useAppStore.getState()
-      void store.refreshWorktrees(selectedProjectId)
-      void store.refreshLiveSessions(selectedProjectId)
+      const startedAt = performance.now()
+      const reconcileId = createDiagnosticsCorrelationId('reconcile')
+      void Promise.all([
+        store.refreshWorktrees(selectedProjectId),
+        store.refreshLiveSessions(selectedProjectId),
+      ])
+        .then(() => {
+          const durationMs = performance.now() - startedAt
+          recordDiagnosticsEntry({
+            event: 'refresh.runtime-reconcile',
+            source: 'refresh',
+            severity: durationMs >= 500 ? 'warn' : 'info',
+            summary: `Runtime reconcile from ${trigger}`,
+            durationMs,
+            metadata: {
+              reconcileId,
+              projectId: selectedProjectId,
+              trigger,
+            },
+          })
+        })
+        .catch((error) => {
+          const durationMs = performance.now() - startedAt
+          recordDiagnosticsEntry({
+            event: 'refresh.runtime-reconcile',
+            source: 'refresh',
+            severity: 'error',
+            summary: `Runtime reconcile failed from ${trigger}`,
+            durationMs,
+            metadata: {
+              reconcileId,
+              projectId: selectedProjectId,
+              trigger,
+              error,
+            },
+          })
+        })
     }
 
     const handleWindowFocus = () => {
-      reconcileRuntimeState()
+      reconcileRuntimeState('focus')
     }
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        reconcileRuntimeState()
+        reconcileRuntimeState('visibility')
       }
     }
 
     window.addEventListener('focus', handleWindowFocus)
     document.addEventListener('visibilitychange', handleVisibilityChange)
 
-    const intervalId = window.setInterval(reconcileRuntimeState, 30000)
+    const intervalId = window.setInterval(() => {
+      reconcileRuntimeState('fallback-interval')
+    }, 30000)
 
     return () => {
       window.removeEventListener('focus', handleWindowFocus)
@@ -383,7 +754,7 @@ function App() {
       return
     }
 
-    scheduleVisibleContextRefresh(selectedProjectId, 0)
+    scheduleVisibleContextRefresh(selectedProjectId, 'live-session-context-open', 0)
   }, [
     liveSessionCount,
     selectedProjectId,
@@ -428,6 +799,19 @@ function App() {
 
     const bind = async () => {
       outputUnlisten = await listen<TerminalOutputEvent>('terminal-output', (event) => {
+        const outputEventId = createDiagnosticsCorrelationId('terminal-output')
+        recordDiagnosticsEntry({
+          event: 'tauri.event.terminal-output',
+          source: 'tauri-event',
+          summary: 'terminal-output received',
+          metadata: {
+            outputEventId,
+            projectId: event.payload.projectId,
+            worktreeId: event.payload.worktreeId ?? null,
+            bytes: event.payload.data.length,
+          },
+        })
+
         if (disposed || event.payload.projectId !== selectedProjectId) {
           return
         }
@@ -440,7 +824,7 @@ function App() {
           store.isAgentGuideOpen
 
         if (shouldRefreshVisibleContext) {
-          scheduleVisibleContextRefresh(selectedProjectId)
+          scheduleVisibleContextRefresh(selectedProjectId, 'terminal-output')
         }
       })
 
@@ -457,7 +841,7 @@ function App() {
           store.isAgentGuideOpen
 
         if (shouldRefreshVisibleContext) {
-          scheduleVisibleContextRefresh(selectedProjectId, 150)
+          scheduleVisibleContextRefresh(selectedProjectId, 'terminal-exit', 150)
         }
       })
     }

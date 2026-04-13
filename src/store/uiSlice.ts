@@ -1,4 +1,5 @@
 import type { StateCreator } from 'zustand'
+import { createDiagnosticsCorrelationId, recordDiagnosticsEntry } from '@/diagnostics'
 import type { AppStore, UiSlice } from './types'
 import { defaultThemeId, getTheme } from '../themes'
 import { applyTheme } from '../themeEngine'
@@ -59,30 +60,64 @@ export const createUiSlice: StateCreator<AppStore, [], [], UiSlice> = (set, get)
     }
 
     const uniqueTargets = [...new Set(targets)]
+    const startedAt = performance.now()
+    const refreshId = createDiagnosticsCorrelationId('selected-refresh')
 
-    await Promise.all(
-      uniqueTargets.map((target) => {
-        switch (target) {
-          case 'workItems':
-            return state.refreshWorkItems(selectedProjectId)
-          case 'documents':
-            return state.refreshDocuments(selectedProjectId)
-          case 'worktrees':
-            return state.refreshWorktrees(selectedProjectId)
-          case 'liveSessions':
-            return state.refreshLiveSessions(selectedProjectId)
-          case 'sessionSnapshot':
-            return state.refreshSelectedSessionSnapshot()
-          case 'history':
-            return state.refreshSessionHistory(selectedProjectId)
-          case 'orphanedSessions':
-            return state.refreshOrphanedSessions(selectedProjectId)
-          case 'cleanupCandidates':
-            return state.refreshCleanupCandidates()
-          default:
-            return Promise.resolve()
-        }
-      }),
-    )
+    try {
+      await Promise.all(
+        uniqueTargets.map((target) => {
+          switch (target) {
+            case 'workItems':
+              return state.refreshWorkItems(selectedProjectId)
+            case 'documents':
+              return state.refreshDocuments(selectedProjectId)
+            case 'worktrees':
+              return state.refreshWorktrees(selectedProjectId)
+            case 'liveSessions':
+              return state.refreshLiveSessions(selectedProjectId)
+            case 'sessionSnapshot':
+              return state.refreshSelectedSessionSnapshot()
+            case 'history':
+              return state.refreshSessionHistory(selectedProjectId)
+            case 'orphanedSessions':
+              return state.refreshOrphanedSessions(selectedProjectId)
+            case 'cleanupCandidates':
+              return state.refreshCleanupCandidates()
+            default:
+              return Promise.resolve()
+          }
+        }),
+      )
+
+      const durationMs = performance.now() - startedAt
+      recordDiagnosticsEntry({
+        event: 'refresh.selected-project',
+        source: 'refresh',
+        severity: durationMs >= 500 ? 'warn' : 'info',
+        summary: `Selected project refresh: ${uniqueTargets.join(', ')}`,
+        durationMs,
+        metadata: {
+          refreshId,
+          projectId: selectedProjectId,
+          targets: uniqueTargets.join(', '),
+        },
+      })
+    } catch (error) {
+      const durationMs = performance.now() - startedAt
+      recordDiagnosticsEntry({
+        event: 'refresh.selected-project',
+        source: 'refresh',
+        severity: 'error',
+        summary: `Selected project refresh failed: ${uniqueTargets.join(', ')}`,
+        durationMs,
+        metadata: {
+          refreshId,
+          projectId: selectedProjectId,
+          targets: uniqueTargets.join(', '),
+          error,
+        },
+      })
+      throw error
+    }
   },
 })

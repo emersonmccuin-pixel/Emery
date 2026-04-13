@@ -1,5 +1,5 @@
 import type { StateCreator } from 'zustand'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/lib/tauri'
 import { withPerfSpan } from '../perf'
 import { buildRecoveryStartupPrompt, hasNativeSessionResume } from '../sessionHistory'
 import type {

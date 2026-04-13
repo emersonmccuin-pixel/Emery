@@ -197,7 +197,7 @@ function VirtualWorktreeSessionList({
     )
   }
 
-  const itemHeight = 88
+  const itemHeight = 104
   const overscan = 4
   const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - overscan)
   const endIndex = Math.min(

@@ -6,6 +6,55 @@ export type StorageInfo = {
   dbPath: string
 }
 
+export type DiagnosticsLogTail = {
+  path: string
+  exists: boolean
+  tail: string
+  truncated: boolean
+  readError?: string | null
+}
+
+export type DiagnosticsRuntimeContext = {
+  appRunId: string
+  appStartedAt: string
+}
+
+export type DiagnosticsStreamPayload = {
+  at: string
+  appRunId: string
+  event: string
+  source: 'supervisor-log'
+  severity: 'info' | 'warn' | 'error'
+  summary: string
+  path?: string | null
+  line?: string | null
+}
+
+export type DiagnosticsSnapshot = {
+  capturedAt: string
+  appRunId: string
+  appStartedAt: string
+  appDataDir: string
+  dbDir: string
+  dbPath: string
+  runtimeDir: string
+  worktreesDir: string
+  logsDir: string
+  sessionOutputDir: string
+  crashReportsDir: string
+  diagnosticsLogPath: string
+  previousDiagnosticsLogPath: string
+  supervisorLog: DiagnosticsLogTail
+  previousSupervisorLog: DiagnosticsLogTail
+}
+
+export type DiagnosticsBundleExportResult = {
+  path: string
+  appRunId: string
+  includedFiles: string[]
+  truncatedFiles: string[]
+}
+
 export type AppSettings = {
   defaultLaunchProfileId: number | null
   autoRepairSafeCleanupOnStartup: boolean

@@ -1,5 +1,5 @@
 import type { StateCreator } from 'zustand'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '@/lib/tauri'
 import type { SessionSnapshot } from '../types'
 import { withPerfSpan } from '../perf'
 import {

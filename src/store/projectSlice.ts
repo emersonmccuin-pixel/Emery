@@ -1,6 +1,6 @@
 import type { StateCreator } from 'zustand'
-import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
+import { invoke } from '@/lib/tauri'
 import { startTrackedPerfSpan, withPerfSpan } from '../perf'
 
 import type {

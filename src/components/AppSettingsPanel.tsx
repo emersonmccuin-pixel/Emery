@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { Suspense, lazy, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { PanelLoadingState } from '@/components/ui/panel-state'
 import { useAppStore } from '../store'
 import { themes } from '../themes'
 
@@ -12,6 +13,8 @@ type AppSettingsTab = 'appearance' | 'accounts' | 'defaults' | 'diagnostics'
 type Props = {
   initialTab?: AppSettingsTab
 }
+
+const DiagnosticsConsole = lazy(() => import('@/components/DiagnosticsConsole'))
 
 function AppSettingsPanel({ initialTab = 'appearance' }: Props) {
   const [activeTab, setActiveTab] = useState<AppSettingsTab>(initialTab)
@@ -42,7 +45,7 @@ function AppSettingsPanel({ initialTab = 'appearance' }: Props) {
           <DefaultsTab />
         </TabsContent>
         <TabsContent value="diagnostics">
-          <DiagnosticsTab />
+          <DiagnosticsTab isActive={activeTab === 'diagnostics'} />
         </TabsContent>
       </div>
     </Tabs>
@@ -442,53 +445,21 @@ function AccountsTab() {
   )
 }
 
-function DiagnosticsTab() {
-  const storageInfo = useAppStore((s) => s.storageInfo)
-  const runtimeDir = storageInfo ? `${storageInfo.appDataDir}\\runtime` : null
-  const worktreeDir = storageInfo ? `${storageInfo.appDataDir}\\worktrees` : null
-
+function DiagnosticsTab({ isActive }: { isActive: boolean }) {
   return (
-    <article className="overview-card">
-      <div className="overview-card__header">
-        <div>
-          <p className="panel__eyebrow">Diagnostics</p>
-          <strong>Storage and runtime paths</strong>
-        </div>
-      </div>
-
-      {storageInfo ? (
-        <div className="settings-path-list">
-          <div className="settings-path-row">
-            <span>App data</span>
-            <code>{storageInfo.appDataDir}</code>
-          </div>
-          <div className="settings-path-row">
-            <span>Database dir</span>
-            <code>{storageInfo.dbDir}</code>
-          </div>
-          <div className="settings-path-row">
-            <span>Database file</span>
-            <code>{storageInfo.dbPath}</code>
-          </div>
-          {runtimeDir ? (
-            <div className="settings-path-row">
-              <span>Runtime dir</span>
-              <code>{runtimeDir}</code>
-            </div>
-          ) : null}
-          {worktreeDir ? (
-            <div className="settings-path-row">
-              <span>Managed worktrees</span>
-              <code>{worktreeDir}</code>
-            </div>
-          ) : null}
-        </div>
-      ) : (
-        <div className="empty-state empty-state--rail">
-          Storage info is not available yet.
-        </div>
-      )}
-    </article>
+    <Suspense
+      fallback={
+        <PanelLoadingState
+          className="min-h-[18rem]"
+          detail="Loading the diagnostics console."
+          eyebrow="Diagnostics"
+          title="Opening diagnostics"
+          tone="cyan"
+        />
+      }
+    >
+      <DiagnosticsConsole isActive={isActive} />
+    </Suspense>
   )
 }
 

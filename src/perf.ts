@@ -1,3 +1,5 @@
+import { createDiagnosticsCorrelationId, recordDiagnosticsEntry } from '@/diagnostics'
+
 type PerfStatus = 'ok' | 'error' | 'cancelled'
 type PerfValue = string | number | boolean | null | undefined
 type PerfMetadata = Record<string, PerfValue>
@@ -100,6 +102,20 @@ function getErrorMessage(error: unknown) {
 }
 
 function recordPerfEntry(entry: PerfEntry) {
+  recordDiagnosticsEntry({
+    event: 'perf.span',
+    source: 'perf',
+    severity:
+      entry.status === 'error' ? 'error' : entry.exceededBudget ? 'warn' : 'info',
+    summary: `${entry.name} ${entry.status}`,
+    durationMs: entry.durationMs,
+    metadata: {
+      ...entry.metadata,
+      status: entry.status,
+      exceededBudget: entry.exceededBudget,
+    },
+  })
+
   if (!isPerfEnabled()) {
     return
   }
@@ -125,6 +141,7 @@ function recordPerfEntry(entry: PerfEntry) {
 export function startPerfSpan(name: string, metadata: PerfMetadata = {}): PerfSpan {
   const startedAt = new Date().toISOString()
   const startedAtMs = performance.now()
+  const spanId = createDiagnosticsCorrelationId('perf')
   let completed = false
 
   const complete = (status: PerfStatus, nextMetadata: PerfMetadata = {}) => {
@@ -145,6 +162,7 @@ export function startPerfSpan(name: string, metadata: PerfMetadata = {}): PerfSp
       metadata: normalizeMetadata({ ...metadata, ...nextMetadata }),
     }
 
+    entry.metadata.spanId = spanId
     recordPerfEntry(entry)
     return durationMs
   }

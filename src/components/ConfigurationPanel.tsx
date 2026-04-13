@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { invoke } from '@tauri-apps/api/core'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { PanelBanner, PanelEmptyState, PanelLoadingState } from '@/components/ui/panel-state'
 import { MarkdownEditor } from '@/components/ui/markdown-editor'
+import { invoke } from '@/lib/tauri'
 import { useAppStore, useSelectedProject } from '../store'
 
 type ConfigurationTab = 'general' | 'system_prompt' | 'claude' | 'agents_md'

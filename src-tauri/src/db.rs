@@ -4501,8 +4501,14 @@ mod tests {
         assert!(limited
             .iter()
             .all(|record| record.startup_prompt.is_empty()));
-        assert_eq!(limited[0].provider_session_id.as_deref(), Some("session-third"));
-        assert_eq!(limited[1].provider_session_id.as_deref(), Some("session-second"));
+        assert_eq!(
+            limited[0].provider_session_id.as_deref(),
+            Some("session-third")
+        );
+        assert_eq!(
+            limited[1].provider_session_id.as_deref(),
+            Some("session-second")
+        );
 
         let full = harness
             .state

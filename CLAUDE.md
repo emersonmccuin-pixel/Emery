@@ -66,3 +66,75 @@ workaround encountered during development **must** be logged:
 - Call `list_work_items` first to avoid duplicates
 - Then `create_work_item(itemType: 'bug')` with clear repro steps
 - Do this before continuing work — don't silently paper over issues
+
+## Diagnostics Workflow
+
+Project Commander now has an always-on diagnostics pipeline while the desktop
+app process is running. Claude should use it by default when debugging
+slowdowns, refresh churn, crashes, launch failures, or “something feels off”
+reports.
+
+### Rebuild / Run
+
+- Verify the repo with:
+  `npm test`
+  `npm run build`
+  `cargo test --manifest-path src-tauri/Cargo.toml`
+- Run the current local desktop build with:
+  `npm run tauri:dev`
+- Build and run a release build with:
+  `npm run prod:build`
+  `npm run prod:run`
+- Diagnostics start automatically with the app; open `Settings -> Diagnostics`
+  after launch.
+
+### Use The In-App Diagnostics Console First
+
+- Open `Settings -> Diagnostics`
+- Use `Live Feed` to inspect:
+  - frontend perf spans
+  - Tauri command exchanges and durations
+  - correlation IDs, app-run IDs, and captured selection context
+  - targeted refresh reasons
+  - terminal event traffic
+  - unhandled frontend errors / promise rejections
+  - streamed supervisor log lines
+- Use `Supervisor Log` to inspect the live `supervisor.log` tail and resolved
+  runtime/log/crash-artifact paths
+- Use the console’s filters and copy/export actions before asking the user to restart the
+  app if the issue is currently reproduced
+
+### Persisted Artifacts To Inspect
+
+When the issue must be debugged after the fact, use the persisted runtime
+artifacts documented in `docs/observability.md`:
+
+- `<app-data>/db/logs/diagnostics.ndjson`
+- `<app-data>/db/logs/diagnostics.prev.ndjson`
+- `<app-data>/db/logs/supervisor.log`
+- `<app-data>/db/logs/supervisor.prev.log`
+- `<app-data>/crash-reports/<session-id>.json`
+- `<app-data>/session-output/<session-id>.log`
+
+### History Behavior
+
+- The live diagnostics feed is still bounded in memory for UI cost control
+- Recent diagnostics history is also persisted to rolling NDJSON logs, so
+  prior-run context survives app restarts
+- The in-app feed hydrates from that persisted recent history on startup
+- Use `appRunId` and project/source filters to isolate the session you care
+  about before drawing conclusions
+- For deep history beyond the current in-app window, inspect the raw
+  `diagnostics*.ndjson` files directly
+
+### Debugging Expectation
+
+When the user asks for help debugging:
+
+- check the in-app diagnostics console if the app is still running
+- filter by run, project, source, or `slow only` before scanning raw logs
+- inspect persisted supervisor/crash/session-output artifacts for prior runs
+- prefer exporting a diagnostics bundle when the user needs to preserve a bad
+  session for later analysis
+- correlate slow or failed UX with the recorded Tauri invokes, refresh events,
+  and supervisor log lines before guessing
