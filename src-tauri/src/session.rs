@@ -514,6 +514,7 @@ impl SupervisorClient {
                         worktree_id,
                         exit_code: poll.exit_code.unwrap_or(1),
                         success: poll.exit_success.unwrap_or(false),
+                        error: poll.exit_error,
                     },
                 );
                 break;

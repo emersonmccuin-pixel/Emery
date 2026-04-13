@@ -36,6 +36,7 @@ pub struct TerminalExitEvent {
     pub worktree_id: Option<i64>,
     pub exit_code: u32,
     pub success: bool,
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -95,6 +96,7 @@ pub struct SessionPollOutput {
     pub is_running: bool,
     pub exit_code: Option<u32>,
     pub exit_success: Option<bool>,
+    pub exit_error: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

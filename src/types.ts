@@ -68,6 +68,7 @@ export type TerminalExitEvent = {
   worktreeId?: number | null
   exitCode: number
   success: boolean
+  error?: string | null
 }
 
 export type WorkItemStatus = 'backlog' | 'in_progress' | 'blocked' | 'parked' | 'done'

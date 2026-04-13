@@ -57,10 +57,11 @@ struct OutputBufferState {
     end_offset: usize,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct ExitState {
     exit_code: u32,
     success: bool,
+    error: Option<String>,
 }
 
 impl Default for SessionRegistry {
@@ -539,6 +540,7 @@ impl SessionRegistry {
         let exit_state = session.current_exit_state().unwrap_or(ExitState {
             exit_code: 127,
             success: false,
+            error: None,
         });
         force_record_session_exit(
             &session,
@@ -585,7 +587,7 @@ impl SessionRegistry {
 
 impl HostedSession {
     fn snapshot(&self) -> SessionSnapshot {
-        let exit_state = self.exit_state.lock().map(|state| *state).unwrap_or(None);
+        let exit_state = self.exit_state.lock().map(|state| state.clone()).unwrap_or(None);
         let (output, output_cursor) = self
             .output_state
             .lock()
@@ -603,13 +605,13 @@ impl HostedSession {
             started_at: self.started_at.clone(),
             output,
             output_cursor,
-            exit_code: exit_state.map(|state| state.exit_code),
-            exit_success: exit_state.map(|state| state.success),
+            exit_code: exit_state.as_ref().map(|state| state.exit_code),
+            exit_success: exit_state.as_ref().map(|state| state.success),
         }
     }
 
     fn poll_output(&self, offset: usize) -> SessionPollOutput {
-        let exit_state = self.exit_state.lock().map(|state| *state).unwrap_or(None);
+        let exit_state = self.exit_state.lock().map(|state| state.clone()).unwrap_or(None);
         let (data, next_offset, reset) = self
             .output_state
             .lock()
@@ -636,8 +638,9 @@ impl HostedSession {
             next_offset,
             reset,
             is_running: exit_state.is_none(),
-            exit_code: exit_state.map(|state| state.exit_code),
-            exit_success: exit_state.map(|state| state.success),
+            exit_code: exit_state.as_ref().map(|state| state.exit_code),
+            exit_success: exit_state.as_ref().map(|state| state.success),
+            exit_error: exit_state.and_then(|state| state.error),
         }
     }
 
@@ -648,13 +651,13 @@ impl HostedSession {
             .unwrap_or(false)
     }
 
-    fn mark_exited_once(&self, exit_code: u32, success: bool) -> bool {
+    fn mark_exited_once(&self, exit_code: u32, success: bool, error: Option<String>) -> bool {
         match self.exit_state.lock() {
             Ok(mut exit_state) => {
                 if exit_state.is_some() {
                     false
                 } else {
-                    *exit_state = Some(ExitState { exit_code, success });
+                    *exit_state = Some(ExitState { exit_code, success, error });
                     true
                 }
             }
@@ -678,14 +681,26 @@ impl HostedSession {
             return Ok(false);
         };
 
+        let code = status.exit_code();
+        let error_detail = if !status.success() {
+            let reason = describe_exit_code(code);
+            let mut detail = format!("exit code {code}: {reason}");
+            if let Some(tail) = last_output_lines(self, 20) {
+                detail.push_str("\n--- last output ---\n");
+                detail.push_str(&tail);
+            }
+            Some(detail)
+        } else {
+            None
+        };
         record_session_exit(
             self,
             app_state,
-            status.exit_code(),
+            code,
             status.success(),
             "session.exited",
             None,
-            None,
+            error_detail.as_deref(),
         );
         Ok(true)
     }
@@ -695,7 +710,7 @@ impl HostedSession {
     }
 
     fn current_exit_state(&self) -> Option<ExitState> {
-        self.exit_state.lock().map(|state| *state).unwrap_or(None)
+        self.exit_state.lock().map(|state| state.clone()).unwrap_or(None)
     }
 }
 
@@ -1235,23 +1250,56 @@ fn build_claude_bridge_system_prompt(
                 "## Session Start\n",
                 "Call get_work_item for {} to read current project state, priorities, and active work. ",
                 "Update it throughout the session as things change.\n\n",
-                "## Agent Lifecycle\n",
-                "1. **Plan** — Create or select a work item. Break large features into children.\n",
-                "2. **Launch** — launch_worktree_agent(workItemId, model). ",
-                "Model selection: opus for hard/architectural, sonnet for standard features/bugs, haiku for mechanical tasks.\n",
-                "3. **Direct** — send_message(to=\"AGENT-NAME\", messageType=\"directive\", body=\"<instructions>\")\n",
-                "4. **Monitor** — Agents message back with questions, status updates, blocked, or complete signals.\n",
-                "5. **Review** — On agent completion: read the work item handoff summary, inspect the diff.\n",
-                "6. **Commit** — If satisfactory, commit staged changes in the worktree.\n",
-                "7. **Merge** — Merge the worktree branch into dev.\n",
-                "8. **Close** — close_work_item(id).\n",
-                "9. **Cleanup** — terminate_session(worktreeId), then cleanup_worktree(worktreeId).\n\n",
-                "Never skip steps 7–9. A merged branch with a live worktree is waste.\n\n",
+                "## Agent Lifecycle\n\n",
+                "### 1. Plan\n",
+                "Create or select a work item. Break large features into children via create_work_item(parentWorkItemId=...).\n\n",
+                "### 2. Launch\n",
+                "- Set status: `update_work_item(id=<id>, status=\"in_progress\")`\n",
+                "- Launch: `launch_worktree_agent(workItemId=<id>, model=<model>, executionMode=<mode>)`\n",
+                "  - Models: opus for hard/architectural, sonnet for standard features/bugs, haiku for mechanical\n",
+                "  - Modes: \"plan\" (plan + wait for approval), \"build\" (implement now), \"plan_and_build\" (plan then implement)\n",
+                "- Note the returned `agentName` from the response — you need it for step 3.\n\n",
+                "### 3. Direct — IMMEDIATELY after launch\n",
+                "**CRITICAL: Every launch MUST be followed by a directive. Agents do NOT start working without one.**\n",
+                "- Read the work item body to understand the full requirements\n",
+                "- Send: `send_message(to=\"<agentName>\", messageType=\"directive\", body=\"<instructions>\")`\n",
+                "- The directive body MUST include:\n",
+                "  - What to do (summarize the work item requirements)\n",
+                "  - Key file paths and locations if known\n",
+                "  - Build/test commands to run for verification\n",
+                "  - Reminder: stage with git add, update work item body, send complete message\n",
+                "- You may launch multiple agents then send multiple directives, but never leave an agent without a directive.\n\n",
+                "### 4. Monitor\n",
+                "Agents message back via send_message. Check `get_messages()` for incoming messages.\n",
+                "- question → answer via send_message(messageType=\"directive\")\n",
+                "- blocked → help unblock or reassign\n",
+                "- request_approval → review plan, approve or send feedback via directive\n",
+                "- status_update → acknowledge, no action needed\n",
+                "- complete → proceed to step 5\n\n",
+                "### 5. Review\n",
+                "On agent completion:\n",
+                "- Read the completion message for a summary\n",
+                "- Inspect the diff from the worktree: `git diff dev..<branch_name>` or `cd <worktree_path> && git diff --cached`\n",
+                "- Verify changes match requirements\n",
+                "- If unsatisfactory, send another directive with feedback and wait for a new complete signal\n\n",
+                "### 6. Commit\n",
+                "From INSIDE the worktree directory:\n",
+                "`cd <worktree_path> && git commit -m \"<type>: <description> (<CALLSIGN>)\"`\n",
+                "Use conventional commits: fix|feat|refactor|chore: description\n\n",
+                "### 7. Merge\n",
+                "From the MAIN repo directory (your working directory, NOT the worktree):\n",
+                "`git merge <branch_name> --no-edit`\n\n",
+                "### 8. Close\n",
+                "`close_work_item(id=<work_item_id>)`\n\n",
+                "### 9. Cleanup\n",
+                "- `terminate_session(worktreeId=<worktreeId>)` — kill the agent process\n",
+                "- `cleanup_worktree(worktreeId=<worktreeId>)` — remove worktree, delete branch, drop DB record\n\n",
+                "**Never skip steps 7–9.** A merged branch with a live worktree is waste.\n\n",
                 "## Communication\n",
-                "All agent communication uses the send_message MCP tool.\n",
+                "All agent communication uses the Project Commander send_message MCP tool (NOT the Claude Code SendMessage tool).\n",
                 "- send_message(to=\"AGENT-NAME\", messageType=\"directive\", body=\"...\")\n",
                 "- Agent names = call signs with dots → hyphens ({}-23.01 → {}-23-01)\n",
-                "- list_worktrees to see active agents\n\n",
+                "- list_worktrees to see active agents and their worktree IDs/paths\n\n",
                 "## Maintaining {}\n",
                 "High-level only — epics, goals, blockers, key decisions. Not individual tasks or child items.\n",
                 "Update when: priorities shift, major features complete, blockers surface, ",
@@ -1441,14 +1489,26 @@ fn spawn_exit_watch_thread(session: Arc<HostedSession>, app_state: AppState) {
 
         match result {
             Ok(Some(status)) => {
+                let code = status.exit_code();
+                let error_detail = if !status.success() {
+                    let reason = describe_exit_code(code);
+                    let mut detail = format!("exit code {code}: {reason}");
+                    if let Some(tail) = last_output_lines(&session, 20) {
+                        detail.push_str("\n--- last output ---\n");
+                        detail.push_str(&tail);
+                    }
+                    Some(detail)
+                } else {
+                    None
+                };
                 record_session_exit(
                     &session,
                     &app_state,
-                    status.exit_code(),
+                    code,
                     status.success(),
                     "session.exited",
                     None,
-                    None,
+                    error_detail.as_deref(),
                 );
                 break;
             }
@@ -1473,6 +1533,77 @@ fn spawn_exit_watch_thread(session: Arc<HostedSession>, app_state: AppState) {
 
 fn normalize_prompt_for_launch(prompt: &str) -> String {
     prompt.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Grab the last N lines from the session's output buffer for crash diagnostics.
+fn last_output_lines(session: &HostedSession, max_lines: usize) -> Option<String> {
+    let state = session.output_state.lock().ok()?;
+    if state.buffer.is_empty() {
+        return None;
+    }
+    // Strip ANSI escape sequences for readability
+    let clean: String = strip_ansi_escapes(&state.buffer);
+    let lines: Vec<&str> = clean.lines().collect();
+    let start = lines.len().saturating_sub(max_lines);
+    let tail = lines[start..].join("\n");
+    if tail.trim().is_empty() { None } else { Some(tail) }
+}
+
+fn strip_ansi_escapes(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            // Skip CSI sequences: ESC [ ... final_byte
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                while let Some(&next) = chars.peek() {
+                    chars.next();
+                    if next.is_ascii_alphabetic() || next == '~' {
+                        break;
+                    }
+                }
+            // Skip OSC sequences: ESC ] ... ST (BEL or ESC \)
+            } else if chars.peek() == Some(&']') {
+                chars.next();
+                while let Some(&next) = chars.peek() {
+                    chars.next();
+                    if next == '\x07' { break; }
+                    if next == '\x1b' && chars.peek() == Some(&'\\') {
+                        chars.next();
+                        break;
+                    }
+                }
+            } else {
+                // Single-char escape sequence
+                chars.next();
+            }
+        } else {
+            output.push(ch);
+        }
+    }
+    output
+}
+
+/// Map Windows exit codes to human-readable reasons.
+fn describe_exit_code(code: u32) -> &'static str {
+    match code {
+        0 => "clean exit",
+        1 => "general error",
+        2 => "file not found (ERROR_FILE_NOT_FOUND)",
+        3 => "path not found (ERROR_PATH_NOT_FOUND) — a directory in the launch path may not exist",
+        5 => "access denied (ERROR_ACCESS_DENIED)",
+        87 => "invalid parameter (ERROR_INVALID_PARAMETER)",
+        127 => "command not found — executable may not be on PATH",
+        128 => "invalid exit argument",
+        255 => "generic fatal error",
+        0xC0000005 => "access violation (EXCEPTION_ACCESS_VIOLATION)",
+        0xC000013A => "process terminated by Ctrl+C",
+        0xC0000135 => "DLL not found (STATUS_DLL_NOT_FOUND)",
+        0xC0000142 => "DLL initialization failed (STATUS_DLL_INIT_FAILED)",
+        _ if code > 128 && code < 256 => "terminated by signal",
+        _ => "unknown",
+    }
 }
 
 fn try_append_session_event<T>(
@@ -1517,7 +1648,7 @@ fn record_session_exit(
     state_override: Option<&str>,
     error: Option<&str>,
 ) {
-    if !session.mark_exited_once(exit_code, success) {
+    if !session.mark_exited_once(exit_code, success, error.map(ToOwned::to_owned)) {
         return;
     }
 
@@ -1541,7 +1672,7 @@ fn force_record_session_exit(
     state_override: Option<&str>,
     error: Option<&str>,
 ) {
-    let _ = session.mark_exited_once(exit_code, success);
+    let _ = session.mark_exited_once(exit_code, success, error.map(ToOwned::to_owned));
     persist_session_exit(
         session,
         app_state,

@@ -225,7 +225,11 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
         (snap) =>
           !(snap.projectId === event.projectId && (snap.worktreeId ?? null) === (event.worktreeId ?? null)),
       ),
-      sessionError: event.success ? state.sessionError : `Session exited with code ${event.exitCode}.`,
+      sessionError: event.success
+        ? state.sessionError
+        : event.error
+          ? `Session crashed — ${event.error.split('\n')[0]}`
+          : `Session exited with code ${event.exitCode}.`,
     }))
     get().invalidateProjectContext()
   },
