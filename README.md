@@ -1,212 +1,247 @@
 # Project Commander
 
-Rust + Tauri + React desktop app scaffold.
+A desktop runtime for orchestrating AI coding agents as a coordinated team.
 
-## Environments
+Project Commander gives you a supervisor process, work item tracking, git worktree isolation, and inter-agent messaging — all wired together so you can point multiple Claude Code instances at a real codebase and let them work in parallel without stepping on each other.
 
-### Dev
+Built with **Tauri 2** (Rust) + **React 19** + **TypeScript** + **SQLite**.
 
-Use the live-reload desktop environment while building features:
+---
+
+## Why
+
+AI coding agents are powerful individually. But real projects need more than one agent running one task — they need coordination: who's working on what, on which branch, with what context, and how do they talk to each other?
+
+Project Commander is the control plane. You register a project, break work into tracked items, and launch agents into isolated worktrees. The supervisor keeps everything alive, recoverable, and observable from a single UI.
+
+---
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────┐
+│            Tauri Desktop Window               │
+│                                               │
+│   ┌─────────┬──────────────┬──────────────┐  │
+│   │ Project │  Terminal /   │  Worktree    │  │
+│   │  Rail   │  Work Items / │  & Session   │  │
+│   │         │  Backlog /    │  Rail        │  │
+│   │         │  History /    │              │  │
+│   │         │  Settings     │              │  │
+│   └─────────┴──────────────┴──────────────┘  │
+└───────────────────┬──────────────────────────┘
+                    │ Tauri IPC
+                    ▼
+┌──────────────────────────────────────────────┐
+│          Supervisor Process (Rust)            │
+│                                               │
+│   HTTP API · PTY Registry · SQLite Writer     │
+│   Event Log · Crash Recovery · MCP Server     │
+└───────────┬────────────────┬─────────────────┘
+            │                │
+     ┌──────▼──────┐  ┌─────▼──────────┐
+     │  Dispatcher  │  │ Worktree Agent │ ×N
+     │  Session     │  │ Sessions       │
+     │  (project    │  │ (isolated      │
+     │   root)      │  │  branches)     │
+     └──────────────┘  └────────────────┘
+```
+
+**Key design decision:** the supervisor is a standalone process that survives UI restarts. Sessions, PTYs, and database writes all live there — the Tauri window is a stateless client that can reconnect at any time.
+
+---
+
+## Core Components
+
+### Supervisor
+
+A long-lived Rust binary that owns the runtime:
+
+- **Session lifecycle** — launch, monitor, reattach, terminate Claude Code instances via PTY
+- **Single database writer** — all mutations (work items, documents, worktrees, sessions) go through one authority
+- **Append-only event log** — every mutation is recorded for audit and recovery
+- **Crash recovery** — detects orphaned sessions, stale worktrees, and artifact corruption on startup; offers guided repair
+- **MCP server** — runs as a stdio Model Context Protocol server so launched agents get native tool access back into Project Commander
+
+### Work Item Management
+
+Track bugs, tasks, features, and notes with automatic call sign generation:
+
+- **Call signs** — human-readable IDs derived from the project name (e.g. `PJTCMD-1`, `PJTCMD-1.a` for children)
+- **Hierarchy** — flat parent items with dotted child items
+- **Status flow** — `backlog` → `in_progress` → `blocked` / `parked` → `done`
+- **Full CRUD** from both the UI and from within agent sessions via MCP tools
+
+### Agent Orchestration
+
+Launch and coordinate multiple Claude Code instances:
+
+- **Dispatcher session** — a project-rooted session for triage, planning, and coordination
+- **Worktree agent sessions** — each gets an isolated git worktree, its own branch, and a focused work item
+- **Launch profiles** — configurable executable, args, and environment per provider
+- **MCP integration** — agents call back into the supervisor for work items, documents, worktree management, and messaging
+- **CLI bridge** — fallback `project-commander-cli` binary on `PATH` for non-MCP agents
+
+### Git Worktree Isolation
+
+Every active work item gets its own worktree:
+
+- Automatic branch creation (`worktree-CALLSIGN`)
+- Bootstrap commit for unborn repos (so `HEAD` exists before first worktree)
+- Dirty/unmerged state tracking in the UI
+- Pin worktrees to prevent cleanup
+- Supervisor-managed create/recreate/remove lifecycle
+
+### Inter-Agent Messaging
+
+Agents communicate through a mailbox system:
+
+- `send_message` / `get_messages` / `ack_messages` MCP tools
+- Project-scoped sender/receiver addressing
+- Read receipts via acknowledgment
+- Designed for dispatcher ↔ worker coordination patterns
+
+### Terminal Integration
+
+Full PTY-backed terminal in the UI via xterm.js:
+
+- Live output streaming from supervisor-owned sessions
+- Paste and input forwarding
+- Session snapshot polling
+- Reconnect to surviving sessions after UI restart
+
+### Crash Recovery
+
+Startup diagnostics with guided repair:
+
+- Detects interrupted and orphaned sessions
+- Finds stale worktree directories without DB records
+- Recovery banner with resume/skip/terminate options per session
+- Optional auto-repair for safe cleanup on startup
+
+---
+
+## MCP Tools
+
+Agents launched by Project Commander get a `project-commander` MCP server with these tools:
+
+| Tool | Purpose |
+|------|---------|
+| `current_project` | Active project metadata |
+| `list_work_items` | Query work items (filter by status, type, parent) |
+| `get_work_item` | Fetch a single work item by ID |
+| `create_work_item` | Create bug, task, feature, or note |
+| `update_work_item` | Change status, title, body, parent |
+| `close_work_item` | Mark done and flag for cleanup |
+| `list_documents` | Project documents, optionally filtered by work item |
+| `create_document` | Attach a document to the project or a work item |
+| `update_document` | Edit document title/body |
+| `delete_document` | Remove a document |
+| `list_worktrees` | All worktrees for the project |
+| `launch_worktree_agent` | Create worktree + spawn a new agent session |
+| `pin_worktree` | Prevent automatic cleanup |
+| `cleanup_worktree` | Remove a worktree and its branch |
+| `send_message` | Send a message to another agent |
+| `get_messages` | Read messages for a receiver |
+| `list_messages` | All messages in the project |
+| `ack_messages` | Acknowledge received messages |
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) (v18+)
+- [Rust](https://rustup.rs/) (stable toolchain)
+- [Tauri CLI prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed (for agent sessions)
+
+### Development
 
 ```bash
 npm install
 npm run tauri:dev
 ```
 
-This starts Vite on port `1420` and launches the Tauri shell against it.
+Starts Vite on port 1420 and launches the Tauri shell. The supervisor and CLI binaries are built automatically before the app starts.
 
-### Prod
-
-Build the packaged production app:
+### Production Build
 
 ```bash
 npm run prod:build
 ```
 
-Run the locally built production executable:
+Windows installers are produced under `src-tauri/target/release/bundle/`.
+
+### Run Production Locally
 
 ```bash
 npm run prod:run
 ```
 
-Windows installers are produced under `src-tauri/target/release/bundle/`.
+---
 
-## Shared Data
+## Project Structure
 
-Development and production are configured to use the same Tauri app-data root,
-based on the app identifier in `src-tauri/tauri.conf.json`.
+```
+src/                        React frontend
+├── components/
+│   ├── WorkspaceShell.tsx      Three-panel layout
+│   ├── LiveTerminal.tsx        xterm.js terminal
+│   ├── WorkItemsPanel.tsx      Work item CRUD
+│   ├── DocumentsPanel.tsx      Document management
+│   ├── HistoryPanel.tsx        Session history
+│   ├── ConfigurationPanel.tsx  Settings
+│   └── ui/                     Shared primitives (tabs, etc.)
+├── store/                  Zustand state (slices per domain)
+└── App.tsx                 Bootstrap + polling
 
-The scaffold already creates a dedicated database folder inside that root:
+src-tauri/                  Rust backend
+├── src/
+│   ├── lib.rs                  Tauri command surface
+│   ├── db.rs                   SQLite schema + CRUD
+│   ├── session_host.rs         PTY management
+│   ├── supervisor_mcp.rs       MCP protocol handler
+│   └── bin/
+│       ├── project-commander-supervisor.rs   HTTP server + runtime
+│       ├── project-commander-cli.rs          CLI bridge
+│       └── project-commander-mcp.rs          MCP stdio entry
+└── tauri.conf.json         App configuration
 
-```text
-<app-data-dir>\db\
+scripts/                    Dev/release helper scripts
+docs/                       Architecture and status docs
 ```
 
-The app now stores its shared SQLite file at:
+---
 
-```text
-<app-data-dir>\db\project-commander.sqlite3
+## Data Storage
+
+Dev and production share the same Tauri app-data directory:
+
+```
+%LOCALAPPDATA%/project-commander/db/project-commander.sqlite3
 ```
 
-If you store work items, documents, and session summaries there, both
-`npm run tauri:dev` and the packaged `project-commander.exe` will use the same
-data.
+All state — projects, work items, documents, sessions, events — lives in this single SQLite file, owned exclusively by the supervisor process.
 
-## Current Baseline
+---
 
-The current working baseline includes:
+## Tech Stack
 
-- a shared SQLite database under the shared Tauri app-data root
-- a dedicated local supervisor process that owns live runtime behavior
-- registered projects with root folders
-- project edit/rebind flow when a registered root moves or is renamed
-- project registration that resolves around the repository root, reconnecting duplicate folder selections to the existing project when they point at the same repo
-- automatic `git init` for newly registered folders that are not already Git repositories
-- a supervisor bootstrap commit for unborn repositories when the first managed worktree needs a real `HEAD`
-- no user-visible manual initial commit step before the first focused worktree launch
-- Claude Code launch profiles stored in the DB
-- supervisor-backed app settings stored in the DB
-- a PTY-backed terminal slice driven through the supervisor for project-rooted Claude sessions
-- a dispatcher-first terminal flow with one live Dispatcher session per project and reconnect instead of duplicate launch
-- a supervisor-attached Project Commander MCP server for launched Claude Code sessions
-- the companion CLI bridge as a fallback when MCP is unavailable
-- project-scoped work-item CRUD for bugs, tasks, features, and notes routed through the supervisor
-- project-scoped documents with optional work-item links routed through the supervisor
-- durable session records owned by the supervisor
-- an append-only supervisor event log for session lifecycle plus work-item/document mutations
-- worktree records and supervisor-owned git worktree create/recreate/remove flows per work item
-- project-scoped work-item call signs with flat parent IDs and dotted child IDs
-- dispatcher-backed and backlog-backed focused worktree agent launch through supervisor-owned worktree/session flows
-- supervisor-owned recovery and cleanup for orphaned sessions, stale runtime artifacts, stale managed worktree directories, and stale worktree records
-- a terminal-first three-panel UI shell with:
-  - projects on the left
-  - tabbed center pane for `Terminal`, `Project Overview`, `History`, `Settings`, and `Backlog`
-  - runtime rail on the right for the live Dispatcher and project worktrees
-- session history and event history surfaced in the UI
-- reconnect and recovery actions for interrupted/orphaned sessions
-- worktree registry controls for open, recreate, and remove
-- worktree runtime visibility for live/offline, dirty/unmerged, short branch, call sign, and short summary state
-- a dedicated settings screen for project configuration, launch-profile management, app defaults, and storage diagnostics
+| Layer | Technology |
+|-------|-----------|
+| Desktop shell | Tauri 2.10 |
+| Backend | Rust (rusqlite, portable-pty, tiny_http, reqwest) |
+| Frontend | React 19, TypeScript 6, Zustand |
+| Styling | Tailwind CSS 4 |
+| Terminal | xterm.js 6 |
+| Database | SQLite 3 |
+| Build | Vite 8, Tauri CLI |
+| Testing | Vitest |
 
-## Agent Bridge
+---
 
-Launched terminal sessions now inherit:
+## License
 
-- `PROJECT_COMMANDER_DB_PATH`
-- `PROJECT_COMMANDER_PROJECT_ID`
-- `PROJECT_COMMANDER_PROJECT_NAME`
-- `PROJECT_COMMANDER_ROOT_PATH`
-
-They also get the companion `project-commander-cli` helper on `PATH`.
-
-Claude Code launches now get an inline MCP config generated by the supervisor.
-That attaches a stdio server named `project-commander` through the supervisor
-itself, so Claude-facing tools and long-lived session runtime share one backend
-boundary. The attached tools expose:
-
-- current project context
-- session brief
-- work-item list/get/create/update/close with open/type/parent filtering
-- document list/create/update/delete
-- worktree list and focused worktree-agent launch
-
-Example commands inside a launched Claude Code session:
-
-```powershell
-project-commander-cli session brief --json
-project-commander-cli work-item list --open-only --item-type bug --json
-project-commander-cli work-item create --type bug --title "Log a bug in Emery" --body "Describe the issue." --json
-project-commander-cli work-item update --id 12 --status in_progress --body "Started work." --json
-project-commander-cli work-item close --id 12 --json
-project-commander-cli worktree list --json
-project-commander-cli document list --json
-```
-
-`npm run tauri:dev` and `npm run tauri:build` now build the CLI and supervisor
-binaries before starting the app shell so the runtime behaves the same in dev
-and packaged runs.
-
-## Supervisor
-
-Project Commander now starts a local supervisor process on demand and talks to
-it over a localhost control API. The supervisor owns:
-
-- session launch and reattach
-- PTY lifecycle
-- terminal output buffering
-- session survival across frontend restarts
-- durable session history
-- append-only mutation and lifecycle events
-
-The Tauri window is now a client of that runtime instead of the process that
-owns it directly. Claude-facing Project Commander MCP tools are also attached
-through that supervisor.
-
-Work-item and document CRUD invoked from the UI now also go through the
-supervisor, so session runtime, agent tools, and desktop edits share the same
-authority boundary.
-
-Worktree creation and worktree-backed session launch now also go through the
-supervisor.
-
-Project, launch-profile, and app-settings writes now also go through the
-supervisor, so the app is operating on a single durable writer for the current
-MVP domain.
-
-## Project Roots
-
-Launches are blocked when a registered project root no longer exists.
-
-Use the selected-project edit form to rebind the project to its new folder.
-Launched sessions stay bound to the registered project they were opened for,
-even if the shell later changes directories, and any root change applies on the
-next launch.
-
-## Structure
-
-- `src/`: React frontend
-- `src-tauri/`: Rust backend and Tauri configuration
-- `scripts/`: local helper scripts for development and release workflows
-- `Project Files/Docs/`: design notes and architecture docs
-- `docs/ui/frontend-overhaul-brief.md`: constrained redesign brief for a frontend-only UI overhaul
-- `docs/status/current-state.md`: current implementation checkpoint, gaps, and next steps
-- `docs/status/core-workflow-loop.md`: working definition of the product loop currently being hardened
-- `docs/status/core-workflow-closeout-plan.md`: explicit end-to-end closeout plan for the current product workflow
-- `docs/status/next-session-handoff.md`: focused handoff note for the next coding session
-
-## Known Gaps
-
-These are the main known issues or intentionally deferred areas at this
-checkpoint:
-
-- the merge queue is still only an architectural intent; there is not yet a fully implemented dispatcher-managed merge-queue surface
-- the worktree session summary shown in the UI is currently a short supervisor-derived label from work-item context, not a live generated summary
-- session and event history are surfaced, but richer summaries/search are not implemented yet
-- reconnect and recovery UX now covers interrupted/orphaned sessions, but broader automation policy is still thin
-- final manual end-to-end proof of the tightened core loop in both dev and packaged runs is still required before scope reopens
-- planning entities for quarter, sprint, week, and day are not implemented yet
-- workflow templates and workflow runs are not implemented yet
-- agent claims, locking, and agent-to-agent coordination are not implemented yet
-- session summaries, semantic search, graph relations, and knowledge indexing are intentionally out of the current MVP baseline
-
-## Current Priority
-
-The current priority is not widening the feature surface. It is closing out the
-existing supervisor-backed core workflow end-to-end and proving it in both dev
-and packaged runs.
-
-No new feature wedge should start until the closeout plan in
-`docs/status/core-workflow-closeout-plan.md` is green.
-
-The current order is:
-
-1. Execute the core workflow closeout plan across project setup, session launch, work items/documents, focused worktrees, reconnect/recovery, and history/cleanup.
-2. Fix issues found in that pass without introducing new authority paths or new product scope.
-3. Only after the closeout gate is green, resume richer worktree lifecycle work, then planning/workflow schema and UI.
-
-Architecture checkpoint:
-
-- `docs/architecture/supervisor-planning-architecture.md`
-- `docs/status/current-state.md`
-- `docs/status/core-workflow-loop.md`
-- `docs/status/core-workflow-closeout-plan.md`
+This project is not yet licensed for public use. All rights reserved.
