@@ -5,6 +5,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { PanelBanner, PanelEmptyState, PanelLoadingState } from '@/components/ui/panel-state'
+import { MarkdownEditor } from '@/components/ui/markdown-editor'
 import { useAppStore, useSelectedProject } from '../store'
 
 type ConfigurationTab = 'general' | 'claude' | 'agents_md'
@@ -263,13 +264,11 @@ function ProjectFileEditor({
           tone="cyan"
         />
       ) : (
-        <textarea
-          className="w-full min-h-[360px] rounded border border-hud-cyan/30 bg-black/60 p-3 font-mono text-[11px] text-hud-cyan/90 outline-none focus:border-hud-cyan"
+        <MarkdownEditor
           value={contents}
-          disabled={isLoading}
-          spellCheck={false}
-          onChange={(event) => setContents(event.target.value)}
-          placeholder={`# ${filename}\n`}
+          onChange={setContents}
+          readonly={isLoading}
+          className="min-h-[360px]"
         />
       )}
     </article>
