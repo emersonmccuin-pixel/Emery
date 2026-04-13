@@ -1188,7 +1188,7 @@ fn build_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "reconcile_tracker",
-            "description": "Regenerate the dynamic sections of the project tracker ({NS}-0) from current DB state. Call this at session start before reading the tracker. Preserves human-authored sections (About, Current Focus, Blockers, Key Decisions) and regenerates Epics, Top-Level Items, and Standalone from live data.",
+            "description": "Regenerate the dynamic sections of the project tracker ({NS}-0) from current DB state. Call this at session start before reading the tracker. Preserves human-authored sections (About, Current Focus, Blockers, Key Decisions) and regenerates Epics, Top-Level Items, Standalone, Active Worktrees, and Pending Inbox from live data.",
             "inputSchema": {
                 "type": "object",
                 "properties": {},

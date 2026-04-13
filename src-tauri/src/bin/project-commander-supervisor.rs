@@ -475,6 +475,9 @@ fn route_request(
         }
         (&Method::Post, "/session/launch") => {
             let input = read_json::<LaunchSessionInput>(request)?;
+            if input.worktree_id.is_none() {
+                let _ = reconcile_tracker_body(state, sessions, input.project_id);
+            }
             serde_json::to_value(
                 sessions
                     .launch(input, state, runtime, &context.source)
@@ -1206,7 +1209,7 @@ fn route_request(
         }
         (&Method::Post, "/tracker/reconcile") => {
             let input = read_json::<ReconcileProjectTrackerInput>(request)?;
-            reconcile_tracker_body(state, input.project_id)
+            reconcile_tracker_body(state, sessions, input.project_id)
         }
         _ => Err(RouteError::not_found("route not found")),
     }
@@ -1232,6 +1235,7 @@ fn require_work_item_for_project(
 
 fn reconcile_tracker_body(
     state: &AppState,
+    sessions: &SessionRegistry,
     project_id: i64,
 ) -> Result<Value, RouteError> {
     let project = state.get_project(project_id)?;
@@ -1274,12 +1278,64 @@ fn reconcile_tracker_body(
     let top_level_items_body = build_top_level_items_section(&top_level, &children_map);
     let standalone_body = build_standalone_section(&top_level, &children_map);
 
+    // Build Active Worktrees section
+    let worktrees = state.list_worktrees(project_id).map_err(RouteError::from)?;
+    let active_worktrees_body = if worktrees.is_empty() {
+        "(none)".to_string()
+    } else {
+        let mut lines = Vec::new();
+        for wt in &worktrees {
+            let has_active_session = sessions
+                .snapshot(ProjectSessionTarget {
+                    project_id,
+                    worktree_id: Some(wt.id),
+                })
+                .ok()
+                .flatten()
+                .is_some();
+            lines.push(format!(
+                "- **{}** ({}) | branch: `{}` | unmerged: {} | active session: {}",
+                wt.agent_name,
+                wt.work_item_call_sign,
+                wt.short_branch_name,
+                if wt.has_unmerged_commits { "yes" } else { "no" },
+                if has_active_session { "yes" } else { "no" },
+            ));
+        }
+        lines.join("\n")
+    };
+
+    // Build Pending Inbox section
+    let unread_messages = state
+        .get_agent_inbox(project_id, "dispatcher", true, None, None, Some(20))
+        .map_err(RouteError::from)?;
+    let pending_inbox_body = if unread_messages.is_empty() {
+        "(no unread messages)".to_string()
+    } else {
+        let mut lines = vec![format!("{} unread message(s)", unread_messages.len())];
+        for msg in unread_messages.iter().take(3) {
+            let preview: String = msg.body.chars().take(80).collect();
+            let truncated = if msg.body.chars().count() > 80 {
+                format!("{preview}...")
+            } else {
+                preview
+            };
+            lines.push(format!(
+                "- [{}] ({}) {}",
+                msg.from_agent, msg.message_type, truncated
+            ));
+        }
+        lines.join("\n")
+    };
+
     // Known generated section names to discard when preserving
     const GENERATED_NAMES: &[&str] = &[
         "Epics",
         "Top-Level Items (can't nest \u{2014} have children)",
         "Top-Level Items",
         "Standalone",
+        "Active Worktrees",
+        "Pending Inbox",
     ];
     const PRESERVED_NAMES: &[&str] = &["About", "Current Focus", "Blockers", "Key Decisions"];
 
@@ -1329,6 +1385,8 @@ fn reconcile_tracker_body(
         &top_level_items_body,
     );
     push_section(&mut output, "Standalone", &standalone_body);
+    push_section(&mut output, "Active Worktrees", &active_worktrees_body);
+    push_section(&mut output, "Pending Inbox", &pending_inbox_body);
     if let Some(content) = preserved.get("Blockers") {
         push_section(&mut output, "Blockers", content);
     }

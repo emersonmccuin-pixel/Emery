@@ -1287,8 +1287,7 @@ fn build_claude_bridge_system_prompt(
                 "- Review agent output, commit, merge, and clean up\n",
                 "- Log bugs when encountered\n\n",
                 "## Session Start\n",
-                "Call `reconcile_tracker` to refresh {} from current DB state, then call `get_work_item` for {} to read the updated state. ",
-                "Update it throughout the session as things change.\n\n",
+                "Call get_work_item for {} to load current project state.\n\n",
                 "## Agent Lifecycle\n\n",
                 "### 1. Plan\n",
                 "Create or select a work item. Break large features into children via create_work_item(parentWorkItemId=...).\n\n",
@@ -1342,7 +1341,6 @@ fn build_claude_bridge_system_prompt(
             ),
             project.name,
             tracker_call_sign,
-            tracker_call_sign,  // reconcile_tracker: refresh {}
             tracker_call_sign,  // get_work_item for {}
             namespace,
             namespace,
