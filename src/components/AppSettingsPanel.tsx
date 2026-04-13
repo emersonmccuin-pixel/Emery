@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { useAppStore } from '../store'
 import { themes } from '../themes'
@@ -229,13 +231,13 @@ function DefaultsTab() {
         </label>
 
         <div className="action-row">
-          <button
-            className="button button--primary"
+          <Button
+            variant="default"
             disabled={isSavingAppSettings}
             type="submit"
           >
             {isSavingAppSettings ? 'Saving...' : 'Save app settings'}
-          </button>
+          </Button>
         </div>
       </form>
     </article>
@@ -276,15 +278,16 @@ function AccountsTab() {
           <p className="panel__eyebrow">Accounts</p>
           <strong>Manage Claude launch accounts</strong>
         </div>
-        <button
-          className="button button--secondary button--compact"
+        <Button
+          variant="outline"
+          size="sm"
           type="button"
           onClick={() => startCreateLaunchProfile()}
         >
           {isProfileFormOpen && editingLaunchProfileId === null
             ? 'Adding profile'
             : 'Add account'}
-        </button>
+        </Button>
       </div>
 
       <div className="settings-profile-list">
@@ -324,22 +327,22 @@ function AccountsTab() {
               </p>
 
               <div className="action-row">
-                <button
-                  className="button button--secondary"
+                <Button
+                  variant="outline"
                   type="button"
                   onClick={() => setSelectedLaunchProfileId(profile.id)}
                 >
                   {selectedLaunchProfileId === profile.id ? 'In use' : 'Use now'}
-                </button>
-                <button
-                  className="button button--secondary"
+                </Button>
+                <Button
+                  variant="outline"
                   type="button"
                   onClick={() => startEditLaunchProfile(profile)}
                 >
                   Edit
-                </button>
-                <button
-                  className="button button--danger"
+                </Button>
+                <Button
+                  variant="destructive"
                   disabled={activeDeleteLaunchProfileId === profile.id}
                   type="button"
                   onClick={() => void deleteLaunchProfile(profile)}
@@ -347,7 +350,7 @@ function AccountsTab() {
                   {activeDeleteLaunchProfileId === profile.id
                     ? 'Deleting...'
                     : 'Delete'}
-                </button>
+                </Button>
               </div>
             </article>
           ))
@@ -371,29 +374,32 @@ function AccountsTab() {
 
           <label className="field">
             <span>Label</span>
-            <input
+            <Input
               value={profileLabel}
               onChange={(event) => setProfileLabel(event.target.value)}
               placeholder="Claude Code / Work"
+              className="hud-input"
             />
           </label>
 
           <div className="field-grid">
             <label className="field">
               <span>Executable</span>
-              <input
+              <Input
                 value={profileExecutable}
                 onChange={(event) => setProfileExecutable(event.target.value)}
                 placeholder="claude"
+                className="hud-input"
               />
             </label>
 
             <label className="field">
               <span>Args</span>
-              <input
+              <Input
                 value={profileArgs}
                 onChange={(event) => setProfileArgs(event.target.value)}
                 placeholder="--dangerously-skip-permissions"
+                className="hud-input"
               />
             </label>
           </div>
@@ -411,8 +417,8 @@ function AccountsTab() {
           {profileError ? <p className="form-error">{profileError}</p> : null}
 
           <div className="action-row">
-            <button
-              className="button button--primary"
+            <Button
+              variant="default"
               disabled={isCreatingProfile}
               type="submit"
             >
@@ -421,14 +427,14 @@ function AccountsTab() {
                 : editingLaunchProfileId === null
                   ? 'Create account'
                   : 'Save account'}
-            </button>
-            <button
-              className="button button--secondary"
+            </Button>
+            <Button
+              variant="outline"
               type="button"
               onClick={() => cancelLaunchProfileEditor()}
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </form>
       ) : null}

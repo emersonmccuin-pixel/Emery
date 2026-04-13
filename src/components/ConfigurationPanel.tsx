@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { useAppStore, useSelectedProject } from '../store'
 
 type ConfigurationTab = 'general' | 'agents' | 'claude' | 'agents_md'
@@ -106,30 +108,32 @@ function GeneralTab() {
         <div className="field-grid">
           <label className="field">
             <span>Name</span>
-            <input
+            <Input
               value={editProjectName}
               onChange={(event) => setEditProjectName(event.target.value)}
               placeholder="Project name"
+              className="hud-input"
             />
           </label>
 
           <label className="field">
             <span>Root folder</span>
             <div className="input-row">
-              <input
+              <Input
                 value={editProjectRootPath}
                 onChange={(event) => setEditProjectRootPath(event.target.value)}
                 placeholder="E:\\Projects\\Example"
+                className="hud-input"
               />
-              <button
-                className="button button--secondary"
+              <Button
+                variant="outline"
                 type="button"
                 onClick={() =>
                   browseForProjectFolder(setEditProjectRootPath, setProjectUpdateError)
                 }
               >
                 Browse
-              </button>
+              </Button>
             </div>
           </label>
         </div>
@@ -139,8 +143,8 @@ function GeneralTab() {
         ) : null}
 
         <div className="action-row">
-          <button
-            className="button button--primary"
+          <Button
+            variant="default"
             disabled={isUpdatingProject}
             type="submit"
           >
@@ -149,7 +153,7 @@ function GeneralTab() {
               : selectedProject.rootAvailable
                 ? 'Save changes'
                 : 'Rebind project'}
-          </button>
+          </Button>
         </div>
       </form>
     </article>
@@ -246,14 +250,14 @@ function ProjectFileEditor({
               Unsaved
             </span>
           ) : null}
-          <button
-            className="button button--primary"
+          <Button
+            variant="default"
             type="button"
             disabled={isSaving || isLoading || !dirty}
             onClick={() => void save()}
           >
             {isSaving ? 'Saving...' : 'Save'}
-          </button>
+          </Button>
         </div>
       </div>
 
