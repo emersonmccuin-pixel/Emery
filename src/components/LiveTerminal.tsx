@@ -239,14 +239,14 @@ function LiveTerminal({ snapshot, onSessionExit }: LiveTerminalProps) {
         return false
       }
 
-      // Shift+Enter: send the CSI u escape sequence for Shift+Return so Claude Code
-      // inserts a newline in the current input rather than submitting. Bare \n is
-      // treated as a line-complete by Node.js readline/ink — the CSI u sequence
-      // \x1b[13;2u (kitty keyboard protocol: Enter with Shift modifier) is what
-      // Claude Code recognises as "insert newline, don't submit."
+      // Shift+Enter: send a line-feed (0x0A) so Claude Code inserts a newline
+      // instead of submitting.  Enter sends \r (0x0D = submit); \n (0x0A = Ctrl+J)
+      // is documented by Claude Code as "works as a newline in any terminal without
+      // configuration."  Prior attempts used escape sequences (\x1b[13;2~ and
+      // \x1b[13;2u) but Windows ConPTY mangles sequences it doesn't recognise.
       if (event.type === 'keydown' && event.shiftKey && event.key === 'Enter') {
         void invoke('write_session_input', {
-          input: { projectId: snapshot.projectId, worktreeId: snapshot.worktreeId, data: '\x1b[13;2u' },
+          input: { projectId: snapshot.projectId, worktreeId: snapshot.worktreeId, data: '\n' },
         })
           .then(() => { setTerminalError(null) })
           .catch((error) => {
