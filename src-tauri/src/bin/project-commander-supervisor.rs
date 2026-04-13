@@ -594,9 +594,34 @@ fn route_request(
         }
         (&Method::Post, "/session/terminate") => {
             let input = read_json::<ProjectSessionTarget>(request)?;
-            sessions
-                .terminate(input, state, &context.source)
-                .map_err(RouteError::from)?;
+            match sessions.terminate(input.clone(), state, &context.source) {
+                Ok(()) => {}
+                Err(error) if error.code == AppErrorCode::NotFound => {
+                    // Not in live registry — fall through to orphaned DB record.
+                    if let Some(worktree_id) = input.worktree_id {
+                        match latest_session_record_for_worktree(
+                            state,
+                            input.project_id,
+                            worktree_id,
+                        )? {
+                            Some(record) if record.state == "orphaned" => {
+                                terminate_orphaned_session(
+                                    state,
+                                    &context,
+                                    ProjectSessionRecordTarget {
+                                        project_id: input.project_id,
+                                        session_id: record.id,
+                                    },
+                                )?;
+                            }
+                            _ => return Err(RouteError::from(error)),
+                        }
+                    } else {
+                        return Err(RouteError::from(error));
+                    }
+                }
+                Err(error) => return Err(RouteError::from(error)),
+            }
             Ok(json!({ "ok": true, "data": null }))
         }
         (&Method::Post, "/session/orphaned-terminate") => {
@@ -1153,6 +1178,7 @@ fn route_request(
             let removed = cleanup_project_worktree(
                 state,
                 sessions,
+                &context,
                 input.project_id,
                 input.worktree_id,
                 input.force,
@@ -2095,6 +2121,7 @@ fn remove_project_worktree(
 fn cleanup_project_worktree(
     state: &AppState,
     sessions: &SessionRegistry,
+    context: &RequestContext,
     project_id: i64,
     worktree_id: i64,
     force: bool,
@@ -2117,6 +2144,24 @@ fn cleanup_project_worktree(
         return Err(RouteError::bad_request(format!(
             "worktree #{worktree_id} has uncommitted staged changes; commit or stash them first, or pass force=true to discard"
         )));
+    }
+
+    // When force is requested, auto-purge any orphaned session blocking removal.
+    if force {
+        if let Some(record) =
+            latest_session_record_for_worktree(state, project_id, worktree_id)?
+        {
+            if record.state == "orphaned" {
+                terminate_orphaned_session(
+                    state,
+                    context,
+                    ProjectSessionRecordTarget {
+                        project_id,
+                        session_id: record.id,
+                    },
+                )?;
+            }
+        }
     }
 
     // Auto-park active work items so they aren't lost in the backlog.
@@ -5748,5 +5793,152 @@ mod tests {
         assert_eq!(records[0].state, "terminated");
         assert_eq!(snapshot.root_path, worktree.worktree_path);
         assert!(!snapshot.is_running);
+    }
+
+    #[test]
+    fn cleanup_worktree_force_purges_orphaned_session() {
+        let harness = TestHarness::new("cleanup-worktree-orphan", true);
+        let project = harness.create_project("Commander");
+        let work_item = harness.create_work_item(project.id, "Orphaned cleanup item");
+        let worktree = ensure_project_worktree(&harness.state, project.id, work_item.id)
+            .expect("worktree should be created");
+
+        harness
+            .state
+            .create_session_record(CreateSessionRecordInput {
+                project_id: project.id,
+                launch_profile_id: None,
+                worktree_id: Some(worktree.id),
+                process_id: None,
+                supervisor_pid: None,
+                provider: "test_provider".to_string(),
+                provider_session_id: None,
+                profile_label: "Orphaned Worktree Session".to_string(),
+                root_path: worktree.worktree_path.clone(),
+                state: "orphaned".to_string(),
+                startup_prompt: String::new(),
+                started_at: "111111".to_string(),
+            })
+            .expect("orphaned session record should be created");
+
+        let (runtime, handle) = spawn_route_server(harness.state.clone(), 1);
+        let client = authorized_client(&runtime);
+
+        let removed = client
+            .post(supervisor_url(&runtime, "/worktree/cleanup"))
+            .header("x-project-commander-token", &runtime.token)
+            .header("x-project-commander-source", "integration_test")
+            .json(&CleanupWorktreeInput {
+                project_id: project.id,
+                worktree_id: worktree.id,
+                force: true,
+            })
+            .send()
+            .expect("worktree cleanup request should succeed")
+            .error_for_status()
+            .expect("cleanup_worktree with force=true should succeed despite orphaned session");
+        let removed =
+            unwrap_envelope::<WorktreeRecord>(removed, "worktree cleanup response should decode");
+
+        handle
+            .join()
+            .expect("cleanup worktree route server should stop cleanly");
+
+        let worktrees = harness
+            .state
+            .list_worktrees(project.id)
+            .expect("worktrees should load");
+        let sessions = harness
+            .state
+            .list_session_records(project.id)
+            .expect("session records should load");
+        let event_types = harness
+            .state
+            .list_session_events(project.id, 30)
+            .expect("session events should load")
+            .into_iter()
+            .map(|event| event.event_type)
+            .collect::<Vec<_>>();
+
+        assert_eq!(removed.id, worktree.id);
+        assert!(worktrees.is_empty());
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].state, "interrupted");
+        assert!(sessions[0].ended_at.is_some());
+        assert!(event_types.contains(&"session.orphan_cleanup_requested".to_string()));
+        assert!(event_types.contains(&"worktree.removed".to_string()));
+    }
+
+    #[test]
+    fn terminate_session_via_worktree_target_handles_orphaned_state() {
+        let harness = TestHarness::new("terminate-orphaned-via-target", false);
+        let project = harness.create_project("Commander");
+        let work_item = harness.create_work_item(project.id, "Orphaned terminate item");
+        let worktree = harness
+            .state
+            .upsert_worktree_record(UpsertWorktreeRecordInput {
+                project_id: project.id,
+                work_item_id: work_item.id,
+                branch_name: "pc/orphaned-terminate".to_string(),
+                worktree_path: harness.root_dir.join("orphaned-wt").display().to_string(),
+            })
+            .expect("worktree record should be created");
+
+        let session = harness
+            .state
+            .create_session_record(CreateSessionRecordInput {
+                project_id: project.id,
+                launch_profile_id: None,
+                worktree_id: Some(worktree.id),
+                process_id: None,
+                supervisor_pid: None,
+                provider: "test_provider".to_string(),
+                provider_session_id: None,
+                profile_label: "Orphaned Session".to_string(),
+                root_path: harness.root_dir.join("orphaned-wt").display().to_string(),
+                state: "orphaned".to_string(),
+                startup_prompt: String::new(),
+                started_at: "222222".to_string(),
+            })
+            .expect("orphaned session record should be created");
+
+        let (runtime, handle) = spawn_route_server(harness.state.clone(), 1);
+        let client = authorized_client(&runtime);
+
+        let response = client
+            .post(supervisor_url(&runtime, "/session/terminate"))
+            .header("x-project-commander-token", &runtime.token)
+            .header("x-project-commander-source", "integration_test")
+            .json(&ProjectSessionTarget {
+                project_id: project.id,
+                worktree_id: Some(worktree.id),
+            })
+            .send()
+            .expect("session terminate request should succeed")
+            .error_for_status()
+            .expect("terminate_session on orphaned session should succeed");
+
+        let body: serde_json::Value = response.json().expect("response should decode as JSON");
+        assert_eq!(body.get("ok").and_then(|v| v.as_bool()), Some(true));
+
+        handle
+            .join()
+            .expect("terminate session route server should stop cleanly");
+
+        let stored = harness
+            .state
+            .get_session_record(session.id)
+            .expect("session record should load");
+        let event_types = harness
+            .state
+            .list_session_events(project.id, 20)
+            .expect("session events should load")
+            .into_iter()
+            .map(|event| event.event_type)
+            .collect::<Vec<_>>();
+
+        assert_eq!(stored.state, "interrupted");
+        assert!(stored.ended_at.is_some());
+        assert!(event_types.contains(&"session.orphan_cleanup_requested".to_string()));
     }
 }
