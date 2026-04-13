@@ -481,6 +481,16 @@ impl AppState {
         Ok(load_app_settings(&connection)?)
     }
 
+    pub fn set_clean_shutdown(&self, clean: bool) -> AppResult<()> {
+        let connection = self.connect()?;
+        upsert_app_setting(
+            &connection,
+            APP_SETTING_CLEAN_SHUTDOWN,
+            if clean { "true" } else { "false" },
+        )?;
+        Ok(())
+    }
+
     pub fn list_projects(&self) -> AppResult<Vec<ProjectRecord>> {
         let connection = self.connect()?;
         Ok(load_projects(&connection)?)
@@ -1149,6 +1159,21 @@ impl AppState {
         Ok(load_session_record_by_id(&connection, input.id)?)
     }
 
+    pub fn update_session_heartbeat(&self, session_id: i64) -> AppResult<()> {
+        let connection = self.connect()?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs().to_string())
+            .unwrap_or_else(|_| "0".to_string());
+        connection
+            .execute(
+                "UPDATE sessions SET last_heartbeat_at = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
+                params![now, session_id],
+            )
+            .map_err(|error| format!("failed to update session heartbeat: {error}"))?;
+        Ok(())
+    }
+
     pub fn finish_session_record(
         &self,
         input: FinishSessionRecordInput,
@@ -1709,6 +1734,7 @@ fn open_connection(database_path: &Path) -> Result<Connection, String> {
 const APP_SETTING_DEFAULT_LAUNCH_PROFILE_ID: &str = "default_launch_profile_id";
 const APP_SETTING_AUTO_REPAIR_SAFE_CLEANUP_ON_STARTUP: &str =
     "auto_repair_safe_cleanup_on_startup";
+const APP_SETTING_CLEAN_SHUTDOWN: &str = "clean_shutdown";
 
 fn migrate(connection: &Connection) -> Result<(), String> {
     connection
@@ -1909,6 +1935,7 @@ fn migrate(connection: &Connection) -> Result<(), String> {
     ensure_column_exists(connection, "work_items", "call_sign", "TEXT")?;
     ensure_column_exists(connection, "sessions", "process_id", "INTEGER")?;
     ensure_column_exists(connection, "sessions", "supervisor_pid", "INTEGER")?;
+    ensure_column_exists(connection, "sessions", "last_heartbeat_at", "TEXT")?;
     ensure_column_exists(connection, "worktrees", "pinned", "INTEGER NOT NULL DEFAULT 0")?;
     connection
         .execute_batch(

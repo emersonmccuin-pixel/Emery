@@ -1,6 +1,6 @@
 use crate::db::{
     AppState, AppendSessionEventInput, CreateSessionRecordInput, FinishSessionRecordInput,
-    UpdateSessionRuntimeMetadataInput,
+    StorageInfo, UpdateSessionRuntimeMetadataInput,
 };
 use crate::error::{AppError, AppResult};
 use crate::session_api::{
@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -44,6 +44,7 @@ struct HostedSession {
     root_path: String,
     started_at: String,
     startup_prompt: String,
+    storage: StorageInfo,
     last_activity: Mutex<String>,
     output_state: Mutex<OutputBufferState>,
     exit_state: Mutex<Option<ExitState>>,
@@ -390,6 +391,7 @@ impl SessionRegistry {
             root_path: launch_root_path.clone(),
             started_at,
             startup_prompt: startup_prompt.clone(),
+            storage: app_state.storage(),
             last_activity: Mutex::new(initial_activity),
             output_state: Mutex::new(OutputBufferState {
                 buffer: String::new(),
@@ -1470,9 +1472,20 @@ fn append_output(output_state: &Mutex<OutputBufferState>, chunk: &str) {
     }
 }
 
+const SESSION_OUTPUT_LOG_FLUSH_BYTES: usize = 8_192;
+const SESSION_OUTPUT_LOG_FLUSH_SECS: u64 = 2;
+const SESSION_OUTPUT_LOG_CAP_BYTES: u64 = 500_000;
+
 fn spawn_output_thread(session: Arc<HostedSession>, mut reader: Box<dyn Read + Send>) {
+    let log_path = session_output_log_path(&session.storage, session.session_record_id);
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
     std::thread::spawn(move || {
         let mut buffer = [0_u8; 4096];
+        let mut pending: Vec<u8> = Vec::new();
+        let mut last_flush = Instant::now();
 
         loop {
             match reader.read(&mut buffer) {
@@ -1480,6 +1493,7 @@ fn spawn_output_thread(session: Arc<HostedSession>, mut reader: Box<dyn Read + S
                 Ok(bytes_read) => {
                     let chunk = String::from_utf8_lossy(&buffer[..bytes_read]).to_string();
                     append_output(&session.output_state, &chunk);
+                    pending.extend_from_slice(&buffer[..bytes_read]);
 
                     // Auto-reply to cursor position queries (DSR: ESC[6n).
                     // Without an attached xterm, nobody answers this query and
@@ -1491,23 +1505,169 @@ fn spawn_output_thread(session: Arc<HostedSession>, mut reader: Box<dyn Read + S
                             let _ = writer.flush();
                         }
                     }
+
+                    let should_flush = pending.len() >= SESSION_OUTPUT_LOG_FLUSH_BYTES
+                        || last_flush.elapsed().as_secs() >= SESSION_OUTPUT_LOG_FLUSH_SECS;
+
+                    if should_flush {
+                        flush_session_output_log(&log_path, &pending);
+                        pending.clear();
+                        last_flush = Instant::now();
+                    }
                 }
                 Err(_) => break,
             }
         }
+
+        // Final flush when the reader closes.
+        if !pending.is_empty() {
+            flush_session_output_log(&log_path, &pending);
+        }
     });
 }
 
-fn spawn_exit_watch_thread(session: Arc<HostedSession>, app_state: AppState) {
-    std::thread::spawn(move || loop {
-        if !session.is_running() {
-            break;
-        }
+fn session_output_log_path(storage: &StorageInfo, session_record_id: i64) -> std::path::PathBuf {
+    PathBuf::from(&storage.app_data_dir)
+        .join("session-output")
+        .join(format!("{session_record_id}.log"))
+}
 
-        let result = {
-            let mut child = match session.child.lock() {
-                Ok(child) => child,
-                Err(_) => {
+fn flush_session_output_log(log_path: &std::path::Path, data: &[u8]) {
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+    {
+        Ok(mut file) => {
+            let _ = file.write_all(data);
+            let _ = file.flush();
+        }
+        Err(error) => {
+            log::warn!("failed to write session output log {}: {error}", log_path.display());
+            return;
+        }
+    }
+
+    // Trim from the front if the file exceeds the cap.
+    if let Ok(meta) = std::fs::metadata(log_path) {
+        if meta.len() > SESSION_OUTPUT_LOG_CAP_BYTES {
+            trim_session_output_log(log_path, SESSION_OUTPUT_LOG_CAP_BYTES);
+        }
+    }
+}
+
+fn trim_session_output_log(log_path: &std::path::Path, cap_bytes: u64) {
+    let content = match std::fs::read(log_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let len = content.len() as u64;
+    if len <= cap_bytes {
+        return;
+    }
+    // Keep the trailing half of the cap to avoid over-trimming on every flush.
+    let trim_start = (len - cap_bytes / 2) as usize;
+    // Advance to a valid UTF-8 boundary.
+    let mut start = trim_start;
+    while start < content.len() && (content[start] & 0xC0) == 0x80 {
+        start += 1;
+    }
+    let _ = std::fs::write(log_path, &content[start..]);
+}
+
+// How many 200ms polls before writing a heartbeat (~30s).
+const HEARTBEAT_POLL_INTERVAL: u32 = 150;
+
+fn spawn_exit_watch_thread(session: Arc<HostedSession>, app_state: AppState) {
+    std::thread::spawn(move || {
+        let mut poll_count: u32 = 0;
+
+        loop {
+            if !session.is_running() {
+                break;
+            }
+
+            let result = {
+                let mut child = match session.child.lock() {
+                    Ok(child) => child,
+                    Err(_) => {
+                        record_session_exit(
+                            &session,
+                            &app_state,
+                            1,
+                            false,
+                            "session.wait_failed",
+                            None,
+                            Some("failed to access session child"),
+                        );
+                        break;
+                    }
+                };
+
+                child.try_wait()
+            };
+
+            match result {
+                Ok(Some(status)) => {
+                    let code = status.exit_code();
+                    let error_detail = if !status.success() {
+                        let reason = describe_exit_code(code);
+                        let activity = last_activity_snapshot(&session);
+                        let mut detail = format!("exit code {code}: {reason}");
+                        detail.push_str(&format!("\n--- last activity ---\n{activity}"));
+                        if !session.startup_prompt.is_empty() {
+                            detail.push_str(&format!(
+                                "\n--- startup prompt ---\n{}",
+                                truncate_for_log(&session.startup_prompt, 500)
+                            ));
+                        }
+                        if let Some(tail) = last_output_lines(&session, 30) {
+                            detail.push_str("\n--- last output (30 lines) ---\n");
+                            detail.push_str(&tail);
+                        }
+                        log::error!(
+                            "session #{} crashed — {detail}",
+                            session.session_record_id
+                        );
+                        Some(detail)
+                    } else {
+                        log::info!(
+                            "session #{} exited cleanly (code {code})",
+                            session.session_record_id
+                        );
+                        None
+                    };
+                    record_session_exit(
+                        &session,
+                        &app_state,
+                        code,
+                        status.success(),
+                        "session.exited",
+                        None,
+                        error_detail.as_deref(),
+                    );
+                    break;
+                }
+                Ok(None) => {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    poll_count = poll_count.wrapping_add(1);
+
+                    if poll_count % HEARTBEAT_POLL_INTERVAL == 0 {
+                        if let Err(error) =
+                            app_state.update_session_heartbeat(session.session_record_id)
+                        {
+                            log::warn!(
+                                "session #{} heartbeat update failed: {error}",
+                                session.session_record_id
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    log::error!(
+                        "session #{} wait failed: {error}",
+                        session.session_record_id
+                    );
                     record_session_exit(
                         &session,
                         &app_state,
@@ -1515,74 +1675,10 @@ fn spawn_exit_watch_thread(session: Arc<HostedSession>, app_state: AppState) {
                         false,
                         "session.wait_failed",
                         None,
-                        Some("failed to access session child"),
+                        Some(&error.to_string()),
                     );
                     break;
                 }
-            };
-
-            child.try_wait()
-        };
-
-        match result {
-            Ok(Some(status)) => {
-                let code = status.exit_code();
-                let error_detail = if !status.success() {
-                    let reason = describe_exit_code(code);
-                    let activity = last_activity_snapshot(&session);
-                    let mut detail = format!("exit code {code}: {reason}");
-                    detail.push_str(&format!("\n--- last activity ---\n{activity}"));
-                    if !session.startup_prompt.is_empty() {
-                        detail.push_str(&format!(
-                            "\n--- startup prompt ---\n{}",
-                            truncate_for_log(&session.startup_prompt, 500)
-                        ));
-                    }
-                    if let Some(tail) = last_output_lines(&session, 30) {
-                        detail.push_str("\n--- last output (30 lines) ---\n");
-                        detail.push_str(&tail);
-                    }
-                    log::error!(
-                        "session #{} crashed — {detail}",
-                        session.session_record_id
-                    );
-                    Some(detail)
-                } else {
-                    log::info!(
-                        "session #{} exited cleanly (code {code})",
-                        session.session_record_id
-                    );
-                    None
-                };
-                record_session_exit(
-                    &session,
-                    &app_state,
-                    code,
-                    status.success(),
-                    "session.exited",
-                    None,
-                    error_detail.as_deref(),
-                );
-                break;
-            }
-            Ok(None) => {
-                std::thread::sleep(std::time::Duration::from_millis(200));
-            }
-            Err(error) => {
-                log::error!(
-                    "session #{} wait failed: {error}",
-                    session.session_record_id
-                );
-                record_session_exit(
-                    &session,
-                    &app_state,
-                    1,
-                    false,
-                    "session.wait_failed",
-                    None,
-                    Some(&error.to_string()),
-                );
-                break;
             }
         }
     });
@@ -1800,6 +1896,21 @@ fn persist_session_exit(
     if let Some(error) = finish_error {
         log::error!("failed to finish session record: {error}");
     }
+
+    // Clean up the on-disk output log when the session exits normally.
+    // On crash we keep it for post-mortem inspection.
+    if success {
+        let log_path = session_output_log_path(&session.storage, session.session_record_id);
+        if log_path.exists() {
+            if let Err(error) = std::fs::remove_file(&log_path) {
+                log::warn!(
+                    "failed to remove session output log {}: {error}",
+                    log_path.display()
+                );
+            }
+        }
+    }
+
     try_append_session_event(
         app_state,
         session.project_id,
