@@ -318,7 +318,15 @@ fn project_create_initializes_git_and_reuses_existing_repo_root_identity() {
             work_item_prefix: None,
         })
         .expect("existing project should be returned for the same repository root");
-    let normalize_path = |value: String| value.replace("\\\\?\\", "").to_ascii_lowercase();
+    let normalize_path = |value: String| {
+        let p = std::path::PathBuf::from(value.replace("\\\\?\\", ""));
+        std::fs::canonicalize(&p)
+            .unwrap_or(p)
+            .display()
+            .to_string()
+            .replace("\\\\?\\", "")
+            .to_ascii_lowercase()
+    };
 
     assert_eq!(created.id, reused.id);
     assert!(harness.project_root.join(".git").is_dir());
