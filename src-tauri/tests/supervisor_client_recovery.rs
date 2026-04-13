@@ -280,6 +280,9 @@ fn supervisor_client_recovers_after_supervisor_process_is_killed() {
     let first_runtime = harness.runtime_info();
 
     terminate_pid(first_runtime.pid).expect("supervisor process should terminate");
+    // Give the OS time to release the port so the client detects the dead process
+    // rather than hitting a half-closed socket (flaky on slow CI runners).
+    std::thread::sleep(std::time::Duration::from_millis(500));
 
     let project = harness
         .client
