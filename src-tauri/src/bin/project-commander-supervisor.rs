@@ -1799,6 +1799,8 @@ fn ensure_project_worktree(
         }
         inject_claude_gitexclude(&worktree_path);
         link_node_modules(&project_git_root, &worktree_path);
+        create_sidecar_stubs(&worktree_path);
+        run_npm_install_in_worktree(&worktree_path);
     }
 
     state
@@ -4050,6 +4052,81 @@ fn link_node_modules(main_root: &Path, worktree_path: &Path) {
             log::error!("node_modules symlink error: {e}");
         }
     }
+}
+
+/// Creates empty stub sidecar binaries in `{worktree_path}/src-tauri/binaries/` so that
+/// `tauri_build::build()` succeeds during `cargo check` inside worktrees.
+///
+/// The `src-tauri/binaries/` directory is gitignored and absent in every new worktree.
+/// Zero-byte stubs are sufficient — they are never executed during development.
+fn create_sidecar_stubs(worktree_path: &Path) {
+    const TARGET_TRIPLE: &str = env!("CARGO_BUILD_TARGET");
+
+    let stubs = [
+        "project-commander-supervisor",
+        "project-commander-cli",
+    ];
+
+    let binaries_dir = worktree_path.join("src-tauri").join("binaries");
+    if let Err(e) = fs::create_dir_all(&binaries_dir) {
+        log::warn!("[supervisor] failed to create sidecar stubs dir: {e}");
+        return;
+    }
+
+    for name in stubs {
+        #[cfg(windows)]
+        let filename = format!("{name}-{TARGET_TRIPLE}.exe");
+        #[cfg(not(windows))]
+        let filename = format!("{name}-{TARGET_TRIPLE}");
+
+        let stub_path = binaries_dir.join(&filename);
+        if stub_path.exists() {
+            continue;
+        }
+        match fs::write(&stub_path, b"") {
+            Ok(()) => log::info!("[supervisor] created sidecar stub: {}", stub_path.display()),
+            Err(e) => log::warn!("[supervisor] failed to write sidecar stub {filename}: {e}"),
+        }
+    }
+}
+
+/// Runs `npm install` in the worktree root so `node_modules` is populated before the
+/// agent begins work. Best-effort: logs on failure but never prevents worktree creation.
+fn run_npm_install_in_worktree(worktree_path: &Path) {
+    log::info!(
+        "[supervisor] running npm install in worktree: {}",
+        worktree_path.display()
+    );
+    match npm_command()
+        .arg("install")
+        .current_dir(worktree_path)
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            log::info!("[supervisor] npm install succeeded in worktree");
+        }
+        Ok(o) => log::warn!(
+            "[supervisor] npm install failed in worktree: {}",
+            String::from_utf8_lossy(&o.stderr).trim()
+        ),
+        Err(e) => log::warn!("[supervisor] npm install error in worktree: {e}"),
+    }
+}
+
+fn npm_command() -> ProcessCommand {
+    #[cfg(windows)]
+    let binary = "npm.cmd";
+    #[cfg(not(windows))]
+    let binary = "npm";
+
+    let mut command = ProcessCommand::new(binary);
+
+    #[cfg(windows)]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    command
 }
 
 fn is_git_worktree_path(worktree_path: &Path) -> bool {
