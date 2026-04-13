@@ -71,11 +71,17 @@ function WorkspaceShell() {
       if (mod && !event.altKey && !event.shiftKey) {
         if (key === '1') {
           event.preventDefault()
-          state.setActiveView('terminal')
+          state.setActiveView('overview')
           return
         }
 
         if (key === '2') {
+          event.preventDefault()
+          state.setActiveView('terminal')
+          return
+        }
+
+        if (key === '3') {
           event.preventDefault()
           state.setActiveView(
             state.selectedTerminalWorktreeId === null ? 'workItems' : 'worktreeWorkItem',
@@ -83,13 +89,13 @@ function WorkspaceShell() {
           return
         }
 
-        if (key === '3' && state.selectedTerminalWorktreeId === null) {
+        if (key === '4' && state.selectedTerminalWorktreeId === null) {
           event.preventDefault()
           state.setActiveView('history')
           return
         }
 
-        if (key === '4' && state.selectedTerminalWorktreeId === null) {
+        if (key === '5' && state.selectedTerminalWorktreeId === null) {
           event.preventDefault()
           state.setActiveView('configuration')
           return

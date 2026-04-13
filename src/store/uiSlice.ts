@@ -26,7 +26,7 @@ const initialThemeId = loadPersistedThemeId()
 applyTheme(getTheme(initialThemeId))
 
 export const createUiSlice: StateCreator<AppStore, [], [], UiSlice> = (set, get) => ({
-  activeView: 'terminal',
+  activeView: 'overview',
   activeThemeId: initialThemeId,
   isProjectRailCollapsed: false,
   isSessionRailCollapsed: false,

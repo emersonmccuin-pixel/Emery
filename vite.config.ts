@@ -29,6 +29,10 @@ export default defineConfig({
             return 'virtualizer-vendor'
           }
 
+          if (id.includes('react-markdown') || id.includes('remark') || id.includes('micromark') || id.includes('mdast') || id.includes('unified') || id.includes('hast') || id.includes('vfile') || id.includes('unist') || id.includes('devlop') || id.includes('decode-named-character') || id.includes('character-entities')) {
+            return 'markdown-vendor'
+          }
+
           return 'vendor'
         },
       },

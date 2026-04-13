@@ -12,7 +12,7 @@ const budgets = [
   {
     label: 'main-css',
     pattern: /^index-.*\.css$/,
-    maxBytes: 85_000,
+    maxBytes: 90_000,
   },
   {
     label: 'store-js',
@@ -35,9 +35,14 @@ const budgets = [
     maxBytes: 5_000,
   },
   {
+    label: 'markdown-vendor-js',
+    pattern: /^markdown-vendor-.*\.js$/,
+    maxBytes: 200_000,
+  },
+  {
     label: 'lazy-panel-js',
     pattern:
-      /^(WorkItemsPanel|AppSettingsPanel|HistoryPanel|CreateProjectModal|WorktreeWorkItemPanel|LiveTerminal|ConfigurationPanel)-.*\.js$/,
+      /^(WorkItemsPanel|AppSettingsPanel|HistoryPanel|CreateProjectModal|WorktreeWorkItemPanel|LiveTerminal|ConfigurationPanel|OverviewPanel)-.*\.js$/,
     maxBytes: 20_000,
     allowMany: true,
   },

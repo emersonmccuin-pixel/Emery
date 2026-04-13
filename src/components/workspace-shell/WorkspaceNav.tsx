@@ -34,16 +34,23 @@ function WorkspaceNav() {
         {selectedTerminalWorktreeId !== null ? (
           <TabsList>
             <TabsTrigger
-              value="terminal"
-              title="Console (Ctrl/Cmd+1)"
+              value="overview"
+              title="Overview (Ctrl/Cmd+1)"
               aria-keyshortcuts="Control+1 Meta+1"
+            >
+              OVERVIEW
+            </TabsTrigger>
+            <TabsTrigger
+              value="terminal"
+              title="Console (Ctrl/Cmd+2)"
+              aria-keyshortcuts="Control+2 Meta+2"
             >
               CONSOLE
             </TabsTrigger>
             <TabsTrigger
               value="worktreeWorkItem"
-              title="Work Item (Ctrl/Cmd+2)"
-              aria-keyshortcuts="Control+2 Meta+2"
+              title="Work Item (Ctrl/Cmd+3)"
+              aria-keyshortcuts="Control+3 Meta+3"
             >
               WORK ITEM
             </TabsTrigger>
@@ -51,16 +58,23 @@ function WorkspaceNav() {
         ) : (
           <TabsList>
             <TabsTrigger
-              value="terminal"
-              title="Console (Ctrl/Cmd+1)"
+              value="overview"
+              title="Overview (Ctrl/Cmd+1)"
               aria-keyshortcuts="Control+1 Meta+1"
+            >
+              OVERVIEW
+            </TabsTrigger>
+            <TabsTrigger
+              value="terminal"
+              title="Console (Ctrl/Cmd+2)"
+              aria-keyshortcuts="Control+2 Meta+2"
             >
               CONSOLE
             </TabsTrigger>
             <TabsTrigger
               value="workItems"
-              title="Backlog (Ctrl/Cmd+2)"
-              aria-keyshortcuts="Control+2 Meta+2"
+              title="Backlog (Ctrl/Cmd+3)"
+              aria-keyshortcuts="Control+3 Meta+3"
             >
               BACKLOG
               {openWorkItemCount > 0 ? (
@@ -71,8 +85,8 @@ function WorkspaceNav() {
             </TabsTrigger>
             <TabsTrigger
               value="history"
-              title="History (Ctrl/Cmd+3)"
-              aria-keyshortcuts="Control+3 Meta+3"
+              title="History (Ctrl/Cmd+4)"
+              aria-keyshortcuts="Control+4 Meta+4"
             >
               HISTORY
               {recoverableSessionCount > 0 ? (
@@ -83,8 +97,8 @@ function WorkspaceNav() {
             </TabsTrigger>
             <TabsTrigger
               value="configuration"
-              title="Configuration (Ctrl/Cmd+4)"
-              aria-keyshortcuts="Control+4 Meta+4"
+              title="Configuration (Ctrl/Cmd+5)"
+              aria-keyshortcuts="Control+5 Meta+5"
             >
               CONFIGURATION
             </TabsTrigger>
