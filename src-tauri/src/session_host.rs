@@ -1165,7 +1165,7 @@ fn build_claude_bridge_system_prompt(
                 " This session is attached to worktree #{} on branch {} for work item {} ({}).",
                 " Treat the attached worktree path as the only writable project path and do not intentionally modify files outside it.",
                 "\n\n## Your Assignment\n",
-                "Read your work item ({}) via get_work_item for full context, requirements, and any notes from previous agents.",
+                "Read your work item ({}, id: {}) via get_work_item(id: {}) for full context, requirements, and any notes from previous agents.",
                 " Your work item body is your primary source of truth for what to do.\n\n",
                 "## Communication Protocol\n",
                 "Use the send_message MCP tool for ALL communication. Do NOT use SendMessage or teammate messaging.\n\n",
@@ -1198,6 +1198,8 @@ fn build_claude_bridge_system_prompt(
             worktree.work_item_call_sign,
             worktree.work_item_title,
             worktree.work_item_call_sign,
+            worktree.work_item_id,
+            worktree.work_item_id,
         ));
 
         let mode_paragraph = match execution_mode.unwrap_or("build") {
