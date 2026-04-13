@@ -1,4 +1,4 @@
-import { Suspense, useState } from 'react'
+import { type ReactNode, Suspense, useState } from 'react'
 import { Settings, Plus, ChevronLeft, ChevronRight, X, Pin, PinOff } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -276,12 +276,6 @@ function WorkspaceShell() {
                 </div>
               </ScrollArea>
 
-              <div className="p-4 border-t border-hud-cyan/30">
-                <Button variant="ghost" className="w-full justify-start h-8 text-[10px] uppercase tracking-widest hover:text-hud-cyan" onClick={() => openAppSettings()}>
-                  <Settings size={12} className="mr-2" />
-                  App Settings
-                </Button>
-              </div>
             </>
           )}
         </aside>
@@ -372,7 +366,7 @@ function WorkspaceShell() {
               <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                 {sessionError ? (
                   <div className="px-4 py-2 bg-destructive/10 border-b border-destructive/20 text-destructive text-[10px] uppercase font-bold tracking-widest animate-pulse">
-                    SYSTEM ALERT: {sessionError}
+                    Alert: {sessionError}
                   </div>
                 ) : null}
                 
@@ -432,7 +426,7 @@ function WorkspaceShell() {
                             <Suspense
                               fallback={
                                 <div className="flex flex-col items-center justify-center h-full text-hud-green font-mono text-xs animate-pulse">
-                                  <div className="mb-4">[ SYSTEM ] INITIATING SECURE LINK...</div>
+                                  <div className="mb-4">Starting session...</div>
                                   <div className="w-48 h-1 bg-hud-cyan/10 rounded-full overflow-hidden">
                                     <div className="h-full bg-hud-green animate-[progress_2s_ease-in-out_infinite]" style={{ width: '40%' }} />
                                   </div>
@@ -536,7 +530,7 @@ function WorkspaceShell() {
                                   <span className="text-xl font-black text-hud-green">{openWorkItemCount}</span>
                                 </div>
                                 <div className="p-4 bg-hud-cyan/10 border border-hud-cyan/30 rounded-lg flex flex-col items-center">
-                                  <span className="text-[9px] uppercase tracking-widest opacity-60 mb-2">Knowledge Base</span>
+                                  <span className="text-[9px] uppercase tracking-widest opacity-60 mb-2">Documents</span>
                                   <span className="text-xl font-black text-hud-cyan">{documents.length}</span>
                                 </div>
                               </div>
@@ -584,7 +578,7 @@ function WorkspaceShell() {
 
                             <div className="space-y-4">
                               <div className="flex flex-col p-3 bg-black/60 border border-hud-cyan/30 rounded">
-                                <span className="text-[8px] uppercase tracking-widest opacity-60 mb-1">Mount Point</span>
+                                <span className="text-[8px] uppercase tracking-widest opacity-60 mb-1">Project Path</span>
                                 <code className="text-[10px] break-all text-hud-cyan/80">{selectedProject.rootPath}</code>
                               </div>
                               <div className="grid grid-cols-3 gap-2">
@@ -691,7 +685,7 @@ function WorkspaceShell() {
                                   onClick={() => void repairCleanupCandidates()}
                                   disabled={isRepairingCleanup}
                                 >
-                                  {isRepairingCleanup ? 'REPAIRING...' : 'EXECUTE SYSTEM PURGE'}
+                                  {isRepairingCleanup ? 'REPAIRING...' : 'Clean Up'}
                                 </Button>
                               )}
                             </div>
@@ -699,7 +693,7 @@ function WorkspaceShell() {
 
                           {recoveryActionCount === 0 && interruptedSessionRecords.length === 0 ? (
                             <div className="text-center py-12 border border-dashed border-hud-magenta/50 rounded-lg bg-black/40">
-                              <p className="text-[10px] text-hud-magenta/40 uppercase tracking-[0.4em] font-black">System Nominal // No Leaks Detected</p>
+                              <p className="text-[10px] text-hud-magenta/40 uppercase tracking-[0.4em] font-black">All clear</p>
                             </div>
                           ) : (
                             <div className="space-y-6">
@@ -751,7 +745,7 @@ function WorkspaceShell() {
 
                               {orphanedSessions.length > 0 ? (
                                 <div className="space-y-3">
-                                  <span className="text-[9px] font-black uppercase tracking-[0.3em] text-hud-magenta/60">Ghost Sessions Detected</span>
+                                  <span className="text-[9px] font-black uppercase tracking-[0.3em] text-hud-magenta/60">Orphaned Sessions</span>
                                   <div className="grid grid-cols-1 gap-3">
                                     {orphanedSessions.map((session) => (
                                       <div key={session.id} className="flex flex-wrap items-center justify-between gap-3 p-3 bg-black/60 border border-hud-magenta/40 rounded">
@@ -795,7 +789,7 @@ function WorkspaceShell() {
 
                               {runtimeCleanupCandidates.length > 0 || staleWorktreeCleanupCandidates.length > 0 || staleWorktreeRecordCandidates.length > 0 ? (
                                 <div className="space-y-3">
-                                  <span className="text-[9px] font-black uppercase tracking-[0.3em] text-hud-magenta/60">Artifact Drift</span>
+                                  <span className="text-[9px] font-black uppercase tracking-[0.3em] text-hud-magenta/60">Stale Files</span>
                                   <div className="grid grid-cols-1 gap-2">
                                     {[...runtimeCleanupCandidates, ...staleWorktreeCleanupCandidates, ...staleWorktreeRecordCandidates].map((candidate) => (
                                       <div key={`${candidate.kind}:${candidate.path}`} className="flex flex-wrap items-center justify-between gap-3 p-3 bg-black/60 border border-hud-magenta/40 rounded">
@@ -1110,7 +1104,7 @@ function WorkspaceShell() {
                           <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
                             <div>
                               <p className="text-[9px] uppercase tracking-[0.2em] text-hud-cyan mb-1">
-                                Knowledge Base
+                                Documents
                               </p>
                               <h4 className="text-lg font-black tracking-widest">
                                 PROJECT DOCUMENTS
@@ -1280,7 +1274,7 @@ function WorkspaceShell() {
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-[11px] font-black tracking-widest truncate flex-1 uppercase">
-                          {selectedProject?.name ?? 'NODE_NULL'}
+                          {selectedProject?.name ?? 'No session'}
                         </span>
                         <div className="flex items-center gap-1.5 shrink-0">
                           <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${isDispatcherRunning ? 'bg-hud-green shadow-[0_0_6px_rgba(116,243,161,0.8)]' : 'bg-white/20'}`} />
@@ -1331,34 +1325,41 @@ function WorkspaceShell() {
                               >
                                 {snapshot?.isRunning ? 'LIVE' : 'OFF'}
                               </Badge>
-                              <span className="ml-auto text-[8px] font-mono text-white/35 shrink-0">
-                                #{worktree.id}
-                              </span>
                             </div>
                             <div className="mb-1.5 flex gap-1 flex-wrap">
-                              {(worktree.pendingSignalCount ?? 0) > 0 ? (
-                                <Badge
-                                  variant="offline"
-                                  className="h-3.5 text-[7px] px-1 bg-hud-amber/10 text-hud-amber border-hud-amber/30 animate-pulse"
-                                >
-                                  {worktree.pendingSignalCount === 1 ? '1 SIG' : `${worktree.pendingSignalCount} SIGS`}
-                                </Badge>
-                              ) : null}
-                              {worktree.hasUncommittedChanges ? (
-                                <Badge variant="destructive" className="h-3.5 text-[7px] px-1">
-                                  DIRTY
-                                </Badge>
-                              ) : null}
-                              {worktree.hasUnmergedCommits ? (
-                                <Badge variant="offline" className="h-3.5 text-[7px] bg-hud-magenta/10 text-hud-magenta border-hud-magenta/30 px-1">
-                                  UNMERGED
-                                </Badge>
-                              ) : null}
-                              {!worktree.pathAvailable ? (
-                                <Badge variant="destructive" className="h-3.5 text-[7px] px-1">
-                                  MISSING
-                                </Badge>
-                              ) : null}
+                              {(() => {
+                                // Cap at 3 total badges (LIVE/OFF counts as 1); show up to 2 more in priority order
+                                const extra: ReactNode[] = []
+                                if (worktree.hasUncommittedChanges) {
+                                  extra.push(
+                                    <Badge key="dirty" variant="destructive" className="h-3.5 text-[7px] px-1">
+                                      DIRTY
+                                    </Badge>
+                                  )
+                                }
+                                if (worktree.hasUnmergedCommits) {
+                                  extra.push(
+                                    <Badge key="unmerged" variant="offline" className="h-3.5 text-[7px] bg-hud-magenta/10 text-hud-magenta border-hud-magenta/30 px-1">
+                                      UNMERGED
+                                    </Badge>
+                                  )
+                                }
+                                if ((worktree.pendingSignalCount ?? 0) > 0 && extra.length < 2) {
+                                  extra.push(
+                                    <Badge key="sigs" variant="offline" className="h-3.5 text-[7px] px-1 bg-hud-amber/10 text-hud-amber border-hud-amber/30 animate-pulse">
+                                      {worktree.pendingSignalCount === 1 ? '1 SIG' : `${worktree.pendingSignalCount} SIGS`}
+                                    </Badge>
+                                  )
+                                }
+                                if (!worktree.pathAvailable && extra.length < 2) {
+                                  extra.push(
+                                    <Badge key="missing" variant="destructive" className="h-3.5 text-[7px] px-1">
+                                      MISSING
+                                    </Badge>
+                                  )
+                                }
+                                return extra.slice(0, 2)
+                              })()}
                             </div>
                             {(worktree.workItemTitle || worktree.sessionSummary) ? (
                               <p className="text-[10px] text-white/70 leading-snug line-clamp-2">
