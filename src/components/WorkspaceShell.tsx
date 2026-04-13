@@ -12,6 +12,7 @@ import ConfigurationPanel from './ConfigurationPanel'
 import AppSettingsPanel from './AppSettingsPanel'
 import WorkItemsPanel from './WorkItemsPanel'
 import WorktreeWorkItemPanel from './WorktreeWorkItemPanel'
+import RecoveryBanner from './RecoveryBanner'
 import {
   formatSessionState,
   formatTimestamp,
@@ -110,6 +111,10 @@ function WorkspaceShell() {
   const startingWorkItemId = useAppStore((s) => s.startingWorkItemId)
   const launchProfiles = useAppStore((s) => s.launchProfiles)
 
+  // Recovery state
+  const crashManifest = useAppStore((s) => s.crashManifest)
+  const recoveryResults = useAppStore((s) => s.recoveryResults)
+
   // Actions (stable references — never cause re-renders)
   const {
     setProjectError,
@@ -152,12 +157,47 @@ function WorkspaceShell() {
     deleteDocument,
     openAppSettings,
     closeAppSettings,
+    dismissRecovery,
+    skipSession,
+    continueSession,
   } = useAppStore.getState()
 
   const isAppSettingsOpen = useAppStore((s) => s.isAppSettingsOpen)
   const appSettingsInitialTab = useAppStore((s) => s.appSettingsInitialTab)
 
   const [cleanupConfirmId, setCleanupConfirmId] = useState<number | null>(null)
+  const [bannerActiveSessionId, setBannerActiveSessionId] = useState<number | null>(null)
+
+  // Recovery banner handlers
+  async function handleBannerResume(session: import('../types').SessionRecord) {
+    setBannerActiveSessionId(session.id)
+    try {
+      if (session.state === 'orphaned') {
+        await recoverOrphanedSession(session)
+      } else {
+        await resumeSessionRecord(session)
+      }
+      useAppStore.setState((s) => ({
+        recoveryResults: { ...s.recoveryResults, [session.id]: 'resumed' as const },
+      }))
+    } catch {
+      useAppStore.setState((s) => ({
+        recoveryResults: { ...s.recoveryResults, [session.id]: 'failed' as const },
+      }))
+    } finally {
+      setBannerActiveSessionId(null)
+    }
+  }
+
+  async function handleBannerResumeAll() {
+    if (!crashManifest) return
+    const allSessions = [...crashManifest.interruptedSessions, ...crashManifest.orphanedSessions]
+    for (const session of allSessions) {
+      if (!recoveryResults[session.id] || recoveryResults[session.id] === 'pending') {
+        await handleBannerResume(session)
+      }
+    }
+  }
 
   // Derive dispatcher status from live sessions
   const isDispatcherRunning = liveSessions.some(
@@ -482,6 +522,18 @@ function WorkspaceShell() {
                 </nav>
               </Tabs>
 
+              {crashManifest ? (
+                <RecoveryBanner
+                  manifest={crashManifest}
+                  recoveryResults={recoveryResults}
+                  activeSessionId={bannerActiveSessionId}
+                  onResume={(session) => void handleBannerResume(session)}
+                  onResumeAll={() => void handleBannerResumeAll()}
+                  onSkip={skipSession}
+                  onDismiss={dismissRecovery}
+                />
+              ) : null}
+
               <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
                 {sessionError ? (
                   <div className="px-4 py-2 bg-destructive/10 border-b border-destructive/20 text-destructive text-[10px] uppercase font-bold tracking-widest animate-pulse">
@@ -584,6 +636,16 @@ function WorkspaceShell() {
                                   </div>
 
                                   <div className="mt-4 flex flex-wrap gap-2">
+                                    {selectedTargetHistoryRecord.state === 'interrupted' ? (
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-8 px-4 text-[9px] font-black uppercase tracking-[0.2em] border-hud-cyan text-hud-cyan hover:bg-hud-cyan/10 shadow-[0_0_12px_rgba(58,240,224,0.25)]"
+                                        onClick={() => continueSession(selectedTargetHistoryRecord.id)}
+                                      >
+                                        CONTINUE SESSION
+                                      </Button>
+                                    ) : null}
                                     {selectedTargetHistoryRecord.state === 'orphaned' ? (
                                       <Button
                                         variant="outline"

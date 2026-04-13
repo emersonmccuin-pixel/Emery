@@ -19,10 +19,10 @@ use session_api::{
 use std::fs;
 use supervisor_api::{
     CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget, CleanupRepairOutput,
-    CreateProjectDocumentInput, CreateProjectWorkItemInput, EnsureProjectWorktreeInput,
-    LaunchProjectWorktreeAgentInput, PinWorktreeInput, ProjectDocumentTarget, ProjectWorkItemTarget,
-    ProjectWorktreeTarget, SessionHistoryOutput, UpdateProjectDocumentInput,
-    UpdateProjectWorkItemInput, WorktreeLaunchOutput,
+    CrashRecoveryManifest, CreateProjectDocumentInput, CreateProjectWorkItemInput,
+    EnsureProjectWorktreeInput, LaunchProjectWorktreeAgentInput, PinWorktreeInput,
+    ProjectDocumentTarget, ProjectWorkItemTarget, ProjectWorktreeTarget, SessionHistoryOutput,
+    UpdateProjectDocumentInput, UpdateProjectWorkItemInput, WorktreeLaunchOutput,
 };
 use tauri::{AppHandle, Manager, State};
 
@@ -368,6 +368,11 @@ fn save_clipboard_image(base64_png: String, app_handle: AppHandle) -> AppResult<
     Ok(path.display().to_string())
 }
 
+#[tauri::command]
+fn get_crash_recovery_manifest(state: State<SupervisorClient>) -> AppResult<Option<CrashRecoveryManifest>> {
+    state.get_crash_recovery_manifest()
+}
+
 const PROJECT_FILE_WHITELIST: &[&str] = &["CLAUDE.md", "AGENTS.md"];
 
 fn resolve_project_file(root_path: &str, filename: &str) -> AppResult<std::path::PathBuf> {
@@ -447,7 +452,8 @@ pub fn run() {
             repair_cleanup_candidates,
             read_project_file,
             write_project_file,
-            save_clipboard_image
+            save_clipboard_image,
+            get_crash_recovery_manifest
         ])
         .setup(|app| {
             let storage = ensure_storage_dirs(&app.handle())?;

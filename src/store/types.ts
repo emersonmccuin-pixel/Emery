@@ -2,6 +2,7 @@ import type { FormEvent } from 'react'
 import type {
   AppSettings,
   CleanupCandidate,
+  CrashRecoveryManifest,
   DocumentRecord,
   LaunchProfileRecord,
   ProjectRecord,
@@ -241,6 +242,19 @@ export type HistorySlice = {
   repairCleanupCandidates: () => Promise<void>
 }
 
+export type RecoveryResult = 'pending' | 'resumed' | 'skipped' | 'failed'
+
+export type RecoverySlice = {
+  crashManifest: CrashRecoveryManifest | null
+  recoveryInProgress: boolean
+  recoveryResults: Record<number, RecoveryResult>
+
+  loadCrashManifest: () => Promise<void>
+  dismissRecovery: () => void
+  skipSession: (sessionId: number) => void
+  continueSession: (sessionId: number) => void
+}
+
 export type AppSettingsTab = 'appearance' | 'accounts' | 'defaults' | 'diagnostics'
 
 export type UiSlice = {
@@ -268,4 +282,5 @@ export type AppStore = ProjectSlice &
   WorkItemSlice &
   WorktreeSlice &
   HistorySlice &
-  UiSlice
+  UiSlice &
+  RecoverySlice
