@@ -1,0 +1,21 @@
+name: reviewer.sonnet.lightweight
+role: reviewer
+version: 1
+description: Lightweight reviewer for docs and non-blocking sanity passes.
+categories:
+  - DOCUMENTATION
+  - CODING
+provider: claude_code
+model: sonnet-4.6
+prompt_template_ref: prompts/reviewer.lightweight.md
+tool_allowlist:
+  - list_work_items
+  - list_documents
+secret_scopes: []
+default_policy:
+  timeout_ms: 600000
+  max_retries: 1
+  token_budget: low
+tags:
+  - lightweight
+  - review

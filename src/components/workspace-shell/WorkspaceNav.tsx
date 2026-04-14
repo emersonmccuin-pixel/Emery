@@ -9,6 +9,21 @@ import {
   useSelectedWorktree,
 } from '../../store'
 
+const WORKTREE_TABS = [
+  { value: 'overview', label: 'OVERVIEW' },
+  { value: 'terminal', label: 'CONSOLE' },
+  { value: 'worktreeWorkItem', label: 'WORK ITEM' },
+] as const
+
+const PROJECT_TABS = [
+  { value: 'overview', label: 'OVERVIEW' },
+  { value: 'terminal', label: 'CONSOLE' },
+  { value: 'workItems', label: 'BACKLOG' },
+  { value: 'history', label: 'HISTORY' },
+  { value: 'configuration', label: 'CONFIGURATION' },
+  { value: 'workflows', label: 'WORKFLOWS' },
+] as const
+
 function WorkspaceNav() {
   const selectedProject = useSelectedProject()
   const selectedWorktree = useSelectedWorktree()
@@ -19,6 +34,7 @@ function WorkspaceNav() {
   const selectedTerminalWorktreeId = useAppStore((s) => s.selectedTerminalWorktreeId)
 
   const { setActiveView, openAppSettings } = useAppStore.getState()
+  const tabs = selectedTerminalWorktreeId !== null ? WORKTREE_TABS : PROJECT_TABS
 
   if (!selectedProject) {
     return null
@@ -31,86 +47,28 @@ function WorkspaceNav() {
       className="contents"
     >
       <nav className="workspace-tabs--shell flex items-center justify-between h-10 px-4 shrink-0">
-        {selectedTerminalWorktreeId !== null ? (
-          <TabsList>
-            <TabsTrigger
-              value="overview"
-              title="Overview (Ctrl/Cmd+1)"
-              aria-keyshortcuts="Control+1 Meta+1"
-            >
-              OVERVIEW
-            </TabsTrigger>
-            <TabsTrigger
-              value="terminal"
-              title="Console (Ctrl/Cmd+2)"
-              aria-keyshortcuts="Control+2 Meta+2"
-            >
-              CONSOLE
-            </TabsTrigger>
-            <TabsTrigger
-              value="worktreeWorkItem"
-              title="Work Item (Ctrl/Cmd+3)"
-              aria-keyshortcuts="Control+3 Meta+3"
-            >
-              WORK ITEM
-            </TabsTrigger>
-          </TabsList>
-        ) : (
-          <TabsList>
-            <TabsTrigger
-              value="overview"
-              title="Overview (Ctrl/Cmd+1)"
-              aria-keyshortcuts="Control+1 Meta+1"
-            >
-              OVERVIEW
-            </TabsTrigger>
-            <TabsTrigger
-              value="terminal"
-              title="Console (Ctrl/Cmd+2)"
-              aria-keyshortcuts="Control+2 Meta+2"
-            >
-              CONSOLE
-            </TabsTrigger>
-            <TabsTrigger
-              value="workItems"
-              title="Backlog (Ctrl/Cmd+3)"
-              aria-keyshortcuts="Control+3 Meta+3"
-            >
-              BACKLOG
-              {openWorkItemCount > 0 ? (
+        <TabsList>
+          {tabs.map((tab) => (
+            <TabsTrigger key={tab.value} value={tab.value}>
+              {tab.label}
+              {tab.value === 'workItems' && openWorkItemCount > 0 ? (
                 <span className="ml-2 px-1 rounded-sm bg-hud-green/10 text-[9px] text-hud-green font-bold border border-hud-green/40">
                   {openWorkItemCount}
                 </span>
               ) : null}
-            </TabsTrigger>
-            <TabsTrigger
-              value="history"
-              title="History (Ctrl/Cmd+4)"
-              aria-keyshortcuts="Control+4 Meta+4"
-            >
-              HISTORY
-              {recoverableSessionCount > 0 ? (
+              {tab.value === 'history' && recoverableSessionCount > 0 ? (
                 <span className="ml-2 px-1 rounded-sm bg-hud-magenta/10 text-[9px] text-hud-magenta font-bold border border-hud-magenta/40">
                   {recoverableSessionCount}
                 </span>
               ) : null}
             </TabsTrigger>
-            <TabsTrigger
-              value="configuration"
-              title="Configuration (Ctrl/Cmd+5)"
-              aria-keyshortcuts="Control+5 Meta+5"
-            >
-              CONFIGURATION
-            </TabsTrigger>
-          </TabsList>
-        )}
+          ))}
+        </TabsList>
         <div className="flex items-center gap-3">
           <button
             type="button"
             className="h-6 w-6 inline-flex items-center justify-center rounded text-hud-cyan/60 hover:text-hud-cyan hover:bg-hud-cyan/10 transition-colors"
-            title="App Settings (Ctrl/Cmd+,)"
             aria-label="Open App Settings"
-            aria-keyshortcuts="Control+, Meta+,"
             onClick={() => openAppSettings()}
           >
             <Settings size={13} />

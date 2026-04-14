@@ -7,6 +7,7 @@ import { PanelBanner, PanelEmptyState, PanelLoadingState } from '@/components/ui
 import { MarkdownEditor } from '@/components/ui/markdown-editor'
 import { invoke } from '@/lib/tauri'
 import { useAppStore, useSelectedProject } from '../store'
+import './panel-surfaces.css'
 
 type ConfigurationTab = 'general' | 'system_prompt' | 'claude' | 'agents_md'
 

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import SessionRecoveryInspector from '../SessionRecoveryInspector'
 import { formatTimestamp, hasNativeSessionResume } from '../../sessionHistory'
+import { isWorkerLaunchProfileProvider } from '../../store/utils'
 import {
   useAppStore,
   useHasSelectedProjectLiveSession,
@@ -94,6 +95,14 @@ function TerminalStage() {
     selectedTargetHistoryRecord != null &&
     sessionRecoveryStatus[selectedTargetHistoryRecord.id] === 'loading'
   const selectedTargetHasNativeResume = hasNativeSessionResume(selectedTargetHistoryRecord)
+  const sessionProvider =
+    sessionSnapshot != null
+      ? launchProfiles.find((profile) => profile.id === sessionSnapshot.launchProfileId)?.provider ?? null
+      : null
+  const isReadOnlyWorkerTerminal =
+    sessionSnapshot != null &&
+    sessionSnapshot.worktreeId != null &&
+    isWorkerLaunchProfileProvider(sessionProvider)
   const countdownSeconds =
     selectedAutoRestart?.status === 'countdown' && selectedAutoRestart.restartAt !== null
       ? Math.max(0, Math.ceil((selectedAutoRestart.restartAt - countdownNow) / 1000))
@@ -175,7 +184,12 @@ function TerminalStage() {
                 </div>
               }
             >
-              <LiveTerminal snapshot={sessionSnapshot} onSessionExit={handleSessionExit} workItemPrefix={selectedProject.workItemPrefix} />
+              <LiveTerminal
+                snapshot={sessionSnapshot}
+                onSessionExit={handleSessionExit}
+                workItemPrefix={selectedProject.workItemPrefix}
+                readOnly={isReadOnlyWorkerTerminal}
+              />
             </Suspense>
           </div>
         </div>
@@ -207,9 +221,9 @@ function TerminalStage() {
                     </h4>
                     <p className="text-[11px] text-white/90 leading-relaxed">
                       {selectedAutoRestart.status === 'countdown'
-                        ? `This ${selectedTerminalWorktreeId === null ? 'dispatcher' : 'worktree session'} crashed unexpectedly. Project Commander will ${selectedTargetHasNativeResume ? 'resume the saved Claude session' : 'relaunch only this target with recovery context'} in ${countdownSeconds ?? 0}s unless you cancel.`
+                        ? `This ${selectedTerminalWorktreeId === null ? 'dispatcher' : 'worktree session'} crashed unexpectedly. Project Commander will ${selectedTargetHasNativeResume ? 'resume the saved provider session' : 'relaunch only this target with recovery context'} in ${countdownSeconds ?? 0}s unless you cancel.`
                         : selectedAutoRestart.status === 'restarting'
-                          ? `Project Commander is ${selectedTargetHasNativeResume ? 'resuming the saved Claude session' : 'relaunching only this target with recovery context'}.`
+                          ? `Project Commander is ${selectedTargetHasNativeResume ? 'resuming the saved provider session' : 'relaunching only this target with recovery context'}.`
                           : selectedAutoRestart.blockedReason ??
                             'This target has crashed repeatedly. Auto-restart is paused until you resume manually.'}
                     </p>
@@ -280,15 +294,15 @@ function TerminalStage() {
                       <p className="text-[11px] text-white/90 leading-relaxed">
                         {selectedTargetHistoryRecord.state === 'orphaned'
                           ? selectedTargetHasNativeResume
-                            ? 'A Claude Code session was left running from a previous app launch. Project Commander can clean it up and reopen the same saved Claude conversation.'
-                            : 'A Claude Code session was left running from a previous app launch. You can clean it up and start fresh, or view its history.'
+                            ? 'A saved provider session was left running from a previous app launch. Project Commander can clean it up and reopen the same saved conversation.'
+                            : 'A previous session was left running from a previous app launch. You can clean it up and start fresh, or view its history.'
                           : selectedTargetHistoryRecord.state === 'interrupted'
                             ? selectedTargetHasNativeResume
-                              ? 'The last Claude Code session on this target lost app supervision during an unclean shutdown, but its saved Claude session can be resumed directly.'
-                              : 'The last Claude Code session on this target lost app supervision during an unclean shutdown. You can relaunch with recovery context, or inspect what happened.'
+                              ? 'The last session on this target lost app supervision during an unclean shutdown, but its saved provider session can be resumed directly.'
+                              : 'The last session on this target lost app supervision during an unclean shutdown. You can relaunch with recovery context, or inspect what happened.'
                             : selectedTargetHasNativeResume
-                              ? 'The last Claude Code session on this target exited unexpectedly, but its saved Claude conversation can be resumed directly.'
-                              : 'The last Claude Code session on this target exited unexpectedly. You can relaunch with recovery context, or inspect what happened.'}
+                              ? 'The last session on this target exited unexpectedly, but its saved provider conversation can be resumed directly.'
+                              : 'The last session on this target exited unexpectedly. You can relaunch with recovery context, or inspect what happened.'}
                       </p>
                       <p className="mt-2 text-[9px] uppercase tracking-widest text-white/40">
                         Session #{selectedTargetHistoryRecord.id} //{' '}

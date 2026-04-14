@@ -21,6 +21,8 @@ const MAX_BUNDLE_SESSION_OUTPUT_TAIL_BYTES: u64 = 160_000;
 pub struct DiagnosticsRuntimeMetadata {
     pub app_run_id: String,
     pub app_started_at: String,
+    pub app_runtime_state_path: String,
+    pub last_unexpected_shutdown: Option<AppUnexpectedShutdown>,
 }
 
 impl DiagnosticsRuntimeMetadata {
@@ -36,8 +38,31 @@ impl DiagnosticsRuntimeMetadata {
                 rand::random::<u32>()
             ),
             app_started_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            app_runtime_state_path: String::new(),
+            last_unexpected_shutdown: None,
         }
     }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppUnexpectedShutdown {
+    pub app_run_id: String,
+    pub app_started_at: String,
+    pub app_ended_at: Option<String>,
+    pub process_id: u32,
+    pub state_path: String,
+    pub detected_at: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AppRuntimeState {
+    app_run_id: String,
+    app_started_at: String,
+    process_id: u32,
+    clean_shutdown: bool,
+    app_ended_at: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -72,6 +97,124 @@ pub fn diagnostics_log_path(storage: &StorageInfo) -> PathBuf {
 
 pub fn diagnostics_prev_log_path(storage: &StorageInfo) -> PathBuf {
     diagnostics_log_dir(storage).join("diagnostics.prev.ndjson")
+}
+
+pub fn app_runtime_state_path(storage: &StorageInfo) -> PathBuf {
+    PathBuf::from(&storage.app_data_dir)
+        .join("diagnostics")
+        .join("desktop-runtime.json")
+}
+
+pub fn begin_app_runtime(
+    storage: &StorageInfo,
+    runtime: &DiagnosticsRuntimeMetadata,
+    process_id: u32,
+) -> AppResult<Option<AppUnexpectedShutdown>> {
+    let path = app_runtime_state_path(storage);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "failed to create app runtime state directory {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
+
+    let previous_state = if path.is_file() {
+        let raw = fs::read_to_string(&path).map_err(|error| {
+            format!(
+                "failed to read app runtime state {}: {error}",
+                path.display()
+            )
+        })?;
+        serde_json::from_str::<AppRuntimeState>(&raw).ok()
+    } else {
+        None
+    };
+
+    let unexpected_shutdown = previous_state.and_then(|state| {
+        if state.clean_shutdown || state.app_run_id == runtime.app_run_id {
+            return None;
+        }
+
+        Some(AppUnexpectedShutdown {
+            app_run_id: state.app_run_id,
+            app_started_at: state.app_started_at,
+            app_ended_at: state.app_ended_at,
+            process_id: state.process_id,
+            state_path: path.display().to_string(),
+            detected_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+        })
+    });
+
+    let current_state = AppRuntimeState {
+        app_run_id: runtime.app_run_id.clone(),
+        app_started_at: runtime.app_started_at.clone(),
+        process_id,
+        clean_shutdown: false,
+        app_ended_at: None,
+    };
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&current_state)
+            .map_err(|error| format!("failed to encode app runtime state: {error}"))?,
+    )
+    .map_err(|error| {
+        format!(
+            "failed to write app runtime state {}: {error}",
+            path.display()
+        )
+    })?;
+
+    Ok(unexpected_shutdown)
+}
+
+pub fn finish_app_runtime(
+    storage: &StorageInfo,
+    runtime: &DiagnosticsRuntimeMetadata,
+) -> AppResult<()> {
+    let path = app_runtime_state_path(storage);
+    if !path.is_file() {
+        return Ok(());
+    }
+
+    let mut state = match fs::read_to_string(&path) {
+        Ok(raw) => serde_json::from_str::<AppRuntimeState>(&raw).map_err(|error| {
+            format!(
+                "failed to decode app runtime state {}: {error}",
+                path.display()
+            )
+        })?,
+        Err(error) => {
+            return Err(format!(
+                "failed to read app runtime state {}: {error}",
+                path.display()
+            )
+            .into())
+        }
+    };
+
+    if state.app_run_id != runtime.app_run_id {
+        return Ok(());
+    }
+
+    state.clean_shutdown = true;
+    state.app_ended_at =
+        Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
+
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&state)
+            .map_err(|error| format!("failed to encode app runtime state: {error}"))?,
+    )
+    .map_err(|error| {
+        format!(
+            "failed to write app runtime state {}: {error}",
+            path.display()
+        )
+    })?;
+
+    Ok(())
 }
 
 fn rotate_diagnostics_log_if_needed(
@@ -499,8 +642,9 @@ pub fn export_diagnostics_bundle(
 #[cfg(test)]
 mod tests {
     use super::{
-        append_diagnostics_entries_with_limit, diagnostics_log_path, diagnostics_prev_log_path,
-        export_diagnostics_bundle, list_diagnostics_history, DiagnosticsRuntimeMetadata,
+        app_runtime_state_path, append_diagnostics_entries_with_limit, begin_app_runtime,
+        diagnostics_log_path, diagnostics_prev_log_path, export_diagnostics_bundle,
+        finish_app_runtime, list_diagnostics_history, DiagnosticsRuntimeMetadata,
         PersistedDiagnosticsEntry,
     };
     use crate::db::StorageInfo;
@@ -608,6 +752,8 @@ mod tests {
         let runtime = DiagnosticsRuntimeMetadata {
             app_run_id: "pc-run-test".to_string(),
             app_started_at: "2026-04-13T12:00:00.000Z".to_string(),
+            app_runtime_state_path: String::new(),
+            last_unexpected_shutdown: None,
         };
         let bundle_path = PathBuf::from(&storage.app_data_dir).join("bundle.zip");
         let result = export_diagnostics_bundle(&storage, &runtime, &bundle_path).unwrap();
@@ -627,6 +773,58 @@ mod tests {
         assert!(archive.by_name("manifest.json").is_ok());
         assert!(archive.by_name("logs/supervisor.log").is_ok());
         assert!(archive.by_name("session-output/session-1.log").is_ok());
+
+        cleanup(&storage);
+    }
+
+    #[test]
+    fn begin_app_runtime_flags_previous_unclean_shutdown() {
+        let storage = test_storage();
+        let previous_runtime = DiagnosticsRuntimeMetadata {
+            app_run_id: "pc-run-previous".to_string(),
+            app_started_at: "2026-04-13T12:00:00.000Z".to_string(),
+            app_runtime_state_path: app_runtime_state_path(&storage).display().to_string(),
+            last_unexpected_shutdown: None,
+        };
+        begin_app_runtime(&storage, &previous_runtime, 1111).unwrap();
+
+        let current_runtime = DiagnosticsRuntimeMetadata {
+            app_run_id: "pc-run-current".to_string(),
+            app_started_at: "2026-04-13T12:05:00.000Z".to_string(),
+            app_runtime_state_path: app_runtime_state_path(&storage).display().to_string(),
+            last_unexpected_shutdown: None,
+        };
+        let detected = begin_app_runtime(&storage, &current_runtime, 2222)
+            .unwrap()
+            .expect("previous unclean run should be detected");
+
+        assert_eq!(detected.app_run_id, previous_runtime.app_run_id);
+        assert_eq!(detected.process_id, 1111);
+
+        cleanup(&storage);
+    }
+
+    #[test]
+    fn finish_app_runtime_marks_current_run_clean() {
+        let storage = test_storage();
+        let runtime = DiagnosticsRuntimeMetadata {
+            app_run_id: "pc-run-clean".to_string(),
+            app_started_at: "2026-04-13T12:00:00.000Z".to_string(),
+            app_runtime_state_path: app_runtime_state_path(&storage).display().to_string(),
+            last_unexpected_shutdown: None,
+        };
+        begin_app_runtime(&storage, &runtime, 3333).unwrap();
+        finish_app_runtime(&storage, &runtime).unwrap();
+
+        let next_runtime = DiagnosticsRuntimeMetadata {
+            app_run_id: "pc-run-next".to_string(),
+            app_started_at: "2026-04-13T12:10:00.000Z".to_string(),
+            app_runtime_state_path: app_runtime_state_path(&storage).display().to_string(),
+            last_unexpected_shutdown: None,
+        };
+        let detected = begin_app_runtime(&storage, &next_runtime, 4444).unwrap();
+
+        assert!(detected.is_none());
 
         cleanup(&storage);
     }

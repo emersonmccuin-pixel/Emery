@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { invoke } from '@/lib/tauri'
 import { useAppStore, useSelectedProject } from '../store'
+import './panel-surfaces.css'
 import { MarkdownEditor } from '@/components/ui/markdown-editor'
 import { PanelEmptyState } from '@/components/ui/panel-state'
 import type { WorkItemRecord } from '../types'

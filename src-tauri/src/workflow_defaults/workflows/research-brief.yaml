@@ -1,0 +1,40 @@
+name: research-brief
+kind: research
+version: 1
+description: Gather source material, synthesize it, and produce a concise research brief.
+template: true
+categories:
+  - RESEARCH
+  - DOCUMENTATION
+tags:
+  - template
+  - research
+stages:
+  - name: scope
+    role: planner
+    pod_ref: planner.opus.standard
+    inputs:
+      - work_item
+    outputs:
+      - research_scope
+  - name: research
+    role: researcher
+    pod_ref: researcher.sonnet.standard
+    inputs:
+      - research_scope
+    outputs:
+      - source_notes
+  - name: synthesize
+    role: generator
+    pod_ref: generator.sonnet.standard
+    inputs:
+      - source_notes
+    outputs:
+      - research_brief
+  - name: critique
+    role: reviewer
+    pod_ref: reviewer.sonnet.lightweight
+    inputs:
+      - research_brief
+    outputs:
+      - critique_notes

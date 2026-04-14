@@ -340,10 +340,6 @@ export const createWorkItemSlice: StateCreator<AppStore, [], [], WorkItemSlice> 
         input: {
           projectId: selectedProject.id,
           workItemId: targetWorkItem.id,
-          launchProfileId:
-            state.launchProfiles.find((p) => p.id === state.selectedLaunchProfileId)?.id ??
-            state.selectedLaunchProfileId ??
-            null,
         },
       })
       const { worktree, session } = launch
@@ -368,7 +364,7 @@ export const createWorkItemSlice: StateCreator<AppStore, [], [], WorkItemSlice> 
         })
       })
       set({
-        agentPromptMessage: `Focused worktree ${worktree.shortBranchName} opened for ${targetWorkItem.callSign}.`,
+        agentPromptMessage: `Focused worktree ${worktree.shortBranchName} opened for ${targetWorkItem.callSign}. The SDK worker is live and waiting for dispatcher directives.`,
       })
     } catch (error) {
       set({ sessionError: getErrorMessage(error, 'Failed to hand work item off to the terminal.') })

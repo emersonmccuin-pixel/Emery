@@ -15,7 +15,9 @@ import {
   areSessionSnapshotListsEqual,
   buildAgentStartupPrompt,
   flattenPromptForTerminal,
+  getFirstDispatcherLaunchProfile,
   getErrorMessage,
+  isWorkerLaunchProfileProvider,
 } from './utils'
 
 const terminationKey = (projectId: number, worktreeId: number | null) =>
@@ -74,6 +76,14 @@ function countRecentFailuresForTarget(
 function exitHeadline(exitCode: number, error?: string | null) {
   const summary = error?.split('\n')[0]?.trim()
   return summary || `Session exited with code ${exitCode}.`
+}
+
+function getSnapshotProvider(state: AppStore, snapshot: SessionSnapshot | null) {
+  if (!snapshot) {
+    return null
+  }
+
+  return state.launchProfiles.find((profile) => profile.id === snapshot.launchProfileId)?.provider ?? null
 }
 
 type SetSessionStore = Parameters<StateCreator<AppStore, [], [], SessionSlice>>[0]
@@ -313,10 +323,12 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
     }
 
     const targetWorktreeId = options?.worktreeId ?? state.selectedTerminalWorktreeId ?? null
-    const requestedLaunchProfileId = options?.launchProfileId ?? state.selectedLaunchProfileId
+    const requestedLaunchProfileId =
+      options?.launchProfileId ??
+      (targetWorktreeId === null ? state.selectedLaunchProfileId : null)
     const targetLaunchProfile =
       state.launchProfiles.find((p) => p.id === requestedLaunchProfileId) ??
-      state.launchProfiles.find((p) => p.id === state.selectedLaunchProfileId) ??
+      getFirstDispatcherLaunchProfile(state.launchProfiles) ??
       null
     const shouldAttachSnapshot =
       options?.attachSnapshot ??
@@ -621,8 +633,20 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
       state.terminalPromptDraft?.prompt ??
       buildAgentStartupPrompt(selectedProject, state.workItems, state.documents)
     const currentTerminalPromptLabel = state.terminalPromptDraft?.label ?? 'Dispatcher prompt'
+    const currentProvider = getSnapshotProvider(state, state.sessionSnapshot)
 
     if (!selectedProject || !state.sessionSnapshot?.isRunning || !currentTerminalPrompt) {
+      return
+    }
+
+    if (
+      state.selectedTerminalWorktreeId !== null &&
+      isWorkerLaunchProfileProvider(currentProvider)
+    ) {
+      set({
+        agentPromptMessage:
+          'SDK worker terminals are watch-only. Send instructions from the dispatcher via Project Commander messaging.',
+      })
       return
     }
 
@@ -699,6 +723,12 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
       state.selectedTerminalWorktreeId !== null && worktree
         ? `Worktree handoff · ${worktree.workItemCallSign}`
         : 'Dispatcher prompt'
+
+    if (state.selectedTerminalWorktreeId !== null && worktree) {
+      set({ terminalPromptDraft: null, sessionError: null })
+      await get().startWorkItemInTerminal(worktree.workItemId)
+      return
+    }
 
     set({
       terminalPromptDraft: { label: guideLabel, prompt: agentStartupPrompt },

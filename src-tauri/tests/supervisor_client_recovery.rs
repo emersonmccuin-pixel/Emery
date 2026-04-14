@@ -2,6 +2,7 @@ use project_commander_lib::db::{
     AppState, CreateProjectInput, CreateSessionRecordInput, CreateWorkItemInput, StorageInfo,
     UpdateAppSettingsInput, UpsertWorktreeRecordInput,
 };
+use project_commander_lib::diagnostics::{app_runtime_state_path, DiagnosticsRuntimeMetadata};
 use project_commander_lib::session::SupervisorClient;
 use project_commander_lib::session_api::SupervisorRuntimeInfo;
 use project_commander_lib::supervisor_api::{CleanupCandidateTarget, CreateProjectWorkItemInput};
@@ -47,8 +48,10 @@ impl TestHarness {
             db_dir: db_dir.display().to_string(),
             db_path: db_path.display().to_string(),
         };
-        let client =
-            SupervisorClient::new(storage.clone()).expect("supervisor client should initialize");
+        let mut runtime = DiagnosticsRuntimeMetadata::generate();
+        runtime.app_runtime_state_path = app_runtime_state_path(&storage).display().to_string();
+        let client = SupervisorClient::new(storage.clone(), runtime)
+            .expect("supervisor client should initialize");
 
         Self {
             root_dir,
@@ -740,6 +743,8 @@ fn supervisor_startup_auto_repairs_safe_cleanup_items_when_enabled() {
         .client
         .update_app_settings(UpdateAppSettingsInput {
             default_launch_profile_id: None,
+            default_worker_launch_profile_id: None,
+            sdk_claude_config_dir: None,
             auto_repair_safe_cleanup_on_startup: true,
         })
         .expect("app settings update should succeed");

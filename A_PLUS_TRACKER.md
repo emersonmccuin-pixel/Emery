@@ -1,6 +1,6 @@
 # Project Commander A+ Tracker
 
-Last updated: April 13, 2026
+Last updated: April 14, 2026
 
 ## Current Grade
 
@@ -37,7 +37,9 @@ Last updated: April 13, 2026
 - `[x]` A14. Standardize async UX states.
 - `[x]` A15. Tighten keyboard-first workflows.
 - `[x]` A16. Harden crash recovery, diagnostics, and resume UX.
-- `[>]` Sustain: keep budgets, smoke coverage, and diagnostics green as new features land.
+- `[>]` Agentic workflows phase 2: finish the remaining egress/integration broker layer and template-driven secret delivery on top of the shipped workflow execution + vault env/file delivery foundation without reintroducing global refresh fan-out or bundle regressions.
+- `[>]` Runtime split: keep the dispatcher on Claude Code CLI while migrating worktree agents to SDK-backed worker hosts (Claude Agent SDK and Codex SDK) with a broker-native message contract (`agent_messages` + `threadId`/`replyToMessageId` + `wait_for_messages`) and a dedicated personal Claude auth path for Claude SDK workers.
+- `[>]` Sustain: keep budgets, smoke coverage, and diagnostics green as new features land, including explicit detection of interrupted desktop-app restarts between runs and persisted supervisor-runtime rollover diagnostics when the app replaces its live supervisor.
 
 ## Foundation Already Completed
 
@@ -157,8 +159,46 @@ Last updated: April 13, 2026
 - `[x]` A16. Harden crash recovery, diagnostics, and resume UX.
   Priority: `P1`
   Why it matters: external runtime crashes still happen, so the app needs evidence, containment, and a reliable way to continue work without losing the operator’s place.
-  Done when: failed sessions persist structured crash artifacts, the UI exposes the crash evidence inline, and recovery prefers a true Claude session resume after app restart whenever provider metadata is available, falling back to a recovery-context relaunch only when it is not.
+  Done when: failed sessions persist structured crash artifacts, the UI exposes the crash evidence inline, and recovery prefers a true provider-native session resume after app restart whenever provider metadata is available, falling back to a recovery-context relaunch only when it is not.
   Evidence / Notes: `src-tauri/src/session_host.rs` now persists per-session crash reports under `<app-data>/crash-reports/` alongside retained session-output logs, and the supervisor exposes full `get_session_recovery_details` data through the Tauri boundary. The terminal recovery card and history view now show crash headlines, last activity, artifact paths, output excerpts, and whether direct Claude resume is available through `src/components/SessionRecoveryInspector.tsx`. New Claude launches now receive a persisted provider session UUID, and recovery/orphan-cleanup flows reuse it via `claude --resume` after a full app restart instead of always starting a fresh conversation. When older records lack that metadata, `resumeSessionRecord` and orphan recovery still fall back to the explicit Project Commander recovery handoff prompt so work can continue safely. The session store also keeps target-local auto-restart with a 3-second countdown, cancel/restart controls, and a restart-loop circuit breaker driven by recent recoverable session history, so a crashed dispatcher or worktree session can be resumed without restarting the whole desktop app. Added frontend coverage in `src/sessionHistory.test.ts`, Rust command-builder coverage in `src-tauri/src/session_host.rs`, and kept the repo inside the existing bundle and Rust smoke gates.
+
+### Phase 7: Agentic Workflow Foundation
+
+- `[x]` A17. Ship the workflow/pod catalog foundation without regressing the A+ shell.
+  Priority: `P1`
+  Why it matters: reusable workflow automation needs a stable library/adoption layer before run orchestration, override editing, and vault-backed execution can land safely.
+  Done when: the app seeds a global library of workflows and pods, projects can inspect/adopt linked or forked entries from a dedicated Workflows view, referenced pods auto-follow workflow adoption, and the feature passes the existing frontend/Rust/bundle verification gates without adding new global refresh behavior.
+  Evidence / Notes: added backend catalog/adoption support in `src-tauri/src/workflow.rs` plus new tables/commands in `src-tauri/src/db.rs` and `src-tauri/src/lib.rs`; seeded shipped YAML defaults under `src-tauri/src/workflow_defaults/`; added a new lazy-loaded Workflows surface with library vs. project scope, adopt/upgrade/detach actions, and YAML/detail inspection in `src/components/workflow/WorkflowsPanel.tsx`; extended the store/types for workflow catalog state in `src/store/workflowSlice.ts`, `src/store/types.ts`, and `src/types.ts`; kept the feature inside the bundle budgets by moving panel-only CSS out of the global shell and removing dead selectors; verified with `npm test`, `npm run build`, and `cargo test --manifest-path src-tauri/Cargo.toml` (using an isolated `CARGO_TARGET_DIR` to avoid a running local supervisor binary lock in the default target directory).
+
+- `[x]` A18. Ship the vault core storage/settings slice without exposing raw secrets to agents.
+  Priority: `P1`
+  Why it matters: workflow runs and external-tool integrations need a secure secret substrate before brokered launch/runtime access can be added safely.
+  Done when: users can deposit, rotate, and delete vault entries from `Settings -> Vault`; values live in Stronghold while metadata/audit stay in SQLite; frontend diagnostics redact deposit/update payloads; and the slice passes the existing frontend/Rust/bundle verification gates.
+  Evidence / Notes: added `src-tauri/src/vault.rs` with Stronghold-backed storage helpers, metadata CRUD, and audit scaffolding; added `vault_entries` / `vault_audit_events` plus a compatibility rebuild path in `src-tauri/src/db.rs`; exposed new Tauri commands in `src-tauri/src/lib.rs`; extended `src/lib/tauri.ts` with redacted diagnostics args for sensitive invokes; added the lazy-loaded Vault tab in `src/components/AppSettingsPanel.tsx`; and verified with `npm test`, `npm run build`, and `cargo test --manifest-path src-tauri/Cargo.toml` using an isolated `CARGO_TARGET_DIR`.
+
+- `[x]` A19. Broker vault-backed session launch and scrub injected values from terminal/output artifacts.
+  Priority: `P1`
+  Why it matters: the vault is not operationally useful until trusted launch paths can resolve scoped secrets into sessions without leaking them back into terminal output, crash evidence, or logs.
+  Done when: launch profiles can declare vault-backed env vars, the session host resolves them through the backend with scope checks and audit rows, injected values are scrubbed from PTY output before buffer/log persistence, and the slice still passes the Rust/frontend/bundle gates.
+  Evidence / Notes: extended `src-tauri/src/vault.rs` with backend-only access-binding resolution plus launch audit recording and `last_accessed_at` updates; wired those helpers through `src-tauri/src/db.rs`; taught `src-tauri/src/session_host.rs` to parse vault-backed env bindings from launch-profile `env_json`, inject them for Claude/SDK/wrapped launches, append `session.vault_env_injected` events, and redact injected values across chunk boundaries before terminal/session-output persistence; updated `src/components/AppSettingsPanel.tsx` so launch-profile env JSON documents the vault binding format; and verified with `npm test`, `npm run build`, and `cargo test --manifest-path src-tauri/Cargo.toml` using an isolated `CARGO_TARGET_DIR`.
+
+- `[x]` A20. Ship executable workflow runs and project override resolution on the existing supervisor/session-host path.
+  Priority: `P1`
+  Why it matters: the catalog/vault foundations are only operationally useful once adopted workflows can resolve into frozen runs, dispatch stage work through the existing worktree-agent architecture, and surface run status without reintroducing global refresh churn.
+  Done when: the backend persists `workflow_runs` / `workflow_run_stages` plus the override seam, run start resolves linked or forked adoptions with adopted pods and frozen stage config, supervisor orchestration launches fresh stage sessions on the managed worktree via the existing broker/session-host path, the Workflows surface exposes a project-scoped Runs tab plus start controls, and the slice stays inside the bundle gates.
+  Evidence / Notes: added run/override persistence and resolution in `src-tauri/src/workflow.rs` plus new tables and commands in `src-tauri/src/db.rs`, `src-tauri/src/lib.rs`, and `src-tauri/src/session.rs`; taught `src-tauri/src/bin/project-commander-supervisor.rs` to start runs, resolve launch profiles, dispatch sequential fresh stage sessions on the managed worktree, persist stage replies, and append workflow lifecycle events without adding a second orchestration channel; extended `src/components/workflow/WorkflowsPanel.tsx`, `src/store/workflowSlice.ts`, `src/store/types.ts`, `src/store/uiSlice.ts`, `src/store/projectSlice.ts`, `src/App.tsx`, and `src/types.ts` with workflow-run state, project-scoped run launching, and a lazy Runs observability surface that refreshes only while the workflows panel is open; added focused Rust coverage for run creation, outdated linked-adoption rejection, and override resolution in `src-tauri/src/workflow.rs`; verified with `npm test`, `npm run build`, and `cargo test --manifest-path src-tauri/Cargo.toml` using an isolated `CARGO_TARGET_DIR` (which also exercised the supervisor recovery integration suite).
+
+- `[x]` A21. Ship workflow-stage vault env grants through the existing session-host/supervisor path.
+  Priority: `P1`
+  Why it matters: launch-profile env injection is not enough for workflow automation; stages need frozen, inspectable secret grants that respect pod policy without introducing a second secret-delivery channel.
+  Done when: workflow stages and the SQLite-backed override seam can declare explicit vault env bindings, run resolution freezes and validates them against `needs_secrets` plus adopted-pod `secret_scopes`, supervisor stage launches pass those bindings through `LaunchSessionInput`, session launch reuses the existing vault resolver/audit/scrubber path, and the Workflows surface exposes the configured bindings for inspection.
+  Evidence / Notes: extended `src-tauri/src/workflow.rs` to parse/freeze `vault_env_bindings` on workflow stages and overrides, validate that requested scope tags are declared in `needs_secrets` and allowed by the resolved pod's `secret_scopes`, and persist the bindings into frozen run JSON; extended `src-tauri/src/session_api.rs`, `src-tauri/src/session_host.rs`, and `src-tauri/src/vault.rs` so per-launch stage bindings merge into the existing launch-profile vault binding resolver with the same audit rows and PTY/session-output scrubbing; updated `src-tauri/src/bin/project-commander-supervisor.rs`, `src/components/workflow/WorkflowsPanel.tsx`, and `src/types.ts` so stage dispatch logs/events and the Workflows/Runs detail views surface bound env vars without exposing values; added Rust coverage for workflow binding validation and per-launch binding merge behavior; and verified with `npm test`, `npm run build`, and `cargo test --manifest-path src-tauri/Cargo.toml` using an isolated `CARGO_TARGET_DIR`.
+
+- `[x]` A22. Ship ephemeral-file vault delivery through the existing launch/session path.
+  Priority: `P1`
+  Why it matters: env injection alone does not cover tools that expect credential file paths; the runtime needs a second delivery mode without introducing a second resolver/audit/scrubber implementation.
+  Done when: vault bindings can declare `delivery=file`, the session host materializes those bindings into per-session runtime files under the supervisor runtime directory, launch env injection sets the env var to the temp file path instead of the raw secret value, audit/redaction still run through the existing vault path, workflow runs freeze the delivery mode, and runtime cleanup removes the temp files on exit or failed launch.
+  Evidence / Notes: extended `src-tauri/src/vault.rs` and `src-tauri/src/session_host.rs` so vault bindings carry a `delivery` mode and launch-profile/workflow bindings can resolve to either raw env injection or ephemeral file-path injection; materialized secret files now live under the existing `<app-data>/runtime/` cleanup boundary, with failed launches and normal/crash exits removing those artifacts automatically; updated `src-tauri/src/workflow.rs`, `src/components/workflow/WorkflowsPanel.tsx`, `src/components/AppSettingsPanel.tsx`, `src/types.ts`, and `src-tauri/src/bin/project-commander-supervisor.rs` so file delivery is frozen, surfaced, and logged without exposing values; added focused session-host coverage for parsing/materializing file delivery and workflow coverage for frozen file-delivery bindings; and verified with `npm test`, `npm run build`, and `cargo test --manifest-path src-tauri/Cargo.toml` using an isolated `CARGO_TARGET_DIR`.
 
 ## Recommended Work Order
 

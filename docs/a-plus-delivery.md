@@ -55,7 +55,7 @@ Use these files together:
 
 - Slow runtime paths and failures should remain diagnosable from logs.
 - Session launch, recovery, orphan cleanup, and worktree cleanup paths should keep structured identifiers in logs.
-- Claude-backed crash recovery should preserve true session continuity after app restart when provider session IDs exist; do not regress this back to a blind fresh launch.
+- Provider-backed crash recovery should preserve true session continuity after app restart when provider session IDs exist; do not regress this back to a blind fresh launch.
 
 ## Guardrails By Area
 

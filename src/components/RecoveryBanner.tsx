@@ -191,8 +191,8 @@ export default function RecoveryBanner({
             <p className="text-[9px] text-white/60 uppercase tracking-widest">
               {totalCount} session{totalCount !== 1 ? 's' : ''} {totalCount === 1 ? 'was' : 'were'} interrupted.{' '}
               {hasFallbackRelaunch
-                ? 'Resume saved Claude sessions or relaunch older targets with crash context.'
-                : 'Resume the saved Claude sessions you want back on screen.'}
+                ? 'Resume saved provider sessions or relaunch older targets with crash context.'
+                : 'Resume the saved provider sessions you want back on screen.'}
             </p>
           </div>
         </div>

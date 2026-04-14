@@ -32,18 +32,25 @@ fn run() -> AppResult<()> {
     let stdout = io::stdout();
     let mut reader = BufReader::new(stdin.lock());
     let mut writer = stdout.lock();
+    let mut framing = Framing::Ndjson;
 
     loop {
-        let Some(message) = read_message(&mut reader)? else {
+        let Some(message) = read_message(&mut reader, &mut framing)? else {
             break;
         };
 
         if let Some(response) = handle_message(&state, message)? {
-            write_message(&mut writer, &response)?;
+            write_message(&mut writer, &response, framing)?;
         }
     }
 
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Framing {
+    Ndjson,
+    ContentLength,
 }
 
 fn handle_message(state: &AppState, message: Value) -> AppResult<Option<Value>> {
@@ -687,29 +694,47 @@ fn resolve_work_item(
     }
 }
 
-fn read_message(reader: &mut impl BufRead) -> AppResult<Option<Value>> {
-    let mut content_length = None;
+fn read_message(reader: &mut impl BufRead, framing: &mut Framing) -> AppResult<Option<Value>> {
+    let mut first_line = String::new();
+    loop {
+        first_line.clear();
+        let bytes_read = reader
+            .read_line(&mut first_line)
+            .map_err(|error| AppError::io(format!("failed to read MCP input: {error}")))?;
+        if bytes_read == 0 {
+            return Ok(None);
+        }
+        if !first_line.trim().is_empty() {
+            break;
+        }
+    }
+
+    let trimmed = first_line.trim_end_matches(['\r', '\n']);
+
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        *framing = Framing::Ndjson;
+        return serde_json::from_str(trimmed).map(Some).map_err(|error| {
+            AppError::internal(format!("failed to decode MCP JSON line: {error}"))
+        });
+    }
+
+    *framing = Framing::ContentLength;
+    let mut content_length = parse_content_length_header(trimmed)?;
 
     loop {
         let mut line = String::new();
         let bytes_read = reader
             .read_line(&mut line)
             .map_err(|error| AppError::io(format!("failed to read MCP header: {error}")))?;
-
         if bytes_read == 0 {
             return Ok(None);
         }
-
         let trimmed = line.trim_end_matches(['\r', '\n']);
-
         if trimmed.is_empty() {
             break;
         }
-
-        if let Some(value) = trimmed.strip_prefix("Content-Length:") {
-            content_length = Some(value.trim().parse::<usize>().map_err(|error| {
-                AppError::io(format!("invalid Content-Length header: {error}"))
-            })?);
+        if let Some(value) = parse_content_length_header(trimmed)? {
+            content_length = Some(value);
         }
     }
 
@@ -725,16 +750,39 @@ fn read_message(reader: &mut impl BufRead) -> AppResult<Option<Value>> {
         .map_err(|error| AppError::internal(format!("failed to decode MCP JSON payload: {error}")))
 }
 
-fn write_message(writer: &mut impl Write, message: &Value) -> AppResult<()> {
+fn parse_content_length_header(line: &str) -> AppResult<Option<usize>> {
+    let Some((name, value)) = line.split_once(':') else {
+        return Ok(None);
+    };
+    if !name.trim().eq_ignore_ascii_case("Content-Length") {
+        return Ok(None);
+    }
+    value
+        .trim()
+        .parse::<usize>()
+        .map(Some)
+        .map_err(|error| AppError::io(format!("invalid Content-Length header: {error}")))
+}
+
+fn write_message(writer: &mut impl Write, message: &Value, framing: Framing) -> AppResult<()> {
     let payload = serde_json::to_vec(message)
         .map_err(|error| AppError::internal(format!("failed to encode MCP response: {error}")))?;
-    let header = format!("Content-Length: {}\r\n\r\n", payload.len());
 
-    writer
-        .write_all(header.as_bytes())
-        .and_then(|_| writer.write_all(&payload))
-        .and_then(|_| writer.flush())
-        .map_err(|error| AppError::io(format!("failed to write MCP response: {error}")))
+    let result = match framing {
+        Framing::Ndjson => writer
+            .write_all(&payload)
+            .and_then(|_| writer.write_all(b"\n"))
+            .and_then(|_| writer.flush()),
+        Framing::ContentLength => {
+            let header = format!("Content-Length: {}\r\n\r\n", payload.len());
+            writer
+                .write_all(header.as_bytes())
+                .and_then(|_| writer.write_all(&payload))
+                .and_then(|_| writer.flush())
+        }
+    };
+
+    result.map_err(|error| AppError::io(format!("failed to write MCP response: {error}")))
 }
 
 #[derive(Debug)]

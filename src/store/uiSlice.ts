@@ -73,6 +73,8 @@ export const createUiSlice: StateCreator<AppStore, [], [], UiSlice> = (set, get)
               return state.refreshDocuments(selectedProjectId)
             case 'worktrees':
               return state.refreshWorktrees(selectedProjectId)
+            case 'workflowRuns':
+              return state.refreshProjectWorkflowRuns(selectedProjectId)
             case 'liveSessions':
               return state.refreshLiveSessions(selectedProjectId)
             case 'sessionSnapshot':

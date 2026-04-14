@@ -1,0 +1,21 @@
+name: generator.sonnet.standard
+role: generator
+version: 1
+description: Default implementation pod for focused coding changes.
+categories:
+  - CODING
+provider: claude_code
+model: sonnet-4.6
+prompt_template_ref: prompts/generator.feature-dev.md
+tool_allowlist:
+  - list_work_items
+  - list_documents
+  - launch_worktree_agent
+secret_scopes: []
+default_policy:
+  timeout_ms: 1800000
+  max_retries: 2
+  token_budget: medium
+tags:
+  - balanced
+  - coding

@@ -1,7 +1,7 @@
-import type { StateCreator } from 'zustand'
-import { open } from '@tauri-apps/plugin-dialog'
-import { invoke } from '@/lib/tauri'
-import { startTrackedPerfSpan, withPerfSpan } from '../perf'
+import type { StateCreator } from "zustand";
+import { open } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@/lib/tauri";
+import { startTrackedPerfSpan, withPerfSpan } from "../perf";
 
 import type {
   AppSettings,
@@ -9,18 +9,26 @@ import type {
   LaunchProfileRecord,
   ProjectRecord,
   StorageInfo,
-} from '../types'
-import type { AppStore, ProjectSlice } from './types'
+} from "../types";
+import type { AppStore, ProjectSlice } from "./types";
 import {
   DEFAULT_APP_SETTINGS,
   DEFAULT_PROFILE_ARGS,
   DEFAULT_PROFILE_ENV_JSON,
   DEFAULT_PROFILE_EXECUTABLE,
   DEFAULT_PROFILE_LABEL,
+  DEFAULT_PROFILE_PROVIDER,
+  getDispatcherLaunchProfiles,
+  getFirstDispatcherLaunchProfile,
   getErrorMessage,
-} from './utils'
+} from "./utils";
 
-export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = (set, get) => ({
+export const createProjectSlice: StateCreator<
+  AppStore,
+  [],
+  [],
+  ProjectSlice
+> = (set, get) => ({
   projects: [],
   launchProfiles: [],
   appSettings: DEFAULT_APP_SETTINGS,
@@ -28,20 +36,21 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
   selectedProjectId: null,
   selectedLaunchProfileId: null,
 
-  projectName: '',
-  projectRootPath: '',
+  projectName: "",
+  projectRootPath: "",
   projectError: null,
   isProjectCreateOpen: false,
   isCreatingProject: false,
 
-  editProjectName: '',
-  editProjectRootPath: '',
-  editProjectBaseBranch: '',
+  editProjectName: "",
+  editProjectRootPath: "",
+  editProjectBaseBranch: "",
   projectUpdateError: null,
   isProjectEditorOpen: false,
   isUpdatingProject: false,
 
   profileLabel: DEFAULT_PROFILE_LABEL,
+  profileProvider: DEFAULT_PROFILE_PROVIDER,
   profileExecutable: DEFAULT_PROFILE_EXECUTABLE,
   profileArgs: DEFAULT_PROFILE_ARGS,
   profileEnvJson: DEFAULT_PROFILE_ENV_JSON,
@@ -54,6 +63,8 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
   settingsError: null,
   settingsMessage: null,
   defaultLaunchProfileSettingId: null,
+  defaultWorkerLaunchProfileSettingId: null,
+  sdkClaudeConfigDirSetting: "",
   autoRepairSafeCleanupOnStartup: false,
   isSavingAppSettings: false,
 
@@ -61,16 +72,24 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
   setProjectRootPath: (value) => set({ projectRootPath: value }),
   setProjectError: (value) => set({ projectError: value }),
   setProjectUpdateError: (value) => set({ projectUpdateError: value }),
-  setSelectedLaunchProfileId: (value) => set({ selectedLaunchProfileId: value }),
+  setSelectedLaunchProfileId: (value) =>
+    set({ selectedLaunchProfileId: value }),
   setEditProjectName: (value) => set({ editProjectName: value }),
   setEditProjectRootPath: (value) => set({ editProjectRootPath: value }),
   setEditProjectBaseBranch: (value) => set({ editProjectBaseBranch: value }),
   setIsProjectEditorOpen: (value) => set({ isProjectEditorOpen: value }),
   setIsProjectCreateOpen: (value) => set({ isProjectCreateOpen: value }),
-  setDefaultLaunchProfileSettingId: (value) => set({ defaultLaunchProfileSettingId: value }),
-  setAutoRepairSafeCleanupOnStartup: (value) => set({ autoRepairSafeCleanupOnStartup: value }),
+  setDefaultLaunchProfileSettingId: (value) =>
+    set({ defaultLaunchProfileSettingId: value }),
+  setDefaultWorkerLaunchProfileSettingId: (value) =>
+    set({ defaultWorkerLaunchProfileSettingId: value }),
+  setSdkClaudeConfigDirSetting: (value) =>
+    set({ sdkClaudeConfigDirSetting: value }),
+  setAutoRepairSafeCleanupOnStartup: (value) =>
+    set({ autoRepairSafeCleanupOnStartup: value }),
   setSettingsError: (value) => set({ settingsError: value }),
   setProfileLabel: (value) => set({ profileLabel: value }),
+  setProfileProvider: (value) => set({ profileProvider: value }),
   setProfileExecutable: (value) => set({ profileExecutable: value }),
   setProfileArgs: (value) => set({ profileArgs: value }),
   setProfileEnvJson: (value) => set({ profileEnvJson: value }),
@@ -79,257 +98,344 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
   bootstrap: async () => {
     try {
       const [, bootstrap, storage] = await withPerfSpan(
-        'bootstrap_state',
+        "bootstrap_state",
         {},
         () =>
           Promise.all([
-            invoke<string>('health_check'),
-            invoke<BootstrapData>('bootstrap_app_state'),
-            invoke<StorageInfo>('get_storage_info'),
+            invoke<string>("health_check"),
+            invoke<BootstrapData>("bootstrap_app_state"),
+            invoke<StorageInfo>("get_storage_info"),
           ]),
-      )
+      );
 
-      set((state) => ({
-        storageInfo: storage,
-        appSettings: bootstrap.settings,
-        projects: bootstrap.projects,
-        launchProfiles: bootstrap.launchProfiles,
-        selectedProjectId: state.selectedProjectId ?? bootstrap.projects[0]?.id ?? null,
-        selectedLaunchProfileId:
-          state.selectedLaunchProfileId ??
-          bootstrap.settings.defaultLaunchProfileId ??
-          bootstrap.launchProfiles[0]?.id ??
-          null,
-        defaultLaunchProfileSettingId: bootstrap.settings.defaultLaunchProfileId,
-        autoRepairSafeCleanupOnStartup: bootstrap.settings.autoRepairSafeCleanupOnStartup,
-        isProjectCreateOpen: bootstrap.projects.length === 0,
-      }))
+      set((state) => {
+        const dispatcherProfile = getFirstDispatcherLaunchProfile(
+          bootstrap.launchProfiles,
+        );
+
+        return {
+          storageInfo: storage,
+          appSettings: bootstrap.settings,
+          projects: bootstrap.projects,
+          launchProfiles: bootstrap.launchProfiles,
+          selectedProjectId:
+            state.selectedProjectId ?? bootstrap.projects[0]?.id ?? null,
+          selectedLaunchProfileId:
+            state.selectedLaunchProfileId ??
+            bootstrap.settings.defaultLaunchProfileId ??
+            dispatcherProfile?.id ??
+            null,
+          defaultLaunchProfileSettingId:
+            bootstrap.settings.defaultLaunchProfileId,
+          defaultWorkerLaunchProfileSettingId:
+            bootstrap.settings.defaultWorkerLaunchProfileId,
+          sdkClaudeConfigDirSetting:
+            bootstrap.settings.sdkClaudeConfigDir ?? "",
+          autoRepairSafeCleanupOnStartup:
+            bootstrap.settings.autoRepairSafeCleanupOnStartup,
+          isProjectCreateOpen: bootstrap.projects.length === 0,
+        };
+      });
     } catch (error) {
-      set({ sessionError: getErrorMessage(error, 'The Rust runtime did not respond.') })
+      set({
+        sessionError: getErrorMessage(
+          error,
+          "The Rust runtime did not respond.",
+        ),
+      });
     }
   },
 
   selectProject: (projectId) => {
-    const state = get()
-    const project = state.projects.find((candidate) => candidate.id === projectId) ?? null
+    const state = get();
+    const project =
+      state.projects.find((candidate) => candidate.id === projectId) ?? null;
 
-    startTrackedPerfSpan('project-switch', 'project_switch', {
+    startTrackedPerfSpan("project-switch", "project_switch", {
       projectId,
-      projectName: project?.name ?? 'unknown',
-    })
+      projectName: project?.name ?? "unknown",
+    });
 
     set({
       selectedProjectId: projectId,
       selectedTerminalWorktreeId: null,
-      activeView: 'terminal',
+      activeView: "terminal",
       terminalPromptDraft: null,
       worktreeError: null,
       worktreeMessage: null,
       activeWorktreeActionId: null,
       activeWorktreeActionKind: null,
       selectedHistorySessionId: null,
-    })
+      projectWorkflowCatalog: null,
+      workflowRuns: null,
+      workflowError: null,
+      activeWorkflowActionKey: null,
+      activeWorkflowRunKey: null,
+    });
 
     if (project) {
       set({
         editProjectName: project.name,
         editProjectRootPath: project.rootPath,
-        editProjectBaseBranch: project.baseBranch ?? '',
+        editProjectBaseBranch: project.baseBranch ?? "",
         projectUpdateError: null,
         isProjectEditorOpen: !project.rootAvailable,
-      })
+      });
     }
   },
 
   startCreateProject: () => {
     set({
-      projectName: '',
-      projectRootPath: '',
+      projectName: "",
+      projectRootPath: "",
       projectError: null,
       isProjectCreateOpen: true,
-    })
+    });
   },
 
   cancelCreateProject: () => {
     set({
-      projectName: '',
-      projectRootPath: '',
+      projectName: "",
+      projectRootPath: "",
       projectError: null,
       isProjectCreateOpen: false,
-    })
+    });
   },
 
   browseForProjectFolder: async (applyPath, setError) => {
-    setError(null)
+    setError(null);
 
     try {
       const selected = await open({
         directory: true,
         multiple: false,
-        title: 'Select project root folder',
-      })
+        title: "Select project root folder",
+      });
 
-      if (typeof selected === 'string') {
-        applyPath(selected)
+      if (typeof selected === "string") {
+        applyPath(selected);
       }
     } catch (error) {
-      setError(getErrorMessage(error, 'Failed to open folder picker.'))
+      setError(getErrorMessage(error, "Failed to open folder picker."));
     }
   },
 
   submitProject: async (event) => {
-    event.preventDefault()
-    const { projectName, projectRootPath } = get()
-    set({ projectError: null, isCreatingProject: true })
+    event.preventDefault();
+    const { projectName, projectRootPath } = get();
+    set({ projectError: null, isCreatingProject: true });
 
     try {
-      const project = await invoke<ProjectRecord>('create_project', {
+      const project = await invoke<ProjectRecord>("create_project", {
         input: { name: projectName, rootPath: projectRootPath },
-      })
+      });
 
       set((state) => ({
-        projects: [project, ...state.projects.filter((p) => p.id !== project.id)],
-        projectName: '',
-        projectRootPath: '',
+        projects: [
+          project,
+          ...state.projects.filter((p) => p.id !== project.id),
+        ],
+        projectName: "",
+        projectRootPath: "",
         projectError: null,
         isProjectCreateOpen: false,
         selectedProjectId: project.id,
         selectedTerminalWorktreeId: null,
-        activeView: 'terminal',
-      }))
+        activeView: "terminal",
+      }));
     } catch (error) {
-      set({ projectError: getErrorMessage(error, 'Failed to create project.') })
+      set({
+        projectError: getErrorMessage(error, "Failed to create project."),
+      });
     } finally {
-      set({ isCreatingProject: false })
+      set({ isCreatingProject: false });
     }
   },
 
   submitProjectUpdate: async (event) => {
-    event.preventDefault()
-    const { selectedProjectId: projectId, editProjectName, editProjectRootPath, editProjectBaseBranch } = get()
+    event.preventDefault();
+    const {
+      selectedProjectId: projectId,
+      editProjectName,
+      editProjectRootPath,
+      editProjectBaseBranch,
+    } = get();
 
     if (projectId === null) {
-      return
+      return;
     }
 
-    set({ projectUpdateError: null, isUpdatingProject: true })
+    set({ projectUpdateError: null, isUpdatingProject: true });
 
     try {
-      const project = await invoke<ProjectRecord>('update_project', {
+      const project = await invoke<ProjectRecord>("update_project", {
         input: {
           id: projectId,
           name: editProjectName,
           rootPath: editProjectRootPath,
           baseBranch: editProjectBaseBranch || null,
         },
-      })
+      });
 
       set((state) => ({
-        projects: [project, ...state.projects.filter((p) => p.id !== project.id)],
+        projects: [
+          project,
+          ...state.projects.filter((p) => p.id !== project.id),
+        ],
         selectedProjectId: project.id,
         editProjectName: project.name,
         editProjectRootPath: project.rootPath,
-        editProjectBaseBranch: project.baseBranch ?? '',
+        editProjectBaseBranch: project.baseBranch ?? "",
         isProjectEditorOpen: false,
         sessionError:
           state.sessionError ===
-          'selected project root folder no longer exists. Rebind the project before launching.'
+          "selected project root folder no longer exists. Rebind the project before launching."
             ? null
             : state.sessionError,
-      }))
+      }));
       await get().refreshSelectedProjectData([
-        'documents',
-        'worktrees',
-        'liveSessions',
-        'sessionSnapshot',
-        'history',
-        'orphanedSessions',
-        'cleanupCandidates',
-        'workItems',
-      ])
+        "documents",
+        "worktrees",
+        "liveSessions",
+        "sessionSnapshot",
+        "history",
+        "orphanedSessions",
+        "cleanupCandidates",
+        "workItems",
+      ]);
     } catch (error) {
-      set({ projectUpdateError: getErrorMessage(error, 'Failed to update project.') })
+      set({
+        projectUpdateError: getErrorMessage(error, "Failed to update project."),
+      });
     } finally {
-      set({ isUpdatingProject: false })
+      set({ isUpdatingProject: false });
     }
   },
 
   submitAppSettings: async (event) => {
-    event.preventDefault()
-    const { defaultLaunchProfileSettingId, autoRepairSafeCleanupOnStartup } = get()
-    set({ settingsError: null, settingsMessage: null, isSavingAppSettings: true })
+    event.preventDefault();
+    const {
+      defaultLaunchProfileSettingId,
+      defaultWorkerLaunchProfileSettingId,
+      sdkClaudeConfigDirSetting,
+      autoRepairSafeCleanupOnStartup,
+    } = get();
+    set({
+      settingsError: null,
+      settingsMessage: null,
+      isSavingAppSettings: true,
+    });
 
     try {
-      const settings = await invoke<AppSettings>('update_app_settings', {
-        input: { defaultLaunchProfileId: defaultLaunchProfileSettingId, autoRepairSafeCleanupOnStartup },
-      })
+      const settings = await invoke<AppSettings>("update_app_settings", {
+        input: {
+          defaultLaunchProfileId: defaultLaunchProfileSettingId,
+          defaultWorkerLaunchProfileId: defaultWorkerLaunchProfileSettingId,
+          sdkClaudeConfigDir: sdkClaudeConfigDirSetting.trim() || null,
+          autoRepairSafeCleanupOnStartup,
+        },
+      });
 
       set({
         appSettings: settings,
-        settingsMessage: 'Settings saved.',
+        defaultLaunchProfileSettingId: settings.defaultLaunchProfileId,
+        defaultWorkerLaunchProfileSettingId:
+          settings.defaultWorkerLaunchProfileId,
+        sdkClaudeConfigDirSetting: settings.sdkClaudeConfigDir ?? "",
+        autoRepairSafeCleanupOnStartup: settings.autoRepairSafeCleanupOnStartup,
+        settingsMessage: "Settings saved.",
         selectedLaunchProfileId:
           settings.defaultLaunchProfileId !== null
             ? settings.defaultLaunchProfileId
             : get().selectedLaunchProfileId,
-      })
+      });
     } catch (error) {
-      set({ settingsError: getErrorMessage(error, 'Failed to save app settings.') })
+      set({
+        settingsError: getErrorMessage(error, "Failed to save app settings."),
+      });
     } finally {
-      set({ isSavingAppSettings: false })
+      set({ isSavingAppSettings: false });
     }
   },
 
   submitLaunchProfile: async (event) => {
-    event.preventDefault()
+    event.preventDefault();
     const {
       editingLaunchProfileId,
       profileLabel,
+      profileProvider,
       profileExecutable,
       profileArgs,
       profileEnvJson,
-    } = get()
-    set({ profileError: null, settingsMessage: null, isCreatingProfile: true })
+    } = get();
+    set({ profileError: null, settingsMessage: null, isCreatingProfile: true });
 
     try {
       const profile =
         editingLaunchProfileId === null
-          ? await invoke<LaunchProfileRecord>('create_launch_profile', {
-              input: { label: profileLabel, executable: profileExecutable, args: profileArgs, envJson: profileEnvJson },
-            })
-          : await invoke<LaunchProfileRecord>('update_launch_profile', {
+          ? await invoke<LaunchProfileRecord>("create_launch_profile", {
               input: {
-                id: editingLaunchProfileId,
                 label: profileLabel,
+                provider: profileProvider,
                 executable: profileExecutable,
                 args: profileArgs,
                 envJson: profileEnvJson,
               },
             })
+          : await invoke<LaunchProfileRecord>("update_launch_profile", {
+              input: {
+                id: editingLaunchProfileId,
+                label: profileLabel,
+                provider: profileProvider,
+                executable: profileExecutable,
+                args: profileArgs,
+                envJson: profileEnvJson,
+              },
+            });
 
-      set((state) => ({
-        launchProfiles:
+      set((state) => {
+        const nextLaunchProfiles =
           editingLaunchProfileId === null
             ? [...state.launchProfiles, profile]
-            : state.launchProfiles.map((p) => (p.id === profile.id ? profile : p)),
-        selectedLaunchProfileId: profile.id,
-        settingsMessage: editingLaunchProfileId === null ? 'Launch profile created.' : 'Launch profile updated.',
-        editingLaunchProfileId: null,
-        profileLabel: DEFAULT_PROFILE_LABEL,
-        profileExecutable: DEFAULT_PROFILE_EXECUTABLE,
-        profileArgs: DEFAULT_PROFILE_ARGS,
-        profileEnvJson: DEFAULT_PROFILE_ENV_JSON,
-        profileError: null,
-        isProfileFormOpen: false,
-      }))
+            : state.launchProfiles.map((p) =>
+                p.id === profile.id ? profile : p,
+              );
+        const fallbackDispatcherProfile =
+          getFirstDispatcherLaunchProfile(nextLaunchProfiles);
+
+        return {
+          launchProfiles: nextLaunchProfiles,
+          selectedLaunchProfileId:
+            profile.provider === "claude_code"
+              ? profile.id
+              : (state.selectedLaunchProfileId ??
+                fallbackDispatcherProfile?.id ??
+                null),
+          settingsMessage:
+            editingLaunchProfileId === null
+              ? "Launch profile created."
+              : "Launch profile updated.",
+          editingLaunchProfileId: null,
+          profileLabel: DEFAULT_PROFILE_LABEL,
+          profileProvider: DEFAULT_PROFILE_PROVIDER,
+          profileExecutable: DEFAULT_PROFILE_EXECUTABLE,
+          profileArgs: DEFAULT_PROFILE_ARGS,
+          profileEnvJson: DEFAULT_PROFILE_ENV_JSON,
+          profileError: null,
+          isProfileFormOpen: false,
+        };
+      });
     } catch (error) {
       set({
         profileError: getErrorMessage(
           error,
-          editingLaunchProfileId === null ? 'Failed to create launch profile.' : 'Failed to update launch profile.',
+          editingLaunchProfileId === null
+            ? "Failed to create launch profile."
+            : "Failed to update launch profile.",
         ),
-      })
+      });
     } finally {
-      set({ isCreatingProfile: false })
+      set({ isCreatingProfile: false });
     }
   },
 
@@ -337,6 +443,7 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
     set({
       editingLaunchProfileId: null,
       profileLabel: DEFAULT_PROFILE_LABEL,
+      profileProvider: DEFAULT_PROFILE_PROVIDER,
       profileExecutable: DEFAULT_PROFILE_EXECUTABLE,
       profileArgs: DEFAULT_PROFILE_ARGS,
       profileEnvJson: DEFAULT_PROFILE_ENV_JSON,
@@ -344,14 +451,15 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
       settingsMessage: null,
       isProfileFormOpen: true,
       isAppSettingsOpen: true,
-      appSettingsInitialTab: 'accounts',
-    })
+      appSettingsInitialTab: "accounts",
+    });
   },
 
   startEditLaunchProfile: (profile) => {
     set({
       editingLaunchProfileId: profile.id,
       profileLabel: profile.label,
+      profileProvider: profile.provider,
       profileExecutable: profile.executable,
       profileArgs: profile.args,
       profileEnvJson: profile.envJson,
@@ -359,20 +467,21 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
       settingsMessage: null,
       isProfileFormOpen: true,
       isAppSettingsOpen: true,
-      appSettingsInitialTab: 'accounts',
-    })
+      appSettingsInitialTab: "accounts",
+    });
   },
 
   cancelLaunchProfileEditor: () => {
     set({
       editingLaunchProfileId: null,
       profileLabel: DEFAULT_PROFILE_LABEL,
+      profileProvider: DEFAULT_PROFILE_PROVIDER,
       profileExecutable: DEFAULT_PROFILE_EXECUTABLE,
       profileArgs: DEFAULT_PROFILE_ARGS,
       profileEnvJson: DEFAULT_PROFILE_ENV_JSON,
       profileError: null,
       isProfileFormOpen: false,
-    })
+    });
   },
 
   deleteLaunchProfile: async (profile) => {
@@ -381,41 +490,85 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
         `Delete launch profile "${profile.label}"? Existing session records will be preserved.`,
       )
     ) {
-      return
+      return;
     }
 
-    set({ profileError: null, settingsError: null, settingsMessage: null, activeDeleteLaunchProfileId: profile.id })
+    set({
+      profileError: null,
+      settingsError: null,
+      settingsMessage: null,
+      activeDeleteLaunchProfileId: profile.id,
+    });
 
     try {
-      await invoke('delete_launch_profile', { id: profile.id })
+      await invoke("delete_launch_profile", { id: profile.id });
 
       set((state) => {
-        const remainingProfiles = state.launchProfiles.filter((p) => p.id !== profile.id)
+        const remainingProfiles = state.launchProfiles.filter(
+          (p) => p.id !== profile.id,
+        );
+        const dispatcherProfiles =
+          getDispatcherLaunchProfiles(remainingProfiles);
+        const fallbackDispatcherId =
+          state.appSettings.defaultLaunchProfileId != null &&
+          dispatcherProfiles.some(
+            (candidate) =>
+              candidate.id === state.appSettings.defaultLaunchProfileId,
+          )
+            ? state.appSettings.defaultLaunchProfileId
+            : (dispatcherProfiles[0]?.id ?? null);
         const nextSelectedId =
           state.selectedLaunchProfileId === profile.id
-            ? state.appSettings.defaultLaunchProfileId === profile.id
-              ? remainingProfiles[0]?.id ?? null
-              : state.appSettings.defaultLaunchProfileId ?? remainingProfiles[0]?.id ?? null
-            : state.selectedLaunchProfileId
+            ? fallbackDispatcherId
+            : state.selectedLaunchProfileId;
 
         return {
           launchProfiles: remainingProfiles,
           selectedLaunchProfileId: nextSelectedId,
+          defaultLaunchProfileSettingId:
+            state.defaultLaunchProfileSettingId === profile.id
+              ? null
+              : state.defaultLaunchProfileSettingId,
+          defaultWorkerLaunchProfileSettingId:
+            state.defaultWorkerLaunchProfileSettingId === profile.id
+              ? null
+              : state.defaultWorkerLaunchProfileSettingId,
           appSettings:
-            state.appSettings.defaultLaunchProfileId === profile.id
-              ? { ...state.appSettings, defaultLaunchProfileId: null }
+            state.appSettings.defaultLaunchProfileId === profile.id ||
+            state.appSettings.defaultWorkerLaunchProfileId === profile.id
+              ? {
+                  ...state.appSettings,
+                  defaultLaunchProfileId:
+                    state.appSettings.defaultLaunchProfileId === profile.id
+                      ? null
+                      : state.appSettings.defaultLaunchProfileId,
+                  defaultWorkerLaunchProfileId:
+                    state.appSettings.defaultWorkerLaunchProfileId ===
+                    profile.id
+                      ? null
+                      : state.appSettings.defaultWorkerLaunchProfileId,
+                }
               : state.appSettings,
           editingLaunchProfileId:
-            state.editingLaunchProfileId === profile.id ? null : state.editingLaunchProfileId,
+            state.editingLaunchProfileId === profile.id
+              ? null
+              : state.editingLaunchProfileId,
           isProfileFormOpen:
-            state.editingLaunchProfileId === profile.id ? false : state.isProfileFormOpen,
-          settingsMessage: 'Launch profile deleted.',
-        }
-      })
+            state.editingLaunchProfileId === profile.id
+              ? false
+              : state.isProfileFormOpen,
+          settingsMessage: "Launch profile deleted.",
+        };
+      });
     } catch (error) {
-      set({ settingsError: getErrorMessage(error, 'Failed to delete launch profile.') })
+      set({
+        settingsError: getErrorMessage(
+          error,
+          "Failed to delete launch profile.",
+        ),
+      });
     } finally {
-      set({ activeDeleteLaunchProfileId: null })
+      set({ activeDeleteLaunchProfileId: null });
     }
   },
 
@@ -424,27 +577,31 @@ export const createProjectSlice: StateCreator<AppStore, [], [], ProjectSlice> = 
       projects: [project, ...state.projects.filter((p) => p.id !== project.id)],
       selectedProjectId: project.id,
       selectedTerminalWorktreeId: null,
-      activeView: 'terminal',
+      activeView: "terminal",
       isProjectCreateOpen: false,
-      projectName: '',
-      projectRootPath: '',
+      projectName: "",
+      projectRootPath: "",
       projectError: null,
-    }))
+    }));
   },
 
   adjustProjectWorkItemCount: (projectId, delta) => {
     set((state) => ({
       projects: state.projects.map((p) =>
-        p.id === projectId ? { ...p, workItemCount: Math.max(0, p.workItemCount + delta) } : p,
+        p.id === projectId
+          ? { ...p, workItemCount: Math.max(0, p.workItemCount + delta) }
+          : p,
       ),
-    }))
+    }));
   },
 
   adjustProjectDocumentCount: (projectId, delta) => {
     set((state) => ({
       projects: state.projects.map((p) =>
-        p.id === projectId ? { ...p, documentCount: Math.max(0, p.documentCount + delta) } : p,
+        p.id === projectId
+          ? { ...p, documentCount: Math.max(0, p.documentCount + delta) }
+          : p,
       ),
-    }))
+    }));
   },
-})
+});

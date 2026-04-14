@@ -1,0 +1,21 @@
+name: researcher.sonnet.standard
+role: researcher
+version: 1
+description: Standard research pod for collecting and summarizing source material.
+categories:
+  - RESEARCH
+  - DOCUMENTATION
+provider: claude_code
+model: sonnet-4.6
+prompt_template_ref: prompts/researcher.standard.md
+tool_allowlist:
+  - list_work_items
+  - list_documents
+secret_scopes: []
+default_policy:
+  timeout_ms: 1200000
+  max_retries: 1
+  token_budget: medium
+tags:
+  - research
+  - synthesis

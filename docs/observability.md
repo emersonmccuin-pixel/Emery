@@ -1,6 +1,6 @@
 # Observability Notes
 
-Last updated: April 13, 2026
+Last updated: April 14, 2026
 
 ## Supervisor Log Location
 
@@ -53,6 +53,18 @@ Last updated: April 13, 2026
   - original startup prompt when available
   - artifact paths and Bun crash-report URL when present
 
+## Desktop App Runtime Marker
+
+- The desktop app now keeps its own runtime-state marker at:
+  - `<app-data>/diagnostics/desktop-runtime.json`
+- On startup, Project Commander records the current `appRunId`, `appStartedAt`, process id, and `cleanShutdown=false`.
+- On graceful app exit, that marker is updated to `cleanShutdown=true`.
+- If the next startup sees the previous marker still marked unclean, it records:
+  - a persisted diagnostics entry: `app.previous_run_interrupted`
+  - runtime-context fields in the Diagnostics console for the previous interrupted run
+- This is the primary signal for “the desktop app restarted or died unexpectedly between runs.”
+- The marker intentionally lives outside the supervisor-owned `runtime/` directory so normal supervisor cleanup cannot erase desktop restart evidence.
+
 ## Claude Resume Metadata
 
 - Claude-backed session records now persist a provider session UUID in the database.
@@ -71,18 +83,34 @@ Last updated: April 13, 2026
   - the app hydrates recent persisted diagnostics history on startup so the live feed includes prior-run context
   - persisted entries carry `appRunId`, `appStartedAt`, and active frontend selection context so prior-run events can be filtered accurately
   - supervisor log stream events are also persisted into the same rolling diagnostics history
+  - desktop-app lifecycle markers such as `app.runtime_started` and `app.previous_run_interrupted` are persisted from the backend during startup
+  - supervisor-client runtime rollover markers such as `supervisor.runtime_invalidated`, `supervisor.runtime_spawn_requested`, and `supervisor.runtime_spawned` are persisted from the desktop app whenever it replaces the active supervisor runtime
 - Frontend slowdown diagnostics:
   - long main-thread tasks (`ui.longtask`) are recorded when supported by the runtime
   - visible view/stage load start, settle, and cancellation points are recorded with correlation IDs
 - Supervisor route timing:
   - `src-tauri/src/bin/project-commander-supervisor.rs` logs route-level timings on the `perf` target.
   - Successful routes at or above `500 ms` are elevated to `warn`.
+  - Exception: `POST /message/wait` is an intentional blocking broker wait, so successful waits log with `blocking_wait=true` instead of `slow=true`.
+  - `/message/wait` now sleeps on an in-process broker notification instead of a timer loop, so a wait completion usually means an actual broker state change or a real timeout.
+  - Claude-backed sessions now bind Project Commander tools through `POST /mcp` on the supervisor, so dispatcher or worker MCP attach/debug traffic is visible directly in `supervisor.log` without needing a spawned stdio helper process.
+  - Codex SDK workers bind Project Commander tools through the supervisor's `mcp-stdio` helper, so their MCP tool calls still fan into the same supervisor route logs even though the provider itself is not using the HTTP `/mcp` transport.
   - `5xx` route failures log at `error`; non-`5xx` failures log at `warn`.
+- Broker message threading:
+  - `agent_messages` now carries `thread_id` and `reply_to_message_id`.
+  - Use those fields to reconstruct a dispatcher/worker conversation when you inspect raw message payloads or exported diagnostics.
 - Session lifecycle diagnostics:
   - `src-tauri/src/session_host.rs` now logs session reattachs, launch requests, missing-root rejections, launch failure stages, and termination outcomes.
   - Claude launch requests now include `launch_mode=fresh|resume` plus the provider session UUID when available, so true-resume behavior after a full app restart is visible in logs.
+  - `session.vault_env_injected` now covers both launch-profile bindings and workflow-stage launch bindings; the event payload records env-var names and vault-entry names without ever logging the raw value.
+  - `session.vault_file_injected` records the env vars and vault entries whose secrets were materialized into per-session temp files, again without exposing the raw value or file contents.
 - Recovery and cleanup diagnostics:
   - The supervisor now logs worktree-agent launch requests, orphan termination attempts, cleanup-candidate application, and repair-all cleanup runs with structured identifiers and durations.
+- Workflow run diagnostics:
+  - `src-tauri/src/bin/project-commander-supervisor.rs` now logs workflow run start requests, stage dispatch requests, launch/directive failures, blocked/completed stage replies, and run completion with `run_id`, `stage`, `workflow_slug`, `project_id`, and `worktree_id` context.
+  - Stage dispatch logs and `workflow.stage_dispatched` project events now also record the count of configured vault bindings plus separate env-var lists for direct env injection vs. file-path delivery when a workflow stage launches with scoped vault grants.
+  - Workflow stage waits still ride the existing broker wait path; no workflow-specific polling loop was added on top of `/message/wait`.
+  - Project event history now records `workflow.run_started`, `workflow.stage_dispatched`, `workflow.stage_completed`, `workflow.stage_blocked`, `workflow.stage_failed`, and `workflow.run_completed` so workflow timelines stay visible in the same diagnostics surface as the rest of the supervisor runtime.
 
 ## Useful Log Patterns
 
@@ -90,10 +118,30 @@ Last updated: April 13, 2026
   - Route or command timing entries.
 - `slow=true`
   - A wrapped route or command exceeded the current `500 ms` threshold.
+- `blocking_wait=true`
+  - A successful `/message/wait` broker wait completed after holding the request open for message delivery or timeout.
+- `message.sent` / `message.broadcast`
+  - Project event payloads for broker sends now include threaded agent-message metadata.
+- `supervisor_route=/mcp`
+  - Claude or SDK runtimes are attaching to or calling the Project Commander HTTP MCP endpoint.
+- `app.previous_run_interrupted`
+  - The last desktop app run did not record a clean shutdown before this startup.
+- `supervisor.runtime_invalidated`
+  - The desktop app gave up on the current supervisor runtime after a failed request and failed health check.
+- `supervisor.runtime_spawned`
+  - The desktop app started and connected to a replacement supervisor runtime.
 - `stage=build_command`
   - Session launch failed while assembling the child process command.
 - `stage=spawn_command`
   - Session launch failed while spawning the child process.
+- `session.provider_session_id_updated`
+  - A worker host discovered or refreshed the provider-native resume id (for example, a Codex thread id) and persisted it for later recovery.
+- `workflow run started` / `workflow run completed`
+  - Supervisor lifecycle entries for workflow-run start and overall completion.
+- `workflow stage dispatch requested`
+  - A stage is about to launch a fresh session on the managed worktree.
+- `workflow.stage_blocked` / `workflow.stage_failed`
+  - The stage did not advance cleanly; inspect the payload for `failureReason` or the worker reply summary.
 - `stage=persist_runtime_metadata`
   - Session launch succeeded far enough to start, but runtime metadata persistence failed.
 - `terminate orphaned session`

@@ -7,6 +7,10 @@ import {
 
 const SLOW_TAURI_INVOKE_MS = 500
 
+type InvokeOptions = {
+  diagnosticsArgs?: unknown
+}
+
 function summarizeInvokeResult(value: unknown) {
   if (Array.isArray(value)) {
     return `Array(${value.length})`
@@ -22,9 +26,11 @@ function summarizeInvokeResult(value: unknown) {
 export async function invoke<T>(
   command: string,
   args?: Record<string, unknown>,
+  options?: InvokeOptions,
 ): Promise<T> {
   const startedAt = performance.now()
   const invokeId = createDiagnosticsCorrelationId('invoke')
+  const diagnosticsArgs = options?.diagnosticsArgs ?? args
 
   try {
     const result = await tauriInvoke<T>(command, args)
@@ -40,7 +46,7 @@ export async function invoke<T>(
         invokeId,
         command,
         status: 'ok',
-        args,
+        args: diagnosticsArgs,
         result: summarizeInvokeResult(result),
       },
     })
@@ -59,7 +65,7 @@ export async function invoke<T>(
         invokeId,
         command,
         status: 'error',
-        args,
+        args: diagnosticsArgs,
         error,
       },
     })

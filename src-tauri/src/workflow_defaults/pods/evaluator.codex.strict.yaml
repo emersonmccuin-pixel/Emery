@@ -1,0 +1,21 @@
+name: evaluator.codex.strict
+role: evaluator
+version: 1
+description: Strict independent evaluator for coding deliverables.
+categories:
+  - CODING
+provider: codex_sdk
+model: gpt-5.4
+prompt_template_ref: prompts/evaluator.strict.md
+tool_allowlist:
+  - list_work_items
+  - list_documents
+  - list_worktrees
+secret_scopes: []
+default_policy:
+  timeout_ms: 900000
+  max_retries: 1
+  token_budget: medium
+tags:
+  - strict
+  - independent

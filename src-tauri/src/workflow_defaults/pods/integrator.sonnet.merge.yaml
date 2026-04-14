@@ -1,0 +1,22 @@
+name: integrator.sonnet.merge
+role: integrator
+version: 1
+description: Merge and cleanup pod for successful workflow completions.
+categories:
+  - CODING
+  - OPS
+provider: claude_code
+model: sonnet-4.6
+prompt_template_ref: prompts/integrator.merge.md
+tool_allowlist:
+  - list_work_items
+  - list_worktrees
+  - cleanup_worktree
+secret_scopes: []
+default_policy:
+  timeout_ms: 900000
+  max_retries: 1
+  token_budget: low
+tags:
+  - merge
+  - cleanup

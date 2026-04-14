@@ -8,6 +8,7 @@ import WorkItemsStage from './WorkItemsStage'
 const ConfigurationPanel = lazy(() => import('../ConfigurationPanel'))
 const OverviewPanel = lazy(() => import('../OverviewPanel'))
 const WorktreeWorkItemPanel = lazy(() => import('../WorktreeWorkItemPanel'))
+const WorkflowsPanel = lazy(() => import('../workflow/WorkflowsPanel'))
 
 function WorktreeWorkItemStage() {
   const selectedWorktree = useSelectedWorktree()
@@ -41,6 +42,12 @@ function WorkspaceActiveStage() {
       return (
         <Suspense fallback={<PanelFallback label="Loading configuration..." />}>
           <ConfigurationPanel />
+        </Suspense>
+      )
+    case 'workflows':
+      return (
+        <Suspense fallback={<PanelFallback label="Loading workflows..." />}>
+          <WorkflowsPanel />
         </Suspense>
       )
     case 'workItems':

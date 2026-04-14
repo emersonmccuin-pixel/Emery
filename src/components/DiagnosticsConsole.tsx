@@ -28,6 +28,7 @@ import {
   PanelLoadingState,
 } from '@/components/ui/panel-state'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import './panel-surfaces.css'
 import type {
   DiagnosticsBundleExportResult,
   DiagnosticsSnapshot,
@@ -107,6 +108,17 @@ function formatRunLabel(runId: string) {
   return runId.length > 24 ? `${runId.slice(0, 14)}…${runId.slice(-8)}` : runId
 }
 
+function formatUnexpectedShutdownSummary(
+  shutdown: DiagnosticsSnapshot['lastUnexpectedShutdown'] | null | undefined,
+) {
+  if (!shutdown) {
+    return null
+  }
+
+  const endedAt = shutdown.appEndedAt ? `Ended ${shutdown.appEndedAt}. ` : ''
+  return `Previous run ${formatRunLabel(shutdown.appRunId)} started ${shutdown.appStartedAt}. ${endedAt}PID ${shutdown.processId}.`
+}
+
 function getEntryRunId(entry: ReturnType<typeof useDiagnosticsEntries>[number]) {
   const runId = entry.metadata.appRunId
   return typeof runId === 'string' && runId.trim() ? runId : null
@@ -175,6 +187,8 @@ function DiagnosticsConsole({ isActive }: Props) {
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const deferredQuery = useDeferredValue(query.trim())
   const currentRunId = runtimeContext.appRunId ?? snapshot?.appRunId ?? null
+  const lastUnexpectedShutdown =
+    runtimeContext.lastUnexpectedShutdown ?? snapshot?.lastUnexpectedShutdown ?? null
 
   const loadSnapshot = async () => {
     setIsLoadingSnapshot(true)
@@ -444,6 +458,13 @@ function DiagnosticsConsole({ isActive }: Props) {
 
   return (
     <div className="space-y-6">
+      {lastUnexpectedShutdown ? (
+        <PanelBanner
+          message={`Unexpected app restart detected. ${formatUnexpectedShutdownSummary(lastUnexpectedShutdown) ?? ''}`.trim()}
+          tone="amber"
+        />
+      ) : null}
+
       {actionMessage ? (
         <p className="stack-form__note settings-banner settings-banner--success">
           {actionMessage}
@@ -767,6 +788,7 @@ function DiagnosticsConsole({ isActive }: Props) {
                     ['Captured', snapshot.capturedAt],
                     ['App run', snapshot.appRunId],
                     ['Started', snapshot.appStartedAt],
+                    ['App runtime state', snapshot.appRuntimeStatePath],
                     ['App data', snapshot.appDataDir],
                     ['Database dir', snapshot.dbDir],
                     ['Runtime dir', snapshot.runtimeDir],
@@ -791,6 +813,20 @@ function DiagnosticsConsole({ isActive }: Props) {
                     </div>
                   ))}
                 </div>
+
+                {snapshot.lastUnexpectedShutdown ? (
+                  <div className="rounded-xl border border-hud-amber/25 bg-hud-amber/10 px-4 py-3">
+                    <p className="text-[10px] font-black uppercase tracking-[0.18em] text-hud-amber/75">
+                      Previous Interrupted Run
+                    </p>
+                    <p className="mt-2 text-xs text-white/78">
+                      {formatUnexpectedShutdownSummary(snapshot.lastUnexpectedShutdown)}
+                    </p>
+                    <code className="mt-2 block whitespace-pre-wrap break-words text-[11px] text-white/62">
+                      {snapshot.lastUnexpectedShutdown.statePath}
+                    </code>
+                  </div>
+                ) : null}
 
                 <LogTailPanel
                   title="Current supervisor log"

@@ -6,18 +6,21 @@ pub mod session_api;
 pub mod session_host;
 pub mod supervisor_api;
 pub mod supervisor_mcp;
+pub mod vault;
+pub mod workflow;
 
 use db::{
-    AppSettings, BootstrapData, CreateLaunchProfileInput, CreateProjectInput, DocumentRecord,
-    LaunchProfileRecord, ProjectRecord, SessionRecord, StorageInfo, UpdateAppSettingsInput,
-    UpdateLaunchProfileInput, UpdateProjectInput, WorkItemRecord, WorktreeRecord,
+    AppSettings, AppState, BootstrapData, CreateLaunchProfileInput, CreateProjectInput,
+    DocumentRecord, LaunchProfileRecord, ProjectRecord, SessionRecord, StorageInfo,
+    UpdateAppSettingsInput, UpdateLaunchProfileInput, UpdateProjectInput, WorkItemRecord,
+    WorktreeRecord,
 };
 use diagnostics::{
-    append_diagnostics_entries as persist_diagnostics_entries, diagnostics_log_path,
-    diagnostics_prev_log_path, enrich_diagnostics_entry,
-    export_diagnostics_bundle as build_diagnostics_bundle,
-    list_diagnostics_history as load_diagnostics_history, DiagnosticsBundleExportResult,
-    DiagnosticsRuntimeMetadata, PersistedDiagnosticsEntry,
+    app_runtime_state_path, append_diagnostics_entries as persist_diagnostics_entries,
+    begin_app_runtime, diagnostics_log_path, diagnostics_prev_log_path, enrich_diagnostics_entry,
+    export_diagnostics_bundle as build_diagnostics_bundle, finish_app_runtime,
+    list_diagnostics_history as load_diagnostics_history, AppUnexpectedShutdown,
+    DiagnosticsBundleExportResult, DiagnosticsRuntimeMetadata, PersistedDiagnosticsEntry,
 };
 use error::AppResult;
 use notify::{Config as NotifyConfig, RecommendedWatcher, RecursiveMode, Watcher};
@@ -30,6 +33,7 @@ use std::fs;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use supervisor_api::{
     CleanupActionOutput, CleanupCandidate, CleanupCandidateTarget, CleanupRepairOutput,
@@ -40,6 +44,11 @@ use supervisor_api::{
     UpdateProjectWorkItemInput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
+use vault::{DeleteVaultEntryInput, UpsertVaultEntryInput, VaultSnapshot};
+use workflow::{
+    AdoptCatalogEntryInput, CatalogAdoptionTarget, ProjectWorkflowCatalog,
+    ProjectWorkflowRunSnapshot, StartWorkflowRunInput, WorkflowLibrarySnapshot, WorkflowRunRecord,
+};
 
 const TAURI_SLOW_COMMAND_MS: f64 = 500.0;
 const DEFAULT_DIAGNOSTICS_LOG_TAIL_CHARS: usize = 20_000;
@@ -87,6 +96,8 @@ struct DiagnosticsSnapshot {
     captured_at: String,
     app_run_id: String,
     app_started_at: String,
+    app_runtime_state_path: String,
+    last_unexpected_shutdown: Option<AppUnexpectedShutdown>,
     app_data_dir: String,
     db_dir: String,
     db_path: String,
@@ -112,6 +123,32 @@ struct DiagnosticsStreamEvent {
     summary: String,
     path: Option<String>,
     line: Option<String>,
+}
+
+struct AppRuntimeLifecycle {
+    storage: StorageInfo,
+    runtime: DiagnosticsRuntimeMetadata,
+    finished: AtomicBool,
+}
+
+impl AppRuntimeLifecycle {
+    fn new(storage: StorageInfo, runtime: DiagnosticsRuntimeMetadata) -> Self {
+        Self {
+            storage,
+            runtime,
+            finished: AtomicBool::new(false),
+        }
+    }
+
+    fn mark_clean_shutdown(&self) {
+        if self.finished.swap(true, Ordering::Relaxed) {
+            return;
+        }
+
+        if let Err(error) = finish_app_runtime(&self.storage, &self.runtime) {
+            log::warn!("failed to mark app runtime clean shutdown: {error}");
+        }
+    }
 }
 
 fn trim_to_last_chars(value: &str, max_chars: usize) -> (String, bool) {
@@ -218,6 +255,29 @@ fn emit_diagnostics_stream_event(
     }
 
     let _ = app.emit(DIAGNOSTICS_STREAM_EVENT, event);
+}
+
+fn persist_backend_diagnostics_entry(
+    storage: &StorageInfo,
+    runtime: &DiagnosticsRuntimeMetadata,
+    event: &str,
+    source: &str,
+    severity: &str,
+    summary: String,
+    metadata: std::collections::HashMap<String, serde_json::Value>,
+) {
+    let mut entry = PersistedDiagnosticsEntry {
+        id: format!("backend-{}-{}", event, rand::random::<u64>()),
+        at: crate::session_host::now_timestamp_string(),
+        event: event.to_string(),
+        source: source.to_string(),
+        severity: severity.to_string(),
+        summary,
+        duration_ms: None,
+        metadata,
+    };
+    enrich_diagnostics_entry(&mut entry, runtime);
+    let _ = persist_diagnostics_entries(storage, &[entry]);
 }
 
 fn emit_supervisor_log_event(
@@ -531,6 +591,8 @@ fn get_diagnostics_snapshot(
                 captured_at: crate::session_host::now_timestamp_string(),
                 app_run_id: runtime.app_run_id.clone(),
                 app_started_at: runtime.app_started_at.clone(),
+                app_runtime_state_path: runtime.app_runtime_state_path.clone(),
+                last_unexpected_shutdown: runtime.last_unexpected_shutdown.clone(),
                 app_data_dir: storage.app_data_dir.clone(),
                 db_dir: storage.db_dir.clone(),
                 db_path: storage.db_path.clone(),
@@ -615,6 +677,112 @@ fn update_launch_profile(
 #[tauri::command]
 fn delete_launch_profile(id: i64, state: State<SupervisorClient>) -> AppResult<()> {
     state.delete_launch_profile(id)
+}
+
+#[tauri::command]
+fn list_workflow_library(state: State<AppState>) -> AppResult<WorkflowLibrarySnapshot> {
+    timed_command("list_workflow_library", "scope=library", || {
+        state.list_workflow_library()
+    })
+}
+
+#[tauri::command]
+fn list_project_workflow_catalog(
+    project_id: i64,
+    state: State<AppState>,
+) -> AppResult<ProjectWorkflowCatalog> {
+    timed_command(
+        "list_project_workflow_catalog",
+        format!("project_id={project_id}"),
+        || state.list_project_workflow_catalog(project_id),
+    )
+}
+
+#[tauri::command]
+fn adopt_project_catalog_entry(
+    input: AdoptCatalogEntryInput,
+    state: State<AppState>,
+) -> AppResult<ProjectWorkflowCatalog> {
+    timed_command(
+        "adopt_project_catalog_entry",
+        format!(
+            "project_id={} entity_type={} slug={} mode={}",
+            input.project_id,
+            input.entity_type,
+            input.slug,
+            input.mode.as_deref().unwrap_or("linked")
+        ),
+        || state.adopt_catalog_entry(input),
+    )
+}
+
+#[tauri::command]
+fn upgrade_project_catalog_adoption(
+    input: CatalogAdoptionTarget,
+    state: State<AppState>,
+) -> AppResult<ProjectWorkflowCatalog> {
+    timed_command(
+        "upgrade_project_catalog_adoption",
+        format!(
+            "project_id={} entity_type={} slug={}",
+            input.project_id, input.entity_type, input.slug
+        ),
+        || state.upgrade_catalog_adoption(input),
+    )
+}
+
+#[tauri::command]
+fn detach_project_catalog_adoption(
+    input: CatalogAdoptionTarget,
+    state: State<AppState>,
+) -> AppResult<ProjectWorkflowCatalog> {
+    timed_command(
+        "detach_project_catalog_adoption",
+        format!(
+            "project_id={} entity_type={} slug={}",
+            input.project_id, input.entity_type, input.slug
+        ),
+        || state.detach_catalog_adoption(input),
+    )
+}
+
+#[tauri::command]
+fn list_project_workflow_runs(
+    project_id: i64,
+    state: State<AppState>,
+) -> AppResult<ProjectWorkflowRunSnapshot> {
+    timed_command(
+        "list_project_workflow_runs",
+        format!("project_id={project_id}"),
+        || state.list_project_workflow_runs(project_id),
+    )
+}
+
+#[tauri::command]
+fn list_vault_entries(state: State<AppState>) -> AppResult<VaultSnapshot> {
+    timed_command("list_vault_entries", "scope=settings".to_string(), || {
+        state.list_vault_entries()
+    })
+}
+
+#[tauri::command]
+fn upsert_vault_entry(
+    input: UpsertVaultEntryInput,
+    state: State<AppState>,
+) -> AppResult<VaultSnapshot> {
+    timed_command("upsert_vault_entry", "scope=settings".to_string(), || {
+        state.upsert_vault_entry(input)
+    })
+}
+
+#[tauri::command]
+fn delete_vault_entry(
+    input: DeleteVaultEntryInput,
+    state: State<AppState>,
+) -> AppResult<VaultSnapshot> {
+    timed_command("delete_vault_entry", "scope=settings".to_string(), || {
+        state.delete_vault_entry(input)
+    })
 }
 
 #[tauri::command]
@@ -821,6 +989,26 @@ fn launch_worktree_agent(
     );
     timed_command("launch_worktree_agent", detail, || {
         state.launch_worktree_agent(input, &app_handle)
+    })
+}
+
+#[tauri::command]
+fn start_workflow_run(
+    input: StartWorkflowRunInput,
+    state: State<SupervisorClient>,
+) -> AppResult<WorkflowRunRecord> {
+    let detail = format!(
+        "project_id={} workflow_slug={} root_work_item_id={} root_worktree_id={}",
+        input.project_id,
+        input.workflow_slug,
+        input.root_work_item_id,
+        input
+            .root_worktree_id
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "null".to_string())
+    );
+    timed_command("start_workflow_run", detail, || {
+        state.start_workflow_run(input)
     })
 }
 
@@ -1101,7 +1289,7 @@ fn write_project_file(root_path: String, filename: String, contents: String) -> 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             health_check,
@@ -1118,6 +1306,15 @@ pub fn run() {
             create_launch_profile,
             update_launch_profile,
             delete_launch_profile,
+            list_workflow_library,
+            list_project_workflow_catalog,
+            adopt_project_catalog_entry,
+            upgrade_project_catalog_adoption,
+            detach_project_catalog_adoption,
+            list_project_workflow_runs,
+            list_vault_entries,
+            upsert_vault_entry,
+            delete_vault_entry,
             get_session_snapshot,
             launch_project_session,
             write_session_input,
@@ -1137,6 +1334,7 @@ pub fn run() {
             list_worktrees,
             ensure_worktree,
             launch_worktree_agent,
+            start_workflow_run,
             remove_worktree,
             recreate_worktree,
             cleanup_worktree,
@@ -1156,9 +1354,85 @@ pub fn run() {
         ])
         .setup(|app| {
             let storage = ensure_storage_dirs(&app.handle())?;
-            let diagnostics_runtime = DiagnosticsRuntimeMetadata::generate();
-            let supervisor = SupervisorClient::new(storage.clone())?;
+            let workflow_state = AppState::new(storage.clone())?;
+            let mut diagnostics_runtime = DiagnosticsRuntimeMetadata::generate();
+            diagnostics_runtime.app_runtime_state_path =
+                app_runtime_state_path(&storage).display().to_string();
+            diagnostics_runtime.last_unexpected_shutdown =
+                begin_app_runtime(&storage, &diagnostics_runtime, std::process::id())?;
+            let supervisor = SupervisorClient::new(storage.clone(), diagnostics_runtime.clone())?;
+            let app_runtime_lifecycle =
+                AppRuntimeLifecycle::new(storage.clone(), diagnostics_runtime.clone());
+
+            if let Some(previous) = &diagnostics_runtime.last_unexpected_shutdown {
+                log::warn!(
+                    "desktop app detected a previous interrupted run — previous_app_run_id={} previous_started_at={} process_id={}",
+                    previous.app_run_id,
+                    previous.app_started_at,
+                    previous.process_id
+                );
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert(
+                    "previousAppRunId".to_string(),
+                    serde_json::Value::String(previous.app_run_id.clone()),
+                );
+                metadata.insert(
+                    "previousAppStartedAt".to_string(),
+                    serde_json::Value::String(previous.app_started_at.clone()),
+                );
+                metadata.insert(
+                    "previousAppEndedAt".to_string(),
+                    previous
+                        .app_ended_at
+                        .clone()
+                        .map(serde_json::Value::String)
+                        .unwrap_or(serde_json::Value::Null),
+                );
+                metadata.insert(
+                    "previousProcessId".to_string(),
+                    serde_json::Value::Number(previous.process_id.into()),
+                );
+                metadata.insert(
+                    "appRuntimeStatePath".to_string(),
+                    serde_json::Value::String(previous.state_path.clone()),
+                );
+                persist_backend_diagnostics_entry(
+                    &storage,
+                    &diagnostics_runtime,
+                    "app.previous_run_interrupted",
+                    "app",
+                    "warn",
+                    "Previous desktop app run ended unexpectedly".to_string(),
+                    metadata,
+                );
+            }
+
+            let mut startup_metadata = std::collections::HashMap::new();
+            startup_metadata.insert(
+                "processId".to_string(),
+                serde_json::Value::Number(std::process::id().into()),
+            );
+            startup_metadata.insert(
+                "appRuntimeStatePath".to_string(),
+                serde_json::Value::String(diagnostics_runtime.app_runtime_state_path.clone()),
+            );
+            startup_metadata.insert(
+                "hadUnexpectedPreviousRun".to_string(),
+                serde_json::Value::Bool(diagnostics_runtime.last_unexpected_shutdown.is_some()),
+            );
+            persist_backend_diagnostics_entry(
+                &storage,
+                &diagnostics_runtime,
+                "app.runtime_started",
+                "app",
+                "info",
+                "Desktop app runtime initialized".to_string(),
+                startup_metadata,
+            );
+
             app.manage(diagnostics_runtime.clone());
+            app.manage(app_runtime_lifecycle);
+            app.manage(workflow_state);
             app.manage(supervisor);
             spawn_supervisor_log_stream(&app.handle(), &storage, &diagnostics_runtime);
 
@@ -1171,6 +1445,15 @@ pub fn run() {
             )?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| match event {
+        tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
+            if let Some(lifecycle) = app_handle.try_state::<AppRuntimeLifecycle>() {
+                lifecycle.mark_clean_shutdown();
+            }
+        }
+        _ => {}
+    });
 }

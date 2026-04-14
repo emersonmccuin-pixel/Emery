@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::vault::VaultAccessBindingRequest;
+
 pub const TERMINAL_OUTPUT_EVENT: &str = "terminal-output";
 pub const TERMINAL_EXIT_EVENT: &str = "terminal-exit";
 pub const SUPERVISOR_PROTOCOL_VERSION: u32 = 1;
@@ -54,6 +56,8 @@ pub struct LaunchSessionInput {
     pub model: Option<String>,
     #[serde(default)]
     pub execution_mode: Option<String>,
+    #[serde(default)]
+    pub vault_env_bindings: Vec<VaultAccessBindingRequest>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

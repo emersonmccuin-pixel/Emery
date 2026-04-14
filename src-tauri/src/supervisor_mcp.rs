@@ -7,8 +7,8 @@ use crate::supervisor_api::{
     ListAgentMessagesApiInput, ListProjectDocumentsInput, ListProjectWorkItemsInput,
     ListProjectWorktreesInput, PinWorktreeInput, ProjectCallSignTarget, ProjectDocumentTarget,
     ProjectWorkItemTarget, ReconcileProjectTrackerInput, SendAgentMessageApiInput,
-    UpdateProjectDocumentInput, UpdateProjectWorkItemInput, WorkItemDetailOutput,
-    WorktreeLaunchOutput,
+    UpdateProjectDocumentInput, UpdateProjectWorkItemInput, WaitAgentMessagesApiInput,
+    WaitAgentMessagesOutput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
 use reqwest::blocking::Client;
 use serde::de::DeserializeOwned;
@@ -20,6 +20,18 @@ use std::time::Duration;
 const MCP_SERVER_NAME: &str = "project-commander";
 const MCP_SERVER_VERSION: &str = "0.1.0";
 const MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+
+pub fn handle_supervisor_mcp_message(
+    port: u16,
+    token: String,
+    project_id: i64,
+    worktree_id: Option<i64>,
+    session_id: Option<i64>,
+    message: Value,
+) -> AppResult<Option<Value>> {
+    let client = SupervisorMcpClient::new(port, token, project_id, worktree_id, session_id)?;
+    handle_message(&client, message)
+}
 
 pub fn run_supervisor_mcp_stdio(
     port: u16,
@@ -337,12 +349,16 @@ impl SupervisorMcpClient {
         message_type: String,
         body: String,
         context_json: Option<String>,
+        thread_id: Option<String>,
+        reply_to_message_id: Option<i64>,
     ) -> AppResult<Value> {
         self.post(
             "message/send",
             &SendAgentMessageApiInput {
                 project_id: self.project_id,
                 to_agent: to,
+                thread_id,
+                reply_to_message_id,
                 message_type,
                 body,
                 context_json,
@@ -354,6 +370,8 @@ impl SupervisorMcpClient {
         &self,
         from_agent: Option<String>,
         to_agent: Option<String>,
+        thread_id: Option<String>,
+        reply_to_message_id: Option<i64>,
         message_type: Option<String>,
         status: Option<String>,
         limit: Option<i64>,
@@ -364,6 +382,8 @@ impl SupervisorMcpClient {
                 project_id: self.project_id,
                 from_agent,
                 to_agent,
+                thread_id,
+                reply_to_message_id,
                 message_type,
                 status,
                 limit,
@@ -375,6 +395,8 @@ impl SupervisorMcpClient {
         &self,
         unread_only: bool,
         from_agent: Option<String>,
+        thread_id: Option<String>,
+        reply_to_message_id: Option<i64>,
         message_type: Option<String>,
         limit: Option<i64>,
     ) -> AppResult<AgentMessageListOutput> {
@@ -385,8 +407,34 @@ impl SupervisorMcpClient {
                 agent_name: None,
                 unread_only,
                 from_agent,
+                thread_id,
+                reply_to_message_id,
                 message_type,
                 limit,
+            },
+        )
+    }
+
+    fn wait_for_messages(
+        &self,
+        from_agent: Option<String>,
+        thread_id: Option<String>,
+        reply_to_message_id: Option<i64>,
+        message_type: Option<String>,
+        limit: Option<i64>,
+        timeout_ms: Option<u64>,
+    ) -> AppResult<WaitAgentMessagesOutput> {
+        self.post(
+            "message/wait",
+            &WaitAgentMessagesApiInput {
+                project_id: self.project_id,
+                agent_name: None,
+                from_agent,
+                thread_id,
+                reply_to_message_id,
+                message_type,
+                limit,
+                timeout_ms,
             },
         )
     }
@@ -787,11 +835,15 @@ fn call_tool(client: &SupervisorMcpClient, tool_name: &str, arguments: Value) ->
             read_required_string(&arguments, "messageType")?,
             read_required_string(&arguments, "body")?,
             read_optional_string(&arguments, "contextJson"),
+            read_optional_string(&arguments, "threadId"),
+            read_optional_i64(&arguments, "replyToMessageId"),
         )?),
         "list_messages" => {
             let result = client.list_messages(
                 read_optional_string(&arguments, "fromAgent"),
                 read_optional_string(&arguments, "toAgent"),
+                read_optional_string(&arguments, "threadId"),
+                read_optional_i64(&arguments, "replyToMessageId"),
                 read_optional_string(&arguments, "messageType"),
                 read_optional_string(&arguments, "status"),
                 read_optional_i64(&arguments, "limit").or(Some(50)),
@@ -810,9 +862,18 @@ fn call_tool(client: &SupervisorMcpClient, tool_name: &str, arguments: Value) ->
                 .and_then(Value::as_bool)
                 .unwrap_or(true);
             let from_agent = read_optional_string(&arguments, "fromAgent");
+            let thread_id = read_optional_string(&arguments, "threadId");
+            let reply_to_message_id = read_optional_i64(&arguments, "replyToMessageId");
             let message_type = read_optional_string(&arguments, "messageType");
             let limit = read_optional_i64(&arguments, "limit").or(Some(20));
-            let result = client.get_inbox(unread_only, from_agent, message_type, limit)?;
+            let result = client.get_inbox(
+                unread_only,
+                from_agent,
+                thread_id,
+                reply_to_message_id,
+                message_type,
+                limit,
+            )?;
             let ids: Vec<i64> = result.messages.iter().map(|m| m.id).collect();
             if mark_as_read && !ids.is_empty() {
                 client.ack_messages(ids)?;
@@ -820,6 +881,38 @@ fn call_tool(client: &SupervisorMcpClient, tool_name: &str, arguments: Value) ->
             let mut value = serde_json::to_value(result)
                 .map_err(|error| AppError::internal(format!("failed to encode inbox: {error}")))?;
             strip_inbox_response_fields(&mut value);
+            Ok(value)
+        }
+        "wait_for_messages" => {
+            let mark_as_read = arguments
+                .get("markAsRead")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            let from_agent = read_optional_string(&arguments, "fromAgent");
+            let thread_id = read_optional_string(&arguments, "threadId");
+            let reply_to_message_id = read_optional_i64(&arguments, "replyToMessageId");
+            let message_type = read_optional_string(&arguments, "messageType");
+            let limit = read_optional_i64(&arguments, "limit").or(Some(20));
+            let timeout_ms = arguments
+                .get("timeoutMs")
+                .and_then(Value::as_u64)
+                .or(Some(30_000));
+            let result = client.wait_for_messages(
+                from_agent,
+                thread_id,
+                reply_to_message_id,
+                message_type,
+                limit,
+                timeout_ms,
+            )?;
+            let ids: Vec<i64> = result.messages.iter().map(|m| m.id).collect();
+            if mark_as_read && !ids.is_empty() {
+                client.ack_messages(ids)?;
+            }
+            let mut value = serde_json::to_value(result).map_err(|error| {
+                AppError::internal(format!("failed to encode waited inbox: {error}"))
+            })?;
+            strip_wait_response_fields(&mut value);
             Ok(value)
         }
         "reconcile_inbox" => Ok(client.reconcile_inbox()?),
@@ -1101,7 +1194,7 @@ fn build_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "launch_worktree_agent",
-            "description": "Ensure a worktree for a work item and launch or reconnect to its Claude session. Optionally specify a model — choose based on task complexity: opus for hard/architectural work, sonnet for standard features/bugs, haiku for simple/mechanical tasks.",
+            "description": "Ensure a worktree for a work item and launch or reconnect to its SDK-backed worker session. Optionally specify a provider-specific model override. For Claude worker profiles use Claude model ids such as opus/sonnet/haiku; for Codex worker profiles use OpenAI model ids such as gpt-5.4 or gpt-5.4-mini.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1115,7 +1208,7 @@ fn build_tool_definitions() -> Vec<Value> {
                     },
                     "model": {
                         "type": "string",
-                        "description": "Optional Claude model override (e.g. 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'). Pick based on task complexity."
+                        "description": "Optional provider-specific model override for the selected worker profile."
                     },
                     "executionMode": {
                         "type": "string",
@@ -1167,7 +1260,7 @@ fn build_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "terminate_session",
-            "description": "Forcefully terminate a running worktree agent session. Kills the Claude Code process and cleans up the PTY. Use this when an agent is stuck, completed but lingering, or needs to be stopped before worktree cleanup.",
+            "description": "Forcefully terminate a running worktree agent session and clean up the PTY host. Use this when an agent is stuck, completed but lingering, or needs to be stopped before worktree cleanup.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1182,17 +1275,17 @@ fn build_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "send_message",
-            "description": "Send a message to another agent in the project. The message will be queued in the recipient's inbox.",
+            "description": "Send a broker message to another agent in the project. Preserve threadId and set replyToMessageId when replying inside an existing conversation.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "to": {
                         "type": "string",
-                        "description": "Recipient agent name (e.g. 'dispatcher', 'teammate-42')."
+                        "description": "Recipient agent name (e.g. 'dispatcher', 'AGENT-42')."
                     },
                     "messageType": {
                         "type": "string",
-                        "enum": ["question", "blocked", "complete", "status_update", "request_approval", "handoff", "directive"],
+                        "enum": ["question", "blocked", "complete", "options", "status_update", "request_approval", "handoff", "directive"],
                         "description": "Message type that classifies intent."
                     },
                     "body": {
@@ -1202,6 +1295,14 @@ fn build_tool_definitions() -> Vec<Value> {
                     "contextJson": {
                         "type": "string",
                         "description": "Optional JSON string with additional structured context."
+                    },
+                    "threadId": {
+                        "type": "string",
+                        "description": "Optional thread identifier. Reuse the incoming threadId when replying in an existing conversation."
+                    },
+                    "replyToMessageId": {
+                        "type": "integer",
+                        "description": "Optional message id this reply answers. Set this when responding to a specific broker message."
                     }
                 },
                 "required": ["to", "messageType", "body"],
@@ -1221,6 +1322,14 @@ fn build_tool_definitions() -> Vec<Value> {
                     "toAgent": {
                         "type": "string",
                         "description": "Optional filter by recipient agent name."
+                    },
+                    "threadId": {
+                        "type": "string",
+                        "description": "Optional filter by thread id."
+                    },
+                    "replyToMessageId": {
+                        "type": "integer",
+                        "description": "Optional filter by parent message id."
                     },
                     "messageType": {
                         "type": "string",
@@ -1271,9 +1380,59 @@ fn build_tool_definitions() -> Vec<Value> {
                         "type": "string",
                         "description": "Optional filter by sender agent name."
                     },
+                    "threadId": {
+                        "type": "string",
+                        "description": "Optional filter by thread id."
+                    },
+                    "replyToMessageId": {
+                        "type": "integer",
+                        "description": "Optional filter by parent message id."
+                    },
                     "messageType": {
                         "type": "string",
                         "description": "Optional filter by message type (e.g. 'directive', 'complete', 'question')."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of messages to return. Defaults to 20."
+                    }
+                },
+                "required": [],
+                "additionalProperties": false
+            },
+            "_meta": {
+                "anthropic/maxResultSizeChars": 200000
+            }
+        }),
+        json!({
+            "name": "wait_for_messages",
+            "description": "Block until this agent has unread broker messages or the timeout elapses. Use this to wait on dispatcher or worker replies without mailbox polling.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "timeoutMs": {
+                        "type": "integer",
+                        "description": "Maximum time to wait in milliseconds. Defaults to 30000."
+                    },
+                    "markAsRead": {
+                        "type": "boolean",
+                        "description": "When true (default), mark returned messages as read."
+                    },
+                    "fromAgent": {
+                        "type": "string",
+                        "description": "Optional filter by sender agent name."
+                    },
+                    "threadId": {
+                        "type": "string",
+                        "description": "Optional filter by thread id."
+                    },
+                    "replyToMessageId": {
+                        "type": "integer",
+                        "description": "Optional filter by parent message id."
+                    },
+                    "messageType": {
+                        "type": "string",
+                        "description": "Optional filter by message type."
                     },
                     "limit": {
                         "type": "integer",
@@ -1330,14 +1489,7 @@ fn read_message(reader: &mut impl BufRead) -> AppResult<Option<Value>> {
         });
     }
 
-    let mut content_length = None;
-
-    if let Some(value) = trimmed.strip_prefix("Content-Length:") {
-        content_length =
-            Some(value.trim().parse::<usize>().map_err(|error| {
-                AppError::io(format!("invalid Content-Length header: {error}"))
-            })?);
-    }
+    let mut content_length = parse_content_length_header(trimmed)?;
 
     loop {
         let mut line = String::new();
@@ -1357,10 +1509,8 @@ fn read_message(reader: &mut impl BufRead) -> AppResult<Option<Value>> {
             break;
         }
 
-        if let Some(value) = trimmed.strip_prefix("Content-Length:") {
-            content_length = Some(value.trim().parse::<usize>().map_err(|error| {
-                AppError::io(format!("invalid Content-Length header: {error}"))
-            })?);
+        if let Some(value) = parse_content_length_header(trimmed)? {
+            content_length = Some(value);
         }
     }
 
@@ -1386,10 +1536,11 @@ fn write_message(writer: &mut impl Write, message: &Value) -> AppResult<()> {
             "failed to encode Project Commander MCP response: {error}"
         ))
     })?;
+    let header = format!("Content-Length: {}\r\n\r\n", raw.len());
 
     writer
-        .write_all(raw.as_bytes())
-        .and_then(|_| writer.write_all(b"\n"))
+        .write_all(header.as_bytes())
+        .and_then(|_| writer.write_all(raw.as_bytes()))
         .and_then(|_| writer.flush())
         .map_err(|error| {
             AppError::io(format!(
@@ -1447,5 +1598,83 @@ fn strip_inbox_response_fields(value: &mut Value) {
                 }
             }
         }
+    }
+}
+
+fn parse_content_length_header(header_line: &str) -> AppResult<Option<usize>> {
+    let Some((name, value)) = header_line.split_once(':') else {
+        return Ok(None);
+    };
+
+    if !name.trim().eq_ignore_ascii_case("Content-Length") {
+        return Ok(None);
+    }
+
+    value
+        .trim()
+        .parse::<usize>()
+        .map(Some)
+        .map_err(|error| AppError::io(format!("invalid Content-Length header: {error}")))
+}
+
+fn strip_wait_response_fields(value: &mut Value) {
+    if let Some(messages) = value.get_mut("messages").and_then(Value::as_array_mut) {
+        for msg in messages.iter_mut() {
+            if let Some(obj) = msg.as_object_mut() {
+                obj.remove("sessionId");
+                if let Some(ctx) = obj.get("contextJson") {
+                    let empty = ctx.as_str().map_or(true, |s| s.is_empty() || s == "{}");
+                    if empty {
+                        obj.remove("contextJson");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn write_message_emits_content_length_framing() {
+        let mut buffer = Vec::new();
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": { "ok": true }
+        });
+
+        write_message(&mut buffer, &payload).expect("message should encode");
+
+        let raw = String::from_utf8(buffer.clone()).expect("frame should be utf-8");
+        assert!(raw.starts_with("Content-Length: "));
+        assert!(raw.contains("\r\n\r\n"));
+
+        let mut cursor = Cursor::new(buffer);
+        let decoded = read_message(&mut cursor)
+            .expect("message should decode")
+            .expect("frame should contain one message");
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn read_message_accepts_case_insensitive_content_length_headers() {
+        let payload = br#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+        let raw = format!(
+            "content-length: {}\r\n\r\n{}",
+            payload.len(),
+            String::from_utf8_lossy(payload)
+        );
+        let mut cursor = Cursor::new(raw.into_bytes());
+
+        let decoded = read_message(&mut cursor)
+            .expect("message should decode")
+            .expect("frame should contain one message");
+
+        assert_eq!(decoded["method"], "ping");
+        assert_eq!(decoded["id"], 1);
     }
 }

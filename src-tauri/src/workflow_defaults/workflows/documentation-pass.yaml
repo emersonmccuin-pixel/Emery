@@ -1,0 +1,33 @@
+name: documentation-pass
+kind: documentation
+version: 1
+description: Audit documentation, draft improvements, and run a lightweight review pass.
+template: true
+categories:
+  - DOCUMENTATION
+tags:
+  - template
+  - docs
+stages:
+  - name: audit
+    role: reviewer
+    pod_ref: reviewer.sonnet.lightweight
+    inputs:
+      - work_item
+      - project_tracker
+    outputs:
+      - doc_audit
+  - name: patch
+    role: generator
+    pod_ref: generator.sonnet.standard
+    inputs:
+      - doc_audit
+    outputs:
+      - doc_patchset
+  - name: evaluate
+    role: reviewer
+    pod_ref: reviewer.sonnet.lightweight
+    inputs:
+      - doc_patchset
+    outputs:
+      - review_notes

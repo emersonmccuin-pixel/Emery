@@ -1,0 +1,33 @@
+name: data-analysis
+kind: data_analysis
+version: 1
+description: Scope a data task, analyze it, and produce a reviewable report.
+template: true
+categories:
+  - DATA
+  - RESEARCH
+tags:
+  - template
+  - analysis
+stages:
+  - name: scope
+    role: planner
+    pod_ref: planner.opus.standard
+    inputs:
+      - work_item
+    outputs:
+      - analysis_contract
+  - name: analyze
+    role: researcher
+    pod_ref: researcher.sonnet.standard
+    inputs:
+      - analysis_contract
+    outputs:
+      - data_analysis_report
+  - name: review
+    role: reviewer
+    pod_ref: reviewer.sonnet.lightweight
+    inputs:
+      - data_analysis_report
+    outputs:
+      - review_notes

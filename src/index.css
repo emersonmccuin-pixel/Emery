@@ -455,14 +455,6 @@
   border-bottom: 1px solid color-mix(in srgb, var(--center-tint) 30%, transparent);
 }
 
-/* ── Guide panel ── */
-.guide-panel {
-  border: 1px dashed color-mix(in srgb, var(--center-tint) 45%, transparent);
-  background: linear-gradient(135deg, color-mix(in srgb, var(--center-tint) 14%, transparent), color-mix(in srgb, var(--hud-cyan) 6%, transparent));
-  padding: 16px;
-  border-radius: 8px;
-}
-
 /* ── Launch card ── */
 .terminal-launch-card {
   padding: 32px;
@@ -483,14 +475,6 @@
   -webkit-text-fill-color: transparent;
   background-clip: text;
   filter: drop-shadow(0 0 15px color-mix(in srgb, var(--hud-cyan) 50%, transparent));
-}
-
-/* ── Overview cards ── */
-.overview-card {
-  background: linear-gradient(135deg, color-mix(in srgb, var(--center-tint) 10%, transparent), color-mix(in srgb, var(--center-tint) 3%, transparent));
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  border-radius: 8px;
-  padding: 16px;
 }
 
 /* ── Buttons ── */
@@ -594,181 +578,7 @@
   background: rgba(58, 240, 224, 0.45);
 }
 
-/* ── Settings ── */
-.settings-banner {
-  margin-bottom: 12px;
-}
-
-.settings-banner--success {
-  color: var(--success);
-}
-
-.settings-toggle {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: start;
-  padding: 10px;
-  border-radius: var(--panel-radius);
-  border: 1px solid color-mix(in srgb, var(--center-tint) 25%, transparent);
-  background: linear-gradient(135deg, color-mix(in srgb, var(--center-tint) 6%, transparent), color-mix(in srgb, var(--hud-cyan) 2%, transparent));
-}
-
-.settings-toggle span {
-  display: block;
-  font-size: 0.8rem;
-}
-
-.settings-toggle input[type='checkbox'] {
-  width: auto;
-  margin-top: 2px;
-  accent-color: var(--primary);
-}
-
-.settings-profile-list,
-.settings-path-list {
-  display: grid;
-  gap: 10px;
-}
-
-.settings-profile-card,
-.settings-path-row {
-  display: grid;
-  gap: 8px;
-  padding: 10px;
-  border-radius: var(--panel-radius);
-  border: 1px solid color-mix(in srgb, var(--center-tint) 20%, transparent);
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.01));
-}
-
-.settings-profile-card__header,
-.settings-profile-card__title,
-.settings-profile-card__badges {
-  display: grid;
-  gap: 8px;
-}
-
-.settings-profile-card__badges {
-  grid-template-columns: repeat(auto-fit, minmax(0, max-content));
-}
-
-.settings-path-row span {
-  color: var(--muted-foreground);
-  font-size: 0.65rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.settings-path-row code {
-  display: inline-flex;
-  padding: 4px 8px;
-  border-radius: var(--panel-radius);
-  background: color-mix(in srgb, var(--rail-projects-tint) 6%, transparent);
-  border: 1px solid color-mix(in srgb, var(--rail-projects-tint) 15%, transparent);
-  color: var(--foreground);
-  font-size: 0.72rem;
-  overflow-wrap: anywhere;
-}
-
-.settings-profile-form {
-  margin-top: 10px;
-}
-
-/* ── Theme picker ── */
-.theme-picker-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 12px;
-  margin-top: 12px;
-}
-
-.theme-card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
-  cursor: pointer;
-  text-align: left;
-  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
-}
-
-.theme-card:hover:not(.theme-card--active) {
-  border-color: rgba(255, 255, 255, 0.28);
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.04));
-}
-
-.theme-card__preview {
-  display: flex;
-  gap: 3px;
-  height: 52px;
-  border-radius: 5px;
-  overflow: hidden;
-  padding: 4px;
-}
-
-.theme-card__preview-panel {
-  flex: 1;
-  border-radius: 3px;
-  border: 1px solid;
-  opacity: 0.85;
-}
-
-.theme-card__preview-panel--center {
-  flex: 2;
-}
-
-.theme-card__footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-}
-
-.theme-card__label {
-  font-size: 0.7rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: var(--foreground);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.theme-card__swatches {
-  display: flex;
-  gap: 3px;
-  flex-shrink: 0;
-}
-
-.theme-card__swatch {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  display: block;
-}
-
-.theme-card__check {
-  position: absolute;
-  top: 6px;
-  right: 8px;
-  font-size: 0.75rem;
-  font-weight: 700;
-  line-height: 1;
-}
-
-/* ── Document / Session cards ── */
-.document-preview-list,
-.session-card-list {
-  display: grid;
-  gap: 8px;
-}
-
-.document-preview-card,
+/* ── Session cards ── */
 .session-card {
   display: grid;
   gap: 4px;
@@ -778,20 +588,8 @@
   background: linear-gradient(135deg, color-mix(in srgb, var(--rail-sessions-tint) 10%, transparent), color-mix(in srgb, var(--rail-sessions-tint) 3%, transparent));
 }
 
-.document-preview-card p,
 .session-card p {
   margin: 0;
-}
-
-.document-preview-card p {
-  color: var(--muted);
-}
-
-.session-card__meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
 }
 
 .session-card {
@@ -802,14 +600,6 @@
 .session-card:hover {
   border-color: color-mix(in srgb, var(--center-tint) 45%, transparent);
   background: linear-gradient(135deg, color-mix(in srgb, var(--center-tint) 16%, transparent), color-mix(in srgb, var(--hud-cyan) 8%, transparent));
-}
-
-.session-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: linear-gradient(135deg, var(--hud-cyan), var(--hud-green));
-  box-shadow: 0 0 6px color-mix(in srgb, var(--hud-cyan) 40%, transparent);
 }
 
 /* ── Rail sections ── */
@@ -861,75 +651,12 @@
     inset 0 0 20px color-mix(in srgb, var(--rail-projects-tint) 14%, transparent);
 }
 
-.dispatcher-card__row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  width: 100%;
-}
-
-.session-card__subtitle {
-  margin: 0;
-  color: var(--muted-foreground);
-  font-size: 0.72rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.session-card__path {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.68rem;
-  font-family: 'JetBrains Mono', Consolas, monospace;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.session-card__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 4px;
-}
-
-.session-card__actions--stacked {
-  justify-content: stretch;
-}
-
-.session-card__actions--stacked > * {
-  width: 100%;
-}
-
 /* ── Empty states ── */
-.empty-state--rail,
-.empty-state--center {
+.empty-state--rail {
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01));
   border-radius: var(--panel-radius);
   font-size: 0.75rem;
   color: var(--muted-foreground);
-}
-
-.empty-state--center {
-  min-height: 100%;
-  display: grid;
-  place-items: center;
-}
-
-.stack-form--rail {
-  margin-top: 4px;
-}
-
-.work-items-section,
-.documents-section {
-  min-height: 0;
-  overflow: auto;
-  padding-right: 4px;
-}
-
-.list-detail-layout {
-  min-height: 0;
 }
 
 .terminal-host {
@@ -937,6 +664,23 @@
   height: 100%;
   border-radius: var(--panel-radius);
   overflow: hidden;
+  position: relative;
+}
+
+.terminal-host::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 2px,
+    rgba(0, 0, 0, 0.12) 2px,
+    rgba(0, 0, 0, 0.12) 4px
+  );
+  pointer-events: none;
+  z-index: 10;
+  border-radius: inherit;
 }
 
 .terminal-loading {
@@ -1034,17 +778,6 @@
   .terminal-layout--right-collapsed,
   .terminal-layout--left-collapsed.terminal-layout--right-collapsed {
     grid-template-columns: 1fr;
-  }
-
-  .overview-grid,
-  .overview-metrics,
-  .terminal-launch-card__meta {
-    grid-template-columns: 1fr;
-  }
-
-  .overview-card--summary,
-  .overview-card--full {
-    grid-column: auto;
   }
 }
 

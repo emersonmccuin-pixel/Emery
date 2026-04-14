@@ -13,6 +13,7 @@ type LiveTerminalProps = {
   snapshot: SessionSnapshot
   onSessionExit: (event: TerminalExitEvent) => void
   workItemPrefix: string | null
+  readOnly?: boolean
 }
 
 type HoverState = {
@@ -46,7 +47,7 @@ function getTerminalErrorMessage(error: unknown, fallback: string) {
   return fallback
 }
 
-function LiveTerminal({ snapshot, onSessionExit, workItemPrefix }: LiveTerminalProps) {
+function LiveTerminal({ snapshot, onSessionExit, workItemPrefix, readOnly = false }: LiveTerminalProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -71,8 +72,9 @@ function LiveTerminal({ snapshot, onSessionExit, workItemPrefix }: LiveTerminalP
     }
 
     const terminal = new Terminal({
-      cursorBlink: true,
+      cursorBlink: !readOnly,
       convertEol: true,
+      disableStdin: readOnly,
       fontFamily: 'JetBrains Mono, Consolas, monospace',
       fontSize: 13,
       lineHeight: 1.35,
@@ -298,8 +300,16 @@ function LiveTerminal({ snapshot, onSessionExit, workItemPrefix }: LiveTerminalP
       const mod = event.ctrlKey || event.metaKey
 
       if (event.type === 'keydown' && mod && event.shiftKey && key === 'c') { void copySelection(); return false }
-      if (event.type === 'keydown' && mod && event.shiftKey && key === 'v') { void pasteClipboard(); return false }
-      if (event.type === 'keydown' && event.shiftKey && key === 'insert') { void pasteClipboard(); return false }
+      if (!readOnly && event.type === 'keydown' && mod && event.shiftKey && key === 'v') { void pasteClipboard(); return false }
+      if (!readOnly && event.type === 'keydown' && event.shiftKey && key === 'insert') { void pasteClipboard(); return false }
+
+      if (readOnly) {
+        if (event.type === 'keydown' && mod && !event.shiftKey && key === 'c' && terminal.hasSelection()) {
+          void copySelection()
+        }
+
+        return false
+      }
 
       // Ctrl+C: copy selection to clipboard, or fall through to send SIGINT if nothing selected
       if (event.type === 'keydown' && mod && !event.shiftKey && key === 'c') {
@@ -413,12 +423,12 @@ function LiveTerminal({ snapshot, onSessionExit, workItemPrefix }: LiveTerminalP
       terminalRef.current = null
       fitAddonRef.current = null
     }
-  }, [sessionKey, snapshot.projectId])
+  }, [readOnly, sessionKey, snapshot.projectId])
 
   useEffect(() => {
     const terminal = terminalRef.current
 
-    if (!terminal || !snapshot.isRunning) {
+    if (!terminal || !snapshot.isRunning || readOnly) {
       return
     }
 
@@ -484,10 +494,18 @@ function LiveTerminal({ snapshot, onSessionExit, workItemPrefix }: LiveTerminalP
       flushPendingInput()
       dataDisposable.dispose()
     }
-  }, [sessionKey, snapshot.isRunning, snapshot.projectId, snapshot.worktreeId])
+  }, [readOnly, sessionKey, snapshot.isRunning, snapshot.projectId, snapshot.worktreeId])
 
   return (
     <div className="terminal-shell flex h-full min-h-0 flex-col gap-3">
+      {readOnly ? (
+        <div
+          className="rounded border border-hud-cyan/30 bg-hud-cyan/10 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-hud-cyan"
+          role="status"
+        >
+          Watch-only SDK worker console. Send directives from the dispatcher.
+        </div>
+      ) : null}
       {terminalError ? (
         <div
           className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-destructive"

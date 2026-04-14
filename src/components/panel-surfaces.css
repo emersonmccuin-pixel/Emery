@@ -1,0 +1,18 @@
+.overview-card {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--center-tint) 10%, transparent),
+    color-mix(in srgb, var(--center-tint) 3%, transparent)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.settings-banner {
+  margin-bottom: 12px;
+}
+
+.settings-banner--success {
+  color: var(--success);
+}

@@ -21,6 +21,7 @@ import type {
 } from './types'
 import { useAppStore } from './store'
 import type { ProjectRefreshTarget } from './store/types'
+import { getFirstDispatcherLaunchProfile } from './store/utils'
 import {
   useSelectedProject,
   useSelectedLaunchProfile,
@@ -37,6 +38,7 @@ function App() {
     projects,
     launchProfiles,
     defaultLaunchProfileId,
+    defaultWorkerLaunchProfileId,
     autoRepairSetting,
     selectedProjectId,
     selectedTerminalWorktreeId,
@@ -56,6 +58,7 @@ function App() {
       projects: s.projects,
       launchProfiles: s.launchProfiles,
       defaultLaunchProfileId: s.appSettings.defaultLaunchProfileId,
+      defaultWorkerLaunchProfileId: s.appSettings.defaultWorkerLaunchProfileId,
       autoRepairSetting: s.appSettings.autoRepairSafeCleanupOnStartup,
       selectedProjectId: s.selectedProjectId,
       selectedTerminalWorktreeId: s.selectedTerminalWorktreeId,
@@ -446,15 +449,17 @@ function App() {
   useEffect(() => {
     useAppStore.setState({
       defaultLaunchProfileSettingId: defaultLaunchProfileId,
+      defaultWorkerLaunchProfileSettingId: defaultWorkerLaunchProfileId,
       autoRepairSafeCleanupOnStartup: autoRepairSetting,
     })
-  }, [defaultLaunchProfileId, autoRepairSetting])
+  }, [defaultLaunchProfileId, defaultWorkerLaunchProfileId, autoRepairSetting])
 
   // Sync: auto-select launch profile
   useEffect(() => {
     if (!selectedLaunchProfile && launchProfiles.length > 0) {
+      const dispatcherProfile = getFirstDispatcherLaunchProfile(launchProfiles)
       useAppStore.setState({
-        selectedLaunchProfileId: defaultLaunchProfileId ?? launchProfiles[0].id,
+        selectedLaunchProfileId: defaultLaunchProfileId ?? dispatcherProfile?.id ?? null,
       })
     }
   }, [defaultLaunchProfileId, launchProfiles, selectedLaunchProfile])

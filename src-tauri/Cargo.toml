@@ -37,3 +37,7 @@ base64 = "0.22"
 dirs = "6"
 notify = "6.1"
 zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
+serde_yaml = "0.9"
+iota_stronghold = "2"
+tauri-plugin-stronghold = "2"
+zeroize = "1"

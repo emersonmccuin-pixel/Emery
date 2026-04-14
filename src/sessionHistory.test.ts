@@ -105,6 +105,16 @@ describe('session recovery helpers', () => {
         createSessionRecord({ provider: 'custom_provider', providerSessionId: 'abc-123' }),
       ),
     ).toBe(false)
+    expect(
+      hasNativeSessionResume(
+        createSessionRecord({ provider: 'claude_agent_sdk', providerSessionId: 'sdk-123' }),
+      ),
+    ).toBe(true)
+    expect(
+      hasNativeSessionResume(
+        createSessionRecord({ provider: 'codex_sdk', providerSessionId: 'thread-123' }),
+      ),
+    ).toBe(true)
   })
 
   it('extracts the most useful payload summary for the history feed', () => {

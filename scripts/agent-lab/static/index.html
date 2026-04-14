@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent Lab</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Project Commander Prototype</p>
+          <h1>Claude and Codex Agent Lab</h1>
+          <p class="lede">
+            Run a provider in a chosen repo or worktree, watch the structured stream,
+            capture its resume token, and send a follow-up turn against the same session.
+          </p>
+        </div>
+        <div class="callout">
+          <strong>Scope</strong>
+          <p>
+            This lab validates launch, observe, and resume. It does not yet implement a
+            dispatcher mailbox or Codex app-server steering.
+          </p>
+        </div>
+      </section>
+
+      <section class="grid">
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Environment</h2>
+            <button id="refreshProviders" type="button">Refresh</button>
+          </div>
+          <div id="providers" class="provider-grid"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Run</h2>
+          </div>
+          <form id="runForm" class="stack">
+            <label>
+              <span>Provider</span>
+              <select id="provider" name="provider">
+                <option value="claude">Claude Code</option>
+                <option value="codex">Codex CLI</option>
+              </select>
+            </label>
+
+            <label>
+              <span>Repo or worktree path</span>
+              <input id="cwd" name="cwd" type="text" spellcheck="false" />
+            </label>
+
+            <div class="inline">
+              <label>
+                <span>Model</span>
+                <input id="model" name="model" type="text" spellcheck="false" />
+              </label>
+
+              <label>
+                <span>Run mode</span>
+                <select id="runMode" name="runMode"></select>
+              </label>
+            </div>
+
+            <label id="allowedToolsWrap">
+              <span>Claude allowed tools</span>
+              <input
+                id="allowedTools"
+                name="allowedTools"
+                type="text"
+                spellcheck="false"
+                placeholder="Optional, e.g. Bash,Read,Edit"
+              />
+            </label>
+
+            <label id="systemPromptWrap">
+              <span>Claude append system prompt</span>
+              <textarea id="systemPrompt" name="systemPrompt" rows="3"></textarea>
+            </label>
+
+            <label class="checkbox" id="bareWrap">
+              <input id="bare" name="bare" type="checkbox" />
+              <span>Use Claude bare mode</span>
+            </label>
+
+            <label class="checkbox" id="skipGitRepoCheckWrap">
+              <input id="skipGitRepoCheck" name="skipGitRepoCheck" type="checkbox" />
+              <span>Allow Codex outside a git repo</span>
+            </label>
+
+            <label>
+              <span>Prompt</span>
+              <textarea id="prompt" name="prompt" rows="6"></textarea>
+            </label>
+
+            <button type="submit" class="primary">Start Run</button>
+          </form>
+        </article>
+      </section>
+
+      <section class="grid detail-grid">
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Runs</h2>
+            <button id="refreshRuns" type="button">Refresh</button>
+          </div>
+          <div id="runs" class="run-list empty-state">No runs yet.</div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h2>Selected Run</h2>
+            <span id="selectedMeta" class="meta-tag">None selected</span>
+          </div>
+
+          <div id="selectedRun" class="selected-run empty-state">
+            Pick a run to inspect its event stream and launch a follow-up turn.
+          </div>
+
+          <form id="followUpForm" class="stack hidden">
+            <label>
+              <span>Follow-up prompt</span>
+              <textarea id="followUpPrompt" rows="4"></textarea>
+            </label>
+            <button type="submit" class="primary">Resume Session</button>
+          </form>
+
+          <pre id="eventStream" class="stream empty-state">No stream selected.</pre>
+        </article>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

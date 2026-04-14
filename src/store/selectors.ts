@@ -3,7 +3,7 @@ import { getLatestSessionForTarget, isRecoverableSession } from '../sessionHisto
 import { mergeWorktreesForProject } from '../worktrees'
 import { useAppStore } from './store'
 import type { LiveProjectSession, WorktreeSessionEntry } from './types'
-import { buildAgentStartupPrompt } from './utils'
+import { buildAgentStartupPrompt, getFirstDispatcherLaunchProfile } from './utils'
 
 export function useSelectedProject() {
   return useAppStore((s) => s.projects.find((p) => p.id === s.selectedProjectId) ?? null)
@@ -11,10 +11,7 @@ export function useSelectedProject() {
 
 export function useSelectedLaunchProfile() {
   return useAppStore(
-    (s) =>
-      s.launchProfiles.find((p) => p.id === s.selectedLaunchProfileId) ??
-      s.launchProfiles[0] ??
-      null,
+    (s) => s.launchProfiles.find((p) => p.id === s.selectedLaunchProfileId) ?? getFirstDispatcherLaunchProfile(s.launchProfiles),
   )
 }
 
@@ -167,7 +164,7 @@ export function useSelectedProjectLaunchLabel() {
   return useAppStore((s) => {
     const profile =
       s.launchProfiles.find((p) => p.id === s.selectedLaunchProfileId) ??
-      s.launchProfiles[0] ??
+      getFirstDispatcherLaunchProfile(s.launchProfiles) ??
       null
     return profile?.label ?? 'No account selected'
   })

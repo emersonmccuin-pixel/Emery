@@ -1,0 +1,22 @@
+name: generator.opus.crosscutting
+role: generator
+version: 1
+description: Cross-cutting implementation pod for architecture-heavy work.
+categories:
+  - CODING
+  - PRODUCT
+provider: claude_code
+model: opus-4.6
+prompt_template_ref: prompts/generator.crosscutting.md
+tool_allowlist:
+  - list_work_items
+  - list_documents
+  - launch_worktree_agent
+secret_scopes: []
+default_policy:
+  timeout_ms: 2400000
+  max_retries: 2
+  token_budget: high
+tags:
+  - cross_cutting
+  - deep_reasoning

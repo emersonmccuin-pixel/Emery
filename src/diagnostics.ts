@@ -14,6 +14,15 @@ export type DiagnosticsValue = string | number | boolean | null
 export type DiagnosticsRuntimeContext = {
   appRunId: string | null
   appStartedAt: string | null
+  appRuntimeStatePath?: string | null
+  lastUnexpectedShutdown?: {
+    appRunId: string
+    appStartedAt: string
+    appEndedAt?: string | null
+    processId: number
+    statePath: string
+    detectedAt: string
+  } | null
 }
 
 export type DiagnosticsEntry = {
@@ -43,6 +52,8 @@ let diagnosticsEntries: DiagnosticsEntry[] = []
 let diagnosticsRuntimeContext: DiagnosticsRuntimeContext = {
   appRunId: null,
   appStartedAt: null,
+  appRuntimeStatePath: null,
+  lastUnexpectedShutdown: null,
 }
 let nextDiagnosticsEntryId = 1
 let nextDiagnosticsCorrelationId = 1
@@ -200,7 +211,10 @@ function applyRuntimeContextToEntry(entry: DiagnosticsEntry): DiagnosticsEntry {
 function setDiagnosticsRuntimeContext(nextContext: DiagnosticsRuntimeContext) {
   const didChange =
     diagnosticsRuntimeContext.appRunId !== nextContext.appRunId ||
-    diagnosticsRuntimeContext.appStartedAt !== nextContext.appStartedAt
+    diagnosticsRuntimeContext.appStartedAt !== nextContext.appStartedAt ||
+    diagnosticsRuntimeContext.appRuntimeStatePath !== nextContext.appRuntimeStatePath ||
+    JSON.stringify(diagnosticsRuntimeContext.lastUnexpectedShutdown ?? null) !==
+      JSON.stringify(nextContext.lastUnexpectedShutdown ?? null)
 
   diagnosticsRuntimeContext = nextContext
 

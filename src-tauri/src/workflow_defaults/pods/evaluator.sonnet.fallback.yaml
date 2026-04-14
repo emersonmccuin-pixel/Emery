@@ -1,0 +1,22 @@
+name: evaluator.sonnet.fallback
+role: evaluator
+version: 1
+description: Fallback evaluator when the primary Codex path is unavailable.
+categories:
+  - CODING
+  - DOCUMENTATION
+provider: claude_code
+model: sonnet-4.6
+prompt_template_ref: prompts/evaluator.fallback.md
+tool_allowlist:
+  - list_work_items
+  - list_documents
+  - list_worktrees
+secret_scopes: []
+default_policy:
+  timeout_ms: 900000
+  max_retries: 1
+  token_budget: medium
+tags:
+  - fallback
+  - evaluator

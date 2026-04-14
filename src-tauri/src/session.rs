@@ -4,6 +4,10 @@ use crate::db::{
     UpdateAppSettingsInput, UpdateLaunchProfileInput, UpdateProjectInput, WorkItemRecord,
     WorktreeRecord,
 };
+use crate::diagnostics::{
+    append_diagnostics_entries, enrich_diagnostics_entry, DiagnosticsRuntimeMetadata,
+    PersistedDiagnosticsEntry,
+};
 use crate::error::{AppError, AppErrorCode, AppResult};
 use crate::session_api::{
     LaunchSessionInput, ProjectSessionTarget, ResizeSessionInput, SessionInput, SessionPollInput,
@@ -17,11 +21,12 @@ use crate::supervisor_api::{
     CreateProjectWorkItemInput, EnsureProjectWorktreeInput, LaunchProfileTarget,
     LaunchProjectWorktreeAgentInput, ListCleanupCandidatesInput, ListProjectDocumentsInput,
     ListProjectSessionEventsInput, ListProjectSessionsInput, ListProjectWorkItemsInput,
-    ListProjectWorktreesInput, PinWorktreeInput, ProjectDocumentTarget, ProjectSessionRecordTarget,
-    ProjectCallSignTarget, ProjectWorkItemTarget, ProjectWorktreeTarget, RepairCleanupInput,
+    ListProjectWorktreesInput, PinWorktreeInput, ProjectCallSignTarget, ProjectDocumentTarget,
+    ProjectSessionRecordTarget, ProjectWorkItemTarget, ProjectWorktreeTarget, RepairCleanupInput,
     SessionRecoveryDetails, UpdateProjectDocumentInput, UpdateProjectWorkItemInput,
     WorkItemDetailOutput, WorktreeLaunchOutput,
 };
+use crate::workflow::{StartWorkflowRunInput, WorkflowRunRecord};
 use reqwest::blocking::Client;
 use reqwest::StatusCode;
 use serde::de::DeserializeOwned;
@@ -57,6 +62,7 @@ pub struct SupervisorClient {
 
 struct SupervisorClientInner {
     storage: StorageInfo,
+    runtime: DiagnosticsRuntimeMetadata,
     runtime_file: PathBuf,
     runtime_lock: Mutex<()>,
     runtime_info: Mutex<Option<SupervisorRuntimeInfo>>,
@@ -81,7 +87,7 @@ struct ErrorResponse {
 }
 
 impl SupervisorClient {
-    pub fn new(storage: StorageInfo) -> AppResult<Self> {
+    pub fn new(storage: StorageInfo, runtime: DiagnosticsRuntimeMetadata) -> AppResult<Self> {
         let runtime_dir = PathBuf::from(&storage.app_data_dir).join("runtime");
         let runtime_file = runtime_dir.join("supervisor.json");
         let http_client = Client::builder()
@@ -94,6 +100,7 @@ impl SupervisorClient {
         Ok(Self {
             inner: Arc::new(SupervisorClientInner {
                 storage,
+                runtime,
                 runtime_file,
                 runtime_lock: Mutex::new(()),
                 runtime_info: Mutex::new(None),
@@ -209,7 +216,10 @@ impl SupervisorClient {
         .map(|_| ())
     }
 
-    pub fn get_work_item_by_call_sign(&self, input: &ProjectCallSignTarget) -> AppResult<WorkItemDetailOutput> {
+    pub fn get_work_item_by_call_sign(
+        &self,
+        input: &ProjectCallSignTarget,
+    ) -> AppResult<WorkItemDetailOutput> {
         self.request_json("work-item/get-by-call-sign", input)
     }
 
@@ -320,6 +330,14 @@ impl SupervisorClient {
         )?;
         self.ensure_terminal_poller(&output.session, app_handle);
         Ok(output)
+    }
+
+    pub fn start_workflow_run(&self, input: StartWorkflowRunInput) -> AppResult<WorkflowRunRecord> {
+        self.request_json_with_timeout(
+            "workflow/run/start",
+            &input,
+            SUPERVISOR_LONG_REQUEST_TIMEOUT,
+        )
     }
 
     pub fn list_session_records(&self, project_id: i64) -> AppResult<Vec<SessionRecord>> {
@@ -596,7 +614,14 @@ impl SupervisorClient {
                 Err(RequestFailure::Fatal(message)) => return Err(message),
                 Err(RequestFailure::Retryable(message)) if attempt == 1 => return Err(message),
                 Err(RequestFailure::Retryable(_)) => {
-                    self.invalidate_runtime();
+                    if self.ping_runtime(&runtime).is_ok() {
+                        continue;
+                    }
+
+                    self.invalidate_runtime(
+                        Some(&runtime),
+                        &format!("GET /{route} failed and supervisor health check also failed"),
+                    );
                 }
             }
         }
@@ -622,15 +647,9 @@ impl SupervisorClient {
             .header("x-project-commander-source", SUPERVISOR_REQUEST_SOURCE)
             .send()
             .map_err(|error| {
-                if error.is_connect() || error.is_timeout() {
-                    RequestFailure::Retryable(AppError::supervisor(format!(
-                        "failed to reach Project Commander supervisor: {error}"
-                    )))
-                } else {
-                    RequestFailure::Fatal(AppError::supervisor(format!(
-                        "Project Commander supervisor GET request failed: {error}"
-                    )))
-                }
+                RequestFailure::Retryable(AppError::supervisor(format!(
+                    "failed to reach Project Commander supervisor: {error}"
+                )))
             })?;
 
         let status = response.status();
@@ -701,8 +720,18 @@ impl SupervisorClient {
                 Ok(value) => return Ok(value),
                 Err(RequestFailure::Fatal(message)) => return Err(message),
                 Err(RequestFailure::Retryable(message)) if attempt == 1 => return Err(message),
-                Err(RequestFailure::Retryable(_)) => {
-                    self.invalidate_runtime();
+                Err(RequestFailure::Retryable(message)) => {
+                    if self.ping_runtime(&runtime).is_ok() {
+                        continue;
+                    }
+
+                    self.invalidate_runtime(
+                        Some(&runtime),
+                        &format!(
+                            "POST /{route} failed and supervisor health check also failed: {}",
+                            message.message
+                        ),
+                    );
                 }
             }
         }
@@ -732,15 +761,9 @@ impl SupervisorClient {
             .json(payload)
             .send()
             .map_err(|error| {
-                if error.is_connect() || error.is_timeout() {
-                    RequestFailure::Retryable(AppError::supervisor(format!(
-                        "failed to reach Project Commander supervisor: {error}"
-                    )))
-                } else {
-                    RequestFailure::Fatal(AppError::supervisor(format!(
-                        "Project Commander supervisor request failed: {error}"
-                    )))
-                }
+                RequestFailure::Retryable(AppError::supervisor(format!(
+                    "failed to reach Project Commander supervisor: {error}"
+                )))
             })?;
 
         let status = response.status();
@@ -804,11 +827,32 @@ impl SupervisorClient {
                 self.cache_runtime(runtime.clone())?;
                 return Ok(runtime);
             }
+
+            self.invalidate_runtime(
+                Some(&runtime),
+                "supervisor runtime file existed but the supervisor health check failed",
+            );
         }
 
-        self.invalidate_runtime();
+        self.persist_supervisor_runtime_event(
+            "supervisor.runtime_spawn_requested",
+            "warn",
+            "Starting a new supervisor runtime".to_string(),
+            std::collections::HashMap::new(),
+        );
         self.spawn_supervisor()?;
         let runtime = self.wait_for_runtime()?;
+        let mut metadata = runtime_metadata(&runtime);
+        metadata.insert(
+            "runtimeFile".to_string(),
+            serde_json::Value::String(self.inner.runtime_file.display().to_string()),
+        );
+        self.persist_supervisor_runtime_event(
+            "supervisor.runtime_spawned",
+            "info",
+            format!("Supervisor runtime is ready on port {}", runtime.port),
+            metadata,
+        );
         self.cache_runtime(runtime.clone())?;
         Ok(runtime)
     }
@@ -920,7 +964,25 @@ impl SupervisorClient {
         ))
     }
 
-    fn invalidate_runtime(&self) {
+    fn invalidate_runtime(&self, runtime: Option<&SupervisorRuntimeInfo>, reason: &str) {
+        let mut metadata = runtime
+            .map(runtime_metadata)
+            .unwrap_or_else(std::collections::HashMap::new);
+        metadata.insert(
+            "reason".to_string(),
+            serde_json::Value::String(reason.to_string()),
+        );
+        metadata.insert(
+            "runtimeFile".to_string(),
+            serde_json::Value::String(self.inner.runtime_file.display().to_string()),
+        );
+        self.persist_supervisor_runtime_event(
+            "supervisor.runtime_invalidated",
+            "warn",
+            "Supervisor runtime was invalidated and will be replaced".to_string(),
+            metadata,
+        );
+
         if let Ok(mut runtime_info) = self.inner.runtime_info.lock() {
             *runtime_info = None;
         }
@@ -936,6 +998,27 @@ impl SupervisorClient {
             .map_err(|_| "failed to cache supervisor runtime info".to_string())?;
         *runtime_info = Some(runtime);
         Ok(())
+    }
+
+    fn persist_supervisor_runtime_event(
+        &self,
+        event: &str,
+        severity: &str,
+        summary: String,
+        metadata: HashMap<String, serde_json::Value>,
+    ) {
+        let mut entry = PersistedDiagnosticsEntry {
+            id: format!("backend-{}-{}", event, rand::random::<u64>()),
+            at: now_timestamp_string(),
+            event: event.to_string(),
+            source: "app".to_string(),
+            severity: severity.to_string(),
+            summary,
+            duration_ms: None,
+            metadata,
+        };
+        enrich_diagnostics_entry(&mut entry, &self.inner.runtime);
+        let _ = append_diagnostics_entries(&self.inner.storage, &[entry]);
     }
 }
 
@@ -966,4 +1049,21 @@ fn generate_runtime_token() -> String {
     rand::thread_rng().fill_bytes(&mut bytes);
 
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn runtime_metadata(runtime: &SupervisorRuntimeInfo) -> HashMap<String, serde_json::Value> {
+    let mut metadata = HashMap::new();
+    metadata.insert(
+        "port".to_string(),
+        serde_json::Value::Number(runtime.port.into()),
+    );
+    metadata.insert(
+        "pid".to_string(),
+        serde_json::Value::Number(runtime.pid.into()),
+    );
+    metadata.insert(
+        "startedAt".to_string(),
+        serde_json::Value::String(runtime.started_at.clone()),
+    );
+    metadata
 }

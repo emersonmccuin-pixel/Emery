@@ -5,12 +5,24 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
 use crate::error::{AppError, AppResult};
+use crate::vault::{
+    self, DeleteVaultEntryInput, ResolvedVaultBinding, UpsertVaultEntryInput,
+    VaultAccessBindingRequest, VaultSnapshot,
+};
+use crate::workflow::{
+    self, AdoptCatalogEntryInput, CatalogAdoptionTarget, FailWorkflowRunInput,
+    MarkWorkflowStageDispatchedInput, ProjectWorkflowCatalog, ProjectWorkflowRunSnapshot,
+    RecordWorkflowStageResultInput, StartWorkflowRunInput, WorkflowLibrarySnapshot,
+    WorkflowRunRecord,
+};
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -32,6 +44,8 @@ Strategic or architectural decisions that shape future work.
 - (none yet)
 ";
 
+static AGENT_MESSAGE_THREAD_COUNTER: AtomicU64 = AtomicU64::new(1);
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StorageInfo {
@@ -44,6 +58,8 @@ pub struct StorageInfo {
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub default_launch_profile_id: Option<i64>,
+    pub default_worker_launch_profile_id: Option<i64>,
+    pub sdk_claude_config_dir: Option<String>,
     pub auto_repair_safe_cleanup_on_startup: bool,
 }
 
@@ -156,6 +172,8 @@ pub struct AgentMessageRecord {
     pub session_id: Option<i64>,
     pub from_agent: String,
     pub to_agent: String,
+    pub thread_id: String,
+    pub reply_to_message_id: Option<i64>,
     pub message_type: String,
     pub body: String,
     pub context_json: String,
@@ -234,6 +252,7 @@ pub struct UpdateProjectInput {
 #[serde(rename_all = "camelCase")]
 pub struct CreateLaunchProfileInput {
     pub label: String,
+    pub provider: String,
     pub executable: String,
     pub args: String,
     pub env_json: String,
@@ -244,6 +263,7 @@ pub struct CreateLaunchProfileInput {
 pub struct UpdateLaunchProfileInput {
     pub id: i64,
     pub label: String,
+    pub provider: String,
     pub executable: String,
     pub args: String,
     pub env_json: String,
@@ -253,6 +273,8 @@ pub struct UpdateLaunchProfileInput {
 #[serde(rename_all = "camelCase")]
 pub struct UpdateAppSettingsInput {
     pub default_launch_profile_id: Option<i64>,
+    pub default_worker_launch_profile_id: Option<i64>,
+    pub sdk_claude_config_dir: Option<String>,
     pub auto_repair_safe_cleanup_on_startup: bool,
 }
 
@@ -325,6 +347,8 @@ pub struct SendAgentMessageInput {
     pub session_id: Option<i64>,
     pub from_agent: String,
     pub to_agent: String,
+    pub thread_id: Option<String>,
+    pub reply_to_message_id: Option<i64>,
     pub message_type: String,
     pub body: String,
     pub context_json: Option<String>,
@@ -334,9 +358,53 @@ pub struct SendAgentMessageInput {
 pub struct ListAgentMessagesFilter {
     pub from_agent: Option<String>,
     pub to_agent: Option<String>,
+    pub thread_id: Option<String>,
+    pub reply_to_message_id: Option<i64>,
     pub message_type: Option<String>,
     pub status: Option<String>,
     pub limit: Option<i64>,
+}
+
+#[derive(Default)]
+struct AgentMessageBroker {
+    sequence: Mutex<u64>,
+    changed: Condvar,
+}
+
+impl AgentMessageBroker {
+    fn current_sequence(&self) -> u64 {
+        *self
+            .sequence
+            .lock()
+            .expect("agent message broker mutex poisoned")
+    }
+
+    fn notify_message(&self) {
+        let mut sequence = self
+            .sequence
+            .lock()
+            .expect("agent message broker mutex poisoned");
+        *sequence = sequence.saturating_add(1);
+        self.changed.notify_all();
+    }
+
+    fn wait_for_change(&self, observed_sequence: u64, timeout: std::time::Duration) -> bool {
+        let sequence = self
+            .sequence
+            .lock()
+            .expect("agent message broker mutex poisoned");
+
+        if *sequence != observed_sequence {
+            return true;
+        }
+
+        let (sequence, result) = self
+            .changed
+            .wait_timeout_while(sequence, timeout, |current| *current == observed_sequence)
+            .expect("agent message broker mutex poisoned");
+
+        *sequence != observed_sequence || !result.timed_out()
+    }
 }
 
 #[derive(Clone)]
@@ -405,6 +473,7 @@ struct AssignedWorkItemIdentifier {
 pub struct AppState {
     storage: StorageInfo,
     database_path: PathBuf,
+    agent_message_broker: Arc<AgentMessageBroker>,
 }
 
 impl AppState {
@@ -419,10 +488,13 @@ impl AppState {
         let connection = open_connection(&database_path)?;
         migrate(&connection)?;
         seed_defaults(&connection)?;
+        workflow::seed_library_files(Path::new(&storage.app_data_dir))?;
+        vault::ensure_vault_storage(Path::new(&storage.app_data_dir))?;
 
         Ok(Self {
             storage,
             database_path,
+            agent_message_broker: Arc::new(AgentMessageBroker::default()),
         })
     }
 
@@ -443,6 +515,19 @@ impl AppState {
         self.storage.clone()
     }
 
+    pub fn current_agent_message_sequence(&self) -> u64 {
+        self.agent_message_broker.current_sequence()
+    }
+
+    pub fn wait_for_agent_message_change(
+        &self,
+        observed_sequence: u64,
+        timeout: std::time::Duration,
+    ) -> bool {
+        self.agent_message_broker
+            .wait_for_change(observed_sequence, timeout)
+    }
+
     pub fn bootstrap(&self) -> AppResult<BootstrapData> {
         let connection = self.connect()?;
 
@@ -454,9 +539,172 @@ impl AppState {
         })
     }
 
+    pub fn list_workflow_library(&self) -> AppResult<WorkflowLibrarySnapshot> {
+        let connection = self.connect()?;
+        workflow::sync_library_catalog(&connection, Path::new(&self.storage.app_data_dir))?;
+        Ok(workflow::load_library_snapshot(
+            &connection,
+            Path::new(&self.storage.app_data_dir),
+        )?)
+    }
+
+    pub fn list_project_workflow_catalog(
+        &self,
+        project_id: i64,
+    ) -> AppResult<ProjectWorkflowCatalog> {
+        let connection = self.connect()?;
+        workflow::sync_library_catalog(&connection, Path::new(&self.storage.app_data_dir))?;
+        Ok(workflow::load_project_catalog(&connection, project_id)?)
+    }
+
+    pub fn adopt_catalog_entry(
+        &self,
+        input: AdoptCatalogEntryInput,
+    ) -> AppResult<ProjectWorkflowCatalog> {
+        let connection = self.connect()?;
+        workflow::sync_library_catalog(&connection, Path::new(&self.storage.app_data_dir))?;
+        workflow::adopt_catalog_entry(&connection, &input)?;
+        Ok(workflow::load_project_catalog(
+            &connection,
+            input.project_id,
+        )?)
+    }
+
+    pub fn upgrade_catalog_adoption(
+        &self,
+        input: CatalogAdoptionTarget,
+    ) -> AppResult<ProjectWorkflowCatalog> {
+        let connection = self.connect()?;
+        workflow::sync_library_catalog(&connection, Path::new(&self.storage.app_data_dir))?;
+        workflow::upgrade_catalog_adoption(&connection, &input)?;
+        Ok(workflow::load_project_catalog(
+            &connection,
+            input.project_id,
+        )?)
+    }
+
+    pub fn detach_catalog_adoption(
+        &self,
+        input: CatalogAdoptionTarget,
+    ) -> AppResult<ProjectWorkflowCatalog> {
+        let connection = self.connect()?;
+        workflow::sync_library_catalog(&connection, Path::new(&self.storage.app_data_dir))?;
+        workflow::detach_catalog_adoption(&connection, &input)?;
+        Ok(workflow::load_project_catalog(
+            &connection,
+            input.project_id,
+        )?)
+    }
+
+    pub fn list_project_workflow_runs(
+        &self,
+        project_id: i64,
+    ) -> AppResult<ProjectWorkflowRunSnapshot> {
+        let connection = self.connect()?;
+        Ok(workflow::load_project_run_snapshot(
+            &connection,
+            project_id,
+        )?)
+    }
+
+    pub fn start_workflow_run(&self, input: StartWorkflowRunInput) -> AppResult<WorkflowRunRecord> {
+        let connection = self.connect()?;
+        workflow::sync_library_catalog(&connection, Path::new(&self.storage.app_data_dir))?;
+        Ok(workflow::start_workflow_run(&connection, &input)?)
+    }
+
+    pub fn mark_workflow_stage_dispatched(
+        &self,
+        input: MarkWorkflowStageDispatchedInput,
+    ) -> AppResult<WorkflowRunRecord> {
+        let connection = self.connect()?;
+        Ok(workflow::mark_workflow_stage_dispatched(
+            &connection,
+            &input,
+        )?)
+    }
+
+    pub fn record_workflow_stage_result(
+        &self,
+        input: RecordWorkflowStageResultInput,
+    ) -> AppResult<WorkflowRunRecord> {
+        let connection = self.connect()?;
+        Ok(workflow::record_workflow_stage_result(&connection, &input)?)
+    }
+
+    pub fn fail_workflow_run(&self, input: FailWorkflowRunInput) -> AppResult<WorkflowRunRecord> {
+        let connection = self.connect()?;
+        Ok(workflow::fail_workflow_run(&connection, &input)?)
+    }
+
     pub fn get_app_settings(&self) -> AppResult<AppSettings> {
         let connection = self.connect()?;
         Ok(load_app_settings(&connection)?)
+    }
+
+    pub fn list_vault_entries(&self) -> AppResult<VaultSnapshot> {
+        let connection = self.connect()?;
+        Ok(vault::load_snapshot(
+            &connection,
+            Path::new(&self.storage.app_data_dir),
+        )?)
+    }
+
+    pub fn upsert_vault_entry(&self, input: UpsertVaultEntryInput) -> AppResult<VaultSnapshot> {
+        let connection = self.connect()?;
+        vault::upsert_entry(&connection, Path::new(&self.storage.app_data_dir), input)?;
+        Ok(vault::load_snapshot(
+            &connection,
+            Path::new(&self.storage.app_data_dir),
+        )?)
+    }
+
+    pub fn delete_vault_entry(&self, input: DeleteVaultEntryInput) -> AppResult<VaultSnapshot> {
+        let connection = self.connect()?;
+        vault::delete_entry(&connection, Path::new(&self.storage.app_data_dir), &input)?;
+        Ok(vault::load_snapshot(
+            &connection,
+            Path::new(&self.storage.app_data_dir),
+        )?)
+    }
+
+    pub fn resolve_vault_access_bindings(
+        &self,
+        bindings: Vec<VaultAccessBindingRequest>,
+        source: &str,
+    ) -> AppResult<Vec<ResolvedVaultBinding>> {
+        let connection = self.connect()?;
+        let app_data_dir = Path::new(&self.storage.app_data_dir);
+        bindings
+            .into_iter()
+            .map(|binding| {
+                vault::resolve_access_binding(&connection, app_data_dir, binding, source)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
+    pub fn record_vault_access_bindings<'a, I>(
+        &self,
+        bindings: I,
+        action: &str,
+        consumer_prefix: &str,
+        correlation_id: &str,
+        session_id: Option<i64>,
+    ) -> AppResult<()>
+    where
+        I: IntoIterator<Item = &'a ResolvedVaultBinding>,
+    {
+        let connection = self.connect()?;
+        vault::record_access_bindings(
+            &connection,
+            bindings,
+            action,
+            consumer_prefix,
+            correlation_id,
+            session_id,
+        )?;
+        Ok(())
     }
 
     pub fn update_app_settings(&self, input: UpdateAppSettingsInput) -> AppResult<AppSettings> {
@@ -471,6 +719,32 @@ impl AppState {
             )?;
         } else {
             delete_app_setting(&connection, APP_SETTING_DEFAULT_LAUNCH_PROFILE_ID)?;
+        }
+
+        if let Some(default_worker_launch_profile_id) = input.default_worker_launch_profile_id {
+            load_launch_profile_by_id(&connection, default_worker_launch_profile_id)?;
+            upsert_app_setting(
+                &connection,
+                APP_SETTING_DEFAULT_WORKER_LAUNCH_PROFILE_ID,
+                &default_worker_launch_profile_id.to_string(),
+            )?;
+        } else {
+            delete_app_setting(&connection, APP_SETTING_DEFAULT_WORKER_LAUNCH_PROFILE_ID)?;
+        }
+
+        if let Some(sdk_claude_config_dir) = input
+            .sdk_claude_config_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            upsert_app_setting(
+                &connection,
+                APP_SETTING_SDK_CLAUDE_CONFIG_DIR,
+                sdk_claude_config_dir,
+            )?;
+        } else {
+            delete_app_setting(&connection, APP_SETTING_SDK_CLAUDE_CONFIG_DIR)?;
         }
 
         if input.auto_repair_safe_cleanup_on_startup {
@@ -549,10 +823,13 @@ impl AppState {
 
         // Normalize empty base_branch to NULL (empty string means "auto-detect")
         let update_base_branch = input.base_branch.is_some();
-        let base_branch: Option<&str> = input
-            .base_branch
-            .as_deref()
-            .and_then(|s| if s.trim().is_empty() { None } else { Some(s.trim()) });
+        let base_branch: Option<&str> = input.base_branch.as_deref().and_then(|s| {
+            if s.trim().is_empty() {
+                None
+            } else {
+                Some(s.trim())
+            }
+        });
 
         connection
             .execute(
@@ -583,12 +860,19 @@ impl AppState {
         input: CreateLaunchProfileInput,
     ) -> AppResult<LaunchProfileRecord> {
         let label = input.label.trim();
+        let provider = input.provider.trim();
         let executable = input.executable.trim();
         let args = input.args.trim();
         let env_json = normalize_env_json(&input.env_json)?;
 
         if label.is_empty() {
             return Err(AppError::invalid_input("launch profile label is required"));
+        }
+
+        if provider.is_empty() {
+            return Err(AppError::invalid_input(
+                "launch profile provider is required",
+            ));
         }
 
         if executable.is_empty() {
@@ -616,7 +900,7 @@ impl AppState {
         connection
             .execute(
                 "INSERT INTO launch_profiles (label, provider, executable, args, env_json) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![label, "claude_code", executable, args, env_json],
+                params![label, provider, executable, args, env_json],
             )
             .map_err(|error| format!("failed to create launch profile: {error}"))?;
 
@@ -631,12 +915,19 @@ impl AppState {
         input: UpdateLaunchProfileInput,
     ) -> AppResult<LaunchProfileRecord> {
         let label = input.label.trim();
+        let provider = input.provider.trim();
         let executable = input.executable.trim();
         let args = input.args.trim();
         let env_json = normalize_env_json(&input.env_json)?;
 
         if label.is_empty() {
             return Err(AppError::invalid_input("launch profile label is required"));
+        }
+
+        if provider.is_empty() {
+            return Err(AppError::invalid_input(
+                "launch profile provider is required",
+            ));
         }
 
         if executable.is_empty() {
@@ -667,12 +958,13 @@ impl AppState {
             .execute(
                 "UPDATE launch_profiles
                  SET label = ?1,
-                     executable = ?2,
-                     args = ?3,
-                     env_json = ?4,
+                     provider = ?2,
+                     executable = ?3,
+                     args = ?4,
+                     env_json = ?5,
                      updated_at = CURRENT_TIMESTAMP
-                 WHERE id = ?5",
-                params![label, executable, args, env_json, input.id],
+                 WHERE id = ?6",
+                params![label, provider, executable, args, env_json, input.id],
             )
             .map_err(|error| format!("failed to update launch profile: {error}"))?;
 
@@ -689,6 +981,9 @@ impl AppState {
 
         if load_app_settings(&connection)?.default_launch_profile_id == Some(id) {
             delete_app_setting(&connection, APP_SETTING_DEFAULT_LAUNCH_PROFILE_ID)?;
+        }
+        if load_app_settings(&connection)?.default_worker_launch_profile_id == Some(id) {
+            delete_app_setting(&connection, APP_SETTING_DEFAULT_WORKER_LAUNCH_PROFILE_ID)?;
         }
 
         Ok(())
@@ -1212,6 +1507,28 @@ impl AppState {
         Ok(())
     }
 
+    pub fn update_session_provider_session_id(
+        &self,
+        session_id: i64,
+        provider_session_id: Option<&str>,
+    ) -> AppResult<SessionRecord> {
+        let connection = self.connect()?;
+        let existing = load_session_record_by_id(&connection, session_id)?;
+
+        connection
+            .execute(
+                "UPDATE sessions
+                 SET provider_session_id = ?1,
+                     updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?2",
+                params![provider_session_id, session_id],
+            )
+            .map_err(|error| format!("failed to update session provider session id: {error}"))?;
+
+        touch_project(&connection, existing.project_id)?;
+        Ok(load_session_record_by_id(&connection, session_id)?)
+    }
+
     pub fn finish_session_record(
         &self,
         input: FinishSessionRecordInput,
@@ -1313,6 +1630,7 @@ impl AppState {
             "question",
             "blocked",
             "complete",
+            "options",
             "status_update",
             "request_approval",
         ];
@@ -1460,11 +1778,19 @@ impl AppState {
             return Err(AppError::invalid_input("to_agent is required"));
         }
 
+        let thread_id = resolve_agent_message_thread_id(
+            &connection,
+            input.project_id,
+            input.thread_id.as_deref(),
+            input.reply_to_message_id,
+        )?;
+
         let message_type = input.message_type.trim().to_string();
         const VALID_MESSAGE_TYPES: &[&str] = &[
             "question",
             "blocked",
             "complete",
+            "options",
             "status_update",
             "request_approval",
             "handoff",
@@ -1484,29 +1810,33 @@ impl AppState {
             .map(normalize_json_payload)
             .transpose()?
             .unwrap_or_else(|| "{}".to_string());
+        let delivered_at = now_timestamp_string();
 
         connection
             .execute(
                 "INSERT INTO agent_messages (
                     project_id, session_id, from_agent, to_agent,
-                    message_type, body, context_json, status
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'sent')",
+                    thread_id, reply_to_message_id,
+                    message_type, body, context_json, status, delivered_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'delivered', ?10)",
                 params![
                     input.project_id,
                     input.session_id,
                     from_agent,
                     to_agent,
+                    thread_id,
+                    input.reply_to_message_id,
                     message_type,
                     body,
                     context_json,
+                    delivered_at,
                 ],
             )
             .map_err(|error| format!("failed to insert agent message: {error}"))?;
 
-        Ok(load_agent_message_by_id(
-            &connection,
-            connection.last_insert_rowid(),
-        )?)
+        let record = load_agent_message_by_id(&connection, connection.last_insert_rowid())?;
+        self.agent_message_broker.notify_message();
+        Ok(record)
     }
 
     pub fn list_agent_messages(
@@ -1519,6 +1849,7 @@ impl AppState {
 
         let mut sql = String::from(
             "SELECT id, project_id, session_id, from_agent, to_agent,
+                    thread_id, reply_to_message_id,
                     message_type, body, context_json, status,
                     created_at, delivered_at, read_at
              FROM agent_messages
@@ -1535,6 +1866,16 @@ impl AppState {
         if let Some(ref to_agent) = filters.to_agent {
             sql.push_str(&format!(" AND to_agent = ?{param_index}"));
             param_values.push(Box::new(to_agent.clone()));
+            param_index += 1;
+        }
+        if let Some(ref thread_id) = filters.thread_id {
+            sql.push_str(&format!(" AND thread_id = ?{param_index}"));
+            param_values.push(Box::new(thread_id.clone()));
+            param_index += 1;
+        }
+        if let Some(reply_to_message_id) = filters.reply_to_message_id {
+            sql.push_str(&format!(" AND reply_to_message_id = ?{param_index}"));
+            param_values.push(Box::new(reply_to_message_id));
             param_index += 1;
         }
         if let Some(ref message_type) = filters.message_type {
@@ -1575,6 +1916,8 @@ impl AppState {
         unread_only: bool,
         from_agent: Option<String>,
         message_type: Option<String>,
+        thread_id: Option<String>,
+        reply_to_message_id: Option<i64>,
         limit: Option<i64>,
     ) -> AppResult<Vec<AgentMessageRecord>> {
         let connection = self.connect()?;
@@ -1583,6 +1926,7 @@ impl AppState {
         let limit = limit.unwrap_or(20);
         let mut sql = String::from(
             "SELECT id, project_id, session_id, from_agent, to_agent,
+                    thread_id, reply_to_message_id,
                     message_type, body, context_json, status,
                     created_at, delivered_at, read_at
              FROM agent_messages
@@ -1603,6 +1947,16 @@ impl AppState {
         if let Some(ref mt) = message_type {
             sql.push_str(&format!(" AND message_type = ?{param_index}"));
             param_values.push(Box::new(mt.clone()));
+            param_index += 1;
+        }
+        if let Some(ref thread_id) = thread_id {
+            sql.push_str(&format!(" AND thread_id = ?{param_index}"));
+            param_values.push(Box::new(thread_id.clone()));
+            param_index += 1;
+        }
+        if let Some(reply_to_message_id) = reply_to_message_id {
+            sql.push_str(&format!(" AND reply_to_message_id = ?{param_index}"));
+            param_values.push(Box::new(reply_to_message_id));
             param_index += 1;
         }
         sql.push_str(&format!(" ORDER BY id DESC LIMIT ?{param_index}"));
@@ -1663,7 +2017,7 @@ impl AppState {
         let n = connection
             .execute(
                 "UPDATE agent_messages SET status = 'read', read_at = ?1
-                 WHERE project_id = ?2 AND status = 'sent'
+                 WHERE project_id = ?2 AND status != 'read'
                  AND session_id IN (
                      SELECT id FROM sessions WHERE state NOT IN ('running', 'orphaned')
                  )",
@@ -1679,7 +2033,7 @@ impl AppState {
         connection
             .execute(
                 "UPDATE agent_messages SET status = 'read', read_at = ?1
-                 WHERE project_id = ?2 AND status = 'sent'
+                 WHERE project_id = ?2 AND status != 'read'
                  AND session_id IN (
                      SELECT s.id FROM sessions s
                      JOIN worktrees w ON w.id = s.worktree_id
@@ -1688,21 +2042,6 @@ impl AppState {
                 params![now, project_id, work_item_id],
             )
             .map_err(|error| format!("failed to ack messages for work item: {error}"))?;
-        Ok(())
-    }
-
-    pub fn mark_agent_message_delivered(&self, message_id: i64) -> AppResult<()> {
-        let connection = self.connect()?;
-        let now = now_timestamp_string();
-
-        connection
-            .execute(
-                "UPDATE agent_messages SET status = 'delivered', delivered_at = ?1
-                 WHERE id = ?2 AND status = 'sent'",
-                params![now, message_id],
-            )
-            .map_err(|error| format!("failed to mark agent message delivered: {error}"))?;
-
         Ok(())
     }
 
@@ -1858,6 +2197,8 @@ fn open_connection(database_path: &Path) -> Result<Connection, String> {
 }
 
 const APP_SETTING_DEFAULT_LAUNCH_PROFILE_ID: &str = "default_launch_profile_id";
+const APP_SETTING_DEFAULT_WORKER_LAUNCH_PROFILE_ID: &str = "default_worker_launch_profile_id";
+const APP_SETTING_SDK_CLAUDE_CONFIG_DIR: &str = "sdk_claude_config_dir";
 const APP_SETTING_AUTO_REPAIR_SAFE_CLEANUP_ON_STARTUP: &str = "auto_repair_safe_cleanup_on_startup";
 const APP_SETTING_CLEAN_SHUTDOWN: &str = "clean_shutdown";
 
@@ -2034,6 +2375,8 @@ fn migrate(connection: &Connection) -> Result<(), String> {
               session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
               from_agent TEXT NOT NULL,
               to_agent TEXT NOT NULL,
+              thread_id TEXT,
+              reply_to_message_id INTEGER REFERENCES agent_messages(id) ON DELETE SET NULL,
               message_type TEXT NOT NULL,
               body TEXT NOT NULL DEFAULT '',
               context_json TEXT NOT NULL DEFAULT '{}',
@@ -2051,6 +2394,186 @@ fn migrate(connection: &Connection) -> Result<(), String> {
 
             CREATE INDEX IF NOT EXISTS idx_agent_messages_from_agent
               ON agent_messages(project_id, from_agent);
+
+            CREATE TABLE IF NOT EXISTS workflow_categories (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL UNIQUE,
+              description TEXT NOT NULL DEFAULT '',
+              is_shipped INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS library_workflows (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              slug TEXT NOT NULL UNIQUE,
+              name TEXT NOT NULL,
+              kind TEXT NOT NULL,
+              version INTEGER NOT NULL,
+              description TEXT NOT NULL DEFAULT '',
+              source TEXT NOT NULL DEFAULT 'user',
+              template INTEGER NOT NULL DEFAULT 0,
+              tags_json TEXT NOT NULL DEFAULT '[]',
+              stages_json TEXT NOT NULL DEFAULT '[]',
+              pod_refs_json TEXT NOT NULL DEFAULT '[]',
+              yaml TEXT NOT NULL,
+              file_path TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS library_pods (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              slug TEXT NOT NULL UNIQUE,
+              name TEXT NOT NULL,
+              role TEXT NOT NULL,
+              version INTEGER NOT NULL,
+              description TEXT NOT NULL DEFAULT '',
+              provider TEXT NOT NULL,
+              model TEXT,
+              prompt_template_ref TEXT,
+              tags_json TEXT NOT NULL DEFAULT '[]',
+              tool_allowlist_json TEXT NOT NULL DEFAULT '[]',
+              secret_scopes_json TEXT NOT NULL DEFAULT '[]',
+              default_policy_json TEXT NOT NULL DEFAULT '{}',
+              yaml TEXT NOT NULL,
+              source TEXT NOT NULL DEFAULT 'user',
+              file_path TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS library_workflow_category_assignments (
+              workflow_id INTEGER NOT NULL REFERENCES library_workflows(id) ON DELETE CASCADE,
+              category_id INTEGER NOT NULL REFERENCES workflow_categories(id) ON DELETE CASCADE,
+              PRIMARY KEY (workflow_id, category_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS library_pod_category_assignments (
+              pod_id INTEGER NOT NULL REFERENCES library_pods(id) ON DELETE CASCADE,
+              category_id INTEGER NOT NULL REFERENCES workflow_categories(id) ON DELETE CASCADE,
+              PRIMARY KEY (pod_id, category_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS project_catalog_adoptions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              entity_type TEXT NOT NULL,
+              entity_slug TEXT NOT NULL,
+              pinned_version INTEGER NOT NULL,
+              mode TEXT NOT NULL DEFAULT 'linked',
+              detached_yaml TEXT,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              UNIQUE(project_id, entity_type, entity_slug)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_project_catalog_adoptions_project_id
+              ON project_catalog_adoptions(project_id, entity_type, entity_slug);
+
+            CREATE TABLE IF NOT EXISTS project_workflow_overrides (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              workflow_slug TEXT NOT NULL,
+              overrides_json TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              UNIQUE(project_id, workflow_slug)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_project_workflow_overrides_project_id
+              ON project_workflow_overrides(project_id, workflow_slug);
+
+            CREATE TABLE IF NOT EXISTS workflow_runs (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+              workflow_slug TEXT NOT NULL,
+              workflow_name TEXT NOT NULL,
+              workflow_kind TEXT NOT NULL,
+              workflow_version INTEGER NOT NULL,
+              root_work_item_id INTEGER NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
+              root_work_item_call_sign TEXT NOT NULL,
+              root_worktree_id INTEGER REFERENCES worktrees(id) ON DELETE SET NULL,
+              source_adoption_mode TEXT NOT NULL DEFAULT 'linked',
+              status TEXT NOT NULL DEFAULT 'queued',
+              failure_reason TEXT,
+              has_overrides INTEGER NOT NULL DEFAULT 0,
+              resolved_workflow_json TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              completed_at TEXT,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_workflow_runs_project_id
+              ON workflow_runs(project_id, started_at DESC, id DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_workflow_runs_work_item_id
+              ON workflow_runs(project_id, root_work_item_id, status);
+
+            CREATE TABLE IF NOT EXISTS workflow_run_stages (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              run_id INTEGER NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
+              stage_ordinal INTEGER NOT NULL,
+              stage_name TEXT NOT NULL,
+              stage_role TEXT NOT NULL,
+              pod_slug TEXT,
+              pod_version INTEGER,
+              provider TEXT NOT NULL,
+              model TEXT,
+              worktree_id INTEGER REFERENCES worktrees(id) ON DELETE SET NULL,
+              session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+              agent_name TEXT,
+              thread_id TEXT,
+              directive_message_id INTEGER REFERENCES agent_messages(id) ON DELETE SET NULL,
+              response_message_id INTEGER REFERENCES agent_messages(id) ON DELETE SET NULL,
+              status TEXT NOT NULL DEFAULT 'pending',
+              attempt INTEGER NOT NULL DEFAULT 1,
+              completion_message_type TEXT,
+              completion_summary TEXT,
+              completion_context_json TEXT NOT NULL DEFAULT '{}',
+              failure_reason TEXT,
+              resolved_stage_json TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              started_at TEXT,
+              completed_at TEXT,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_workflow_run_stages_run_id
+              ON workflow_run_stages(run_id, stage_ordinal, attempt, id);
+
+            CREATE INDEX IF NOT EXISTS idx_workflow_run_stages_session_id
+              ON workflow_run_stages(session_id);
+
+            CREATE TABLE IF NOT EXISTS vault_entries (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              name TEXT NOT NULL UNIQUE,
+              kind TEXT NOT NULL,
+              description TEXT NOT NULL DEFAULT '',
+              scope_tags_json TEXT NOT NULL DEFAULT '[]',
+              gate_policy TEXT NOT NULL DEFAULT 'confirm_session',
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              last_accessed_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS vault_audit_events (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              vault_entry_id INTEGER,
+              vault_entry_name TEXT NOT NULL DEFAULT '',
+              action TEXT NOT NULL,
+              consumer TEXT NOT NULL,
+              correlation_id TEXT NOT NULL DEFAULT '',
+              gate_result TEXT NOT NULL DEFAULT 'approved',
+              session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_vault_entries_name
+              ON vault_entries(name COLLATE NOCASE);
+
+            CREATE INDEX IF NOT EXISTS idx_vault_audit_events_entry_id
+              ON vault_audit_events(vault_entry_id, created_at DESC);
             ",
         )
         .map_err(|error| format!("failed to run database migrations: {error}"))?;
@@ -2075,6 +2598,14 @@ fn migrate(connection: &Connection) -> Result<(), String> {
     ensure_column_exists(connection, "sessions", "supervisor_pid", "INTEGER")?;
     ensure_column_exists(connection, "sessions", "provider_session_id", "TEXT")?;
     ensure_column_exists(connection, "sessions", "last_heartbeat_at", "TEXT")?;
+    ensure_vault_audit_event_table(connection)?;
+    ensure_column_exists(connection, "agent_messages", "thread_id", "TEXT")?;
+    ensure_column_exists(
+        connection,
+        "agent_messages",
+        "reply_to_message_id",
+        "INTEGER REFERENCES agent_messages(id) ON DELETE SET NULL",
+    )?;
     ensure_column_exists(
         connection,
         "worktrees",
@@ -2096,9 +2627,13 @@ fn migrate(connection: &Connection) -> Result<(), String> {
 
             CREATE UNIQUE INDEX IF NOT EXISTS idx_work_items_call_sign
               ON work_items(call_sign);
+
+            CREATE INDEX IF NOT EXISTS idx_agent_messages_thread
+              ON agent_messages(project_id, thread_id, id DESC);
             ",
         )
         .map_err(|error| format!("failed to finalize work item indexes: {error}"))?;
+    backfill_agent_message_threads(connection)?;
     backfill_project_work_item_prefixes(connection)?;
     reconcile_work_item_identifiers(connection)?;
     backfill_project_tracker_work_items(connection)?;
@@ -2114,18 +2649,61 @@ fn seed_defaults(connection: &Connection) -> Result<(), String> {
         .map_err(|error| format!("failed to inspect launch profiles: {error}"))?;
 
     if existing_count == 0 {
+        seed_launch_profile_if_missing(
+            connection,
+            "Claude Code / YOLO",
+            "claude_code",
+            "claude",
+            "--dangerously-skip-permissions",
+            "{}",
+        )?;
+    }
+
+    seed_launch_profile_if_missing(
+        connection,
+        "Claude Agent SDK / Local",
+        "claude_agent_sdk",
+        "node",
+        "",
+        "{}",
+    )?;
+
+    seed_launch_profile_if_missing(
+        connection,
+        "Codex SDK / Local",
+        "codex_sdk",
+        "node",
+        "",
+        "{}",
+    )?;
+
+    Ok(())
+}
+
+fn seed_launch_profile_if_missing(
+    connection: &Connection,
+    label: &str,
+    provider: &str,
+    executable: &str,
+    args: &str,
+    env_json: &str,
+) -> Result<(), String> {
+    let existing = connection
+        .query_row(
+            "SELECT id FROM launch_profiles WHERE label = ?1 AND provider = ?2",
+            params![label, provider],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(|error| format!("failed to inspect seeded launch profile {label}: {error}"))?;
+
+    if existing.is_none() {
         connection
             .execute(
                 "INSERT INTO launch_profiles (label, provider, executable, args, env_json) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![
-                    "Claude Code / YOLO",
-                    "claude_code",
-                    "claude",
-                    "--dangerously-skip-permissions",
-                    "{}"
-                ],
+                params![label, provider, executable, args, env_json],
             )
-            .map_err(|error| format!("failed to seed default launch profile: {error}"))?;
+            .map_err(|error| format!("failed to seed launch profile {label}: {error}"))?;
     }
 
     Ok(())
@@ -2142,6 +2720,21 @@ fn load_app_settings(connection: &Connection) -> Result<AppSettings, String> {
                 })
             })
             .transpose()?;
+    let default_worker_launch_profile_id =
+        load_app_setting(connection, APP_SETTING_DEFAULT_WORKER_LAUNCH_PROFILE_ID)?
+            .map(|raw| {
+                raw.parse::<i64>().map_err(|error| {
+                    format!(
+                        "failed to parse app setting {APP_SETTING_DEFAULT_WORKER_LAUNCH_PROFILE_ID}: {error}"
+                    )
+                })
+            })
+            .transpose()?;
+    let sdk_claude_config_dir = load_app_setting(connection, APP_SETTING_SDK_CLAUDE_CONFIG_DIR)?
+        .and_then(|raw| {
+            let trimmed = raw.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        });
     let auto_repair_safe_cleanup_on_startup =
         load_app_setting(connection, APP_SETTING_AUTO_REPAIR_SAFE_CLEANUP_ON_STARTUP)?
             .map(|raw| {
@@ -2167,9 +2760,28 @@ fn load_app_settings(connection: &Connection) -> Result<AppSettings, String> {
         }
         None => None,
     };
+    let default_worker_launch_profile_id = match default_worker_launch_profile_id {
+        Some(profile_id) => {
+            let existing = connection
+                .query_row(
+                    "SELECT id FROM launch_profiles WHERE id = ?1",
+                    [profile_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()
+                .map_err(|error| {
+                    format!("failed to validate default worker launch profile setting: {error}")
+                })?;
+
+            existing
+        }
+        None => None,
+    };
 
     Ok(AppSettings {
         default_launch_profile_id,
+        default_worker_launch_profile_id,
+        sdk_claude_config_dir,
         auto_repair_safe_cleanup_on_startup,
     })
 }
@@ -3265,13 +3877,15 @@ fn map_agent_message_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentMe
         session_id: row.get(2)?,
         from_agent: row.get(3)?,
         to_agent: row.get(4)?,
-        message_type: row.get(5)?,
-        body: row.get(6)?,
-        context_json: row.get(7)?,
-        status: row.get(8)?,
-        created_at: row.get(9)?,
-        delivered_at: row.get(10)?,
-        read_at: row.get(11)?,
+        thread_id: row.get(5)?,
+        reply_to_message_id: row.get(6)?,
+        message_type: row.get(7)?,
+        body: row.get(8)?,
+        context_json: row.get(9)?,
+        status: row.get(10)?,
+        created_at: row.get(11)?,
+        delivered_at: row.get(12)?,
+        read_at: row.get(13)?,
     })
 }
 
@@ -3282,6 +3896,7 @@ fn load_agent_message_by_id(
     connection
         .query_row(
             "SELECT id, project_id, session_id, from_agent, to_agent,
+                    thread_id, reply_to_message_id,
                     message_type, body, context_json, status,
                     created_at, delivered_at, read_at
              FROM agent_messages WHERE id = ?1",
@@ -3289,6 +3904,55 @@ fn load_agent_message_by_id(
             map_agent_message_record,
         )
         .map_err(|error| format!("failed to load agent message #{id}: {error}"))
+}
+
+fn resolve_agent_message_thread_id(
+    connection: &Connection,
+    project_id: i64,
+    explicit_thread_id: Option<&str>,
+    reply_to_message_id: Option<i64>,
+) -> Result<String, AppError> {
+    let explicit_thread_id = explicit_thread_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    let reply_thread_id = if let Some(reply_to_message_id) = reply_to_message_id {
+        let referenced =
+            load_agent_message_by_id(connection, reply_to_message_id).map_err(|error| {
+                AppError::invalid_input(format!(
+                    "reply_to_message_id #{reply_to_message_id} is invalid: {error}"
+                ))
+            })?;
+
+        if referenced.project_id != project_id {
+            return Err(AppError::invalid_input(format!(
+                "reply_to_message_id #{reply_to_message_id} is not part of project #{project_id}"
+            )));
+        }
+
+        Some(referenced.thread_id)
+    } else {
+        None
+    };
+
+    match (explicit_thread_id, reply_thread_id) {
+        (Some(explicit), Some(inherited)) if explicit != inherited => Err(AppError::invalid_input(
+            "thread_id must match the thread of reply_to_message_id",
+        )),
+        (Some(explicit), _) => Ok(explicit),
+        (None, Some(inherited)) if !inherited.trim().is_empty() => Ok(inherited),
+        _ => Ok(generate_agent_message_thread_id()),
+    }
+}
+
+fn generate_agent_message_thread_id() -> String {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_micros())
+        .unwrap_or_default();
+    let counter = AGENT_MESSAGE_THREAD_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("thread-{timestamp}-{counter}")
 }
 
 fn find_project_by_path(
@@ -4085,6 +4749,161 @@ fn ensure_column_exists(
     Ok(())
 }
 
+fn ensure_vault_audit_event_table(connection: &Connection) -> Result<(), String> {
+    ensure_column_exists(
+        connection,
+        "vault_audit_events",
+        "vault_entry_name",
+        "TEXT NOT NULL DEFAULT ''",
+    )?;
+
+    if !vault_audit_events_needs_rebuild(connection)? {
+        return Ok(());
+    }
+
+    connection
+        .execute_batch("BEGIN IMMEDIATE")
+        .map_err(|error| format!("failed to begin vault audit table migration: {error}"))?;
+
+    let result = (|| {
+        connection
+            .execute_batch(
+                "
+                DROP INDEX IF EXISTS idx_vault_audit_events_entry_id;
+
+                CREATE TABLE vault_audit_events_new (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  vault_entry_id INTEGER,
+                  vault_entry_name TEXT NOT NULL DEFAULT '',
+                  action TEXT NOT NULL,
+                  consumer TEXT NOT NULL,
+                  correlation_id TEXT NOT NULL DEFAULT '',
+                  gate_result TEXT NOT NULL DEFAULT 'approved',
+                  session_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
+                  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                INSERT INTO vault_audit_events_new (
+                  id,
+                  vault_entry_id,
+                  vault_entry_name,
+                  action,
+                  consumer,
+                  correlation_id,
+                  gate_result,
+                  session_id,
+                  created_at
+                )
+                SELECT
+                  id,
+                  vault_entry_id,
+                  CASE
+                    WHEN trim(COALESCE(vault_entry_name, '')) <> '' THEN vault_entry_name
+                    ELSE COALESCE(
+                      (SELECT name FROM vault_entries WHERE id = vault_entry_id),
+                      ''
+                    )
+                  END,
+                  action,
+                  consumer,
+                  correlation_id,
+                  gate_result,
+                  session_id,
+                  created_at
+                FROM vault_audit_events;
+
+                DROP TABLE vault_audit_events;
+                ALTER TABLE vault_audit_events_new RENAME TO vault_audit_events;
+
+                CREATE INDEX IF NOT EXISTS idx_vault_audit_events_entry_id
+                  ON vault_audit_events(vault_entry_id, created_at DESC);
+                ",
+            )
+            .map_err(|error| format!("failed to rebuild vault audit table: {error}"))?;
+
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => {
+            connection.execute_batch("COMMIT").map_err(|error| {
+                format!("failed to commit vault audit table migration: {error}")
+            })?;
+            Ok(())
+        }
+        Err(error) => {
+            let _ = connection.execute_batch("ROLLBACK");
+            Err(error)
+        }
+    }
+}
+
+fn vault_audit_events_needs_rebuild(connection: &Connection) -> Result<bool, String> {
+    let mut table_info = connection
+        .prepare("PRAGMA table_info(vault_audit_events)")
+        .map_err(|error| format!("failed to inspect vault audit table schema: {error}"))?;
+    let rows = table_info
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(1)?, row.get::<_, i64>(3)?))
+        })
+        .map_err(|error| format!("failed to query vault audit table schema: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect vault audit table schema: {error}"))?;
+
+    let vault_entry_id_is_not_null = rows
+        .iter()
+        .find(|(name, _)| name == "vault_entry_id")
+        .map(|(_, not_null)| *not_null != 0)
+        .unwrap_or(false);
+
+    let mut foreign_keys = connection
+        .prepare("PRAGMA foreign_key_list(vault_audit_events)")
+        .map_err(|error| format!("failed to inspect vault audit table foreign keys: {error}"))?;
+    let has_vault_entry_foreign_key = foreign_keys
+        .query_map([], |row| row.get::<_, String>(3))
+        .map_err(|error| format!("failed to query vault audit table foreign keys: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect vault audit table foreign keys: {error}"))?
+        .into_iter()
+        .any(|from_column| from_column == "vault_entry_id");
+
+    Ok(vault_entry_id_is_not_null || has_vault_entry_foreign_key)
+}
+
+fn backfill_agent_message_threads(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id
+             FROM agent_messages
+             WHERE thread_id IS NULL OR trim(thread_id) = ''
+             ORDER BY id ASC",
+        )
+        .map_err(|error| {
+            format!("failed to prepare agent message thread backfill query: {error}")
+        })?;
+    let missing_ids = statement
+        .query_map([], |row| row.get::<_, i64>(0))
+        .map_err(|error| format!("failed to query agent messages missing thread ids: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("failed to collect agent messages missing thread ids: {error}"))?;
+
+    for message_id in missing_ids {
+        let thread_id = format!("legacy-thread-{message_id}");
+        connection
+            .execute(
+                "UPDATE agent_messages
+                 SET thread_id = ?1
+                 WHERE id = ?2 AND (thread_id IS NULL OR trim(thread_id) = '')",
+                params![thread_id, message_id],
+            )
+            .map_err(|error| {
+                format!("failed to backfill thread_id for agent message #{message_id}: {error}")
+            })?;
+    }
+
+    Ok(())
+}
+
 fn touch_project(connection: &Connection, project_id: i64) -> Result<(), String> {
     connection
         .execute(
@@ -4141,7 +4960,19 @@ fn normalize_path_for_matching(path: &Path) -> Result<PathBuf, String> {
             .join(path)
     };
 
-    Ok(fs::canonicalize(&absolute).unwrap_or(absolute))
+    let canonical = fs::canonicalize(&absolute).unwrap_or(absolute);
+    Ok(strip_windows_extended_prefix(&canonical))
+}
+
+/// Strip the `\\?\` extended-length prefix that `fs::canonicalize` adds on Windows.
+/// Most tools (git, Claude Code / Bun, shell commands) don't handle it well.
+fn strip_windows_extended_prefix(path: &Path) -> PathBuf {
+    let s = path.to_string_lossy();
+    if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(stripped)
+    } else {
+        path.to_path_buf()
+    }
 }
 
 fn path_is_within(root: &Path, target: &Path) -> bool {
@@ -4354,42 +5185,198 @@ mod tests {
         let harness = TestHarness::new("bootstrap-settings");
 
         let bootstrap = harness.state.bootstrap().expect("bootstrap should load");
-        assert_eq!(bootstrap.launch_profiles.len(), 1);
-        assert_eq!(bootstrap.launch_profiles[0].label, "Claude Code / YOLO");
+        assert_eq!(bootstrap.launch_profiles.len(), 3);
+        assert!(bootstrap
+            .launch_profiles
+            .iter()
+            .any(|profile| profile.label == "Claude Code / YOLO"
+                && profile.provider == "claude_code"));
+        assert!(bootstrap
+            .launch_profiles
+            .iter()
+            .any(|profile| profile.label == "Claude Agent SDK / Local"
+                && profile.provider == "claude_agent_sdk"));
+        assert!(
+            bootstrap
+                .launch_profiles
+                .iter()
+                .any(|profile| profile.label == "Codex SDK / Local"
+                    && profile.provider == "codex_sdk")
+        );
         assert_eq!(bootstrap.settings.default_launch_profile_id, None);
+        assert_eq!(bootstrap.settings.default_worker_launch_profile_id, None);
+        assert_eq!(bootstrap.settings.sdk_claude_config_dir, None);
         assert!(!bootstrap.settings.auto_repair_safe_cleanup_on_startup);
 
         let created = harness
             .state
             .create_launch_profile(CreateLaunchProfileInput {
                 label: "Claude Code / Work".to_string(),
+                provider: "claude_code".to_string(),
                 executable: "claude".to_string(),
                 args: "--print".to_string(),
                 env_json: r#"{"OPENAI_API_KEY":"test-key"}"#.to_string(),
             })
             .expect("launch profile should be created");
+        let worker = harness
+            .state
+            .create_launch_profile(CreateLaunchProfileInput {
+                label: "Claude Agent SDK / Worktree".to_string(),
+                provider: "claude_agent_sdk".to_string(),
+                executable: "node".to_string(),
+                args: "".to_string(),
+                env_json: "{}".to_string(),
+            })
+            .expect("worker launch profile should be created");
 
         let settings = harness
             .state
             .update_app_settings(UpdateAppSettingsInput {
                 default_launch_profile_id: Some(created.id),
+                default_worker_launch_profile_id: Some(worker.id),
+                sdk_claude_config_dir: Some("C:\\Users\\emers\\.claude-personal".to_string()),
                 auto_repair_safe_cleanup_on_startup: true,
             })
             .expect("app settings should update");
         assert_eq!(settings.default_launch_profile_id, Some(created.id));
+        assert_eq!(settings.default_worker_launch_profile_id, Some(worker.id));
+        assert_eq!(
+            settings.sdk_claude_config_dir.as_deref(),
+            Some("C:\\Users\\emers\\.claude-personal")
+        );
         assert!(settings.auto_repair_safe_cleanup_on_startup);
 
         harness
             .state
             .delete_launch_profile(created.id)
             .expect("launch profile should delete cleanly");
+        harness
+            .state
+            .delete_launch_profile(worker.id)
+            .expect("worker launch profile should delete cleanly");
 
         let updated = harness
             .state
             .get_app_settings()
             .expect("updated app settings should load");
         assert_eq!(updated.default_launch_profile_id, None);
+        assert_eq!(updated.default_worker_launch_profile_id, None);
+        assert_eq!(
+            updated.sdk_claude_config_dir.as_deref(),
+            Some("C:\\Users\\emers\\.claude-personal")
+        );
         assert!(updated.auto_repair_safe_cleanup_on_startup);
+    }
+
+    #[test]
+    fn vault_access_bindings_resolve_scope_checked_values_and_record_audit() {
+        let harness = TestHarness::new("vault-access-bindings");
+        let project_root = harness.create_project_root("vault-project");
+        let project = harness.create_project("Vault Project", &project_root);
+
+        harness
+            .state
+            .upsert_vault_entry(UpsertVaultEntryInput {
+                id: None,
+                name: "OpenAI Key".to_string(),
+                kind: "token".to_string(),
+                description: Some("Used for SDK launches".to_string()),
+                scope_tags: vec!["openai:api".to_string(), "llm:chat".to_string()],
+                gate_policy: Some("confirm_session".to_string()),
+                value: Some("sk-test-openai".to_string()),
+            })
+            .expect("vault entry should save");
+
+        let session = harness
+            .state
+            .create_session_record(CreateSessionRecordInput {
+                project_id: project.id,
+                launch_profile_id: None,
+                worktree_id: None,
+                process_id: None,
+                supervisor_pid: None,
+                provider: "claude_code".to_string(),
+                provider_session_id: Some("provider-session".to_string()),
+                profile_label: "Vault Profile".to_string(),
+                root_path: project_root.display().to_string(),
+                state: "running".to_string(),
+                startup_prompt: String::new(),
+                started_at: "1712769601".to_string(),
+            })
+            .expect("session record should create");
+
+        let bindings = harness
+            .state
+            .resolve_vault_access_bindings(
+                vec![VaultAccessBindingRequest {
+                    env_var: "OPENAI_API_KEY".to_string(),
+                    entry_name: "OpenAI Key".to_string(),
+                    required_scope_tags: vec!["openai:api".to_string()],
+                    delivery: crate::vault::VaultBindingDelivery::Env,
+                }],
+                "desktop_ui",
+            )
+            .expect("vault bindings should resolve");
+
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].env_var, "OPENAI_API_KEY");
+        assert_eq!(bindings[0].entry_name, "OpenAI Key");
+        assert_eq!(bindings[0].value.as_str(), "sk-test-openai");
+        assert_eq!(
+            bindings[0].gate_result,
+            "approved_launch_session:desktop_ui"
+        );
+
+        harness
+            .state
+            .record_vault_access_bindings(
+                &bindings,
+                "inject_env",
+                "session_launch:claude_code",
+                "session-launch:123",
+                Some(session.id),
+            )
+            .expect("vault audit should record");
+
+        let connection = harness
+            .state
+            .connect()
+            .expect("test database connection should open");
+        let last_accessed_at = connection
+            .query_row(
+                "SELECT last_accessed_at FROM vault_entries WHERE name = 'OpenAI Key'",
+                [],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .expect("vault entry should load");
+        assert!(last_accessed_at.is_some());
+
+        let audit_row = connection
+            .query_row(
+                "
+                SELECT action, consumer, correlation_id, gate_result, session_id
+                FROM vault_audit_events
+                WHERE action = 'inject_env'
+                ORDER BY id DESC
+                LIMIT 1
+                ",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Option<i64>>(4)?,
+                    ))
+                },
+            )
+            .expect("vault audit event should load");
+        assert_eq!(audit_row.0, "inject_env");
+        assert_eq!(audit_row.1, "session_launch:claude_code:OPENAI_API_KEY");
+        assert_eq!(audit_row.2, "session-launch:123");
+        assert_eq!(audit_row.3, "approved_launch_session:desktop_ui");
+        assert_eq!(audit_row.4, Some(session.id));
     }
 
     #[test]
@@ -4526,6 +5513,89 @@ mod tests {
             .get_session_record(first.id)
             .expect("full session record should still load");
         assert_eq!(full.startup_prompt, "first startup prompt");
+    }
+
+    #[test]
+    fn send_agent_message_accepts_options_message_type() {
+        let harness = TestHarness::new("agent-message-options");
+        let project_root = harness.create_project_root("agent-message-options");
+        let project = harness.create_project("Agent Messages", &project_root);
+
+        let message = harness
+            .state
+            .send_agent_message(SendAgentMessageInput {
+                project_id: project.id,
+                session_id: None,
+                from_agent: "worker-1".to_string(),
+                to_agent: "dispatcher".to_string(),
+                thread_id: None,
+                reply_to_message_id: None,
+                message_type: "options".to_string(),
+                body: "Option A vs Option B".to_string(),
+                context_json: Some(r#"{"recommendedOption":"A"}"#.to_string()),
+            })
+            .expect("options message should be accepted");
+
+        assert_eq!(message.message_type, "options");
+
+        let inbox = harness
+            .state
+            .get_agent_inbox(
+                project.id,
+                "dispatcher",
+                true,
+                None,
+                None,
+                None,
+                None,
+                Some(10),
+            )
+            .expect("dispatcher inbox should load");
+
+        assert_eq!(inbox.len(), 1);
+        assert_eq!(inbox[0].id, message.id);
+        assert_eq!(inbox[0].message_type, "options");
+    }
+
+    #[test]
+    fn send_agent_message_inherits_thread_id_from_reply_target() {
+        let harness = TestHarness::new("agent-message-threading");
+        let project_root = harness.create_project_root("agent-message-threading");
+        let project = harness.create_project("Agent Threads", &project_root);
+
+        let directive = harness
+            .state
+            .send_agent_message(SendAgentMessageInput {
+                project_id: project.id,
+                session_id: None,
+                from_agent: "dispatcher".to_string(),
+                to_agent: "worker-1".to_string(),
+                thread_id: None,
+                reply_to_message_id: None,
+                message_type: "directive".to_string(),
+                body: "Please implement the feature".to_string(),
+                context_json: None,
+            })
+            .expect("directive message should be accepted");
+
+        let reply = harness
+            .state
+            .send_agent_message(SendAgentMessageInput {
+                project_id: project.id,
+                session_id: None,
+                from_agent: "worker-1".to_string(),
+                to_agent: "dispatcher".to_string(),
+                thread_id: None,
+                reply_to_message_id: Some(directive.id),
+                message_type: "complete".to_string(),
+                body: "Implemented the feature".to_string(),
+                context_json: None,
+            })
+            .expect("reply message should inherit the directive thread");
+
+        assert!(!directive.thread_id.is_empty());
+        assert_eq!(reply.thread_id, directive.thread_id);
+        assert_eq!(reply.reply_to_message_id, Some(directive.id));
     }
 
     #[test]

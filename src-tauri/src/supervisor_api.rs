@@ -169,6 +169,12 @@ pub struct LaunchProfileTarget {
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UpdateSessionProviderSessionIdInput {
+    pub provider_session_id: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListCleanupCandidatesInput {}
 
 #[derive(Serialize, Deserialize)]
@@ -322,6 +328,8 @@ pub struct DirectAgentInput {
 pub struct SendAgentMessageApiInput {
     pub project_id: i64,
     pub to_agent: String,
+    pub thread_id: Option<String>,
+    pub reply_to_message_id: Option<i64>,
     pub message_type: String,
     pub body: String,
     pub context_json: Option<String>,
@@ -333,6 +341,8 @@ pub struct ListAgentMessagesApiInput {
     pub project_id: i64,
     pub from_agent: Option<String>,
     pub to_agent: Option<String>,
+    pub thread_id: Option<String>,
+    pub reply_to_message_id: Option<i64>,
     pub message_type: Option<String>,
     pub status: Option<String>,
     pub limit: Option<i64>,
@@ -346,8 +356,23 @@ pub struct AgentInboxApiInput {
     #[serde(default)]
     pub unread_only: bool,
     pub from_agent: Option<String>,
+    pub thread_id: Option<String>,
+    pub reply_to_message_id: Option<i64>,
     pub message_type: Option<String>,
     pub limit: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaitAgentMessagesApiInput {
+    pub project_id: i64,
+    pub agent_name: Option<String>,
+    pub from_agent: Option<String>,
+    pub thread_id: Option<String>,
+    pub reply_to_message_id: Option<i64>,
+    pub message_type: Option<String>,
+    pub limit: Option<i64>,
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -363,6 +388,13 @@ pub struct AckAgentMessagesApiInput {
 #[serde(rename_all = "camelCase")]
 pub struct AgentMessageListOutput {
     pub messages: Vec<AgentMessageRecord>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WaitAgentMessagesOutput {
+    pub messages: Vec<AgentMessageRecord>,
+    pub timed_out: bool,
 }
 
 #[derive(Serialize, Deserialize)]

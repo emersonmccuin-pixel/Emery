@@ -81,7 +81,9 @@ export function isRecoverableSession(record: SessionRecord): boolean {
 
 export function hasNativeSessionResume(record?: SessionRecord | null): boolean {
   return (
-    record?.provider === 'claude_code' &&
+    (record?.provider === 'claude_code' ||
+      record?.provider === 'claude_agent_sdk' ||
+      record?.provider === 'codex_sdk') &&
     typeof record.providerSessionId === 'string' &&
     record.providerSessionId.trim().length > 0
   )

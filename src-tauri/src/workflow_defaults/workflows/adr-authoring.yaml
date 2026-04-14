@@ -1,0 +1,41 @@
+name: adr-authoring
+kind: documentation
+version: 1
+description: Research and draft an architecture decision record with review.
+template: true
+categories:
+  - DOCUMENTATION
+  - PRODUCT
+tags:
+  - template
+  - adr
+stages:
+  - name: research
+    role: researcher
+    pod_ref: researcher.sonnet.standard
+    inputs:
+      - work_item
+      - project_tracker
+    outputs:
+      - research_brief
+  - name: plan
+    role: planner
+    pod_ref: planner.opus.standard
+    inputs:
+      - research_brief
+    outputs:
+      - adr_outline
+  - name: draft
+    role: generator
+    pod_ref: generator.sonnet.standard
+    inputs:
+      - adr_outline
+    outputs:
+      - adr
+  - name: review
+    role: reviewer
+    pod_ref: reviewer.sonnet.lightweight
+    inputs:
+      - adr
+    outputs:
+      - review_notes

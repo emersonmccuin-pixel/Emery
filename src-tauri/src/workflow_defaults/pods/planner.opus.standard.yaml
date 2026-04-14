@@ -1,0 +1,22 @@
+name: planner.opus.standard
+role: planner
+version: 1
+description: High-rigor planner for multi-stage delivery work.
+categories:
+  - CODING
+  - PRODUCT
+provider: claude_code
+model: opus-4.6
+prompt_template_ref: prompts/planner.feature-dev.md
+tool_allowlist:
+  - list_work_items
+  - get_work_item
+  - list_documents
+secret_scopes: []
+default_policy:
+  timeout_ms: 900000
+  max_retries: 1
+  token_budget: high
+tags:
+  - high_quality
+  - planning

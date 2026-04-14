@@ -1,11 +1,11 @@
 use clap::{Args, Parser, Subcommand};
 use project_commander_lib::db::{
-    AgentSignalRecord, AppState, AppendSessionEventInput, CreateDocumentInput,
+    AgentMessageRecord, AppState, AppendSessionEventInput, CreateDocumentInput,
     CreateLaunchProfileInput, CreateProjectInput, CreateWorkItemInput, DocumentRecord,
-    EmitAgentSignalInput, ListAgentMessagesFilter, ReparentRequest, RespondToAgentSignalInput,
-    SendAgentMessageInput, SessionRecord, StorageInfo, UpdateAppSettingsInput, UpdateDocumentInput,
-    UpdateLaunchProfileInput, UpdateProjectInput, UpdateWorkItemInput, UpsertWorktreeRecordInput,
-    WorkItemRecord, WorktreeRecord,
+    ListAgentMessagesFilter, ProjectRecord, ReparentRequest, SendAgentMessageInput, SessionRecord,
+    StorageInfo, UpdateAppSettingsInput, UpdateDocumentInput, UpdateLaunchProfileInput,
+    UpdateProjectInput, UpdateWorkItemInput, UpsertWorktreeRecordInput, WorkItemRecord,
+    WorktreeRecord,
 };
 use project_commander_lib::error::{AppError, AppErrorCode};
 use project_commander_lib::session::build_supervisor_runtime_info;
@@ -15,21 +15,26 @@ use project_commander_lib::session_api::{
 };
 use project_commander_lib::session_host::{now_timestamp_string, SessionRegistry};
 use project_commander_lib::supervisor_api::{
-    AckAgentMessagesApiInput, AgentInboxApiInput, AgentSignalTarget, CleanupActionOutput,
-    CleanupCandidate, CleanupCandidateTarget, CleanupRepairOutput, CleanupWorktreeInput,
-    ClearProjectWorktreesInput, CreateProjectDocumentInput, CreateProjectWorkItemInput,
-    DirectAgentInput, EmitAgentSignalInput as ApiEmitAgentSignalInput, EnsureProjectWorktreeInput,
+    AckAgentMessagesApiInput, AgentInboxApiInput, CleanupActionOutput, CleanupCandidate,
+    CleanupCandidateTarget, CleanupRepairOutput, CleanupWorktreeInput, ClearProjectWorktreesInput,
+    CreateProjectDocumentInput, CreateProjectWorkItemInput, EnsureProjectWorktreeInput,
     LaunchProfileTarget, LaunchProjectWorktreeAgentInput, ListAgentMessagesApiInput,
-    ListAgentSignalsInput, ListCleanupCandidatesInput, ListProjectDocumentsInput,
-    ListProjectSessionEventsInput, ListProjectSessionsInput, ListProjectWorkItemsInput,
-    ListProjectWorktreesInput, PinWorktreeInput, ProjectCallSignTarget, ProjectDocumentTarget,
-    ProjectSessionRecordTarget, ProjectWorkItemTarget, ProjectWorktreeTarget,
-    ReconcileProjectTrackerInput, RepairCleanupInput,
-    RespondToAgentSignalInput as ApiRespondToAgentSignalInput, SendAgentMessageApiInput,
-    SessionCrashReport, SessionRecoveryDetails, UpdateProjectDocumentInput,
-    UpdateProjectWorkItemInput, WorkItemDetailOutput, WorktreeLaunchOutput,
+    ListCleanupCandidatesInput, ListProjectDocumentsInput, ListProjectSessionEventsInput,
+    ListProjectSessionsInput, ListProjectWorkItemsInput, ListProjectWorktreesInput,
+    PinWorktreeInput, ProjectCallSignTarget, ProjectDocumentTarget, ProjectSessionRecordTarget,
+    ProjectWorkItemTarget, ProjectWorktreeTarget, ReconcileProjectTrackerInput, RepairCleanupInput,
+    SendAgentMessageApiInput, SessionCrashReport, SessionRecoveryDetails,
+    UpdateProjectDocumentInput, UpdateProjectWorkItemInput, UpdateSessionProviderSessionIdInput,
+    WaitAgentMessagesApiInput, WaitAgentMessagesOutput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
-use project_commander_lib::supervisor_mcp::run_supervisor_mcp_stdio_with_session;
+use project_commander_lib::supervisor_mcp::{
+    handle_supervisor_mcp_message, run_supervisor_mcp_stdio_with_session,
+};
+use project_commander_lib::vault::VaultAccessBindingRequest;
+use project_commander_lib::workflow::{
+    FailWorkflowRunInput, MarkWorkflowStageDispatchedInput, RecordWorkflowStageResultInput,
+    ResolvedWorkflowStageRecord, StartWorkflowRunInput, WorkflowRunRecord,
+};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -50,6 +55,7 @@ const CLEANUP_KIND_STALE_MANAGED_WORKTREE_DIR: &str = "stale_managed_worktree_di
 const CLEANUP_KIND_STALE_WORKTREE_RECORD: &str = "stale_worktree_record";
 const CLEANUP_KIND_STALE_DONE_WORKTREE: &str = "stale_done_worktree";
 const SUPERVISOR_SLOW_ROUTE_MS: f64 = 500.0;
+const MESSAGE_WAIT_MAX_TIMEOUT_MS: u64 = 300_000;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -337,21 +343,45 @@ fn run_server(db_path: PathBuf, runtime_file: PathBuf) -> Result<(), String> {
 
     log::info!("supervisor listening on 127.0.0.1:{port}");
 
+    let runtime = Arc::new(runtime);
+    let state = Arc::new(state);
+    let sessions = Arc::new(sessions);
     let shutdown = Arc::new(AtomicBool::new(false));
 
-    for request in server.incoming_requests() {
-        if let Err(error) = handle_request(
-            request,
-            &runtime,
-            &state,
-            &sessions,
-            &crash_manifest,
-            Arc::clone(&shutdown),
-        ) {
-            log::error!("request handler error: {error}");
-        }
+    loop {
         if shutdown.load(Ordering::Relaxed) {
             break;
+        }
+
+        match server.recv_timeout(Duration::from_millis(100)) {
+            Ok(Some(request)) => {
+                let runtime = Arc::clone(&runtime);
+                let state = Arc::clone(&state);
+                let sessions = Arc::clone(&sessions);
+                let crash_manifest = Arc::clone(&crash_manifest);
+                let shutdown = Arc::clone(&shutdown);
+
+                std::thread::spawn(move || {
+                    if let Err(error) = handle_request(
+                        request,
+                        runtime.as_ref(),
+                        state.as_ref(),
+                        sessions.as_ref(),
+                        crash_manifest.as_ref(),
+                        shutdown,
+                    ) {
+                        log::error!("request handler error: {error}");
+                    }
+                });
+            }
+            Ok(None) => continue,
+            Err(error) => {
+                if shutdown.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                return Err(format!("supervisor accept loop failed: {error}"));
+            }
         }
     }
 
@@ -370,6 +400,13 @@ fn handle_request(
     crash_manifest: &Option<CrashRecoveryManifest>,
     shutdown: Arc<AtomicBool>,
 ) -> Result<(), String> {
+    let route = request
+        .url()
+        .split('?')
+        .next()
+        .unwrap_or_default()
+        .to_string();
+
     if !is_authorized(&request, &runtime.token) {
         return respond_json(
             request,
@@ -380,13 +417,15 @@ fn handle_request(
 
     let context = build_request_context(&request);
     let method = format!("{:?}", request.method());
-    let route = request
-        .url()
-        .split('?')
-        .next()
-        .unwrap_or_default()
-        .to_string();
     let started_at = Instant::now();
+
+    if route == "/mcp" {
+        let result = handle_mcp_http_request(request, runtime, &context);
+        let duration_ms = started_at.elapsed().as_secs_f64() * 1000.0;
+        log_route_response_result(&method, &route, &context, duration_ms, &result);
+        return result;
+    }
+
     let result = route_request(
         &mut request,
         runtime,
@@ -413,6 +452,97 @@ fn handle_request(
     }
 }
 
+fn handle_mcp_http_request(
+    mut request: Request,
+    runtime: &SupervisorRuntimeInfo,
+    context: &RequestContext,
+) -> Result<(), String> {
+    if request.method() == &Method::Get {
+        return respond_status(request, 405, None, None);
+    }
+
+    if request.method() != &Method::Post {
+        return respond_status(request, 405, None, None);
+    }
+
+    if let Err(error) = validate_mcp_origin(&request) {
+        return respond_json(
+            request,
+            403,
+            &json!({
+                "jsonrpc": "2.0",
+                "error": {
+                    "code": -32003,
+                    "message": error,
+                }
+            }),
+        );
+    }
+
+    let message = match read_json::<Value>(&mut request) {
+        Ok(message) => message,
+        Err(error) => {
+            return respond_json(
+                request,
+                error.status,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32700,
+                        "message": error.message,
+                    }
+                }),
+            )
+        }
+    };
+
+    let project_id = match required_i64_header(&request, "x-project-commander-project-id") {
+        Ok(value) => value,
+        Err(error) => {
+            return respond_json(
+                request,
+                400,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": message.get("id").cloned().unwrap_or(Value::Null),
+                    "error": {
+                        "code": -32602,
+                        "message": error,
+                    }
+                }),
+            )
+        }
+    };
+    let worktree_id = optional_i64_header(&request, "x-project-commander-worktree-id");
+    let session_id = context
+        .session_id
+        .or_else(|| optional_i64_header(&request, "x-project-commander-session-id"));
+
+    match handle_supervisor_mcp_message(
+        runtime.port,
+        runtime.token.clone(),
+        project_id,
+        worktree_id,
+        session_id,
+        message,
+    ) {
+        Ok(Some(response)) => respond_json(request, 200, &response),
+        Ok(None) => respond_status(request, 202, None, None),
+        Err(error) => respond_json(
+            request,
+            200,
+            &json!({
+                "jsonrpc": "2.0",
+                "id": Value::Null,
+                "error": {
+                    "code": -32603,
+                    "message": error.message,
+                }
+            }),
+        ),
+    }
+}
+
 fn log_route_result(
     method: &str,
     route: &str,
@@ -424,11 +554,21 @@ fn log_route_result(
         .session_id
         .map(|value| value.to_string())
         .unwrap_or_else(|| "none".to_string());
+    let blocking_wait_route = route == "/message/wait";
 
     match result {
-        Ok(_) if duration_ms >= SUPERVISOR_SLOW_ROUTE_MS => log::warn!(
+        Ok(_) if duration_ms >= SUPERVISOR_SLOW_ROUTE_MS && !blocking_wait_route => log::warn!(
             target: "perf",
             "supervisor_route={} method={} source={} session_id={} status=ok slow=true duration_ms={:.2}",
+            route,
+            method,
+            context.source,
+            session_id,
+            duration_ms
+        ),
+        Ok(_) if blocking_wait_route => log::info!(
+            target: "perf",
+            "supervisor_route={} method={} source={} session_id={} status=ok blocking_wait=true duration_ms={:.2}",
             route,
             method,
             context.source,
@@ -468,6 +608,55 @@ fn log_route_result(
             duration_ms,
             error.message
         ),
+    }
+}
+
+fn log_route_response_result(
+    method: &str,
+    route: &str,
+    context: &RequestContext,
+    duration_ms: f64,
+    result: &Result<(), String>,
+) {
+    if result.is_ok() {
+        if duration_ms >= SUPERVISOR_SLOW_ROUTE_MS {
+            log::warn!(
+                "supervisor_route={} method={} source={} session_id={} status=ok slow=true duration_ms={:.2}",
+                route,
+                method,
+                context.source,
+                context
+                    .session_id
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                duration_ms
+            );
+        } else {
+            log::info!(
+                "supervisor_route={} method={} source={} session_id={} status=ok duration_ms={:.2}",
+                route,
+                method,
+                context.source,
+                context
+                    .session_id
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                duration_ms
+            );
+        }
+    } else if let Err(error) = result {
+        log::warn!(
+            "supervisor_route={} method={} source={} session_id={} status=error duration_ms={:.2} message={}",
+            route,
+            method,
+            context.source,
+            context
+                .session_id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "none".to_string()),
+            duration_ms,
+            error
+        );
     }
 }
 
@@ -643,6 +832,23 @@ fn route_request(
                         "failed to encode session recovery details: {error}"
                     ))
                 })
+        }
+        (&Method::Post, "/session/provider-session-id") => {
+            let input = read_json::<UpdateSessionProviderSessionIdInput>(request)?;
+            let session_id = context.session_id.ok_or_else(|| {
+                RouteError::bad_request(
+                    "missing x-project-commander-session-id header for provider session id update",
+                )
+            })?;
+            serde_json::to_value(update_session_provider_session_id(
+                state, context, session_id, input,
+            )?)
+            .map(|data| json!({ "ok": true, "data": data }))
+            .map_err(|error| {
+                RouteError::internal(format!(
+                    "failed to encode session provider session id update: {error}"
+                ))
+            })
         }
         (&Method::Post, "/cleanup/list") => {
             let _ = read_json::<ListCleanupCandidatesInput>(request)?;
@@ -1114,6 +1320,16 @@ fn route_request(
                     ))
                 })
         }
+        (&Method::Post, "/workflow/run/start") => {
+            let input = read_json::<StartWorkflowRunInput>(request)?;
+            serde_json::to_value(start_workflow_run(
+                state, sessions, runtime, context, input,
+            )?)
+            .map(|data| json!({ "ok": true, "data": data }))
+            .map_err(|error| {
+                RouteError::internal(format!("failed to encode started workflow run: {error}"))
+            })
+        }
         (&Method::Post, "/worktree/remove") => {
             let input = read_json::<ProjectWorktreeTarget>(request)?;
             let removed = remove_project_worktree(
@@ -1219,96 +1435,6 @@ fn route_request(
                     RouteError::internal(format!("failed to encode pinned worktree: {error}"))
                 })
         }
-        (&Method::Post, "/signal/emit") => {
-            let input = read_json::<ApiEmitAgentSignalInput>(request)?;
-            let signal = emit_agent_signal(
-                state,
-                sessions,
-                context,
-                input.project_id,
-                &input.signal_type,
-                &input.message,
-                input.context_json.as_deref(),
-            )?;
-            serde_json::to_value(&signal)
-                .map(|data| json!({ "ok": true, "data": data }))
-                .map_err(|error| {
-                    RouteError::internal(format!("failed to encode emitted signal: {error}"))
-                })
-        }
-        (&Method::Post, "/signal/list") => {
-            let input = read_json::<ListAgentSignalsInput>(request)?;
-            // Validate status parameter if provided.
-            if let Some(ref status) = input.status {
-                match status.as_str() {
-                    "pending" | "acknowledged" | "responded" => {},
-                    _ => return Err(RouteError::bad_request(
-                        format!("invalid status value '{status}': must be one of 'pending', 'acknowledged', 'responded'")
-                    )),
-                }
-            }
-            let signals = state
-                .list_agent_signals(input.project_id, input.worktree_id, input.status.as_deref())
-                .map_err(RouteError::from)?;
-            Ok(json!({ "ok": true, "data": { "signals": signals } }))
-        }
-        (&Method::Post, "/signal/get") => {
-            let input = read_json::<AgentSignalTarget>(request)?;
-            let signal = state
-                .get_agent_signal(input.id, input.project_id)
-                .map_err(RouteError::from)?;
-            serde_json::to_value(&signal)
-                .map(|data| json!({ "ok": true, "data": data }))
-                .map_err(|error| RouteError::internal(format!("failed to encode signal: {error}")))
-        }
-        (&Method::Post, "/signal/respond") => {
-            let input = read_json::<ApiRespondToAgentSignalInput>(request)?;
-            let signal = respond_to_agent_signal(
-                state,
-                sessions,
-                context,
-                input.project_id,
-                input.id,
-                &input.response,
-            )?;
-            serde_json::to_value(&signal)
-                .map(|data| json!({ "ok": true, "data": data }))
-                .map_err(|error| {
-                    RouteError::internal(format!("failed to encode responded signal: {error}"))
-                })
-        }
-        (&Method::Post, "/signal/acknowledge") => {
-            let input = read_json::<AgentSignalTarget>(request)?;
-            let signal = state
-                .acknowledge_agent_signal(input.id, input.project_id)
-                .map_err(RouteError::from)?;
-            append_project_event(
-                state,
-                context,
-                input.project_id,
-                "signal.acknowledged",
-                "agent_signal",
-                signal.id,
-                &signal,
-            );
-            serde_json::to_value(&signal)
-                .map(|data| json!({ "ok": true, "data": data }))
-                .map_err(|error| {
-                    RouteError::internal(format!("failed to encode acknowledged signal: {error}"))
-                })
-        }
-        (&Method::Post, "/agent/direct") => {
-            let input = read_json::<DirectAgentInput>(request)?;
-            direct_agent(
-                state,
-                sessions,
-                context,
-                input.project_id,
-                input.worktree_id,
-                &input.message,
-            )?;
-            Ok(json!({ "ok": true }))
-        }
         (&Method::Post, "/message/send") => {
             let input = read_json::<SendAgentMessageApiInput>(request)?;
             let result = handle_message_send(state, sessions, context, input)?;
@@ -1326,6 +1452,8 @@ fn route_request(
                     ListAgentMessagesFilter {
                         from_agent: input.from_agent,
                         to_agent: input.to_agent,
+                        thread_id: input.thread_id,
+                        reply_to_message_id: input.reply_to_message_id,
                         message_type: input.message_type,
                         status: input.status,
                         limit: input.limit,
@@ -1345,11 +1473,22 @@ fn route_request(
                     &agent_name,
                     input.unread_only,
                     input.from_agent,
+                    input.thread_id,
                     input.message_type,
+                    input.reply_to_message_id,
                     input.limit,
                 )
                 .map_err(RouteError::from)?;
             Ok(json!({ "ok": true, "data": { "messages": messages } }))
+        }
+        (&Method::Post, "/message/wait") => {
+            let input = read_json::<WaitAgentMessagesApiInput>(request)?;
+            let result = wait_for_agent_messages(state, context, input)?;
+            serde_json::to_value(result)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode waited messages: {error}"))
+                })
         }
         (&Method::Post, "/message/ack") => {
             let input = read_json::<AckAgentMessagesApiInput>(request)?;
@@ -1487,7 +1626,16 @@ fn reconcile_tracker_body(
 
     // Build Pending Inbox section
     let unread_messages = state
-        .get_agent_inbox(project_id, "dispatcher", true, None, None, Some(20))
+        .get_agent_inbox(
+            project_id,
+            "dispatcher",
+            true,
+            None,
+            None,
+            None,
+            None,
+            Some(20),
+        )
         .map_err(RouteError::from)?;
     let pending_inbox_body = if unread_messages.is_empty() {
         "(no unread messages)".to_string()
@@ -1889,6 +2037,7 @@ fn launch_worktree_agent(
                     resume_session_id: None,
                     model: input.model,
                     execution_mode: input.execution_mode,
+                    vault_env_bindings: Vec::new(),
                 },
                 state,
                 runtime,
@@ -1934,6 +2083,917 @@ fn launch_worktree_agent(
     result
 }
 
+fn start_workflow_run(
+    state: &AppState,
+    sessions: &SessionRegistry,
+    runtime: &SupervisorRuntimeInfo,
+    context: &RequestContext,
+    input: StartWorkflowRunInput,
+) -> Result<WorkflowRunRecord, RouteError> {
+    let started_at = Instant::now();
+    let workflow_slug = input.workflow_slug.clone();
+    log::info!(
+        "workflow run start requested — project_id={} workflow_slug={} root_work_item_id={} root_worktree_id={} source={} source_session_id={}",
+        input.project_id,
+        workflow_slug,
+        input.root_work_item_id,
+        input
+            .root_worktree_id
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "auto".to_string()),
+        context.source,
+        context
+            .session_id
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none".to_string())
+    );
+
+    let result: Result<(WorkflowRunRecord, WorktreeRecord), RouteError> = (|| {
+        let _project = state.get_project(input.project_id)?;
+        let _work_item =
+            require_work_item_for_project(state, input.project_id, input.root_work_item_id)?;
+        let worktree = match input.root_worktree_id {
+            Some(worktree_id) => {
+                let worktree = require_worktree_for_project(state, input.project_id, worktree_id)?;
+                if worktree.work_item_id != input.root_work_item_id {
+                    return Err(RouteError::bad_request(format!(
+                        "workflow run target worktree #{} belongs to work item #{}, not requested work item #{}",
+                        worktree_id, worktree.work_item_id, input.root_work_item_id
+                    )));
+                }
+                worktree
+            }
+            None => ensure_project_worktree(state, input.project_id, input.root_work_item_id)?,
+        };
+
+        if let Some(snapshot) = sessions
+            .snapshot(ProjectSessionTarget {
+                project_id: input.project_id,
+                worktree_id: Some(worktree.id),
+            })
+            .map_err(RouteError::from)?
+        {
+            if snapshot.is_running {
+                return Err(RouteError::bad_request(format!(
+                    "worktree {} already has a live session attached; stop it before starting a workflow run",
+                    worktree.short_branch_name
+                )));
+            }
+        }
+
+        let run = state.start_workflow_run(StartWorkflowRunInput {
+            project_id: input.project_id,
+            workflow_slug: input.workflow_slug.clone(),
+            root_work_item_id: input.root_work_item_id,
+            root_worktree_id: Some(worktree.id),
+        })?;
+
+        append_project_event(
+            state,
+            context,
+            run.project_id,
+            "workflow.run_started",
+            "workflow_run",
+            run.id,
+            &json!({
+                "runId": run.id,
+                "workflowSlug": run.workflow_slug,
+                "workflowVersion": run.workflow_version,
+                "rootWorkItemId": run.root_work_item_id,
+                "rootWorkItemCallSign": run.root_work_item_call_sign,
+                "rootWorktreeId": run.root_worktree_id,
+                "status": run.status,
+                "source": context.source,
+            }),
+        );
+
+        let state_clone = state.clone();
+        let sessions_clone = sessions.clone();
+        let runtime_clone = runtime.clone();
+        let worktree_clone = worktree.clone();
+        let source_label = context.source.clone();
+        let run_clone = run.clone();
+
+        std::thread::spawn(move || {
+            execute_workflow_run(
+                state_clone,
+                sessions_clone,
+                runtime_clone,
+                worktree_clone,
+                run_clone,
+                source_label,
+            );
+        });
+
+        Ok((run, worktree))
+    })();
+
+    let duration_ms = started_at.elapsed().as_secs_f64() * 1000.0;
+    match &result {
+        Ok((run, worktree)) if duration_ms >= SUPERVISOR_SLOW_ROUTE_MS => log::warn!(
+            target: "perf",
+            "workflow_run_start status=ok slow=true duration_ms={:.2} project_id={} run_id={} workflow_slug={} worktree_id={} source={}",
+            duration_ms,
+            run.project_id,
+            run.id,
+            run.workflow_slug,
+            worktree.id,
+            context.source
+        ),
+        Ok((run, worktree)) => log::info!(
+            "workflow run started — project_id={} run_id={} workflow_slug={} worktree_id={} duration_ms={:.2} source={}",
+            run.project_id,
+            run.id,
+            run.workflow_slug,
+            worktree.id,
+            duration_ms,
+            context.source
+        ),
+        Err(error) => log::error!(
+            "workflow run start failed — project_id={} workflow_slug={} root_work_item_id={} duration_ms={:.2} source={} code={:?} message={}",
+            input.project_id,
+            workflow_slug,
+            input.root_work_item_id,
+            duration_ms,
+            context.source,
+            error.code,
+            error.message
+        ),
+    }
+
+    result.map(|(run, _)| run)
+}
+
+fn execute_workflow_run(
+    state: AppState,
+    sessions: SessionRegistry,
+    runtime: SupervisorRuntimeInfo,
+    worktree: WorktreeRecord,
+    mut run: WorkflowRunRecord,
+    source: String,
+) {
+    log::info!(
+        "workflow run dispatch loop started — run_id={} project_id={} workflow_slug={} worktree_id={}",
+        run.id, run.project_id, run.workflow_slug, worktree.id
+    );
+
+    let project = match state.get_project(run.project_id) {
+        Ok(project) => project,
+        Err(error) => {
+            let _ = state.fail_workflow_run(FailWorkflowRunInput {
+                project_id: run.project_id,
+                run_id: run.id,
+                stage_name: None,
+                failure_reason: format!("failed to load workflow run project: {error}"),
+            });
+            log::error!(
+                "workflow run aborted before dispatch — run_id={} error={}",
+                run.id,
+                error
+            );
+            return;
+        }
+    };
+
+    for stage in run.resolved_workflow.stages.clone() {
+        let stage_source = format!("workflow_run:{}", run.id);
+        let stage_context = format!("run #{} stage '{}'", run.id, stage.name);
+        log::info!(
+            "workflow stage dispatch requested — run_id={} stage={} ordinal={} provider={} model={} worktree_id={} vault_bindings={}",
+            run.id,
+            stage.name,
+            stage.ordinal,
+            stage.provider,
+            stage.model.as_deref().unwrap_or("default"),
+            worktree.id,
+            stage.vault_env_bindings.len()
+        );
+
+        let launch_profile_id = match resolve_workflow_launch_profile_id(&state, &stage.provider) {
+            Ok(launch_profile_id) => launch_profile_id,
+            Err(error) => {
+                let _ = state.fail_workflow_run(FailWorkflowRunInput {
+                    project_id: run.project_id,
+                    run_id: run.id,
+                    stage_name: Some(stage.name.clone()),
+                    failure_reason: error.message.clone(),
+                });
+                append_workflow_event(
+                    &state,
+                    run.project_id,
+                    None,
+                    "workflow.stage_failed",
+                    run.id,
+                    Some(stage.name.as_str()),
+                    &json!({
+                        "runId": run.id,
+                        "stageName": stage.name,
+                        "failureReason": error.message,
+                    }),
+                );
+                return;
+            }
+        };
+
+        let session_snapshot = match sessions.launch(
+            LaunchSessionInput {
+                project_id: run.project_id,
+                worktree_id: Some(worktree.id),
+                launch_profile_id,
+                cols: 120,
+                rows: 32,
+                startup_prompt: None,
+                resume_session_id: None,
+                model: stage.model.clone(),
+                execution_mode: Some(workflow_stage_execution_mode(&stage)),
+                vault_env_bindings: stage.vault_env_bindings.clone(),
+            },
+            &state,
+            &runtime,
+            &stage_source,
+        ) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                let _ = state.fail_workflow_run(FailWorkflowRunInput {
+                    project_id: run.project_id,
+                    run_id: run.id,
+                    stage_name: Some(stage.name.clone()),
+                    failure_reason: format!("failed to launch {stage_context}: {error}"),
+                });
+                append_workflow_event(
+                    &state,
+                    run.project_id,
+                    None,
+                    "workflow.stage_failed",
+                    run.id,
+                    Some(stage.name.as_str()),
+                    &json!({
+                        "runId": run.id,
+                        "stageName": stage.name,
+                        "failureReason": format!("failed to launch {stage_context}: {error}"),
+                    }),
+                );
+                log::error!(
+                    "workflow stage launch failed — run_id={} stage={} error={}",
+                    run.id,
+                    stage.name,
+                    error
+                );
+                return;
+            }
+        };
+
+        let agent_name = workflow_agent_name(&worktree);
+        let directive_body =
+            build_workflow_stage_directive(&state, &project, &run, &stage, &worktree);
+        let directive_context_json = serde_json::to_string_pretty(&json!({
+            "workflowRunId": run.id,
+            "workflowSlug": run.workflow_slug,
+            "workflowStage": stage.name,
+            "workflowStageOrdinal": stage.ordinal,
+            "rootWorkItemId": run.root_work_item_id,
+            "rootWorkItemCallSign": run.root_work_item_call_sign,
+            "worktreeId": worktree.id,
+            "agentName": agent_name,
+            "triggerSource": source,
+        }))
+        .unwrap_or_else(|_| "{}".to_string());
+        let directive_message = match state.send_agent_message(SendAgentMessageInput {
+            project_id: run.project_id,
+            session_id: None,
+            from_agent: "dispatcher".to_string(),
+            to_agent: agent_name.clone(),
+            thread_id: None,
+            reply_to_message_id: None,
+            message_type: "directive".to_string(),
+            body: directive_body,
+            context_json: Some(directive_context_json),
+        }) {
+            Ok(message) => message,
+            Err(error) => {
+                let _ = state.fail_workflow_run(FailWorkflowRunInput {
+                    project_id: run.project_id,
+                    run_id: run.id,
+                    stage_name: Some(stage.name.clone()),
+                    failure_reason: format!(
+                        "failed to send directive for {stage_context}: {error}"
+                    ),
+                });
+                let _ = sessions.terminate(
+                    ProjectSessionTarget {
+                        project_id: run.project_id,
+                        worktree_id: Some(worktree.id),
+                    },
+                    &state,
+                    &stage_source,
+                );
+                append_workflow_event(
+                    &state,
+                    run.project_id,
+                    Some(session_snapshot.session_id),
+                    "workflow.stage_failed",
+                    run.id,
+                    Some(stage.name.as_str()),
+                    &json!({
+                        "runId": run.id,
+                        "stageName": stage.name,
+                        "sessionId": session_snapshot.session_id,
+                        "failureReason": format!("failed to send directive for {stage_context}: {error}"),
+                    }),
+                );
+                log::error!(
+                    "workflow stage directive failed — run_id={} stage={} error={}",
+                    run.id,
+                    stage.name,
+                    error
+                );
+                return;
+            }
+        };
+
+        run = match state.mark_workflow_stage_dispatched(MarkWorkflowStageDispatchedInput {
+            project_id: run.project_id,
+            run_id: run.id,
+            stage_name: stage.name.clone(),
+            worktree_id: Some(worktree.id),
+            session_id: Some(session_snapshot.session_id),
+            agent_name: Some(agent_name.clone()),
+            thread_id: Some(directive_message.thread_id.clone()),
+            directive_message_id: Some(directive_message.id),
+        }) {
+            Ok(updated) => updated,
+            Err(error) => {
+                let _ = state.fail_workflow_run(FailWorkflowRunInput {
+                    project_id: run.project_id,
+                    run_id: run.id,
+                    stage_name: Some(stage.name.clone()),
+                    failure_reason: format!(
+                        "failed to persist dispatched stage '{stage_context}': {error}"
+                    ),
+                });
+                let _ = sessions.terminate(
+                    ProjectSessionTarget {
+                        project_id: run.project_id,
+                        worktree_id: Some(worktree.id),
+                    },
+                    &state,
+                    &stage_source,
+                );
+                log::error!(
+                    "workflow stage dispatch persistence failed — run_id={} stage={} error={}",
+                    run.id,
+                    stage.name,
+                    error
+                );
+                return;
+            }
+        };
+
+        append_workflow_event(
+            &state,
+            run.project_id,
+            Some(session_snapshot.session_id),
+            "workflow.stage_dispatched",
+            run.id,
+            Some(stage.name.as_str()),
+            &json!({
+                "runId": run.id,
+                "stageName": stage.name,
+                "stageOrdinal": stage.ordinal,
+                "sessionId": session_snapshot.session_id,
+                "worktreeId": worktree.id,
+                "agentName": agent_name,
+                "threadId": directive_message.thread_id,
+                "launchProfileId": session_snapshot.launch_profile_id,
+                "vaultEnvVars": stage
+                    .vault_env_bindings
+                    .iter()
+                    .filter(|binding| matches!(binding.delivery, project_commander_lib::vault::VaultBindingDelivery::Env))
+                    .map(|binding| binding.env_var.clone())
+                    .collect::<Vec<_>>(),
+                "vaultFileEnvVars": stage
+                    .vault_env_bindings
+                    .iter()
+                    .filter(|binding| matches!(binding.delivery, project_commander_lib::vault::VaultBindingDelivery::File))
+                    .map(|binding| binding.env_var.clone())
+                    .collect::<Vec<_>>(),
+                "vaultBindingCount": stage.vault_env_bindings.len(),
+            }),
+        );
+
+        let stage_reply = wait_for_workflow_stage_reply(
+            &state,
+            &sessions,
+            run.project_id,
+            worktree.id,
+            session_snapshot.session_id,
+            &agent_name,
+            &directive_message.thread_id,
+        );
+
+        let _ = sessions.terminate(
+            ProjectSessionTarget {
+                project_id: run.project_id,
+                worktree_id: Some(worktree.id),
+            },
+            &state,
+            &stage_source,
+        );
+
+        let reply = match stage_reply {
+            Ok(reply) => reply,
+            Err(error) => {
+                let _ = state.fail_workflow_run(FailWorkflowRunInput {
+                    project_id: run.project_id,
+                    run_id: run.id,
+                    stage_name: Some(stage.name.clone()),
+                    failure_reason: error.message.clone(),
+                });
+                append_workflow_event(
+                    &state,
+                    run.project_id,
+                    Some(session_snapshot.session_id),
+                    "workflow.stage_failed",
+                    run.id,
+                    Some(stage.name.as_str()),
+                    &json!({
+                        "runId": run.id,
+                        "stageName": stage.name,
+                        "sessionId": session_snapshot.session_id,
+                        "failureReason": error.message,
+                    }),
+                );
+                log::error!(
+                    "workflow stage failed while waiting for reply — run_id={} stage={} error={}",
+                    run.id,
+                    stage.name,
+                    error.message
+                );
+                return;
+            }
+        };
+
+        run = match state.record_workflow_stage_result(RecordWorkflowStageResultInput {
+            project_id: run.project_id,
+            run_id: run.id,
+            stage_name: stage.name.clone(),
+            response_message_id: Some(reply.id),
+            completion_message_type: reply.message_type.clone(),
+            completion_summary: Some(reply.body.clone()),
+            completion_context_json: Some(reply.context_json.clone()),
+        }) {
+            Ok(updated) => updated,
+            Err(error) => {
+                let _ = state.fail_workflow_run(FailWorkflowRunInput {
+                    project_id: run.project_id,
+                    run_id: run.id,
+                    stage_name: Some(stage.name.clone()),
+                    failure_reason: format!("failed to persist workflow stage result: {error}"),
+                });
+                log::error!(
+                    "workflow stage result persistence failed — run_id={} stage={} error={}",
+                    run.id,
+                    stage.name,
+                    error
+                );
+                return;
+            }
+        };
+
+        let result_event = if reply.message_type == "complete" {
+            "workflow.stage_completed"
+        } else {
+            "workflow.stage_blocked"
+        };
+        append_workflow_event(
+            &state,
+            run.project_id,
+            Some(session_snapshot.session_id),
+            result_event,
+            run.id,
+            Some(stage.name.as_str()),
+            &json!({
+                "runId": run.id,
+                "stageName": stage.name,
+                "sessionId": session_snapshot.session_id,
+                "messageId": reply.id,
+                "messageType": reply.message_type,
+                "summary": reply.body,
+            }),
+        );
+
+        if run.status != "running" && run.status != "completed" {
+            log::warn!(
+                "workflow run paused — run_id={} stage={} status={}",
+                run.id,
+                stage.name,
+                run.status
+            );
+            return;
+        }
+    }
+
+    append_workflow_event(
+        &state,
+        run.project_id,
+        None,
+        "workflow.run_completed",
+        run.id,
+        None,
+        &json!({
+            "runId": run.id,
+            "workflowSlug": run.workflow_slug,
+            "status": run.status,
+            "rootWorkItemId": run.root_work_item_id,
+            "rootWorktreeId": run.root_worktree_id,
+        }),
+    );
+    log::info!(
+        "workflow run completed — run_id={} project_id={} workflow_slug={} status={}",
+        run.id,
+        run.project_id,
+        run.workflow_slug,
+        run.status
+    );
+}
+
+fn resolve_workflow_launch_profile_id(state: &AppState, provider: &str) -> Result<i64, RouteError> {
+    let bootstrap = state.bootstrap().map_err(RouteError::from)?;
+
+    if provider == "claude_code" {
+        if let Some(default_launch_profile_id) = bootstrap.settings.default_launch_profile_id {
+            if bootstrap.launch_profiles.iter().any(|profile| {
+                profile.id == default_launch_profile_id && profile.provider == provider
+            }) {
+                return Ok(default_launch_profile_id);
+            }
+        }
+    }
+
+    if is_worker_launch_profile_provider(provider) {
+        if let Some(default_worker_launch_profile_id) =
+            bootstrap.settings.default_worker_launch_profile_id
+        {
+            if bootstrap.launch_profiles.iter().any(|profile| {
+                profile.id == default_worker_launch_profile_id && profile.provider == provider
+            }) {
+                return Ok(default_worker_launch_profile_id);
+            }
+        }
+    }
+
+    bootstrap
+        .launch_profiles
+        .iter()
+        .find(|profile| profile.provider == provider)
+        .map(|profile| profile.id)
+        .ok_or_else(|| {
+            RouteError::bad_request(format!(
+                "no launch profile is configured for workflow provider '{provider}'"
+            ))
+        })
+}
+
+fn workflow_agent_name(worktree: &WorktreeRecord) -> String {
+    worktree.work_item_call_sign.replace('.', "-")
+}
+
+fn workflow_stage_execution_mode(stage: &ResolvedWorkflowStageRecord) -> String {
+    match stage.role.as_str() {
+        "planner" | "researcher" | "synthesizer" => "plan".to_string(),
+        _ => "build".to_string(),
+    }
+}
+
+fn build_workflow_stage_directive(
+    state: &AppState,
+    project: &ProjectRecord,
+    run: &WorkflowRunRecord,
+    stage: &ResolvedWorkflowStageRecord,
+    worktree: &WorktreeRecord,
+) -> String {
+    let work_item = state.get_work_item(run.root_work_item_id).ok();
+    let linked_documents = state
+        .list_documents(run.project_id)
+        .map(|documents| {
+            documents
+                .into_iter()
+                .filter(|document| document.work_item_id == Some(run.root_work_item_id))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let tracker = project.work_item_prefix.as_deref().and_then(|prefix| {
+        state
+            .get_work_item_by_call_sign(&format!("{prefix}-0"))
+            .ok()
+    });
+    let prompt_template = stage
+        .prompt_template_ref
+        .as_deref()
+        .and_then(load_prompt_template_body);
+
+    let mut sections = vec![
+        format!(
+            "Execute Project Commander workflow run #{} for root work item {} in worktree {}.",
+            run.id, run.root_work_item_call_sign, worktree.short_branch_name
+        ),
+        format!(
+            "Workflow: {} v{} ({})",
+            run.workflow_name, run.workflow_version, run.workflow_kind
+        ),
+        format!(
+            "Stage {}/{}: {} ({})",
+            stage.ordinal,
+            run.resolved_workflow.stages.len(),
+            stage.name,
+            stage.role
+        ),
+        format!(
+            "Resolved runtime: provider={} model={} launchProfileTarget={}",
+            stage.provider,
+            stage.model.as_deref().unwrap_or("profile default"),
+            stage.provider
+        ),
+        "You are operating under the Project Commander worktree-agent bridge. Follow the workflow stage instructions below even if they differ from the generic worktree guidance.".to_string(),
+        "When you reply to the dispatcher, use send_message with the same thread. If the stage succeeds, send messageType=\"complete\". If it cannot proceed or the acceptance criteria fail, send messageType=\"blocked\" with exact feedback. Include workflowRunId and stageName in contextJson when possible.".to_string(),
+        String::new(),
+        "Stage contract:".to_string(),
+        format!("- Inputs expected: {}", workflow_token_list(&stage.inputs)),
+        format!("- Outputs expected: {}", workflow_token_list(&stage.outputs)),
+        format!(
+            "- Secrets/capabilities in scope: {}",
+            workflow_token_list(&stage.needs_secrets)
+        ),
+        format!(
+            "- Vault env bindings: {}",
+            workflow_vault_binding_list(&stage.vault_env_bindings)
+        ),
+        format!(
+            "- Prompt template ref: {}",
+            stage.prompt_template_ref.as_deref().unwrap_or("(none)")
+        ),
+    ];
+
+    if let Some(work_item) = work_item {
+        sections.push(String::new());
+        sections.push(format!(
+            "Root work item: {} — {}",
+            work_item.call_sign, work_item.title
+        ));
+        if !work_item.body.trim().is_empty() {
+            sections.push("Work item body:".to_string());
+            sections.push(work_item.body.trim().to_string());
+        }
+    }
+
+    if stage.inputs.iter().any(|input| input == "project_tracker") {
+        if let Some(tracker) = tracker {
+            sections.push(String::new());
+            sections.push(format!("Project tracker: {}", tracker.call_sign));
+            if !tracker.body.trim().is_empty() {
+                sections.push(tracker.body.trim().to_string());
+            }
+        }
+    }
+
+    if !linked_documents.is_empty() {
+        sections.push(String::new());
+        sections.push("Linked project documents:".to_string());
+        for document in linked_documents {
+            sections.push(format!("### {}", document.title));
+            if !document.body.trim().is_empty() {
+                sections.push(document.body.trim().to_string());
+            }
+        }
+    }
+
+    let prior_outputs = summarize_relevant_prior_stage_outputs(run, stage);
+    if !prior_outputs.is_empty() {
+        sections.push(String::new());
+        sections.push("Relevant upstream stage outputs:".to_string());
+        sections.push(prior_outputs);
+    }
+
+    sections.push(String::new());
+    sections.push(match stage.role.as_str() {
+        "planner" => "Planner instructions: produce a scoped plan for this work item. Do not implement code in this stage. Summarize the plan, deliverables, and acceptance criteria in your completion message.".to_string(),
+        "generator" => "Generator instructions: implement the requested work in this worktree, run the relevant verification commands, update the work item body with a concise handoff, and commit your changes before sending complete.".to_string(),
+        "evaluator" | "reviewer" => "Evaluator instructions: treat this as an independent review of the current worktree state. Inspect diffs and run the relevant verification. Do not redo the implementation. Send complete only when the stage passes; otherwise send blocked with specific fix feedback.".to_string(),
+        "integrator" => "Integrator instructions: prepare the worktree for handoff and integration. Summarize merge readiness, commits, verification, and cleanup notes. Only perform merge/cleanup if it is already safe and unambiguous in this repository state.".to_string(),
+        _ => "Stage instructions: complete the stage according to the inputs/outputs above, then report the result through send_message.".to_string(),
+    });
+
+    if let Some(prompt_template) = prompt_template {
+        sections.push(String::new());
+        sections.push("Prompt template reference body:".to_string());
+        sections.push(prompt_template);
+    }
+
+    sections.push(String::new());
+    sections.push("Completion contract:".to_string());
+    sections.push(
+        "- Reply via send_message(to=\"dispatcher\", messageType=\"complete\"|\"blocked\", ...)."
+            .to_string(),
+    );
+    sections.push(format!(
+        "- Include a concise markdown summary plus contextJson like {{\"workflowRunId\":{},\"stageName\":\"{}\",\"rootWorkItemId\":{}}}.",
+        run.id, stage.name, run.root_work_item_id
+    ));
+    sections
+        .push("- Do not continue working after you send the terminal stage result.".to_string());
+
+    sections.join("\n")
+}
+
+fn summarize_relevant_prior_stage_outputs(
+    run: &WorkflowRunRecord,
+    stage: &ResolvedWorkflowStageRecord,
+) -> String {
+    let wanted_outputs = stage.inputs.iter().cloned().collect::<HashSet<_>>();
+    run.stages
+        .iter()
+        .filter(|candidate| candidate.stage_ordinal < stage.ordinal)
+        .filter(|candidate| candidate.status == "completed" || candidate.status == "blocked")
+        .filter(|candidate| {
+            candidate
+                .resolved_stage
+                .outputs
+                .iter()
+                .any(|output| wanted_outputs.contains(output))
+        })
+        .map(|candidate| {
+            let mut section = vec![format!(
+                "### {} ({})",
+                candidate.stage_name, candidate.status
+            )];
+            if let Some(summary) = candidate.completion_summary.as_deref() {
+                if !summary.trim().is_empty() {
+                    section.push(summary.trim().to_string());
+                }
+            }
+            if candidate.completion_context_json.trim() != "{}" {
+                section.push(format!(
+                    "Context JSON:\n{}",
+                    candidate.completion_context_json.trim()
+                ));
+            }
+            section.join("\n")
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn workflow_token_list(tokens: &[String]) -> String {
+    if tokens.is_empty() {
+        "(none)".to_string()
+    } else {
+        tokens.join(", ")
+    }
+}
+
+fn workflow_vault_binding_list(bindings: &[VaultAccessBindingRequest]) -> String {
+    if bindings.is_empty() {
+        "(none)".to_string()
+    } else {
+        bindings
+            .iter()
+            .map(|binding| match binding.delivery {
+                project_commander_lib::vault::VaultBindingDelivery::File => {
+                    format!("{} <= {} (file)", binding.env_var, binding.entry_name)
+                }
+                project_commander_lib::vault::VaultBindingDelivery::Env => {
+                    format!("{} <= {}", binding.env_var, binding.entry_name)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+fn load_prompt_template_body(prompt_template_ref: &str) -> Option<String> {
+    let trimmed = prompt_template_ref.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let path = PathBuf::from(trimmed);
+    let candidate = if path.is_absolute() {
+        path
+    } else {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .map(|root| root.join(trimmed))
+            .unwrap_or(path)
+    };
+
+    fs::read_to_string(candidate)
+        .ok()
+        .map(|contents| contents.trim().to_string())
+        .filter(|contents| !contents.is_empty())
+}
+
+fn wait_for_workflow_stage_reply(
+    state: &AppState,
+    sessions: &SessionRegistry,
+    project_id: i64,
+    worktree_id: i64,
+    session_id: i64,
+    agent_name: &str,
+    thread_id: &str,
+) -> Result<AgentMessageRecord, RouteError> {
+    let mut last_seen_message_id = 0_i64;
+
+    loop {
+        let observed_sequence = state.current_agent_message_sequence();
+        let mut messages = state
+            .list_agent_messages(
+                project_id,
+                ListAgentMessagesFilter {
+                    from_agent: Some(agent_name.to_string()),
+                    to_agent: Some("dispatcher".to_string()),
+                    thread_id: Some(thread_id.to_string()),
+                    reply_to_message_id: None,
+                    message_type: None,
+                    status: None,
+                    limit: Some(20),
+                },
+            )
+            .map_err(RouteError::from)?;
+        messages.sort_by_key(|message| message.id);
+
+        for message in messages {
+            if message.id <= last_seen_message_id {
+                continue;
+            }
+            last_seen_message_id = message.id;
+            match message.message_type.as_str() {
+                "complete" | "blocked" | "question" | "options" | "request_approval" => {
+                    return Ok(message);
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(snapshot) = sessions
+            .snapshot(ProjectSessionTarget {
+                project_id,
+                worktree_id: Some(worktree_id),
+            })
+            .map_err(RouteError::from)?
+        {
+            if !snapshot.is_running {
+                let session = state
+                    .get_session_record(session_id)
+                    .map_err(RouteError::from)?;
+                return Err(RouteError::internal(format!(
+                    "workflow stage session #{} ended before replying (state={}, exit_code={:?})",
+                    session_id, session.state, session.exit_code
+                )));
+            }
+        } else {
+            let session = state
+                .get_session_record(session_id)
+                .map_err(RouteError::from)?;
+            if session.state != "running" {
+                return Err(RouteError::internal(format!(
+                    "workflow stage session #{} is no longer running (state={}, exit_code={:?})",
+                    session_id, session.state, session.exit_code
+                )));
+            }
+        }
+
+        let _ = state.wait_for_agent_message_change(observed_sequence, Duration::from_secs(2));
+    }
+}
+
+fn append_workflow_event(
+    state: &AppState,
+    project_id: i64,
+    session_id: Option<i64>,
+    event_type: &str,
+    run_id: i64,
+    stage_name: Option<&str>,
+    payload: &Value,
+) {
+    let mut enriched = payload.clone();
+    if let Some(object) = enriched.as_object_mut() {
+        object.insert("workflowRunId".to_string(), json!(run_id));
+        if let Some(stage_name) = stage_name {
+            object.insert("workflowStageName".to_string(), json!(stage_name));
+        }
+    }
+
+    let _ = state.append_session_event(AppendSessionEventInput {
+        project_id,
+        session_id,
+        event_type: event_type.to_string(),
+        entity_type: Some("workflow_run".to_string()),
+        entity_id: Some(run_id),
+        source: "workflow_runtime".to_string(),
+        payload_json: enriched.to_string(),
+    });
+}
+
 fn resolve_worktree_launch_profile_id(
     state: &AppState,
     source_session_id: Option<i64>,
@@ -1944,15 +3004,36 @@ fn resolve_worktree_launch_profile_id(
         return Ok(launch_profile_id);
     }
 
-    if let Some(source_session_id) = source_session_id {
-        let source_session = state.get_session_record(source_session_id)?;
+    let bootstrap = state.bootstrap().map_err(RouteError::from)?;
+    let source_session = source_session_id
+        .map(|session_id| state.get_session_record(session_id))
+        .transpose()?;
 
+    if let Some(source_session) = source_session.as_ref() {
+        if source_session.worktree_id.is_some() {
+            if let Some(launch_profile_id) = source_session.launch_profile_id {
+                return Ok(launch_profile_id);
+            }
+        }
+    }
+
+    if let Some(launch_profile_id) = bootstrap.settings.default_worker_launch_profile_id {
+        return Ok(launch_profile_id);
+    }
+
+    if let Some(profile) = bootstrap
+        .launch_profiles
+        .iter()
+        .find(|profile| is_worker_launch_profile_provider(&profile.provider))
+    {
+        return Ok(profile.id);
+    }
+
+    if let Some(source_session) = source_session {
         if let Some(launch_profile_id) = source_session.launch_profile_id {
             return Ok(launch_profile_id);
         }
     }
-
-    let bootstrap = state.bootstrap().map_err(RouteError::from)?;
 
     if let Some(launch_profile_id) = bootstrap.settings.default_launch_profile_id {
         return Ok(launch_profile_id);
@@ -1965,6 +3046,10 @@ fn resolve_worktree_launch_profile_id(
         .ok_or_else(|| {
             RouteError::bad_request("no launch profile is available for worktree launch")
         })
+}
+
+fn is_worker_launch_profile_provider(provider: &str) -> bool {
+    matches!(provider, "claude_agent_sdk" | "codex_sdk")
 }
 
 fn latest_session_record_for_worktree(
@@ -2150,9 +3235,7 @@ fn cleanup_project_worktree(
 
     // When force is requested, auto-purge any orphaned session blocking removal.
     if force {
-        if let Some(record) =
-            latest_session_record_for_worktree(state, project_id, worktree_id)?
-        {
+        if let Some(record) = latest_session_record_for_worktree(state, project_id, worktree_id)? {
             if record.state == "orphaned" {
                 terminate_orphaned_session(
                     state,
@@ -2212,108 +3295,31 @@ fn resolve_agent_name_from_context(state: &AppState, context: &RequestContext) -
     "dispatcher".to_string()
 }
 
-/// Deliver a message to a target agent by writing to Claude Code's native
-/// file-based teammate mailbox at `~/.claude/teams/project-commander/inboxes/{agent}.json`.
-/// Returns true if the message was successfully written.
-fn deliver_message_to_agent(
-    _state: &AppState,
-    _sessions: &SessionRegistry,
-    _project_id: i64,
-    to_agent: &str,
+fn persist_agent_message(
+    state: &AppState,
+    project_id: i64,
+    session_id: Option<i64>,
     from_agent: &str,
-    message_text: &str,
-) -> bool {
-    write_to_claude_mailbox(to_agent, from_agent, message_text).is_ok()
-}
-
-/// Write a message into Claude Code's native teammate inbox file.
-/// The inbox is a JSON array at `~/.claude/teams/project-commander/inboxes/{agent}.json`.
-/// Claude Code polls this file every ~1 second and surfaces new messages as
-/// `<teammate_message>` XML tags in the agent's conversation.
-fn write_to_claude_mailbox(
     to_agent: &str,
-    from_agent: &str,
-    message_text: &str,
-) -> Result<(), String> {
-    let home = dirs::home_dir().ok_or_else(|| "cannot resolve home directory".to_string())?;
-    let inbox_dir = home
-        .join(".claude")
-        .join("teams")
-        .join("project-commander")
-        .join("inboxes");
-
-    if let Err(e) = fs::create_dir_all(&inbox_dir) {
-        return Err(format!("failed to create inbox directory: {e}"));
-    }
-
-    let inbox_path = inbox_dir.join(format!("{to_agent}.json"));
-    let lock_path = inbox_dir.join(format!("{to_agent}.json.lock"));
-
-    // Simple file-based locking: create a .lock sidecar with retries.
-    let mut lock_acquired = false;
-    for _ in 0..20 {
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&lock_path)
-        {
-            Ok(_) => {
-                lock_acquired = true;
-                break;
-            }
-            Err(_) => {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-        }
-    }
-
-    if !lock_acquired {
-        // Force-remove stale lock and retry once.
-        let _ = fs::remove_file(&lock_path);
-        if fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&lock_path)
-            .is_err()
-        {
-            return Err("failed to acquire inbox lock".to_string());
-        }
-    }
-
-    let result = (|| -> Result<(), String> {
-        // Read existing inbox array (or start fresh).
-        let mut inbox: Vec<serde_json::Value> = if inbox_path.exists() {
-            let contents = fs::read_to_string(&inbox_path)
-                .map_err(|e| format!("failed to read inbox: {e}"))?;
-            serde_json::from_str(&contents).unwrap_or_default()
-        } else {
-            Vec::new()
-        };
-
-        // Append the new message.
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs().to_string())
-            .unwrap_or_default();
-
-        inbox.push(json!({
-            "from": from_agent,
-            "text": message_text,
-            "timestamp": timestamp,
-            "read": false,
-        }));
-
-        let serialized = serde_json::to_string_pretty(&inbox)
-            .map_err(|e| format!("failed to serialize inbox: {e}"))?;
-        fs::write(&inbox_path, serialized).map_err(|e| format!("failed to write inbox: {e}"))?;
-
-        Ok(())
-    })();
-
-    // Always release the lock.
-    let _ = fs::remove_file(&lock_path);
-
-    result
+    thread_id: Option<String>,
+    reply_to_message_id: Option<i64>,
+    message_type: &str,
+    body: &str,
+    context_json: Option<String>,
+) -> Result<AgentMessageRecord, RouteError> {
+    state
+        .send_agent_message(SendAgentMessageInput {
+            project_id,
+            session_id,
+            from_agent: from_agent.to_string(),
+            to_agent: to_agent.to_string(),
+            thread_id,
+            reply_to_message_id,
+            message_type: message_type.to_string(),
+            body: body.to_string(),
+            context_json,
+        })
+        .map_err(RouteError::from)
 }
 
 fn handle_message_send(
@@ -2352,30 +3358,18 @@ fn handle_message_send(
                 continue;
             }
 
-            let msg = state
-                .send_agent_message(SendAgentMessageInput {
-                    project_id: input.project_id,
-                    session_id: context.session_id,
-                    from_agent: from_agent.clone(),
-                    to_agent: recipient.clone(),
-                    message_type: message_type.clone(),
-                    body: body.clone(),
-                    context_json: input.context_json.clone(),
-                })
-                .map_err(RouteError::from)?;
-
-            let message_text = format!("[{from_agent}] ({message_type}): {body}");
-            let delivered = deliver_message_to_agent(
+            let msg = persist_agent_message(
                 state,
-                sessions,
                 input.project_id,
-                &recipient,
+                context.session_id,
                 &from_agent,
-                &message_text,
-            );
-            if delivered {
-                let _ = state.mark_agent_message_delivered(msg.id);
-            }
+                &recipient,
+                input.thread_id.clone(),
+                input.reply_to_message_id,
+                &message_type,
+                &body,
+                input.context_json.clone(),
+            )?;
 
             sent_messages.push(msg);
         }
@@ -2402,30 +3396,18 @@ fn handle_message_send(
     }
 
     // Single recipient.
-    let msg = state
-        .send_agent_message(SendAgentMessageInput {
-            project_id: input.project_id,
-            session_id: context.session_id,
-            from_agent: from_agent.clone(),
-            to_agent: to_agent.clone(),
-            message_type: message_type.clone(),
-            body: body.clone(),
-            context_json: input.context_json,
-        })
-        .map_err(RouteError::from)?;
-
-    let message_text = format!("[{from_agent}] ({message_type}): {body}");
-    let delivered = deliver_message_to_agent(
+    let msg = persist_agent_message(
         state,
-        sessions,
         input.project_id,
-        &to_agent,
+        context.session_id,
         &from_agent,
-        &message_text,
-    );
-    if delivered {
-        let _ = state.mark_agent_message_delivered(msg.id);
-    }
+        &to_agent,
+        input.thread_id,
+        input.reply_to_message_id,
+        &message_type,
+        &body,
+        input.context_json,
+    )?;
 
     append_project_event(
         state,
@@ -2450,7 +3432,16 @@ fn handle_message_ack(
         // Ack all messages for the calling agent.
         let agent_name = resolve_agent_name_from_context(state, context);
         let inbox = state
-            .get_agent_inbox(input.project_id, &agent_name, true, None, None, None)
+            .get_agent_inbox(
+                input.project_id,
+                &agent_name,
+                true,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
             .map_err(RouteError::from)?;
         inbox.into_iter().map(|m| m.id).collect::<Vec<_>>()
     } else {
@@ -2466,155 +3457,57 @@ fn handle_message_ack(
     Ok(())
 }
 
-fn emit_agent_signal(
+fn wait_for_agent_messages(
     state: &AppState,
-    _sessions: &SessionRegistry,
     context: &RequestContext,
-    project_id: i64,
-    signal_type: &str,
-    message: &str,
-    context_json: Option<&str>,
-) -> Result<AgentSignalRecord, RouteError> {
-    // Validate message is not empty.
-    let message = message.trim();
-    if message.is_empty() {
-        return Err(RouteError::bad_request("message is required"));
-    }
+    input: WaitAgentMessagesApiInput,
+) -> Result<WaitAgentMessagesOutput, RouteError> {
+    let agent_name = input
+        .agent_name
+        .unwrap_or_else(|| resolve_agent_name_from_context(state, context));
+    let limit = input.limit.or(Some(20));
+    let timeout_ms = input
+        .timeout_ms
+        .unwrap_or(30_000)
+        .min(MESSAGE_WAIT_MAX_TIMEOUT_MS);
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
 
-    // Resolve worktree and work_item from calling session context.
-    let (worktree_id, work_item_id) = if let Some(session_id) = context.session_id {
-        match state.get_session_record(session_id) {
-            Ok(session) => {
-                let wt_id = session.worktree_id;
-                let wi_id = wt_id
-                    .and_then(|wtid| state.get_worktree(wtid).ok())
-                    .map(|wt| wt.work_item_id);
-                (wt_id, wi_id)
-            }
-            Err(e) => {
-                log::error!("failed to resolve session #{}: {e}", session_id);
-                (None, None)
-            }
+    loop {
+        let observed_sequence = state.current_agent_message_sequence();
+        let messages = state
+            .get_agent_inbox(
+                input.project_id,
+                &agent_name,
+                true,
+                input.from_agent.clone(),
+                input.thread_id.clone(),
+                input.message_type.clone(),
+                input.reply_to_message_id,
+                limit,
+            )
+            .map_err(RouteError::from)?;
+
+        if !messages.is_empty() {
+            return Ok(WaitAgentMessagesOutput {
+                messages,
+                timed_out: false,
+            });
         }
-    } else {
-        (None, None)
-    };
 
-    let signal = state
-        .emit_agent_signal(EmitAgentSignalInput {
-            project_id,
-            worktree_id,
-            work_item_id,
-            session_id: context.session_id,
-            signal_type: signal_type.to_string(),
-            message: message.to_string(),
-            context_json: context_json.map(ToOwned::to_owned),
-        })
-        .map_err(RouteError::from)?;
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return Ok(WaitAgentMessagesOutput {
+                messages: Vec::new(),
+                timed_out: true,
+            });
+        };
 
-    append_project_event(
-        state,
-        context,
-        project_id,
-        "signal.emitted",
-        "agent_signal",
-        signal.id,
-        &signal,
-    );
-
-    // Deliver signal to dispatcher via native Claude Code mailbox.
-    let agent_label = worktree_id
-        .and_then(|wtid| state.get_worktree(wtid).ok())
-        .map(|wt| wt.work_item_call_sign.replace('.', "-"))
-        .unwrap_or_else(|| "unknown-agent".to_string());
-    let signal_text = format!("[Agent {agent_label}] ({signal_type}): {message}");
-
-    if let Err(e) = write_to_claude_mailbox("dispatcher", &agent_label, &signal_text) {
-        log::error!("mailbox delivery to dispatcher failed: {e}");
-    }
-
-    Ok(signal)
-}
-
-fn direct_agent(
-    state: &AppState,
-    _sessions: &SessionRegistry,
-    context: &RequestContext,
-    project_id: i64,
-    worktree_id: i64,
-    message: &str,
-) -> Result<(), RouteError> {
-    let message = message.trim();
-    if message.is_empty() {
-        return Err(RouteError::bad_request("message is required"));
-    }
-
-    // Resolve the agent's mailbox name from the worktree's work item call sign.
-    let wt = state
-        .get_worktree(worktree_id)
-        .map_err(|e| RouteError::internal(format!("failed to look up worktree: {e}")))?;
-    let agent_name = wt.work_item_call_sign.replace('.', "-");
-
-    let directive = format!("[Dispatcher]: {message}");
-
-    write_to_claude_mailbox(&agent_name, "dispatcher", &directive).map_err(|e| {
-        RouteError::internal(format!("failed to deliver directive to agent mailbox: {e}"))
-    })?;
-
-    append_project_event(
-        state,
-        context,
-        project_id,
-        "agent.directed",
-        "worktree",
-        worktree_id,
-        &json!({ "message": message }),
-    );
-
-    Ok(())
-}
-
-fn respond_to_agent_signal(
-    state: &AppState,
-    _sessions: &SessionRegistry,
-    context: &RequestContext,
-    project_id: i64,
-    signal_id: i64,
-    response: &str,
-) -> Result<AgentSignalRecord, RouteError> {
-    let signal = state
-        .respond_to_agent_signal(RespondToAgentSignalInput {
-            id: signal_id,
-            project_id,
-            response: response.to_string(),
-        })
-        .map_err(RouteError::from)?;
-
-    // Deliver response to the agent via native Claude Code mailbox.
-    if let Some(worktree_id) = signal.worktree_id {
-        let agent_name = state
-            .get_worktree(worktree_id)
-            .map(|wt| wt.work_item_call_sign.replace('.', "-"))
-            .unwrap_or_else(|_| format!("worktree-{worktree_id}"));
-
-        let directive = format!("[Dispatcher]: {response}");
-
-        if let Err(e) = write_to_claude_mailbox(&agent_name, "dispatcher", &directive) {
-            log::error!("mailbox delivery to agent {agent_name} failed: {e}");
+        if !state.wait_for_agent_message_change(observed_sequence, remaining) {
+            return Ok(WaitAgentMessagesOutput {
+                messages: Vec::new(),
+                timed_out: true,
+            });
         }
     }
-
-    append_project_event(
-        state,
-        context,
-        project_id,
-        "signal.responded",
-        "agent_signal",
-        signal.id,
-        &signal,
-    );
-
-    Ok(signal)
 }
 
 fn recreate_project_worktree(
@@ -3228,6 +4121,58 @@ fn load_session_recovery_details(
         session,
         crash_report,
     })
+}
+
+fn update_session_provider_session_id(
+    state: &AppState,
+    context: &RequestContext,
+    session_id: i64,
+    input: UpdateSessionProviderSessionIdInput,
+) -> Result<SessionRecord, RouteError> {
+    let provider_session_id = input.provider_session_id.trim();
+    if provider_session_id.is_empty() {
+        return Err(RouteError::bad_request(
+            "providerSessionId is required for session provider id updates",
+        ));
+    }
+
+    let existing = state
+        .get_session_record(session_id)
+        .map_err(RouteError::from)?;
+    let previous_provider_session_id = existing.provider_session_id.clone();
+
+    if previous_provider_session_id.as_deref() == Some(provider_session_id) {
+        return Ok(existing);
+    }
+
+    let updated = state
+        .update_session_provider_session_id(session_id, Some(provider_session_id))
+        .map_err(RouteError::from)?;
+
+    if let Err(error) = state.append_session_event(AppendSessionEventInput {
+        project_id: updated.project_id,
+        session_id: Some(updated.id),
+        event_type: "session.provider_session_id_updated".to_string(),
+        entity_type: Some("session".to_string()),
+        entity_id: Some(updated.id),
+        source: context.source.clone(),
+        payload_json: json!({
+            "projectId": updated.project_id,
+            "sessionId": updated.id,
+            "provider": updated.provider,
+            "previousProviderSessionId": previous_provider_session_id,
+            "nextProviderSessionId": provider_session_id,
+        })
+        .to_string(),
+    }) {
+        log::warn!(
+            "failed to append provider-session-id session event for session #{}: {}",
+            updated.id,
+            error
+        );
+    }
+
+    Ok(updated)
 }
 
 fn cleanup_stale_runtime_artifacts(runtime_file: &Path) -> Result<Vec<PathBuf>, String> {
@@ -4107,10 +5052,7 @@ fn link_node_modules(main_root: &Path, worktree_path: &Path) {
 fn create_sidecar_stubs(worktree_path: &Path) {
     const TARGET_TRIPLE: &str = env!("CARGO_BUILD_TARGET");
 
-    let stubs = [
-        "project-commander-supervisor",
-        "project-commander-cli",
-    ];
+    let stubs = ["project-commander-supervisor", "project-commander-cli"];
 
     let binaries_dir = worktree_path.join("src-tauri").join("binaries");
     if let Err(e) = fs::create_dir_all(&binaries_dir) {
@@ -4297,7 +5239,7 @@ fn append_project_audit_event<T>(
 }
 
 // ---------------------------------------------------------------------------
-// Teammate mailbox helpers — write messages to Claude Code's file-based inbox
+// Project event helpers
 // ---------------------------------------------------------------------------
 
 fn append_project_event<T>(
@@ -4354,6 +5296,39 @@ fn is_authorized(request: &Request, expected_token: &str) -> bool {
     request.headers().iter().any(|header| {
         header.field.equiv("x-project-commander-token") && header.value.as_str() == expected_token
     })
+}
+
+fn header_value<'a>(request: &'a Request, name: &str) -> Option<&'a str> {
+    request
+        .headers()
+        .iter()
+        .find(|header| header.field.as_str().as_str().eq_ignore_ascii_case(name))
+        .map(|header| header.value.as_str().trim())
+        .filter(|value| !value.is_empty())
+}
+
+fn optional_i64_header(request: &Request, name: &str) -> Option<i64> {
+    header_value(request, name).and_then(|value| value.parse::<i64>().ok())
+}
+
+fn required_i64_header(request: &Request, name: &str) -> Result<i64, String> {
+    let value =
+        header_value(request, name).ok_or_else(|| format!("missing required header {name}"))?;
+    value
+        .parse::<i64>()
+        .map_err(|_| format!("header {name} must be an integer"))
+}
+
+fn validate_mcp_origin(request: &Request) -> Result<(), String> {
+    let Some(origin) = header_value(request, "origin") else {
+        return Ok(());
+    };
+
+    if matches!(origin, "http://127.0.0.1" | "http://localhost" | "null") {
+        return Ok(());
+    }
+
+    Err(format!("forbidden origin: {origin}"))
 }
 
 fn read_json<T>(request: &mut Request) -> Result<T, RouteError>
@@ -4461,6 +5436,26 @@ where
     let response = Response::from_data(body)
         .with_status_code(StatusCode(status))
         .with_header(content_type);
+
+    request
+        .respond(response)
+        .map_err(|error| format!("failed to send supervisor response: {error}"))
+}
+
+fn respond_status(
+    request: Request,
+    status: u16,
+    content_type: Option<&str>,
+    body: Option<Vec<u8>>,
+) -> Result<(), String> {
+    let mut response =
+        Response::from_data(body.unwrap_or_default()).with_status_code(StatusCode(status));
+
+    if let Some(content_type) = content_type {
+        let header = Header::from_bytes("Content-Type", content_type)
+            .map_err(|_| "failed to build Content-Type header".to_string())?;
+        response = response.with_header(header);
+    }
 
     request
         .respond(response)
@@ -4734,18 +5729,30 @@ mod tests {
 
         let handle = std::thread::spawn(move || {
             let sessions = SessionRegistry::default();
+            let mut request_handles = Vec::with_capacity(request_count);
 
             for _ in 0..request_count {
                 let request = server.recv().expect("test route request should arrive");
-                handle_request(
-                    request,
-                    &runtime_for_thread,
-                    &state,
-                    &sessions,
-                    &None,
-                    Arc::new(AtomicBool::new(false)),
-                )
-                .expect("test route should be handled");
+                let runtime = runtime_for_thread.clone();
+                let state = state.clone();
+                let sessions = sessions.clone();
+                request_handles.push(std::thread::spawn(move || {
+                    handle_request(
+                        request,
+                        &runtime,
+                        &state,
+                        &sessions,
+                        &None,
+                        Arc::new(AtomicBool::new(false)),
+                    )
+                    .expect("test route should be handled");
+                }));
+            }
+
+            for request_handle in request_handles {
+                request_handle
+                    .join()
+                    .expect("test route request should join cleanly");
             }
         });
 
@@ -5091,6 +6098,7 @@ mod tests {
             .header("x-project-commander-source", "integration_test")
             .json(&CreateLaunchProfileInput {
                 label: "Supervisor Route Profile".to_string(),
+                provider: "claude_code".to_string(),
                 executable: "cmd.exe".to_string(),
                 args: "/c echo route-profile".to_string(),
                 env_json: "{}".to_string(),
@@ -5111,6 +6119,7 @@ mod tests {
             .json(&UpdateLaunchProfileInput {
                 id: created_profile.id,
                 label: "Supervisor Route Profile Updated".to_string(),
+                provider: "claude_agent_sdk".to_string(),
                 executable: "cmd.exe".to_string(),
                 args: "/c echo route-profile-updated".to_string(),
                 env_json: "{\"PROFILE\":\"updated\"}".to_string(),
@@ -5130,6 +6139,8 @@ mod tests {
             .header("x-project-commander-source", "integration_test")
             .json(&UpdateAppSettingsInput {
                 default_launch_profile_id: Some(updated_profile.id),
+                default_worker_launch_profile_id: Some(updated_profile.id),
+                sdk_claude_config_dir: Some("C:\\Users\\emers\\.claude-personal".to_string()),
                 auto_repair_safe_cleanup_on_startup: true,
             })
             .send()
@@ -5187,8 +6198,21 @@ mod tests {
             updated_settings.default_launch_profile_id,
             Some(updated_profile.id)
         );
+        assert_eq!(
+            updated_settings.default_worker_launch_profile_id,
+            Some(updated_profile.id)
+        );
+        assert_eq!(
+            updated_settings.sdk_claude_config_dir.as_deref(),
+            Some("C:\\Users\\emers\\.claude-personal")
+        );
         assert!(updated_settings.auto_repair_safe_cleanup_on_startup);
         assert_eq!(settings.default_launch_profile_id, None);
+        assert_eq!(settings.default_worker_launch_profile_id, None);
+        assert_eq!(
+            settings.sdk_claude_config_dir.as_deref(),
+            Some("C:\\Users\\emers\\.claude-personal")
+        );
         assert!(settings.auto_repair_safe_cleanup_on_startup);
         assert!(events.contains(&"project.created".to_string()));
         assert!(events.contains(&"project.updated".to_string()));
@@ -5206,6 +6230,7 @@ mod tests {
             .header("x-project-commander-source", "integration_test")
             .json(&CreateLaunchProfileInput {
                 label: "Duplicate Route Profile".to_string(),
+                provider: "claude_code".to_string(),
                 executable: "cmd.exe".to_string(),
                 args: "/c echo first".to_string(),
                 env_json: "{}".to_string(),
@@ -5221,6 +6246,7 @@ mod tests {
             .header("x-project-commander-source", "integration_test")
             .json(&CreateLaunchProfileInput {
                 label: "Duplicate Route Profile".to_string(),
+                provider: "claude_code".to_string(),
                 executable: "cmd.exe".to_string(),
                 args: "/c echo second".to_string(),
                 env_json: "{}".to_string(),
@@ -5692,6 +6718,249 @@ mod tests {
     }
 
     #[test]
+    fn mcp_http_route_initializes_lists_tools_and_calls_current_project() {
+        let harness = TestHarness::new("mcp-http-route", true);
+        let project = harness.create_project("Commander");
+        let (runtime, handle) = spawn_route_server(harness.state.clone(), 4);
+        let client = authorized_client(&runtime);
+
+        let base_request = |payload: serde_json::Value| {
+            client
+                .post(supervisor_url(&runtime, "/mcp"))
+                .header("x-project-commander-token", &runtime.token)
+                .header("x-project-commander-source", "integration_test_mcp")
+                .header("x-project-commander-project-id", project.id.to_string())
+                .header("x-project-commander-session-id", "44")
+                .json(&payload)
+                .send()
+                .expect("MCP route request should succeed")
+                .error_for_status()
+                .expect("MCP route should return success")
+        };
+
+        let initialize: serde_json::Value = base_request(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "integration-test",
+                    "version": "1.0.0"
+                }
+            }
+        }))
+        .json()
+        .expect("initialize response should decode");
+
+        let tools: serde_json::Value = base_request(json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list",
+            "params": {}
+        }))
+        .json()
+        .expect("tools/list response should decode");
+
+        let current_project: serde_json::Value = base_request(json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "current_project",
+                "arguments": {}
+            }
+        }))
+        .json()
+        .expect("tools/call response should decode");
+
+        handle
+            .join()
+            .expect("MCP HTTP route server should stop cleanly");
+
+        assert_eq!(
+            initialize["result"]["serverInfo"]["name"].as_str(),
+            Some("project-commander")
+        );
+        assert!(tools["result"]["tools"]
+            .as_array()
+            .expect("tools/list should return an array")
+            .iter()
+            .any(|tool| tool["name"].as_str() == Some("current_project")));
+        assert_eq!(current_project["result"]["isError"].as_bool(), Some(false));
+        assert_eq!(
+            current_project["result"]["structuredContent"]["id"].as_i64(),
+            Some(project.id)
+        );
+        assert_eq!(
+            current_project["result"]["structuredContent"]["name"].as_str(),
+            Some(project.name.as_str())
+        );
+    }
+
+    #[test]
+    fn session_provider_session_id_route_persists_runtime_discovered_thread_ids() {
+        let harness = TestHarness::new("session-provider-session-id-route", true);
+        let project = harness.create_project("Commander");
+        let session = harness
+            .state
+            .create_session_record(CreateSessionRecordInput {
+                project_id: project.id,
+                launch_profile_id: None,
+                worktree_id: None,
+                process_id: None,
+                supervisor_pid: None,
+                provider: "codex_sdk".to_string(),
+                provider_session_id: None,
+                profile_label: "Codex Worker".to_string(),
+                root_path: harness.project_root.display().to_string(),
+                state: "running".to_string(),
+                startup_prompt: String::new(),
+                started_at: "123456".to_string(),
+            })
+            .expect("session record should be created");
+        let (runtime, handle) = spawn_route_server(harness.state.clone(), 1);
+
+        let response = authorized_client(&runtime)
+            .post(supervisor_url(&runtime, "/session/provider-session-id"))
+            .header("x-project-commander-token", &runtime.token)
+            .header("x-project-commander-source", "integration_test")
+            .header("x-project-commander-session-id", session.id.to_string())
+            .json(&UpdateSessionProviderSessionIdInput {
+                provider_session_id: "thread-abc-123".to_string(),
+            })
+            .send()
+            .expect("provider session id update request should succeed")
+            .error_for_status()
+            .expect("provider session id update route should return success");
+        let updated = unwrap_envelope::<SessionRecord>(
+            response,
+            "provider session id update response should decode",
+        );
+
+        handle
+            .join()
+            .expect("provider session id route server should stop cleanly");
+
+        let stored = harness
+            .state
+            .get_session_record(session.id)
+            .expect("updated session record should load");
+        let event_types = harness
+            .state
+            .list_session_events(project.id, 20)
+            .expect("session events should load")
+            .into_iter()
+            .map(|event| event.event_type)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            updated.provider_session_id.as_deref(),
+            Some("thread-abc-123")
+        );
+        assert_eq!(
+            stored.provider_session_id.as_deref(),
+            Some("thread-abc-123")
+        );
+        assert!(event_types.contains(&"session.provider_session_id_updated".to_string()));
+    }
+
+    #[test]
+    fn message_wait_route_blocks_until_a_broker_message_arrives() {
+        let harness = TestHarness::new("message-wait-route", true);
+        let project = harness.create_project("Commander");
+        let work_item = harness.create_work_item(project.id, "Wait for broker message");
+        let worktree = ensure_project_worktree(&harness.state, project.id, work_item.id)
+            .expect("worktree should be created");
+        let worker_session = harness
+            .state
+            .create_session_record(CreateSessionRecordInput {
+                project_id: project.id,
+                launch_profile_id: None,
+                worktree_id: Some(worktree.id),
+                process_id: None,
+                supervisor_pid: None,
+                provider: "claude_agent_sdk".to_string(),
+                provider_session_id: Some("provider-session".to_string()),
+                profile_label: "Worker".to_string(),
+                root_path: worktree.worktree_path.clone(),
+                state: "running".to_string(),
+                startup_prompt: String::new(),
+                started_at: "123456".to_string(),
+            })
+            .expect("worker session record should be created");
+        let (runtime, handle) = spawn_route_server(harness.state.clone(), 2);
+        let waiting_client = authorized_client(&runtime);
+        let sender_runtime = runtime.clone();
+
+        let sender = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            let response = authorized_client(&sender_runtime)
+                .post(supervisor_url(&sender_runtime, "/message/send"))
+                .header("x-project-commander-token", &sender_runtime.token)
+                .header("x-project-commander-source", "integration_test_sender")
+                .header(
+                    "x-project-commander-session-id",
+                    worker_session.id.to_string(),
+                )
+                .json(&SendAgentMessageApiInput {
+                    project_id: project.id,
+                    to_agent: "dispatcher".to_string(),
+                    thread_id: None,
+                    reply_to_message_id: None,
+                    message_type: "complete".to_string(),
+                    body: "worker finished".to_string(),
+                    context_json: None,
+                })
+                .send()
+                .expect("message send request should succeed")
+                .error_for_status()
+                .expect("message send should return success");
+
+            unwrap_envelope::<AgentMessageRecord>(response, "message send response should decode")
+        });
+
+        let response = waiting_client
+            .post(supervisor_url(&runtime, "/message/wait"))
+            .header("x-project-commander-token", &runtime.token)
+            .header("x-project-commander-source", "integration_test_waiter")
+            .json(&WaitAgentMessagesApiInput {
+                project_id: project.id,
+                agent_name: Some("dispatcher".to_string()),
+                from_agent: None,
+                thread_id: None,
+                reply_to_message_id: None,
+                message_type: None,
+                limit: Some(10),
+                timeout_ms: Some(1_000),
+            })
+            .send()
+            .expect("message wait request should succeed")
+            .error_for_status()
+            .expect("message wait should return success");
+        let waited = unwrap_envelope::<WaitAgentMessagesOutput>(
+            response,
+            "message wait response should decode",
+        );
+        let sent = sender
+            .join()
+            .expect("message sender thread should complete");
+
+        handle
+            .join()
+            .expect("message wait route server should stop cleanly");
+
+        assert_eq!(sent.status, "delivered");
+        assert!(!waited.timed_out);
+        assert_eq!(waited.messages.len(), 1);
+        assert_eq!(waited.messages[0].id, sent.id);
+        assert_eq!(waited.messages[0].from_agent, worktree.agent_name);
+        assert_eq!(waited.messages[0].to_agent, "dispatcher");
+        assert_eq!(waited.messages[0].message_type, "complete");
+    }
+
+    #[test]
     fn session_registry_launches_reattaches_and_terminates_project_sessions() {
         let harness = TestHarness::new("session-runtime", false);
         let project = harness.create_project("Commander");
@@ -5708,6 +6977,7 @@ mod tests {
             resume_session_id: None,
             model: None,
             execution_mode: None,
+            vault_env_bindings: Vec::new(),
         };
 
         let first = sessions
@@ -5825,6 +7095,7 @@ mod tests {
                     resume_session_id: None,
                     model: None,
                     execution_mode: None,
+                    vault_env_bindings: Vec::new(),
                 },
                 &harness.state,
                 &harness.runtime,

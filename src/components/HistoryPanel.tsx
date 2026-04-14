@@ -7,6 +7,7 @@ import {
   PanelLoadingState,
 } from '@/components/ui/panel-state'
 import { VirtualList } from '@/components/ui/virtual-list'
+import './panel-surfaces.css'
 import {
   filterEventsForSession,
   formatSessionState,

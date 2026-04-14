@@ -1,0 +1,55 @@
+name: feature-dev
+kind: coding
+version: 1
+description: Plan, implement, evaluate, and integrate a feature increment.
+template: true
+categories:
+  - CODING
+tags:
+  - template
+  - primary
+stages:
+  - name: plan
+    role: planner
+    pod_ref: planner.opus.standard
+    inputs:
+      - work_item
+      - project_tracker
+    outputs:
+      - plan_doc
+      - sprint_list
+  - name: contract
+    role: planner
+    pod_ref: planner.opus.standard
+    inputs:
+      - plan_doc
+      - sprint_list
+    outputs:
+      - sprint_contract
+  - name: generate
+    role: generator
+    pod_ref: generator.sonnet.standard
+    inputs:
+      - sprint_contract
+    outputs:
+      - implementation_report
+      - diff_summary
+  - name: evaluate
+    role: evaluator
+    pod_ref: evaluator.codex.strict
+    inputs:
+      - sprint_contract
+      - implementation_report
+      - diff_summary
+    outputs:
+      - eval_report
+    retry_policy:
+      max_attempts: 3
+      on_fail_feedback_to: generate
+  - name: integrate
+    role: integrator
+    pod_ref: integrator.sonnet.merge
+    inputs:
+      - eval_report
+    outputs:
+      - merge_record

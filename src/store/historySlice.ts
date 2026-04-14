@@ -162,7 +162,9 @@ export const createHistorySlice: StateCreator<AppStore, [], [], HistorySlice> = 
   openSessionTarget: (record) => {
     set((state) => ({
       selectedLaunchProfileId:
-        record.launchProfileId !== null && record.launchProfileId !== undefined
+        (record.worktreeId ?? null) === null &&
+        record.launchProfileId !== null &&
+        record.launchProfileId !== undefined
           ? record.launchProfileId
           : state.selectedLaunchProfileId,
       selectedTerminalWorktreeId: record.worktreeId ?? null,
