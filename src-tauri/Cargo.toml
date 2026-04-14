@@ -41,3 +41,6 @@ serde_yaml = "0.9"
 iota_stronghold = "2"
 tauri-plugin-stronghold = "2"
 zeroize = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging"] }

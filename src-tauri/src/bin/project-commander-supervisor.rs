@@ -1593,7 +1593,7 @@ fn handle_http_integration_request(
 ) -> Result<ExecuteVaultHttpIntegrationOutput, RouteError> {
     let started_at = Instant::now();
     let prepared = state
-        .prepare_vault_http_integration_request(input, &context.source)
+        .prepare_vault_http_integration_request(input, &context.source, context.session_id)
         .map_err(RouteError::from)?;
     let correlation_id = format!(
         "integration-http:{}:{}:{}",

@@ -3,11 +3,20 @@ use rand::{rngs::OsRng, RngCore};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use tauri_plugin_stronghold::stronghold::Stronghold;
 use zeroize::{Zeroize, Zeroizing};
+
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
+#[cfg(windows)]
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    MessageBoxW, IDNO, IDOK, IDYES, MB_ICONWARNING, MB_SETFOREGROUND, MB_TASKMODAL,
+    MB_YESNO, MB_YESNOCANCEL,
+};
 
 const VAULT_DIR_NAME: &str = "vault";
 const VAULT_SNAPSHOT_FILE_NAME: &str = "project-commander-vault.hold";
@@ -412,6 +421,8 @@ pub fn prepare_http_integration_request(
     app_data_dir: &Path,
     input: ExecuteVaultHttpIntegrationInput,
     source: &str,
+    session_id: Option<i64>,
+    gate_approvals: &Arc<Mutex<HashSet<(i64, i64)>>>,
 ) -> Result<PreparedVaultHttpIntegrationRequest, String> {
     let installation = load_integration_installation_by_id(connection, input.integration_id)?;
     if !installation.enabled {
@@ -462,6 +473,9 @@ pub fn prepare_http_integration_request(
                 delivery: VaultBindingDelivery::Env,
             },
             source,
+            session_id,
+            &format!("integration:{}", installation.label),
+            gate_approvals,
         )?;
 
         inject_secret_slot_header(&mut header_map, slot, resolved.value.as_ref())?;
@@ -645,6 +659,9 @@ pub fn resolve_access_binding(
     app_data_dir: &Path,
     request: VaultAccessBindingRequest,
     source: &str,
+    session_id: Option<i64>,
+    consumer_prefix: &str,
+    gate_approvals: &Arc<Mutex<HashSet<(i64, i64)>>>,
 ) -> Result<ResolvedVaultBinding, String> {
     let entry = load_entry_by_name(connection, &request.entry_name)?;
     let required_scope_tags = normalize_string_list(&request.required_scope_tags);
@@ -664,7 +681,15 @@ pub fn resolve_access_binding(
     }
 
     let value = load_secret_value(app_data_dir, entry.id)?;
-    let gate_result = resolve_gate_result(&entry.gate_policy, source);
+    let gate_result = resolve_gate_result(
+        connection,
+        gate_approvals,
+        &entry,
+        &request,
+        source,
+        session_id,
+        consumer_prefix,
+    )?;
 
     Ok(ResolvedVaultBinding {
         env_var: request.env_var.trim().to_string(),
@@ -1432,19 +1457,272 @@ fn normalize_gate_policy(value: &str) -> Result<&'static str, String> {
     }
 }
 
-fn resolve_gate_result(policy: &str, source: &str) -> String {
-    if std::env::var("PC_VAULT_MODE")
+fn ci_vault_mode_enabled() -> bool {
+    std::env::var("PC_VAULT_MODE")
         .map(|value| value.eq_ignore_ascii_case("ci"))
         .unwrap_or(false)
-    {
-        return "approved_ci".to_string();
+}
+
+fn running_under_tests() -> bool {
+    cfg!(test) || std::env::var_os("RUST_TEST_THREADS").is_some()
+}
+
+fn approved_use_gate_result(source: &str) -> String {
+    format!("approved_launch_use:{source}")
+}
+
+fn approved_session_gate_result(source: &str) -> String {
+    format!("approved_launch_session:{source}")
+}
+
+fn denied_gate_result(policy: &str, source: &str) -> String {
+    match policy {
+        "confirm_each_use" => format!("denied_launch_use:{source}"),
+        "confirm_session" => format!("denied_launch_session:{source}"),
+        other => format!("denied_unknown:{other}:{source}"),
+    }
+}
+
+fn delivery_label(delivery: &VaultBindingDelivery) -> &'static str {
+    match delivery {
+        VaultBindingDelivery::Env => "environment variable",
+        VaultBindingDelivery::File => "ephemeral file path",
+    }
+}
+
+fn describe_vault_consumer(consumer_prefix: &str, target_name: &str) -> String {
+    if let Some(provider) = consumer_prefix.strip_prefix("session_launch:") {
+        return format!("session launch for provider '{provider}' using target '{target_name}'");
     }
 
-    match policy {
-        "auto" => "approved_auto".to_string(),
-        "confirm_each_use" => format!("approved_launch_use:{source}"),
-        "confirm_session" => format!("approved_launch_session:{source}"),
-        other => format!("approved_unknown:{other}"),
+    if let Some(label) = consumer_prefix.strip_prefix("integration:") {
+        return format!("brokered integration '{label}' using secret slot '{target_name}'");
+    }
+
+    format!("{consumer_prefix}:{target_name}")
+}
+
+fn build_gate_correlation_id(source: &str, session_id: Option<i64>, target_name: &str) -> String {
+    match session_id {
+        Some(session_id) => format!("vault-gate:{source}:session-{session_id}:{target_name}"),
+        None => format!("vault-gate:{source}:no-session:{target_name}"),
+    }
+}
+
+fn build_vault_permission_prompt(
+    entry: &VaultEntryRecord,
+    request: &VaultAccessBindingRequest,
+    source: &str,
+    session_id: Option<i64>,
+    consumer_prefix: &str,
+) -> String {
+    let mut lines = vec![format!(
+        "Project Commander wants to use vault entry '{}' for {}.",
+        entry.name,
+        describe_vault_consumer(consumer_prefix, &request.env_var)
+    )];
+
+    if let Some(session_id) = session_id {
+        lines.push(format!("Session: #{session_id}"));
+    }
+    lines.push(format!("Source: {source}"));
+    lines.push(format!(
+        "Delivery: {} via '{}'",
+        delivery_label(&request.delivery),
+        request.env_var
+    ));
+
+    if !request.required_scope_tags.is_empty() {
+        lines.push(format!(
+            "Required scopes: {}",
+            request.required_scope_tags.join(", ")
+        ));
+    }
+
+    match entry.gate_policy.as_str() {
+        "confirm_session" if session_id.is_some() => {
+            lines.push("Yes = allow for this session, No = allow once, Cancel = deny.".to_string());
+        }
+        _ => {
+            lines.push("Yes = allow once, No = deny.".to_string());
+        }
+    }
+
+    lines.join("\n")
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VaultPromptChoice {
+    AllowSession,
+    AllowOnce,
+    Deny,
+}
+
+#[cfg(windows)]
+fn wide_null(value: &str) -> Vec<u16> {
+    std::ffi::OsStr::new(value)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+#[cfg(windows)]
+fn prompt_for_vault_access(
+    entry: &VaultEntryRecord,
+    request: &VaultAccessBindingRequest,
+    source: &str,
+    session_id: Option<i64>,
+    consumer_prefix: &str,
+) -> VaultPromptChoice {
+    let flags = match entry.gate_policy.as_str() {
+        "confirm_session" if session_id.is_some() => MB_YESNOCANCEL,
+        "confirm_each_use" => MB_YESNO,
+        _ => MB_YESNO,
+    };
+    let title = wide_null(&format!("Allow vault access to '{}'?", entry.name));
+    let description = wide_null(&build_vault_permission_prompt(
+        entry,
+        request,
+        source,
+        session_id,
+        consumer_prefix,
+    ));
+    let result = unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            description.as_ptr(),
+            title.as_ptr(),
+            MB_ICONWARNING | MB_TASKMODAL | MB_SETFOREGROUND | flags,
+        )
+    };
+
+    match entry.gate_policy.as_str() {
+        "confirm_session" if session_id.is_some() => match result {
+            IDYES => VaultPromptChoice::AllowSession,
+            IDNO => VaultPromptChoice::AllowOnce,
+            _ => VaultPromptChoice::Deny,
+        },
+        _ => match result {
+            IDYES | IDOK => VaultPromptChoice::AllowOnce,
+            _ => VaultPromptChoice::Deny,
+        },
+    }
+}
+
+#[cfg(not(windows))]
+fn prompt_for_vault_access(
+    _entry: &VaultEntryRecord,
+    _request: &VaultAccessBindingRequest,
+    _source: &str,
+    _session_id: Option<i64>,
+    _consumer_prefix: &str,
+) -> VaultPromptChoice {
+    VaultPromptChoice::Deny
+}
+
+fn deny_vault_access(
+    connection: &Connection,
+    entry: &VaultEntryRecord,
+    request: &VaultAccessBindingRequest,
+    source: &str,
+    session_id: Option<i64>,
+    consumer_prefix: &str,
+) -> Result<String, String> {
+    let gate_result = denied_gate_result(&entry.gate_policy, source);
+    append_audit_event(
+        connection,
+        Some(entry.id),
+        &entry.name,
+        "gate_denied",
+        &format!("{consumer_prefix}:{}", request.env_var),
+        &build_gate_correlation_id(source, session_id, &request.env_var),
+        &gate_result,
+        session_id,
+    )?;
+    log::warn!(
+        "vault access denied — entry={} session_id={:?} source={} consumer={} target={}",
+        entry.name,
+        session_id,
+        source,
+        consumer_prefix,
+        request.env_var
+    );
+    Err(format!(
+        "vault access denied for '{}' while resolving '{}'",
+        entry.name, request.env_var
+    ))
+}
+
+fn has_session_gate_approval(
+    gate_approvals: &Arc<Mutex<HashSet<(i64, i64)>>>,
+    session_id: i64,
+    entry_id: i64,
+) -> bool {
+    gate_approvals
+        .lock()
+        .map(|approvals| approvals.contains(&(session_id, entry_id)))
+        .unwrap_or(false)
+}
+
+fn remember_session_gate_approval(
+    gate_approvals: &Arc<Mutex<HashSet<(i64, i64)>>>,
+    session_id: i64,
+    entry_id: i64,
+) {
+    if let Ok(mut approvals) = gate_approvals.lock() {
+        approvals.insert((session_id, entry_id));
+    }
+}
+
+fn resolve_gate_result(
+    connection: &Connection,
+    gate_approvals: &Arc<Mutex<HashSet<(i64, i64)>>>,
+    entry: &VaultEntryRecord,
+    request: &VaultAccessBindingRequest,
+    source: &str,
+    session_id: Option<i64>,
+    consumer_prefix: &str,
+) -> Result<String, String> {
+    if ci_vault_mode_enabled() {
+        return Ok("approved_ci".to_string());
+    }
+
+    if entry.gate_policy == "auto" {
+        return Ok("approved_auto".to_string());
+    }
+
+    if entry.gate_policy == "confirm_session"
+        && session_id
+            .map(|session_id| has_session_gate_approval(gate_approvals, session_id, entry.id))
+            .unwrap_or(false)
+    {
+        return Ok(approved_session_gate_result(source));
+    }
+
+    if running_under_tests() {
+        if entry.gate_policy == "confirm_session" {
+            if let Some(session_id) = session_id {
+                remember_session_gate_approval(gate_approvals, session_id, entry.id);
+                return Ok(approved_session_gate_result(source));
+            }
+        }
+        return Ok(approved_use_gate_result(source));
+    }
+
+    match (
+        entry.gate_policy.as_str(),
+        prompt_for_vault_access(entry, request, source, session_id, consumer_prefix),
+    ) {
+        ("confirm_session", VaultPromptChoice::AllowSession) if session_id.is_some() => {
+            remember_session_gate_approval(gate_approvals, session_id.unwrap_or_default(), entry.id);
+            Ok(approved_session_gate_result(source))
+        }
+        ("confirm_session", VaultPromptChoice::AllowOnce)
+        | ("confirm_each_use", VaultPromptChoice::AllowOnce)
+        | ("confirm_session", VaultPromptChoice::AllowSession) => Ok(approved_use_gate_result(source)),
+        _ => {
+            deny_vault_access(connection, entry, request, source, session_id, consumer_prefix)
+        }
     }
 }
 
@@ -1613,6 +1891,7 @@ mod tests {
         let root = temp_root("http-integration");
         fs::create_dir_all(&root).expect("temp root should exist");
         let connection = create_connection();
+        let gate_approvals = Arc::new(Mutex::new(HashSet::new()));
 
         upsert_entry(
             &connection,
@@ -1664,6 +1943,8 @@ mod tests {
                 json_body: None,
             },
             "integration_test",
+            None,
+            &gate_approvals,
         )
         .expect("integration request should prepare");
 

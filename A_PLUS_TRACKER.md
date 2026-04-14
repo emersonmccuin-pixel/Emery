@@ -37,7 +37,7 @@ Last updated: April 14, 2026
 - `[x]` A14. Standardize async UX states.
 - `[x]` A15. Tighten keyboard-first workflows.
 - `[x]` A16. Harden crash recovery, diagnostics, and resume UX.
-- `[>]` Agentic workflows phase 2: finish the remaining generic egress proxy, non-HTTP template execution, and permission-prompt layers on top of the shipped workflow execution + repo-backed override authoring + artifact contracts + vault env/file delivery + brokered HTTP integration foundation without reintroducing global refresh fan-out or bundle regressions.
+- `[>]` Agentic workflows phase 2: finish the remaining generic egress proxy and non-HTTP template execution on top of the shipped workflow execution + repo-backed override authoring + artifact contracts + vault env/file delivery + brokered HTTP integration foundation + permission prompts without reintroducing global refresh fan-out or bundle regressions.
 - `[>]` Runtime split: keep the dispatcher on Claude Code CLI while migrating worktree agents to SDK-backed worker hosts (Claude Agent SDK and Codex SDK) with a broker-native message contract (`agent_messages` + `threadId`/`replyToMessageId` + `wait_for_messages`) and a dedicated personal Claude auth path for Claude SDK workers.
 - `[>]` Sustain: keep budgets, smoke coverage, and diagnostics green as new features land, including explicit detection of interrupted desktop-app restarts between runs and persisted supervisor-runtime rollover diagnostics when the app replaces its live supervisor.
 
@@ -222,6 +222,12 @@ Last updated: April 14, 2026
   Why it matters: project-level workflow tuning needs to become diffable and versionable in the repo without forcing every tweak into a detached workflow fork or a database-only seam.
   Done when: adopted workflows can load/save override YAML documents under `.project-commander/overrides/`, run resolution prefers the repo file while keeping the DB row as a cache/compatibility seam, the Workflows surface exposes a project-scoped override editor with validation/error handling, and the slice preserves lazy-loading, bundle budgets, and the existing workflow-run architecture.
   Evidence / Notes: extended `src-tauri/src/workflow.rs` with repo-backed override document parsing/rendering, canonicalization against the adopted workflow schema, file-preferred resolution with DB fallback, and focused coverage for DB-to-file round-tripping plus repo-file precedence at run start; exposed load/save/clear commands through `src-tauri/src/db.rs` and `src-tauri/src/lib.rs`; surfaced the override editor in the lazy `src/components/workflow/WorkflowsPanel.tsx` detail card with shared panel-state patterns and matching `ProjectWorkflowOverrideDocument` typing in `src/types.ts`; kept the Workflows panel within the existing bundle budgets; and verified with `npm test`, `npm run build`, and `cargo test --manifest-path src-tauri/Cargo.toml` using an isolated `CARGO_TARGET_DIR`.
+
+- `[x]` A27. Ship vault permission prompts and session-scoped approval caching on the existing resolver path.
+  Priority: `P1`
+  Why it matters: a gate policy is not meaningful until non-auto secret access actually pauses for operator approval and fails closed when the user refuses it.
+  Done when: vault entries with `confirm_session` or `confirm_each_use` trigger a native approval prompt during session launch or brokered HTTP integration execution, `confirm_session` approvals cache by `(session, secret)` for the remainder of that session, denied prompts block the access path and append audit breadcrumbs, and `PC_VAULT_MODE=ci` still auto-approves for headless/test flows.
+  Evidence / Notes: extended `src-tauri/src/vault.rs` with interactive gate enforcement, native Windows prompt handling, per-session approval bookkeeping, and denied-access audit logging; threaded the gate context through `src-tauri/src/db.rs`, `src-tauri/src/session_host.rs`, and `src-tauri/src/bin/project-commander-supervisor.rs` so launch-profile bindings, workflow-stage bindings, and brokered HTTP templates all reuse the same approval/cache seam; cleared cached approvals when sessions finish; and verified with `cargo test --manifest-path src-tauri/Cargo.toml` using an isolated `CARGO_TARGET_DIR` (which also exercised the supervisor recovery suite).
 
 ## Recommended Work Order
 

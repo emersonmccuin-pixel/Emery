@@ -20,9 +20,10 @@ The currently shipped slice is the narrowest useful slice of this design:
 - built-in HTTP-broker integration templates with supervisor-owned HTTPS requests, template-bound secret slots, and allowlisted egress domains
 - persisted integration installs/bindings plus a Settings surface for configuring brokered templates without exposing values
 - Project Commander MCP tooling for brokered HTTP integration calls so agent traffic can stay on the existing supervisor/broker path
+- native vault permission prompts for `confirm_session` / `confirm_each_use`, with per-session approval caching for interactive launches and brokered integration calls
 - PTY/session-output scrubbing for injected secret values before terminal buffers and output logs are updated
 - no generic agent-readable `get_secret` API
-- no generic forward proxy for arbitrary child-process egress, non-HTTP template execution, or explicit permission-prompt UI yet
+- no generic forward proxy for arbitrary child-process egress or non-HTTP template execution yet
 
 That slice is intentionally chosen so the app can start storing secrets safely before the remaining generic egress controls, richer template execution, and permission layers land.
 
@@ -32,6 +33,7 @@ Current launch contract:
 - the supervisor resolves that binding at session start, injects the value into the child env, records an audit row, and scrubs that value from terminal/output artifacts
 - bindings may add `"delivery":"file"` when the tool expects a temp file path in the env var rather than the raw secret value
 - workflow stages and project overrides may also declare explicit vault env bindings; those bindings are frozen into the resolved run, validated against the stage/pod scope contract, merged into the launch request, and resolved/audited/scrubbed through the same session-start path
+- bindings now also honor each vault entry's `gate_policy`: `auto` approves immediately, `confirm_session` prompts once per `(session, secret)` in interactive runs, `confirm_each_use` prompts every time, and `PC_VAULT_MODE=ci` auto-approves headless/test flows
 
 ## Threat model
 
@@ -115,6 +117,7 @@ Rate-limit dispatcher deposit requests per session to block modal-fatigue attack
 - **Deposit modal**: paste or file-drop; shows exact integration and scope the secret will be bound to. Never re-displays value after save.
 - **Diagnostics**: new `vault` source; scrubber always on; audit events filterable.
 - **Permission prompts**: "session X wants to use secret Y for integration Z" — Allow once / Allow for session / Deny. Default gate = per-session.
+  Current status: shipped for interactive Windows launches and brokered HTTP integration calls; denied prompts fail closed and append audit breadcrumbs, while `PC_VAULT_MODE=ci` still auto-approves headless/test flows.
 
 ## What we explicitly won't build in v1
 

@@ -478,6 +478,7 @@ pub struct AppState {
     storage: StorageInfo,
     database_path: PathBuf,
     agent_message_broker: Arc<AgentMessageBroker>,
+    vault_gate_approvals: Arc<Mutex<HashSet<(i64, i64)>>>,
 }
 
 impl AppState {
@@ -499,6 +500,7 @@ impl AppState {
             storage,
             database_path,
             agent_message_broker: Arc::new(AgentMessageBroker::default()),
+            vault_gate_approvals: Arc::new(Mutex::new(HashSet::new())),
         })
     }
 
@@ -521,6 +523,25 @@ impl AppState {
 
     pub fn current_agent_message_sequence(&self) -> u64 {
         self.agent_message_broker.current_sequence()
+    }
+
+    pub fn has_vault_session_approval(&self, session_id: i64, entry_id: i64) -> bool {
+        self.vault_gate_approvals
+            .lock()
+            .map(|approvals| approvals.contains(&(session_id, entry_id)))
+            .unwrap_or(false)
+    }
+
+    pub fn remember_vault_session_approval(&self, session_id: i64, entry_id: i64) {
+        if let Ok(mut approvals) = self.vault_gate_approvals.lock() {
+            approvals.insert((session_id, entry_id));
+        }
+    }
+
+    pub fn clear_vault_session_approvals(&self, session_id: i64) {
+        if let Ok(mut approvals) = self.vault_gate_approvals.lock() {
+            approvals.retain(|(cached_session_id, _)| *cached_session_id != session_id);
+        }
     }
 
     pub fn wait_for_agent_message_change(
@@ -748,6 +769,7 @@ impl AppState {
         &self,
         input: ExecuteVaultHttpIntegrationInput,
         source: &str,
+        session_id: Option<i64>,
     ) -> AppResult<PreparedVaultHttpIntegrationRequest> {
         let connection = self.connect()?;
         Ok(vault::prepare_http_integration_request(
@@ -755,6 +777,8 @@ impl AppState {
             Path::new(&self.storage.app_data_dir),
             input,
             source,
+            session_id,
+            &self.vault_gate_approvals,
         )?)
     }
 
@@ -762,13 +786,23 @@ impl AppState {
         &self,
         bindings: Vec<VaultAccessBindingRequest>,
         source: &str,
+        session_id: Option<i64>,
+        consumer_prefix: &str,
     ) -> AppResult<Vec<ResolvedVaultBinding>> {
         let connection = self.connect()?;
         let app_data_dir = Path::new(&self.storage.app_data_dir);
         bindings
             .into_iter()
             .map(|binding| {
-                vault::resolve_access_binding(&connection, app_data_dir, binding, source)
+                vault::resolve_access_binding(
+                    &connection,
+                    app_data_dir,
+                    binding,
+                    source,
+                    session_id,
+                    consumer_prefix,
+                    &self.vault_gate_approvals,
+                )
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(Into::into)
@@ -1645,6 +1679,7 @@ impl AppState {
             )
             .map_err(|error| format!("failed to finish session record: {error}"))?;
 
+        self.clear_vault_session_approvals(input.id);
         touch_project(&connection, existing.project_id)?;
         Ok(load_session_record_by_id(&connection, input.id)?)
     }
@@ -5460,6 +5495,8 @@ mod tests {
                     delivery: crate::vault::VaultBindingDelivery::Env,
                 }],
                 "desktop_ui",
+                Some(session.id),
+                "session_launch:claude_code",
             )
             .expect("vault bindings should resolve");
 

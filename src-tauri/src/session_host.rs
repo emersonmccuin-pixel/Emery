@@ -618,7 +618,12 @@ impl SessionRegistry {
             }
         };
         let resolved_launch_bindings = match app_state
-            .resolve_vault_access_bindings(parsed_launch_env.vault_bindings, source)
+            .resolve_vault_access_bindings(
+                parsed_launch_env.vault_bindings,
+                source,
+                Some(session_record.id),
+                &format!("session_launch:{}", profile.provider),
+            )
         {
             Ok(bindings) => bindings,
             Err(error) => {

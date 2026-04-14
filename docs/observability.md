@@ -106,6 +106,7 @@ Last updated: April 14, 2026
   - SDK worker hosts can now call `session/status`, `session/heartbeat`, and `session/mark-done`; the supervisor persists those as `session.worker_status` / `session.worker_done` events and keeps `last_heartbeat_at` fresh even when the worker is mostly blocked on broker waits.
   - `session.vault_env_injected` now covers both launch-profile bindings and workflow-stage launch bindings; the event payload records env-var names and vault-entry names without ever logging the raw value.
   - `session.vault_file_injected` records the env vars and vault entries whose secrets were materialized into per-session temp files, again without exposing the raw value or file contents.
+  - Vault gate denials now emit a `vault access denied` warning with entry, source, session, and consumer metadata only; the raw value still never reaches logs or diagnostics.
 - Brokered integration diagnostics:
   - `src-tauri/src/bin/project-commander-supervisor.rs` now appends `integration.http_response` and `integration.http_error` project events for supervisor-owned brokered HTTP templates.
   - Those payloads record integration/template ids, URL, allowlisted egress domains, secret slot names, status, byte counts, and duration only; raw auth headers, vault values, and response bodies are never written to diagnostics.
@@ -146,6 +147,8 @@ Last updated: April 14, 2026
   - SDK worker hosts recorded a structured lifecycle transition or directive-level completion summary through the broker-native runtime contract.
 - `session.claude_sdk_auth_configured`
   - A Claude Agent SDK launch recorded whether it used the dedicated personal config directory seam or the default home config path.
+- `vault access denied`
+  - A native vault permission prompt was denied; inspect the paired `vault_audit_events` row for `gate_denied` plus the consumer/correlation identifiers.
 - `workflow run started` / `workflow run completed`
   - Supervisor lifecycle entries for workflow-run start and overall completion.
 - `workflow stage dispatch requested`

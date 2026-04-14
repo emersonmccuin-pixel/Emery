@@ -3615,6 +3615,7 @@ dependencies = [
  "tauri-plugin-log",
  "tauri-plugin-stronghold",
  "tiny_http",
+ "windows-sys 0.61.2",
  "zeroize",
  "zip 0.6.6",
 ]
