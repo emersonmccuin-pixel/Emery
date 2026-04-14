@@ -3,6 +3,7 @@ import { Codex } from '@openai/codex-sdk'
 
 const INBOX_BATCH_LIMIT = 20
 const INBOX_WAIT_TIMEOUT_MS = 30_000
+const WORKER_HEARTBEAT_INTERVAL_MS = 25_000
 const MAX_AUTO_FORWARD_TEXT_LENGTH = 4000
 const BROKER_MESSAGE_SENTINEL = 'PROJECT_COMMANDER_MESSAGE'
 const VALID_DISPATCHER_MESSAGE_TYPES = new Set([
@@ -145,6 +146,69 @@ async function postSupervisor(pathname, payload) {
   }
 
   return envelope.data
+}
+
+function formatError(error) {
+  return error instanceof Error ? error.message : String(error)
+}
+
+async function postSupervisorBestEffort(pathname, payload, label) {
+  try {
+    return await postSupervisor(pathname, payload)
+  } catch (error) {
+    writeHostLine(`${label} failed: ${formatError(error)}`)
+    return null
+  }
+}
+
+async function publishStatus(state, detail = null, options = {}) {
+  return postSupervisorBestEffort(
+    '/session/status',
+    {
+      state,
+      detail,
+      threadId: options.threadId ?? null,
+      providerSessionId: currentThreadId ?? null,
+      contextJson: options.contextJson ?? null,
+    },
+    `worker status ${state}`,
+  )
+}
+
+async function heartbeat(detail = null, options = {}) {
+  return postSupervisorBestEffort(
+    '/session/heartbeat',
+    {
+      detail,
+      contextJson: options.contextJson ?? null,
+    },
+    'worker heartbeat',
+  )
+}
+
+async function markDone(summary, options = {}) {
+  return postSupervisorBestEffort(
+    '/session/mark-done',
+    {
+      summary,
+      threadId: options.threadId ?? null,
+      providerSessionId: currentThreadId ?? null,
+      contextJson: options.contextJson ?? null,
+    },
+    'worker done marker',
+  )
+}
+
+async function withWorkerHeartbeat(detail, options, callback) {
+  const timer = setInterval(() => {
+    void heartbeat(detail, options)
+  }, WORKER_HEARTBEAT_INTERVAL_MS)
+
+  try {
+    return await callback()
+  } finally {
+    clearInterval(timer)
+  }
 }
 
 async function waitForInbox() {
@@ -738,9 +802,22 @@ async function runTurn(prompt) {
 async function main() {
   process.chdir(config.rootPath)
   writeHostLine(`Watching inbox for ${config.agentName} in ${config.rootPath}`)
+  await publishStatus('launching', 'Bootstrapping Codex SDK worker host.', {
+    contextJson: {
+      resumeExistingSession: config.resumeExistingSession,
+      model: config.model,
+    },
+  })
 
   let idleLogged = false
   let startupPromptPending = Boolean(config.startupPrompt)
+
+  await publishStatus('ready', 'Worker host ready and waiting for dispatcher directives.', {
+    contextJson: {
+      resumeExistingSession: config.resumeExistingSession,
+      startupPromptPending,
+    },
+  })
 
   while (true) {
     const waitResult = await waitForInbox()
@@ -749,6 +826,9 @@ async function main() {
     if (inbox.length === 0) {
       if (!idleLogged && waitResult.timedOut) {
         writeHostLine('Idle. Waiting for dispatcher directives...')
+        await publishStatus('idle', 'Waiting for dispatcher directives.', {
+          contextJson: { waitTimedOut: true },
+        })
         idleLogged = true
       }
       continue
@@ -758,19 +838,56 @@ async function main() {
     const nextMessage = inbox[0]
     const previousReplyId = await fetchDispatcherReplyMarkers(nextMessage)
     renderQueuedPrompt(nextMessage)
-    const turnResult = await runTurn(
-      buildCodexTurnPrompt(formatQueuedPrompt(nextMessage), {
+    await publishStatus('busy', `Handling dispatcher directive ${nextMessage.id}.`, {
+      threadId: nextMessage.threadId,
+      contextJson: {
+        dispatcherMessageId: nextMessage.id,
+        dispatcherMessageType: nextMessage.messageType,
+        fromAgent: nextMessage.fromAgent,
         includeStartupPrompt: startupPromptPending,
-      }),
+      },
+    })
+    const turnResult = await withWorkerHeartbeat(
+      `Processing dispatcher directive ${nextMessage.id}.`,
+      {
+        contextJson: {
+          dispatcherMessageId: nextMessage.id,
+        },
+      },
+      () =>
+        runTurn(
+          buildCodexTurnPrompt(formatQueuedPrompt(nextMessage), {
+            includeStartupPrompt: startupPromptPending,
+          }),
+        ),
     )
     startupPromptPending = false
     await ensureDispatcherReply(nextMessage, previousReplyId, turnResult)
     await ackMessages([nextMessage.id])
+    await markDone(`Processed dispatcher directive ${nextMessage.id}.`, {
+      threadId: nextMessage.threadId,
+      contextJson: {
+        dispatcherMessageId: nextMessage.id,
+        dispatcherMessageType: nextMessage.messageType,
+        providerSessionId: currentThreadId,
+      },
+    })
+    await publishStatus('ready', 'Waiting for dispatcher directives.', {
+      contextJson: {
+        startupPromptPending,
+      },
+    })
   }
 }
 
-main().catch((error) => {
+main().catch(async (error) => {
   ensureTrailingNewline()
+  await publishStatus('failed', formatError(error), {
+    contextJson: {
+      phase: 'worker_main',
+      providerSessionId: currentThreadId,
+    },
+  })
   process.stderr.write(
     `[Project Commander Codex] ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`,
   )

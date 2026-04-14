@@ -14,6 +14,7 @@ import type {
   ProjectPodRecord,
   ProjectWorkflowRecord,
   TerminalExitEvent,
+  WorkflowArtifactContractRecord,
   VaultAccessBindingRequest,
   WorkItemRecord,
   WorkflowRecord,
@@ -127,6 +128,41 @@ function formatRetryPolicySummary(
 
   const summary = `${maxAttempts} attempt${maxAttempts === 1 ? "" : "s"}`;
   return feedbackTarget ? `${summary} · feedback ${feedbackTarget}` : summary;
+}
+
+function formatArtifactContracts(contracts: WorkflowArtifactContractRecord[]) {
+  if (contracts.length === 0) {
+    return "(none)";
+  }
+
+  return contracts
+    .map((contract) => {
+      const details: string[] = [];
+      if (contract.requiredFrontmatterFields.length > 0) {
+        details.push(`frontmatter ${contract.requiredFrontmatterFields.join(", ")}`);
+      }
+      if (contract.requiredMarkdownSections.length > 0) {
+        details.push(`sections ${contract.requiredMarkdownSections.join(", ")}`);
+      }
+      return details.length > 0
+        ? `${contract.artifactType} (${details.join(" · ")})`
+        : contract.artifactType;
+    })
+    .join(", ");
+}
+
+function formatProducedArtifacts(stage: WorkflowRunStageRecord) {
+  if (stage.producedArtifacts.length === 0) {
+    return "(none reported)";
+  }
+
+  return stage.producedArtifacts
+    .map((artifact) =>
+      artifact.summary?.trim()
+        ? `${artifact.type}: ${artifact.summary.trim()}`
+        : artifact.type,
+    )
+    .join(" | ");
 }
 
 function WorkflowsPanel() {
@@ -1016,6 +1052,11 @@ function WorkflowDetailCard({
             {stage.outputs.length > 0 ? (
               <p className="workflow-stage-card__line">outputs: {stage.outputs.join(", ")}</p>
             ) : null}
+            {stage.outputContracts.length > 0 ? (
+              <p className="workflow-stage-card__line">
+                output contracts: {formatArtifactContracts(stage.outputContracts)}
+              </p>
+            ) : null}
             {stage.needsSecrets.length > 0 ? (
               <p className="workflow-stage-card__line">
                 secrets: {stage.needsSecrets.join(", ")}
@@ -1260,6 +1301,11 @@ function WorkflowRunStageCard({
           outputs: {stage.resolvedStage.outputs.join(", ")}
         </p>
       ) : null}
+      {stage.resolvedStage.outputContracts.length > 0 ? (
+        <p className="workflow-stage-card__line">
+          output contracts: {formatArtifactContracts(stage.resolvedStage.outputContracts)}
+        </p>
+      ) : null}
       {stage.resolvedStage.needsSecrets.length > 0 ? (
         <p className="workflow-stage-card__line">
           secrets: {stage.resolvedStage.needsSecrets.join(", ")}
@@ -1273,8 +1319,32 @@ function WorkflowRunStageCard({
       {retrySummary ? (
         <p className="workflow-stage-card__line">retry: {retrySummary}</p>
       ) : null}
+      {stage.retrySourceStageName || stage.retryFeedbackSummary ? (
+        <p className="workflow-stage-card__line">
+          retry feedback:
+          {" "}
+          {stage.retrySourceStageName
+            ? `${stage.retrySourceStageName}`
+            : "upstream stage"}
+          {stage.retryFeedbackSummary ? ` · ${stage.retryFeedbackSummary}` : ""}
+        </p>
+      ) : null}
+      {stage.artifactValidationStatus ? (
+        <p className="workflow-stage-card__line">
+          artifact validation: {stage.artifactValidationStatus}
+          {stage.artifactValidationError ? ` · ${stage.artifactValidationError}` : ""}
+        </p>
+      ) : null}
+      {(stage.producedArtifacts.length > 0 || stage.resolvedStage.outputs.length > 0) ? (
+        <p className="workflow-stage-card__line">
+          produced artifacts: {formatProducedArtifacts(stage)}
+        </p>
+      ) : null}
       <div className="workflow-stage-card__meta">
         <span>attempt {stage.attempt}</span>
+        {stage.retryRequestedAt ? (
+          <span>retry requested {formatTimestamp(stage.retryRequestedAt)}</span>
+        ) : null}
         <span>updated {formatTimestamp(stage.updatedAt)}</span>
       </div>
     </article>

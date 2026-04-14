@@ -324,11 +324,79 @@ export type WorkflowStageRetryPolicyRecord = {
   onFailFeedbackTo?: string | null;
 };
 
+export type WorkflowArtifactContractRecord = {
+  artifactType: string;
+  label: string;
+  description: string;
+  requiredFrontmatterFields: string[];
+  requiredMarkdownSections: string[];
+};
+
+export type WorkflowProducedArtifactRecord = {
+  type: string;
+  title?: string | null;
+  summary?: string | null;
+  bodyMarkdown?: string | null;
+  frontmatter: Record<string, unknown>;
+};
+
 export type VaultAccessBindingRequest = {
   envVar: string;
   entryName: string;
   scopeTags: string[];
   delivery: "env" | "file";
+};
+
+export type VaultIntegrationTemplateKind = "http_broker" | "cli" | "mcp";
+
+export type VaultIntegrationSecretPlacement =
+  | "authorization_bearer"
+  | "header";
+
+export type VaultIntegrationSecretSlotTemplate = {
+  slotName: string;
+  label: string;
+  description: string;
+  requiredScopeTags: string[];
+  placement: VaultIntegrationSecretPlacement;
+  headerName?: string | null;
+  headerPrefix?: string | null;
+};
+
+export type VaultIntegrationTemplateRecord = {
+  slug: string;
+  name: string;
+  description: string;
+  kind: VaultIntegrationTemplateKind;
+  source: string;
+  baseUrl?: string | null;
+  egressDomains: string[];
+  supportedMethods: string[];
+  defaultHeaders: Record<string, string>;
+  secretSlots: VaultIntegrationSecretSlotTemplate[];
+};
+
+export type VaultIntegrationBindingRecord = {
+  slotName: string;
+  entryName: string;
+};
+
+export type VaultIntegrationInstallationRecord = {
+  id: number;
+  templateSlug: string;
+  label: string;
+  enabled: boolean;
+  bindings: VaultIntegrationBindingRecord[];
+  createdAt: string;
+  updatedAt: string;
+  ready: boolean;
+  missingBindings: string[];
+  template?: VaultIntegrationTemplateRecord | null;
+};
+
+export type VaultIntegrationSnapshot = {
+  templates: VaultIntegrationTemplateRecord[];
+  installations: VaultIntegrationInstallationRecord[];
 };
 
 export type WorkflowStageRecord = {
@@ -340,6 +408,8 @@ export type WorkflowStageRecord = {
   promptTemplateRef?: string | null;
   inputs: string[];
   outputs: string[];
+  inputContracts: WorkflowArtifactContractRecord[];
+  outputContracts: WorkflowArtifactContractRecord[];
   needsSecrets: string[];
   vaultEnvBindings: VaultAccessBindingRequest[];
   retryPolicy?: WorkflowStageRetryPolicyRecord | null;
@@ -431,6 +501,8 @@ export type ResolvedWorkflowStageRecord = {
   defaultPolicyJson: string;
   inputs: string[];
   outputs: string[];
+  inputContracts: WorkflowArtifactContractRecord[];
+  outputContracts: WorkflowArtifactContractRecord[];
   needsSecrets: string[];
   vaultEnvBindings: VaultAccessBindingRequest[];
   retryPolicy?: WorkflowStageRetryPolicyRecord | null;
@@ -472,6 +544,13 @@ export type WorkflowRunStageRecord = {
   completionMessageType?: string | null;
   completionSummary?: string | null;
   completionContextJson: string;
+  producedArtifacts: WorkflowProducedArtifactRecord[];
+  artifactValidationStatus?: string | null;
+  artifactValidationError?: string | null;
+  retrySourceStageName?: string | null;
+  retryFeedbackSummary?: string | null;
+  retryFeedbackContextJson: string;
+  retryRequestedAt?: string | null;
   failureReason?: string | null;
   createdAt: string;
   startedAt?: string | null;

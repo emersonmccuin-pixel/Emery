@@ -73,6 +73,23 @@
   margin-top: 10px;
 }
 
+.settings-section-stack {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid color-mix(in srgb, var(--center-tint) 16%, transparent);
+  display: grid;
+  gap: 12px;
+}
+
+.settings-profile-list--compact {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.settings-integration-slot-list {
+  display: grid;
+  gap: 12px;
+}
+
 .theme-picker-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));

@@ -4,6 +4,7 @@ use crate::db::{
 };
 use crate::session_api::SessionSnapshot;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -171,6 +172,41 @@ pub struct LaunchProfileTarget {
 #[serde(rename_all = "camelCase")]
 pub struct UpdateSessionProviderSessionIdInput {
     pub provider_session_id: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublishSessionWorkerStatusInput {
+    pub state: String,
+    #[serde(default)]
+    pub detail: Option<String>,
+    #[serde(default)]
+    pub thread_id: Option<String>,
+    #[serde(default)]
+    pub provider_session_id: Option<String>,
+    #[serde(default)]
+    pub context_json: Option<Value>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeartbeatSessionInput {
+    #[serde(default)]
+    pub detail: Option<String>,
+    #[serde(default)]
+    pub context_json: Option<Value>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkSessionWorkerDoneInput {
+    pub summary: String,
+    #[serde(default)]
+    pub thread_id: Option<String>,
+    #[serde(default)]
+    pub provider_session_id: Option<String>,
+    #[serde(default)]
+    pub context_json: Option<Value>,
 }
 
 #[derive(Serialize, Deserialize)]

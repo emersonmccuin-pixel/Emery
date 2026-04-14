@@ -102,15 +102,21 @@ Last updated: April 14, 2026
 - Session lifecycle diagnostics:
   - `src-tauri/src/session_host.rs` now logs session reattachs, launch requests, missing-root rejections, launch failure stages, and termination outcomes.
   - Claude launch requests now include `launch_mode=fresh|resume` plus the provider session UUID when available, so true-resume behavior after a full app restart is visible in logs.
+  - Claude Agent SDK launches now append `session.claude_sdk_auth_configured`, recording whether the worker used a dedicated personal config directory or the default home path.
+  - SDK worker hosts can now call `session/status`, `session/heartbeat`, and `session/mark-done`; the supervisor persists those as `session.worker_status` / `session.worker_done` events and keeps `last_heartbeat_at` fresh even when the worker is mostly blocked on broker waits.
   - `session.vault_env_injected` now covers both launch-profile bindings and workflow-stage launch bindings; the event payload records env-var names and vault-entry names without ever logging the raw value.
   - `session.vault_file_injected` records the env vars and vault entries whose secrets were materialized into per-session temp files, again without exposing the raw value or file contents.
+- Brokered integration diagnostics:
+  - `src-tauri/src/bin/project-commander-supervisor.rs` now appends `integration.http_response` and `integration.http_error` project events for supervisor-owned brokered HTTP templates.
+  - Those payloads record integration/template ids, URL, allowlisted egress domains, secret slot names, status, byte counts, and duration only; raw auth headers, vault values, and response bodies are never written to diagnostics.
 - Recovery and cleanup diagnostics:
   - The supervisor now logs worktree-agent launch requests, orphan termination attempts, cleanup-candidate application, and repair-all cleanup runs with structured identifiers and durations.
 - Workflow run diagnostics:
   - `src-tauri/src/bin/project-commander-supervisor.rs` now logs workflow run start requests, stage dispatch requests, launch/directive failures, blocked/completed stage replies, and run completion with `run_id`, `stage`, `workflow_slug`, `project_id`, and `worktree_id` context.
-  - Stage dispatch logs and `workflow.stage_dispatched` project events now also record the count of configured vault bindings plus separate env-var lists for direct env injection vs. file-path delivery when a workflow stage launches with scoped vault grants.
+  - Stage dispatch logs and `workflow.stage_dispatched` project events now also record attempt count, retry-source metadata when a stage is being rerun, declared output artifact types, the count of configured vault bindings, and separate env-var lists for direct env injection vs. file-path delivery when a workflow stage launches with scoped vault grants.
   - Workflow stage waits still ride the existing broker wait path; no workflow-specific polling loop was added on top of `/message/wait`.
-  - Project event history now records `workflow.run_started`, `workflow.stage_dispatched`, `workflow.stage_completed`, `workflow.stage_blocked`, `workflow.stage_failed`, and `workflow.run_completed` so workflow timelines stay visible in the same diagnostics surface as the rest of the supervisor runtime.
+  - Stage completion events now carry artifact validation status/error plus any reported output artifact types, so invalid contracts and “no artifacts reported” cases are visible without reopening raw `contextJson`.
+  - Project event history now records `workflow.run_started`, `workflow.stage_dispatched`, `workflow.stage_completed`, `workflow.stage_blocked`, `workflow.stage_retry_scheduled`, `workflow.stage_failed`, and `workflow.run_completed` so workflow timelines stay visible in the same diagnostics surface as the rest of the supervisor runtime.
 
 ## Useful Log Patterns
 
@@ -136,12 +142,18 @@ Last updated: April 14, 2026
   - Session launch failed while spawning the child process.
 - `session.provider_session_id_updated`
   - A worker host discovered or refreshed the provider-native resume id (for example, a Codex thread id) and persisted it for later recovery.
+- `session.worker_status` / `session.worker_done`
+  - SDK worker hosts recorded a structured lifecycle transition or directive-level completion summary through the broker-native runtime contract.
+- `session.claude_sdk_auth_configured`
+  - A Claude Agent SDK launch recorded whether it used the dedicated personal config directory seam or the default home config path.
 - `workflow run started` / `workflow run completed`
   - Supervisor lifecycle entries for workflow-run start and overall completion.
 - `workflow stage dispatch requested`
   - A stage is about to launch a fresh session on the managed worktree.
 - `workflow.stage_blocked` / `workflow.stage_failed`
   - The stage did not advance cleanly; inspect the payload for `failureReason` or the worker reply summary.
+- `workflow.stage_retry_scheduled`
+  - A blocked or invalid stage result triggered the stage retry policy; inspect `sourceStageName`, `targetStageName`, `nextAttempt`, and `feedbackSummary`.
 - `stage=persist_runtime_metadata`
   - Session launch succeeded far enough to start, but runtime metadata persistence failed.
 - `terminate orphaned session`

@@ -49,6 +49,8 @@ Current implementation status:
 - Codex SDK worker hosts now use the same broker contract and attach Project Commander MCP through the supervisor's `mcp-stdio` helper command.
 - SDK worker hosts wait on `/message/wait` instead of polling the inbox on a timer.
 - `/message/wait` is broker-notified inside the supervisor process, so waiting sessions wake on actual broker traffic rather than fixed sleep intervals.
+- SDK worker hosts can now publish `ready` / `busy` / `idle` / `completed` / `failed` lifecycle markers through supervisor-backed `publish_status`, `heartbeat`, and `mark_done` tools instead of relying only on terminal text.
+- Claude Agent SDK launches now also record which auth seam they used (`dedicated_config_dir` vs `default_home`) so the personal-Claude path is visible in diagnostics and crash recovery.
 - Future providers should implement the same broker contract instead of adding a second message system.
 
 ## Core Constraint
@@ -80,7 +82,7 @@ Project Commander owns:
 
 All agents should use the same Project Commander MCP contract.
 
-Current tools already cover most of this. The broker wait primitive is now in place:
+The broker wait and worker-lifecycle primitives are now in place:
 
 - `wait_for_messages(timeoutMs)`
 - `publish_status(state, detail?)`

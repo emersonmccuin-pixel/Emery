@@ -1,15 +1,19 @@
-use crate::db::{DocumentRecord, ProjectRecord, WorkItemRecord, WorktreeRecord};
+use crate::db::{
+    DocumentRecord, ProjectRecord, SessionEventRecord, WorkItemRecord, WorktreeRecord,
+};
 use crate::error::{AppError, AppErrorCode, AppResult};
 use crate::session_api::ProjectSessionTarget;
 use crate::supervisor_api::{
     AckAgentMessagesApiInput, AgentInboxApiInput, AgentMessageListOutput, CleanupWorktreeInput,
-    CreateProjectDocumentInput, CreateProjectWorkItemInput, LaunchProjectWorktreeAgentInput,
-    ListAgentMessagesApiInput, ListProjectDocumentsInput, ListProjectWorkItemsInput,
-    ListProjectWorktreesInput, PinWorktreeInput, ProjectCallSignTarget, ProjectDocumentTarget,
-    ProjectWorkItemTarget, ReconcileProjectTrackerInput, SendAgentMessageApiInput,
+    CreateProjectDocumentInput, CreateProjectWorkItemInput, HeartbeatSessionInput,
+    LaunchProjectWorktreeAgentInput, ListAgentMessagesApiInput, ListProjectDocumentsInput,
+    ListProjectWorkItemsInput, ListProjectWorktreesInput, MarkSessionWorkerDoneInput,
+    PinWorktreeInput, ProjectCallSignTarget, ProjectDocumentTarget, ProjectWorkItemTarget,
+    PublishSessionWorkerStatusInput, ReconcileProjectTrackerInput, SendAgentMessageApiInput,
     UpdateProjectDocumentInput, UpdateProjectWorkItemInput, WaitAgentMessagesApiInput,
     WaitAgentMessagesOutput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
+use crate::vault::{ExecuteVaultHttpIntegrationInput, ExecuteVaultHttpIntegrationOutput};
 use reqwest::blocking::Client;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -439,6 +443,54 @@ impl SupervisorMcpClient {
         )
     }
 
+    fn publish_status(
+        &self,
+        state: String,
+        detail: Option<String>,
+        thread_id: Option<String>,
+        provider_session_id: Option<String>,
+        context_json: Option<Value>,
+    ) -> AppResult<SessionEventRecord> {
+        self.post(
+            "session/status",
+            &PublishSessionWorkerStatusInput {
+                state,
+                detail,
+                thread_id,
+                provider_session_id,
+                context_json,
+            },
+        )
+    }
+
+    fn heartbeat(&self, detail: Option<String>, context_json: Option<Value>) -> AppResult<Value> {
+        self.post(
+            "session/heartbeat",
+            &HeartbeatSessionInput {
+                detail,
+                context_json,
+            },
+        )
+    }
+
+    fn mark_done(
+        &self,
+        summary: String,
+        thread_id: Option<String>,
+        provider_session_id: Option<String>,
+        context_json: Option<Value>,
+    ) -> AppResult<SessionEventRecord> {
+        self.post(
+            "session/mark-done",
+            &MarkSessionWorkerDoneInput {
+                summary,
+                thread_id,
+                provider_session_id,
+                context_json,
+            },
+        )
+    }
+
     fn ack_messages(&self, message_ids: Vec<i64>) -> AppResult<Value> {
         self.post(
             "message/ack",
@@ -470,6 +522,49 @@ impl SupervisorMcpClient {
         )
     }
 
+    fn call_http_integration(
+        &self,
+        integration_id: i64,
+        method: String,
+        path: String,
+        query: Option<Value>,
+        headers: Option<Value>,
+        body: Option<String>,
+        json_body: Option<Value>,
+    ) -> AppResult<ExecuteVaultHttpIntegrationOutput> {
+        let query = query
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| {
+                AppError::invalid_input(format!(
+                    "call_http_integration query must be an object of string pairs: {error}"
+                ))
+            })?
+            .unwrap_or_default();
+        let headers = headers
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| {
+                AppError::invalid_input(format!(
+                    "call_http_integration headers must be an object of string pairs: {error}"
+                ))
+            })?
+            .unwrap_or_default();
+
+        self.post(
+            "integration/http",
+            &ExecuteVaultHttpIntegrationInput {
+                integration_id,
+                method,
+                path,
+                query,
+                headers,
+                body,
+                json_body,
+            },
+        )
+    }
+
     fn post<TRequest, TResponse>(&self, route: &str, payload: &TRequest) -> AppResult<TResponse>
     where
         TRequest: Serialize,
@@ -480,6 +575,10 @@ impl SupervisorMcpClient {
             .post(format!("{}/{}", self.base_url, route))
             .header("x-project-commander-token", &self.token)
             .header("x-project-commander-source", "agent_mcp")
+            .header(
+                "x-project-commander-project-id",
+                self.project_id.to_string(),
+            )
             .header(
                 "x-project-commander-session-id",
                 self.session_id
@@ -838,6 +937,29 @@ fn call_tool(client: &SupervisorMcpClient, tool_name: &str, arguments: Value) ->
             read_optional_string(&arguments, "threadId"),
             read_optional_i64(&arguments, "replyToMessageId"),
         )?),
+        "publish_status" => Ok(serde_json::to_value(client.publish_status(
+            read_required_string(&arguments, "state")?,
+            read_optional_string(&arguments, "detail"),
+            read_optional_string(&arguments, "threadId"),
+            read_optional_string(&arguments, "providerSessionId"),
+            arguments.get("contextJson").cloned(),
+        )?)
+        .map_err(|error| {
+            AppError::internal(format!("failed to encode worker status event: {error}"))
+        })?),
+        "heartbeat" => Ok(client.heartbeat(
+            read_optional_string(&arguments, "detail"),
+            arguments.get("contextJson").cloned(),
+        )?),
+        "mark_done" => Ok(serde_json::to_value(client.mark_done(
+            read_required_string(&arguments, "summary")?,
+            read_optional_string(&arguments, "threadId"),
+            read_optional_string(&arguments, "providerSessionId"),
+            arguments.get("contextJson").cloned(),
+        )?)
+        .map_err(|error| {
+            AppError::internal(format!("failed to encode worker done event: {error}"))
+        })?),
         "list_messages" => {
             let result = client.list_messages(
                 read_optional_string(&arguments, "fromAgent"),
@@ -923,6 +1045,20 @@ fn call_tool(client: &SupervisorMcpClient, tool_name: &str, arguments: Value) ->
                 ))
             },
         )?),
+        "call_http_integration" => Ok(serde_json::to_value(client.call_http_integration(
+            read_required_i64(&arguments, "integrationId")?,
+            read_required_string(&arguments, "method")?,
+            read_required_string(&arguments, "path")?,
+            arguments.get("query").cloned(),
+            arguments.get("headers").cloned(),
+            read_optional_string(&arguments, "body"),
+            arguments.get("jsonBody").cloned(),
+        )?)
+        .map_err(|error| {
+            AppError::internal(format!(
+                "failed to encode brokered integration response: {error}"
+            ))
+        })?),
         _ => Err(AppError::invalid_input(format!(
             "unknown tool: {tool_name}"
         ))),
@@ -1310,6 +1446,81 @@ fn build_tool_definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "publish_status",
+            "description": "Publish the current worker-host lifecycle state for this session. Use this to surface ready/busy/idle/blocked/failed transitions without relying on terminal text.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "state": {
+                        "type": "string",
+                        "enum": ["launching", "ready", "busy", "waiting_for_tool", "waiting_for_permission", "idle", "blocked", "completed", "failed", "shell_fallback"],
+                        "description": "Structured worker state to record for this session."
+                    },
+                    "detail": {
+                        "type": "string",
+                        "description": "Optional short human-readable detail for the state transition."
+                    },
+                    "threadId": {
+                        "type": "string",
+                        "description": "Optional provider or broker thread id associated with the current turn."
+                    },
+                    "providerSessionId": {
+                        "type": "string",
+                        "description": "Optional provider-native session/thread id to persist when it changes at runtime."
+                    },
+                    "contextJson": {
+                        "description": "Optional structured JSON context to persist with the lifecycle event."
+                    }
+                },
+                "required": ["state"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "heartbeat",
+            "description": "Refresh the current session heartbeat without emitting terminal output. Use this during long waits or long-running tool turns.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "detail": {
+                        "type": "string",
+                        "description": "Optional short reason for the heartbeat."
+                    },
+                    "contextJson": {
+                        "description": "Optional structured JSON context for future diagnostics."
+                    }
+                },
+                "required": [],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "mark_done",
+            "description": "Record that the current worker turn reached a completed state with a short summary. This does not terminate the session; it logs directive-level completion.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "Short summary of what just completed."
+                    },
+                    "threadId": {
+                        "type": "string",
+                        "description": "Optional provider or broker thread id associated with the completed turn."
+                    },
+                    "providerSessionId": {
+                        "type": "string",
+                        "description": "Optional provider-native session/thread id to persist when it changes at runtime."
+                    },
+                    "contextJson": {
+                        "description": "Optional structured JSON context to persist with the completion event."
+                    }
+                },
+                "required": ["summary"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
             "name": "list_messages",
             "description": "Query message history for review or audit. Never marks messages as read. Use get_messages for routine inbox checks.",
             "inputSchema": {
@@ -1454,6 +1665,54 @@ fn build_tool_definitions() -> Vec<Value> {
                 "properties": {},
                 "required": [],
                 "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "call_http_integration",
+            "description": "Execute a supervisor-brokered HTTPS request through a configured integration template. Secrets stay in the Project Commander vault and are injected into template-defined headers only inside the supervisor.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "integrationId": {
+                        "type": "integer",
+                        "description": "Configured integration id from Settings -> Vault."
+                    },
+                    "method": {
+                        "type": "string",
+                        "description": "HTTP method allowed by the integration template."
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Relative API path under the template's base URL, such as '/repos/owner/repo/issues'."
+                    },
+                    "query": {
+                        "type": "object",
+                        "description": "Optional query-string parameters as string pairs.",
+                        "additionalProperties": {
+                            "type": "string"
+                        }
+                    },
+                    "headers": {
+                        "type": "object",
+                        "description": "Optional non-secret request headers as string pairs. Reserved auth and transport headers are rejected.",
+                        "additionalProperties": {
+                            "type": "string"
+                        }
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Optional raw request body."
+                    },
+                    "jsonBody": {
+                        "type": ["object", "array"],
+                        "description": "Optional JSON request body. Mutually exclusive with body."
+                    }
+                },
+                "required": ["integrationId", "method", "path"],
+                "additionalProperties": false
+            },
+            "_meta": {
+                "anthropic/maxResultSizeChars": 200000
             }
         }),
     ]

@@ -14,14 +14,16 @@ use std::os::windows::process::CommandExt;
 
 use crate::error::{AppError, AppResult};
 use crate::vault::{
-    self, DeleteVaultEntryInput, ResolvedVaultBinding, UpsertVaultEntryInput,
-    VaultAccessBindingRequest, VaultSnapshot,
+    self, DeleteVaultEntryInput, DeleteVaultIntegrationInput, ExecuteVaultHttpIntegrationInput,
+    PreparedVaultHttpIntegrationRequest, ResolvedVaultBinding, UpsertVaultEntryInput,
+    UpsertVaultIntegrationInput, VaultAccessBindingRequest, VaultIntegrationSnapshot,
+    VaultSnapshot,
 };
 use crate::workflow::{
     self, AdoptCatalogEntryInput, CatalogAdoptionTarget, FailWorkflowRunInput,
     MarkWorkflowStageDispatchedInput, ProjectWorkflowCatalog, ProjectWorkflowRunSnapshot,
-    RecordWorkflowStageResultInput, StartWorkflowRunInput, WorkflowLibrarySnapshot,
-    WorkflowRunRecord,
+    RecordWorkflowStageResultInput, RecordWorkflowStageResultOutput, StartWorkflowRunInput,
+    WorkflowLibrarySnapshot, WorkflowRunRecord,
 };
 
 #[cfg(windows)]
@@ -627,7 +629,7 @@ impl AppState {
     pub fn record_workflow_stage_result(
         &self,
         input: RecordWorkflowStageResultInput,
-    ) -> AppResult<WorkflowRunRecord> {
+    ) -> AppResult<RecordWorkflowStageResultOutput> {
         let connection = self.connect()?;
         Ok(workflow::record_workflow_stage_result(&connection, &input)?)
     }
@@ -665,6 +667,43 @@ impl AppState {
         Ok(vault::load_snapshot(
             &connection,
             Path::new(&self.storage.app_data_dir),
+        )?)
+    }
+
+    pub fn list_vault_integrations(&self) -> AppResult<VaultIntegrationSnapshot> {
+        let connection = self.connect()?;
+        Ok(vault::load_integration_snapshot(&connection)?)
+    }
+
+    pub fn upsert_vault_integration(
+        &self,
+        input: UpsertVaultIntegrationInput,
+    ) -> AppResult<VaultIntegrationSnapshot> {
+        let connection = self.connect()?;
+        vault::upsert_integration_installation(&connection, input)?;
+        Ok(vault::load_integration_snapshot(&connection)?)
+    }
+
+    pub fn delete_vault_integration(
+        &self,
+        input: DeleteVaultIntegrationInput,
+    ) -> AppResult<VaultIntegrationSnapshot> {
+        let connection = self.connect()?;
+        vault::delete_integration_installation(&connection, &input)?;
+        Ok(vault::load_integration_snapshot(&connection)?)
+    }
+
+    pub fn prepare_vault_http_integration_request(
+        &self,
+        input: ExecuteVaultHttpIntegrationInput,
+        source: &str,
+    ) -> AppResult<PreparedVaultHttpIntegrationRequest> {
+        let connection = self.connect()?;
+        Ok(vault::prepare_http_integration_request(
+            &connection,
+            Path::new(&self.storage.app_data_dir),
+            input,
+            source,
         )?)
     }
 
@@ -2531,6 +2570,12 @@ fn migrate(connection: &Connection) -> Result<(), String> {
               completion_message_type TEXT,
               completion_summary TEXT,
               completion_context_json TEXT NOT NULL DEFAULT '{}',
+              artifact_validation_status TEXT,
+              artifact_validation_error TEXT,
+              retry_source_stage_name TEXT,
+              retry_feedback_summary TEXT,
+              retry_feedback_context_json TEXT NOT NULL DEFAULT '{}',
+              retry_requested_at TEXT,
               failure_reason TEXT,
               resolved_stage_json TEXT NOT NULL DEFAULT '{}',
               created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -2574,6 +2619,19 @@ fn migrate(connection: &Connection) -> Result<(), String> {
 
             CREATE INDEX IF NOT EXISTS idx_vault_audit_events_entry_id
               ON vault_audit_events(vault_entry_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS vault_integration_installations (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              template_slug TEXT NOT NULL,
+              label TEXT NOT NULL,
+              enabled INTEGER NOT NULL DEFAULT 1,
+              bindings_json TEXT NOT NULL DEFAULT '[]',
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_vault_integration_installations_label
+              ON vault_integration_installations(label COLLATE NOCASE);
             ",
         )
         .map_err(|error| format!("failed to run database migrations: {error}"))?;
@@ -2599,6 +2657,42 @@ fn migrate(connection: &Connection) -> Result<(), String> {
     ensure_column_exists(connection, "sessions", "provider_session_id", "TEXT")?;
     ensure_column_exists(connection, "sessions", "last_heartbeat_at", "TEXT")?;
     ensure_vault_audit_event_table(connection)?;
+    ensure_column_exists(
+        connection,
+        "workflow_run_stages",
+        "artifact_validation_status",
+        "TEXT",
+    )?;
+    ensure_column_exists(
+        connection,
+        "workflow_run_stages",
+        "artifact_validation_error",
+        "TEXT",
+    )?;
+    ensure_column_exists(
+        connection,
+        "workflow_run_stages",
+        "retry_source_stage_name",
+        "TEXT",
+    )?;
+    ensure_column_exists(
+        connection,
+        "workflow_run_stages",
+        "retry_feedback_summary",
+        "TEXT",
+    )?;
+    ensure_column_exists(
+        connection,
+        "workflow_run_stages",
+        "retry_feedback_context_json",
+        "TEXT NOT NULL DEFAULT '{}'",
+    )?;
+    ensure_column_exists(
+        connection,
+        "workflow_run_stages",
+        "retry_requested_at",
+        "TEXT",
+    )?;
     ensure_column_exists(connection, "agent_messages", "thread_id", "TEXT")?;
     ensure_column_exists(
         connection,

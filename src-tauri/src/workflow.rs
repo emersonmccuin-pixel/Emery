@@ -109,6 +109,137 @@ const SHIPPED_WORKFLOW_FILES: &[(&str, &str)] = &[
     ),
 ];
 
+const WORKFLOW_RUNTIME_INPUTS: &[&str] = &["work_item", "project_tracker"];
+
+const BUILTIN_ARTIFACT_CONTRACTS: &[(&str, &str, &str, &[&str], &[&str])] = &[
+    (
+        "plan_doc",
+        "Plan Doc",
+        "High-level plan with scoped deliverables and acceptance criteria.",
+        &["deliverables", "acceptanceCriteria"],
+        &["## Scope", "## Acceptance Criteria"],
+    ),
+    (
+        "sprint_list",
+        "Sprint List",
+        "Sequenced sprint breakdown for the root work item.",
+        &["sprints"],
+        &["## Sprint Breakdown"],
+    ),
+    (
+        "sprint_contract",
+        "Sprint Contract",
+        "Negotiated implementation contract for a generator/evaluator loop.",
+        &["acceptanceCriteria", "outOfScope"],
+        &["## Scope", "## Out Of Scope"],
+    ),
+    (
+        "implementation_report",
+        "Implementation Report",
+        "Generator handoff describing changes, verification, and open risks.",
+        &["filesTouched", "verification"],
+        &["## Changes", "## Verification"],
+    ),
+    (
+        "diff_summary",
+        "Diff Summary",
+        "Concise summary of the current worktree diff.",
+        &["filesTouched"],
+        &["## Diff Highlights"],
+    ),
+    (
+        "eval_report",
+        "Evaluation Report",
+        "Independent evaluation verdict and required follow-up actions.",
+        &["decision", "score"],
+        &["## Findings", "## Verification"],
+    ),
+    (
+        "merge_record",
+        "Merge Record",
+        "Integrator handoff for merge readiness, cleanup, and follow-up.",
+        &["verification"],
+        &["## Merge Readiness", "## Cleanup Notes"],
+    ),
+    (
+        "research_brief",
+        "Research Brief",
+        "Condensed research findings and recommendation framing.",
+        &["sources"],
+        &["## Findings", "## Recommendations"],
+    ),
+    (
+        "adr_outline",
+        "ADR Outline",
+        "Structured ADR outline before drafting.",
+        &["decision", "alternatives"],
+        &["## Context", "## Options"],
+    ),
+    (
+        "adr",
+        "ADR",
+        "Final architecture decision record draft.",
+        &["decision", "status"],
+        &["## Context", "## Decision"],
+    ),
+    (
+        "review_notes",
+        "Review Notes",
+        "Review feedback with concrete findings and follow-up.",
+        &["decision"],
+        &["## Findings"],
+    ),
+    (
+        "analysis_contract",
+        "Analysis Contract",
+        "Scope and evaluation contract for analysis work.",
+        &["questions"],
+        &["## Questions", "## Acceptance Criteria"],
+    ),
+    (
+        "data_analysis_report",
+        "Data Analysis Report",
+        "Analysis output with methods, findings, and caveats.",
+        &["queriesRun", "datasets"],
+        &["## Method", "## Findings"],
+    ),
+    (
+        "doc_audit",
+        "Doc Audit",
+        "Audit of documentation gaps, inconsistencies, and actions.",
+        &["gaps"],
+        &["## Findings", "## Recommended Changes"],
+    ),
+    (
+        "doc_patchset",
+        "Doc Patchset",
+        "Drafted documentation update set for review.",
+        &["filesTouched"],
+        &["## Changes", "## Verification"],
+    ),
+    (
+        "research_scope",
+        "Research Scope",
+        "Research framing and questions to answer.",
+        &["questions"],
+        &["## Scope", "## Questions"],
+    ),
+    (
+        "source_notes",
+        "Source Notes",
+        "Collected notes and citations from source review.",
+        &["sources"],
+        &["## Source Notes"],
+    ),
+    (
+        "critique_notes",
+        "Critique Notes",
+        "Critique findings against a synthesized research brief.",
+        &["decision"],
+        &["## Findings", "## Gaps"],
+    ),
+];
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowCategoryRecord {
@@ -126,6 +257,31 @@ pub struct WorkflowStageRetryPolicyRecord {
     pub on_fail_feedback_to: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowArtifactContractRecord {
+    pub artifact_type: String,
+    pub label: String,
+    pub description: String,
+    pub required_frontmatter_fields: Vec<String>,
+    pub required_markdown_sections: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowProducedArtifactRecord {
+    #[serde(rename = "type", alias = "artifactType")]
+    pub artifact_type: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub summary: Option<String>,
+    #[serde(default, alias = "body", alias = "bodyMarkdown")]
+    pub body_markdown: Option<String>,
+    #[serde(default)]
+    pub frontmatter: serde_json::Map<String, serde_json::Value>,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowStageRecord {
@@ -137,6 +293,10 @@ pub struct WorkflowStageRecord {
     pub prompt_template_ref: Option<String>,
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
+    #[serde(default)]
+    pub input_contracts: Vec<WorkflowArtifactContractRecord>,
+    #[serde(default)]
+    pub output_contracts: Vec<WorkflowArtifactContractRecord>,
     pub needs_secrets: Vec<String>,
     pub vault_env_bindings: Vec<VaultAccessBindingRequest>,
     pub retry_policy: Option<WorkflowStageRetryPolicyRecord>,
@@ -232,6 +392,10 @@ pub struct ResolvedWorkflowStageRecord {
     pub default_policy_json: String,
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
+    #[serde(default)]
+    pub input_contracts: Vec<WorkflowArtifactContractRecord>,
+    #[serde(default)]
+    pub output_contracts: Vec<WorkflowArtifactContractRecord>,
     pub needs_secrets: Vec<String>,
     pub vault_env_bindings: Vec<VaultAccessBindingRequest>,
     pub retry_policy: Option<WorkflowStageRetryPolicyRecord>,
@@ -277,6 +441,13 @@ pub struct WorkflowRunStageRecord {
     pub completion_message_type: Option<String>,
     pub completion_summary: Option<String>,
     pub completion_context_json: String,
+    pub produced_artifacts: Vec<WorkflowProducedArtifactRecord>,
+    pub artifact_validation_status: Option<String>,
+    pub artifact_validation_error: Option<String>,
+    pub retry_source_stage_name: Option<String>,
+    pub retry_feedback_summary: Option<String>,
+    pub retry_feedback_context_json: String,
+    pub retry_requested_at: Option<String>,
     pub failure_reason: Option<String>,
     pub created_at: String,
     pub started_at: Option<String>,
@@ -381,6 +552,23 @@ pub struct RecordWorkflowStageResultInput {
     pub completion_message_type: String,
     pub completion_summary: Option<String>,
     pub completion_context_json: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowStageRetryDispatchRecord {
+    pub source_stage_name: String,
+    pub target_stage_name: String,
+    pub next_attempt: i64,
+    pub max_attempts: i64,
+    pub feedback_summary: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordWorkflowStageResultOutput {
+    pub run: WorkflowRunRecord,
+    pub retry: Option<WorkflowStageRetryDispatchRecord>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -927,8 +1115,16 @@ pub fn mark_workflow_stage_dispatched(
                 agent_name = ?3,
                 thread_id = ?4,
                 directive_message_id = ?5,
+                response_message_id = NULL,
                 status = 'running',
-                started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+                completion_message_type = NULL,
+                completion_summary = NULL,
+                completion_context_json = '{}',
+                artifact_validation_status = NULL,
+                artifact_validation_error = NULL,
+                failure_reason = NULL,
+                started_at = CURRENT_TIMESTAMP,
+                completed_at = NULL,
                 updated_at = CURRENT_TIMESTAMP
             WHERE run_id = ?6 AND stage_name = ?7
             ",
@@ -973,7 +1169,7 @@ pub fn mark_workflow_stage_dispatched(
 pub fn record_workflow_stage_result(
     connection: &Connection,
     input: &RecordWorkflowStageResultInput,
-) -> Result<WorkflowRunRecord, String> {
+) -> Result<RecordWorkflowStageResultOutput, String> {
     let run = load_workflow_run_for_project(connection, input.project_id, input.run_id)?;
     let stage = run
         .stages
@@ -997,80 +1193,271 @@ pub fn record_workflow_stage_result(
         .map(normalize_completion_context_json)
         .transpose()?
         .unwrap_or_else(|| "{}".to_string());
+    let produced_artifacts = parse_produced_artifacts_from_context(&completion_context_json)?;
     let completion_summary = input
         .completion_summary
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned);
+    let (artifact_validation_status, artifact_validation_error) =
+        validate_stage_artifact_outputs(&stage.resolved_stage, &produced_artifacts);
+    let completion_message_type = if completion_message_type == "complete"
+        && matches!(
+            artifact_validation_status.as_deref(),
+            Some("invalid") | Some("unreported")
+        )
+    {
+        "produced_invalid_artifact".to_string()
+    } else {
+        completion_message_type
+    };
     let (stage_status, run_status, failure_reason) = if completion_message_type == "complete" {
         if stage.stage_ordinal == run.resolved_workflow.stages.len() as i64 {
-            ("completed", "completed", None)
+            ("completed".to_string(), "completed".to_string(), None)
         } else {
-            ("completed", "running", None)
+            ("completed".to_string(), "running".to_string(), None)
         }
     } else {
-        ("blocked", "blocked", completion_summary.clone())
+        (
+            "blocked".to_string(),
+            "blocked".to_string(),
+            artifact_validation_error
+                .clone()
+                .or_else(|| completion_summary.clone()),
+        )
     };
+
+    connection
+        .execute_batch("BEGIN IMMEDIATE")
+        .map_err(|error| format!("failed to begin workflow stage result transaction: {error}"))?;
+
+    let stage_result = (|| {
+        connection
+            .execute(
+                "
+                UPDATE workflow_run_stages
+                SET response_message_id = ?1,
+                    status = ?2,
+                    completion_message_type = ?3,
+                    completion_summary = ?4,
+                    completion_context_json = ?5,
+                    artifact_validation_status = ?6,
+                    artifact_validation_error = ?7,
+                    retry_source_stage_name = NULL,
+                    retry_feedback_summary = NULL,
+                    retry_feedback_context_json = '{}',
+                    retry_requested_at = NULL,
+                    failure_reason = ?8,
+                    completed_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE run_id = ?9 AND stage_name = ?10
+                ",
+                params![
+                    input.response_message_id,
+                    stage_status,
+                    completion_message_type,
+                    completion_summary,
+                    completion_context_json,
+                    artifact_validation_status,
+                    artifact_validation_error,
+                    failure_reason,
+                    input.run_id,
+                    input.stage_name,
+                ],
+            )
+            .map_err(|error| {
+                format!(
+                    "failed to record workflow stage result for '{}' on run #{}: {error}",
+                    input.stage_name, input.run_id
+                )
+            })?;
+
+        let retry = if matches!(
+            completion_message_type.as_str(),
+            "blocked" | "produced_invalid_artifact"
+        ) {
+            maybe_prepare_workflow_stage_retry(
+                connection,
+                &run,
+                &stage,
+                completion_summary
+                    .clone()
+                    .or_else(|| failure_reason.clone()),
+                &completion_context_json,
+            )?
+        } else {
+            None
+        };
+
+        if retry.is_none() {
+            let run_completed = run_status == "completed";
+            connection
+                .execute(
+                    "
+                    UPDATE workflow_runs
+                    SET status = ?1,
+                        failure_reason = ?2,
+                        completed_at = CASE WHEN ?3 THEN CURRENT_TIMESTAMP ELSE completed_at END,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?4
+                    ",
+                    params![
+                        run_status,
+                        failure_reason,
+                        run_completed as i64,
+                        input.run_id
+                    ],
+                )
+                .map_err(|error| {
+                    format!(
+                        "failed to update workflow run #{} after stage result: {error}",
+                        input.run_id
+                    )
+                })?;
+        }
+
+        let updated_run = load_workflow_run_by_id(connection, input.run_id)?;
+        Ok(RecordWorkflowStageResultOutput {
+            run: updated_run,
+            retry,
+        })
+    })();
+
+    match stage_result {
+        Ok(output) => {
+            connection
+                .execute_batch("COMMIT")
+                .map_err(|error| format!("failed to commit workflow stage result: {error}"))?;
+            Ok(output)
+        }
+        Err(error) => {
+            let _ = connection.execute_batch("ROLLBACK");
+            Err(error)
+        }
+    }
+}
+
+fn maybe_prepare_workflow_stage_retry(
+    connection: &Connection,
+    run: &WorkflowRunRecord,
+    stage: &WorkflowRunStageRecord,
+    feedback_summary: Option<String>,
+    feedback_context_json: &str,
+) -> Result<Option<WorkflowStageRetryDispatchRecord>, String> {
+    let Some(retry_policy) = stage.resolved_stage.retry_policy.as_ref() else {
+        return Ok(None);
+    };
+    if stage.attempt >= retry_policy.max_attempts {
+        return Ok(None);
+    }
+
+    let target_stage_name = retry_policy
+        .on_fail_feedback_to
+        .as_deref()
+        .unwrap_or(stage.stage_name.as_str())
+        .to_string();
+    let Some(target_stage) = run
+        .stages
+        .iter()
+        .find(|candidate| candidate.stage_name == target_stage_name)
+    else {
+        return Err(format!(
+            "workflow run #{} stage '{}' cannot retry because target stage '{}' does not exist",
+            run.id, stage.stage_name, target_stage_name
+        ));
+    };
+    if target_stage.stage_ordinal > stage.stage_ordinal {
+        return Err(format!(
+            "workflow run #{} stage '{}' cannot retry to later stage '{}'",
+            run.id, stage.stage_name, target_stage_name
+        ));
+    }
 
     connection
         .execute(
             "
             UPDATE workflow_run_stages
-            SET response_message_id = ?1,
-                status = ?2,
-                completion_message_type = ?3,
-                completion_summary = ?4,
-                completion_context_json = ?5,
-                failure_reason = ?6,
-                completed_at = CURRENT_TIMESTAMP,
+            SET status = 'pending',
+                session_id = NULL,
+                agent_name = NULL,
+                thread_id = NULL,
+                directive_message_id = NULL,
+                response_message_id = NULL,
+                completion_message_type = NULL,
+                completion_summary = NULL,
+                completion_context_json = '{}',
+                artifact_validation_status = NULL,
+                artifact_validation_error = NULL,
+                retry_source_stage_name = CASE
+                  WHEN stage_name = ?1 THEN ?2
+                  ELSE NULL
+                END,
+                retry_feedback_summary = CASE
+                  WHEN stage_name = ?1 THEN ?3
+                  ELSE NULL
+                END,
+                retry_feedback_context_json = CASE
+                  WHEN stage_name = ?1 THEN ?4
+                  ELSE '{}'
+                END,
+                retry_requested_at = CASE
+                  WHEN stage_name = ?1 THEN CURRENT_TIMESTAMP
+                  ELSE NULL
+                END,
+                failure_reason = NULL,
+                attempt = CASE
+                  WHEN stage_ordinal >= ?5 AND stage_ordinal <= ?6 THEN attempt + 1
+                  ELSE attempt
+                END,
+                started_at = NULL,
+                completed_at = NULL,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE run_id = ?7 AND stage_name = ?8
+            WHERE run_id = ?7 AND stage_ordinal >= ?5
             ",
             params![
-                input.response_message_id,
-                stage_status,
-                completion_message_type,
-                completion_summary,
-                completion_context_json,
-                failure_reason,
-                input.run_id,
-                input.stage_name,
+                target_stage_name,
+                stage.stage_name,
+                feedback_summary,
+                feedback_context_json,
+                target_stage.stage_ordinal,
+                stage.stage_ordinal,
+                run.id,
             ],
         )
         .map_err(|error| {
             format!(
-                "failed to record workflow stage result for '{}' on run #{}: {error}",
-                input.stage_name, input.run_id
+                "failed to schedule workflow retry from stage '{}' to '{}' on run #{}: {error}",
+                stage.stage_name, target_stage_name, run.id
             )
         })?;
 
-    let run_completed = run_status == "completed";
     connection
         .execute(
             "
             UPDATE workflow_runs
-            SET status = ?1,
-                failure_reason = ?2,
-                completed_at = CASE WHEN ?3 THEN CURRENT_TIMESTAMP ELSE completed_at END,
+            SET status = 'running',
+                failure_reason = NULL,
+                completed_at = NULL,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?4
+            WHERE id = ?1
             ",
-            params![
-                run_status,
-                failure_reason,
-                run_completed as i64,
-                input.run_id
-            ],
+            [run.id],
         )
         .map_err(|error| {
             format!(
-                "failed to update workflow run #{} after stage result: {error}",
-                input.run_id
+                "failed to update workflow run #{} after scheduling retry: {error}",
+                run.id
             )
         })?;
 
-    load_workflow_run_by_id(connection, input.run_id)
+    Ok(Some(WorkflowStageRetryDispatchRecord {
+        source_stage_name: stage.stage_name.clone(),
+        target_stage_name,
+        next_attempt: target_stage.attempt + 1,
+        max_attempts: retry_policy.max_attempts,
+        feedback_summary,
+    }))
 }
 
 pub fn fail_workflow_run(
@@ -1352,6 +1739,122 @@ fn list_yaml_files(directory: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(files)
 }
 
+fn artifact_contract_for(name: &str) -> Option<WorkflowArtifactContractRecord> {
+    BUILTIN_ARTIFACT_CONTRACTS
+        .iter()
+        .find(|(artifact_type, _, _, _, _)| *artifact_type == name)
+        .map(
+            |(
+                artifact_type,
+                label,
+                description,
+                required_frontmatter_fields,
+                required_markdown_sections,
+            )| WorkflowArtifactContractRecord {
+                artifact_type: (*artifact_type).to_string(),
+                label: (*label).to_string(),
+                description: (*description).to_string(),
+                required_frontmatter_fields: required_frontmatter_fields
+                    .iter()
+                    .map(|value| (*value).to_string())
+                    .collect(),
+                required_markdown_sections: required_markdown_sections
+                    .iter()
+                    .map(|value| (*value).to_string())
+                    .collect(),
+            },
+        )
+}
+
+fn output_artifact_contracts(
+    output_names: &[String],
+) -> Result<Vec<WorkflowArtifactContractRecord>, String> {
+    output_names
+        .iter()
+        .map(|name| {
+            artifact_contract_for(name)
+                .ok_or_else(|| format!("workflow artifact contract '{name}' is not registered"))
+        })
+        .collect()
+}
+
+fn input_artifact_contracts(
+    input_names: &[String],
+) -> Result<Vec<WorkflowArtifactContractRecord>, String> {
+    input_names
+        .iter()
+        .filter(|name| !WORKFLOW_RUNTIME_INPUTS.contains(&name.as_str()))
+        .map(|name| {
+            artifact_contract_for(name)
+                .ok_or_else(|| format!("workflow artifact contract '{name}' is not registered"))
+        })
+        .collect()
+}
+
+fn validate_stage_artifact_contracts(
+    workflow_slug: &str,
+    workflow_source: &str,
+    stages: &[WorkflowStageRecord],
+) -> Result<(), String> {
+    let stage_indexes = stages
+        .iter()
+        .enumerate()
+        .map(|(index, stage)| (stage.name.as_str(), index))
+        .collect::<HashMap<_, _>>();
+    let mut available_outputs = BTreeSet::new();
+
+    for (stage_index, stage) in stages.iter().enumerate() {
+        for input in &stage.inputs {
+            if WORKFLOW_RUNTIME_INPUTS.contains(&input.as_str()) {
+                continue;
+            }
+
+            if artifact_contract_for(input).is_none() {
+                return Err(format!(
+                    "workflow '{workflow_slug}' in {workflow_source} uses unknown input artifact '{input}' on stage '{}'",
+                    stage.name
+                ));
+            }
+
+            if !available_outputs.contains(input) {
+                return Err(format!(
+                    "workflow '{workflow_slug}' in {workflow_source} expects input artifact '{input}' on stage '{}' but no earlier stage produces it",
+                    stage.name
+                ));
+            }
+        }
+
+        for output in &stage.outputs {
+            if artifact_contract_for(output).is_none() {
+                return Err(format!(
+                    "workflow '{workflow_slug}' in {workflow_source} uses unknown output artifact '{output}' on stage '{}'",
+                    stage.name
+                ));
+            }
+            available_outputs.insert(output.clone());
+        }
+
+        if let Some(retry_policy) = stage.retry_policy.as_ref() {
+            if let Some(target_stage_name) = retry_policy.on_fail_feedback_to.as_deref() {
+                let Some(target_index) = stage_indexes.get(target_stage_name).copied() else {
+                    return Err(format!(
+                        "workflow '{workflow_slug}' in {workflow_source} sends retry feedback from stage '{}' to unknown stage '{}'",
+                        stage.name, target_stage_name
+                    ));
+                };
+                if target_index > stage_index {
+                    return Err(format!(
+                        "workflow '{workflow_slug}' in {workflow_source} sends retry feedback from stage '{}' to later stage '{}'; retry targets must be the current or an earlier stage",
+                        stage.name, target_stage_name
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn parse_workflow_definition(
     path: &Path,
     is_shipped: bool,
@@ -1455,6 +1958,8 @@ fn parse_workflow_definition(
             prompt_template_ref: normalize_optional(&stage.prompt_template_ref),
             inputs: normalize_string_list(&stage.inputs, "workflow inputs")?,
             outputs: normalize_string_list(&stage.outputs, "workflow outputs")?,
+            input_contracts: Vec::new(),
+            output_contracts: Vec::new(),
             needs_secrets: normalize_string_list(&stage.needs_secrets, "workflow secrets")?,
             vault_env_bindings: normalize_vault_binding_requests(
                 &stage.vault_env_bindings,
@@ -1463,6 +1968,12 @@ fn parse_workflow_definition(
             retry_policy,
             retry_summary,
         });
+    }
+
+    validate_stage_artifact_contracts(&slug, &path.display().to_string(), &stages)?;
+    for stage in &mut stages {
+        stage.input_contracts = input_artifact_contracts(&stage.inputs)?;
+        stage.output_contracts = output_artifact_contracts(&stage.outputs)?;
     }
 
     Ok(ParsedWorkflowDefinition {
@@ -2319,6 +2830,8 @@ fn resolve_effective_workflow(
                 .unwrap_or_else(|| "{}".to_string()),
             inputs: stage.inputs.clone(),
             outputs: stage.outputs.clone(),
+            input_contracts: stage.input_contracts.clone(),
+            output_contracts: stage.output_contracts.clone(),
             needs_secrets,
             vault_env_bindings,
             retry_policy,
@@ -2500,7 +3013,10 @@ fn load_workflow_run_stages(
                    pod_slug, pod_version, provider, model, worktree_id, session_id,
                    agent_name, thread_id, directive_message_id, response_message_id,
                    status, attempt, completion_message_type, completion_summary,
-                   completion_context_json, failure_reason, created_at, started_at,
+                   completion_context_json, artifact_validation_status,
+                   artifact_validation_error, retry_source_stage_name,
+                   retry_feedback_summary, retry_feedback_context_json,
+                   retry_requested_at, failure_reason, created_at, started_at,
                    completed_at, updated_at, resolved_stage_json
             FROM workflow_run_stages
             WHERE run_id = ?1
@@ -2532,12 +3048,27 @@ fn load_workflow_run_stages(
                 completion_message_type: row.get(17)?,
                 completion_summary: row.get(18)?,
                 completion_context_json: row.get(19)?,
-                failure_reason: row.get(20)?,
-                created_at: row.get(21)?,
-                started_at: row.get(22)?,
-                completed_at: row.get(23)?,
-                updated_at: row.get(24)?,
-                resolved_stage: parse_resolved_stage(row.get::<_, String>(25)?)
+                produced_artifacts: parse_produced_artifacts_from_context(
+                    &row.get::<_, String>(19)?,
+                )
+                .map_err(|error| {
+                    rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        error,
+                    )))
+                })?,
+                artifact_validation_status: row.get(20)?,
+                artifact_validation_error: row.get(21)?,
+                retry_source_stage_name: row.get(22)?,
+                retry_feedback_summary: row.get(23)?,
+                retry_feedback_context_json: row.get(24)?,
+                retry_requested_at: row.get(25)?,
+                failure_reason: row.get(26)?,
+                created_at: row.get(27)?,
+                started_at: row.get(28)?,
+                completed_at: row.get(29)?,
+                updated_at: row.get(30)?,
+                resolved_stage: parse_resolved_stage(row.get::<_, String>(31)?)
                     .map_err(rusqlite::Error::ToSqlConversionFailure)?,
             })
         })
@@ -2668,6 +3199,137 @@ fn normalize_completion_context_json(raw: &str) -> Result<String, String> {
     })
 }
 
+fn parse_produced_artifacts_from_context(
+    raw: &str,
+) -> Result<Vec<WorkflowProducedArtifactRecord>, String> {
+    let value = serde_json::from_str::<serde_json::Value>(raw).map_err(|error| {
+        format!("workflow stage completion context must be valid JSON: {error}")
+    })?;
+    let Some(produced_artifacts) = value.as_object().and_then(|object| {
+        object
+            .get("producedArtifacts")
+            .or_else(|| object.get("produced_artifacts"))
+    }) else {
+        return Ok(Vec::new());
+    };
+
+    serde_json::from_value::<Vec<WorkflowProducedArtifactRecord>>(produced_artifacts.clone())
+        .map_err(|error| format!("workflow stage producedArtifacts must be a valid array: {error}"))
+}
+
+fn validate_stage_artifact_outputs(
+    stage: &ResolvedWorkflowStageRecord,
+    produced_artifacts: &[WorkflowProducedArtifactRecord],
+) -> (Option<String>, Option<String>) {
+    if stage.outputs.is_empty() {
+        return (Some("not_required".to_string()), None);
+    }
+
+    if produced_artifacts.is_empty() {
+        return (
+            Some("unreported".to_string()),
+            Some(format!(
+                "stage '{}' declared output artifacts ({}) but reported none in producedArtifacts",
+                stage.name,
+                stage.outputs.join(", ")
+            )),
+        );
+    }
+
+    let declared_outputs = stage.outputs.iter().cloned().collect::<BTreeSet<_>>();
+    let mut seen_types = BTreeSet::new();
+
+    for artifact in produced_artifacts {
+        let artifact_type = artifact.artifact_type.trim();
+        if artifact_type.is_empty() {
+            return (
+                Some("invalid".to_string()),
+                Some(format!(
+                    "stage '{}' reported an artifact with an empty type",
+                    stage.name
+                )),
+            );
+        }
+
+        if !declared_outputs.contains(artifact_type) {
+            return (
+                Some("invalid".to_string()),
+                Some(format!(
+                    "stage '{}' reported undeclared artifact '{}'; declared outputs are {}",
+                    stage.name,
+                    artifact_type,
+                    stage.outputs.join(", ")
+                )),
+            );
+        }
+
+        let Some(contract) = artifact_contract_for(artifact_type) else {
+            return (
+                Some("invalid".to_string()),
+                Some(format!(
+                    "stage '{}' reported artifact '{}' but no contract is registered for it",
+                    stage.name, artifact_type
+                )),
+            );
+        };
+
+        for required_field in &contract.required_frontmatter_fields {
+            let is_present = artifact
+                .frontmatter
+                .get(required_field)
+                .map(|value| match value {
+                    serde_json::Value::Null => false,
+                    serde_json::Value::String(text) => !text.trim().is_empty(),
+                    serde_json::Value::Array(values) => !values.is_empty(),
+                    serde_json::Value::Object(values) => !values.is_empty(),
+                    _ => true,
+                })
+                .unwrap_or(false);
+            if !is_present {
+                return (
+                    Some("invalid".to_string()),
+                    Some(format!(
+                        "artifact '{}' from stage '{}' is missing required frontmatter field '{}'",
+                        artifact_type, stage.name, required_field
+                    )),
+                );
+            }
+        }
+
+        let body_markdown = artifact.body_markdown.as_deref().unwrap_or_default();
+        for required_section in &contract.required_markdown_sections {
+            if !body_markdown.contains(required_section) {
+                return (
+                    Some("invalid".to_string()),
+                    Some(format!(
+                        "artifact '{}' from stage '{}' is missing required markdown section '{}'",
+                        artifact_type, stage.name, required_section
+                    )),
+                );
+            }
+        }
+
+        seen_types.insert(artifact_type.to_string());
+    }
+
+    let missing_outputs = declared_outputs
+        .difference(&seen_types)
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing_outputs.is_empty() {
+        return (
+            Some("invalid".to_string()),
+            Some(format!(
+                "stage '{}' did not report declared output artifacts: {}",
+                stage.name,
+                missing_outputs.join(", ")
+            )),
+        );
+    }
+
+    (Some("valid".to_string()), None)
+}
+
 fn resolve_project_workflow(
     slug: &str,
     detached_yaml: Option<&str>,
@@ -2754,7 +3416,7 @@ fn parse_workflow_yaml_for_detached(yaml: &str) -> Result<ParsedWorkflowDefiniti
     let kind = normalize_required(&parsed.kind, "workflow kind")?.to_string();
     let categories = normalize_category_list(&parsed.categories)?;
     let tags = normalize_string_list(&parsed.tags, "workflow tags")?;
-    let stages = parsed
+    let mut stages = parsed
         .stages
         .into_iter()
         .map(|stage| {
@@ -2784,6 +3446,8 @@ fn parse_workflow_yaml_for_detached(yaml: &str) -> Result<ParsedWorkflowDefiniti
                 prompt_template_ref: normalize_optional(&stage.prompt_template_ref),
                 inputs: normalize_string_list(&stage.inputs, "workflow inputs")?,
                 outputs: normalize_string_list(&stage.outputs, "workflow outputs")?,
+                input_contracts: Vec::new(),
+                output_contracts: Vec::new(),
                 needs_secrets: normalize_string_list(&stage.needs_secrets, "workflow secrets")?,
                 vault_env_bindings: normalize_vault_binding_requests(
                     &stage.vault_env_bindings,
@@ -2801,6 +3465,11 @@ fn parse_workflow_yaml_for_detached(yaml: &str) -> Result<ParsedWorkflowDefiniti
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
+    validate_stage_artifact_contracts(&slug, "detached workflow snapshot", &stages)?;
+    for stage in &mut stages {
+        stage.input_contracts = input_artifact_contracts(&stage.inputs)?;
+        stage.output_contracts = output_artifact_contracts(&stage.outputs)?;
+    }
     let pod_refs = stages
         .iter()
         .filter_map(|stage| stage.pod_ref.clone())
@@ -3113,6 +3782,12 @@ mod tests {
                   completion_message_type TEXT,
                   completion_summary TEXT,
                   completion_context_json TEXT NOT NULL DEFAULT '{}',
+                  artifact_validation_status TEXT,
+                  artifact_validation_error TEXT,
+                  retry_source_stage_name TEXT,
+                  retry_feedback_summary TEXT,
+                  retry_feedback_context_json TEXT NOT NULL DEFAULT '{}',
+                  retry_requested_at TEXT,
                   failure_reason TEXT,
                   resolved_stage_json TEXT NOT NULL DEFAULT '{}',
                   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -3444,6 +4119,260 @@ mod tests {
 
         assert!(error.contains("generator.sonnet.standard"));
         assert!(error.contains("secret_scopes"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolved_workflow_stages_include_artifact_contracts() {
+        let root = temp_dir("run-artifact-contracts");
+        let connection = create_connection();
+        sync_library_catalog(&connection, &root).expect("workflow sync should succeed");
+        adopt_feature_dev(&connection);
+
+        let run = start_workflow_run(
+            &connection,
+            &StartWorkflowRunInput {
+                project_id: 1,
+                workflow_slug: "feature-dev".to_string(),
+                root_work_item_id: 1,
+                root_worktree_id: None,
+            },
+        )
+        .expect("workflow run should start");
+
+        let plan_stage = run
+            .stages
+            .iter()
+            .find(|stage| stage.stage_name == "plan")
+            .expect("plan stage should exist");
+        assert_eq!(plan_stage.resolved_stage.output_contracts.len(), 2);
+        assert_eq!(
+            plan_stage.resolved_stage.output_contracts[0].artifact_type,
+            "plan_doc"
+        );
+        assert!(plan_stage.resolved_stage.output_contracts[0]
+            .required_frontmatter_fields
+            .contains(&"deliverables".to_string()));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn invalid_artifact_contract_blocks_stage_completion() {
+        let root = temp_dir("run-invalid-artifact");
+        let connection = create_connection();
+        sync_library_catalog(&connection, &root).expect("workflow sync should succeed");
+        adopt_feature_dev(&connection);
+
+        let run = start_workflow_run(
+            &connection,
+            &StartWorkflowRunInput {
+                project_id: 1,
+                workflow_slug: "feature-dev".to_string(),
+                root_work_item_id: 1,
+                root_worktree_id: None,
+            },
+        )
+        .expect("workflow run should start");
+
+        let output = record_workflow_stage_result(
+            &connection,
+            &RecordWorkflowStageResultInput {
+                project_id: 1,
+                run_id: run.id,
+                stage_name: "plan".to_string(),
+                response_message_id: Some(42),
+                completion_message_type: "complete".to_string(),
+                completion_summary: Some("planned".to_string()),
+                completion_context_json: Some(
+                    serde_json::json!({
+                        "workflowRunId": run.id,
+                        "stageName": "plan",
+                        "producedArtifacts": [
+                            {
+                                "type": "plan_doc",
+                                "summary": "missing required sections and frontmatter",
+                                "frontmatter": {
+                                    "deliverables": ["scope"]
+                                },
+                                "bodyMarkdown": "## Scope\nLimited scope only"
+                            },
+                            {
+                                "type": "sprint_list",
+                                "summary": "missing sprint breakdown section",
+                                "frontmatter": {
+                                    "sprints": ["one"]
+                                },
+                                "bodyMarkdown": "No heading"
+                            }
+                        ]
+                    })
+                    .to_string(),
+                ),
+            },
+        )
+        .expect("stage result should persist");
+
+        assert!(output.retry.is_none());
+        assert_eq!(output.run.status, "blocked");
+        let plan_stage = output
+            .run
+            .stages
+            .iter()
+            .find(|stage| stage.stage_name == "plan")
+            .expect("plan stage should exist");
+        assert_eq!(
+            plan_stage.completion_message_type.as_deref(),
+            Some("produced_invalid_artifact")
+        );
+        assert_eq!(
+            plan_stage.artifact_validation_status.as_deref(),
+            Some("invalid")
+        );
+        assert!(plan_stage
+            .artifact_validation_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("required"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn missing_reported_artifacts_block_stage_completion() {
+        let root = temp_dir("run-missing-artifacts");
+        let connection = create_connection();
+        sync_library_catalog(&connection, &root).expect("workflow sync should succeed");
+        adopt_feature_dev(&connection);
+
+        let run = start_workflow_run(
+            &connection,
+            &StartWorkflowRunInput {
+                project_id: 1,
+                workflow_slug: "feature-dev".to_string(),
+                root_work_item_id: 1,
+                root_worktree_id: None,
+            },
+        )
+        .expect("workflow run should start");
+
+        let output = record_workflow_stage_result(
+            &connection,
+            &RecordWorkflowStageResultInput {
+                project_id: 1,
+                run_id: run.id,
+                stage_name: "plan".to_string(),
+                response_message_id: Some(43),
+                completion_message_type: "complete".to_string(),
+                completion_summary: Some("planned".to_string()),
+                completion_context_json: Some(
+                    serde_json::json!({
+                        "workflowRunId": run.id,
+                        "stageName": "plan"
+                    })
+                    .to_string(),
+                ),
+            },
+        )
+        .expect("stage result should persist");
+
+        assert_eq!(output.run.status, "blocked");
+        let plan_stage = output
+            .run
+            .stages
+            .iter()
+            .find(|stage| stage.stage_name == "plan")
+            .expect("plan stage should exist");
+        assert_eq!(
+            plan_stage.completion_message_type.as_deref(),
+            Some("produced_invalid_artifact")
+        );
+        assert_eq!(
+            plan_stage.artifact_validation_status.as_deref(),
+            Some("unreported")
+        );
+        assert!(plan_stage
+            .artifact_validation_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("reported none"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn blocked_evaluator_result_schedules_retry_feedback_to_generate_stage() {
+        let root = temp_dir("run-eval-retry");
+        let connection = create_connection();
+        sync_library_catalog(&connection, &root).expect("workflow sync should succeed");
+        adopt_feature_dev(&connection);
+
+        let run = start_workflow_run(
+            &connection,
+            &StartWorkflowRunInput {
+                project_id: 1,
+                workflow_slug: "feature-dev".to_string(),
+                root_work_item_id: 1,
+                root_worktree_id: None,
+            },
+        )
+        .expect("workflow run should start");
+
+        let output = record_workflow_stage_result(
+            &connection,
+            &RecordWorkflowStageResultInput {
+                project_id: 1,
+                run_id: run.id,
+                stage_name: "evaluate".to_string(),
+                response_message_id: Some(77),
+                completion_message_type: "blocked".to_string(),
+                completion_summary: Some("generator missed acceptance criteria".to_string()),
+                completion_context_json: Some(
+                    serde_json::json!({
+                        "workflowRunId": run.id,
+                        "stageName": "evaluate",
+                        "reason": "generator missed acceptance criteria"
+                    })
+                    .to_string(),
+                ),
+            },
+        )
+        .expect("blocked result should persist and schedule retry");
+
+        let retry = output.retry.expect("retry should be scheduled");
+        assert_eq!(retry.source_stage_name, "evaluate");
+        assert_eq!(retry.target_stage_name, "generate");
+        assert_eq!(retry.next_attempt, 2);
+        assert_eq!(retry.max_attempts, 3);
+        assert_eq!(output.run.status, "running");
+
+        let generate_stage = output
+            .run
+            .stages
+            .iter()
+            .find(|stage| stage.stage_name == "generate")
+            .expect("generate stage should exist");
+        assert_eq!(generate_stage.status, "pending");
+        assert_eq!(generate_stage.attempt, 2);
+        assert_eq!(
+            generate_stage.retry_source_stage_name.as_deref(),
+            Some("evaluate")
+        );
+        assert!(generate_stage
+            .retry_feedback_summary
+            .as_deref()
+            .unwrap_or_default()
+            .contains("acceptance criteria"));
+
+        let evaluate_stage = output
+            .run
+            .stages
+            .iter()
+            .find(|stage| stage.stage_name == "evaluate")
+            .expect("evaluate stage should exist");
+        assert_eq!(evaluate_stage.status, "pending");
+        assert_eq!(evaluate_stage.attempt, 2);
 
         let _ = fs::remove_dir_all(root);
     }

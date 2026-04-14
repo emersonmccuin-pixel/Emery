@@ -88,6 +88,12 @@ struct MaterializedVaultFileBinding {
     path: PathBuf,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SdkClaudeAuthConfig {
+    mode: &'static str,
+    config_dir: Option<String>,
+}
+
 #[derive(Clone)]
 struct SessionOutputRedactionRule {
     label: String,
@@ -568,6 +574,8 @@ impl SessionRegistry {
         })?;
 
         let app_settings = app_state.get_app_settings()?;
+        let sdk_claude_auth_config = (profile.provider == "claude_agent_sdk")
+            .then(|| resolve_sdk_claude_auth_config(&app_settings));
         let mut parsed_launch_env = match parse_launch_profile_env(&profile.env_json) {
             Ok(parsed) => parsed,
             Err(error) => {
@@ -654,6 +662,17 @@ impl SessionRegistry {
                 return Err(error.into());
             }
         };
+
+        if let Some(auth_config) = sdk_claude_auth_config.as_ref() {
+            log::info!(
+                "claude sdk auth configured — session_id={} project_id={} worktree_id={:?} auth_mode={} config_dir={}",
+                session_record.id,
+                project.id,
+                input.worktree_id,
+                auth_config.mode,
+                auth_config.config_dir.as_deref().unwrap_or("default")
+            );
+        }
 
         let command = match build_launch_command(
             &project,
@@ -932,6 +951,29 @@ impl SessionRegistry {
                 "requestedBy": source,
             }),
         );
+
+        if let Some(auth_config) = sdk_claude_auth_config.as_ref() {
+            try_append_session_event(
+                app_state,
+                project.id,
+                Some(session_record.id),
+                "session.claude_sdk_auth_configured",
+                Some("session"),
+                Some(session_record.id),
+                "supervisor_runtime",
+                &json!({
+                    "projectId": project.id,
+                    "worktreeId": input.worktree_id,
+                    "launchProfileId": profile.id,
+                    "profileLabel": session.profile_label.clone(),
+                    "provider": "claude_agent_sdk",
+                    "sessionId": session_record.id,
+                    "authMode": auth_config.mode,
+                    "configDir": auth_config.config_dir.clone(),
+                    "requestedBy": source,
+                }),
+            );
+        }
 
         if vault_env_binding_count > 0 {
             try_append_session_event(
@@ -1718,6 +1760,24 @@ fn is_locked_sdk_auth_env_key(key: &str) -> bool {
         .any(|candidate| candidate.eq_ignore_ascii_case(key))
 }
 
+fn resolve_sdk_claude_auth_config(app_settings: &crate::db::AppSettings) -> SdkClaudeAuthConfig {
+    let config_dir = app_settings
+        .sdk_claude_config_dir
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    SdkClaudeAuthConfig {
+        mode: if config_dir.is_some() {
+            "dedicated_config_dir"
+        } else {
+            "default_home"
+        },
+        config_dir,
+    }
+}
+
 fn apply_sdk_claude_auth_env(
     command: &mut CommandBuilder,
     app_settings: &crate::db::AppSettings,
@@ -1726,12 +1786,9 @@ fn apply_sdk_claude_auth_env(
         command.env_remove(key);
     }
 
-    if let Some(config_dir) = app_settings
-        .sdk_claude_config_dir
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
+    let auth_config = resolve_sdk_claude_auth_config(app_settings);
+
+    if let Some(config_dir) = auth_config.config_dir.as_deref() {
         fs::create_dir_all(config_dir).map_err(|error| {
             format!("failed to prepare Claude SDK config directory {config_dir}: {error}")
         })?;
@@ -3938,6 +3995,26 @@ mod tests {
         assert!(!argv.contains(&"--append-system-prompt".to_string()));
         assert!(!argv.contains(&"do not replay this".to_string()));
         assert!(argv.contains(&"--mcp-config".to_string()));
+    }
+
+    #[test]
+    fn resolve_sdk_claude_auth_config_prefers_dedicated_personal_config_dir() {
+        let app_settings = test_app_settings();
+        let auth_config = resolve_sdk_claude_auth_config(&app_settings);
+
+        assert_eq!(auth_config.mode, "dedicated_config_dir");
+        assert_eq!(auth_config.config_dir, app_settings.sdk_claude_config_dir);
+    }
+
+    #[test]
+    fn resolve_sdk_claude_auth_config_falls_back_to_default_home() {
+        let mut app_settings = test_app_settings();
+        app_settings.sdk_claude_config_dir = None;
+
+        let auth_config = resolve_sdk_claude_auth_config(&app_settings);
+
+        assert_eq!(auth_config.mode, "default_home");
+        assert_eq!(auth_config.config_dir, None);
     }
 
     #[test]

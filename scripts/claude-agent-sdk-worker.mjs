@@ -3,6 +3,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk'
 
 const INBOX_BATCH_LIMIT = 20
 const INBOX_WAIT_TIMEOUT_MS = 30_000
+const WORKER_HEARTBEAT_INTERVAL_MS = 25_000
 const MAX_AUTO_FORWARD_TEXT_LENGTH = 4000
 const BROKER_MESSAGE_SENTINEL = 'PROJECT_COMMANDER_MESSAGE'
 const PROJECT_COMMANDER_TOOL_SELECTORS = [
@@ -135,6 +136,69 @@ async function postSupervisor(pathname, payload) {
   }
 
   return envelope.data
+}
+
+function formatError(error) {
+  return error instanceof Error ? error.message : String(error)
+}
+
+async function postSupervisorBestEffort(pathname, payload, label) {
+  try {
+    return await postSupervisor(pathname, payload)
+  } catch (error) {
+    writeHostLine(`${label} failed: ${formatError(error)}`)
+    return null
+  }
+}
+
+async function publishStatus(state, detail = null, options = {}) {
+  return postSupervisorBestEffort(
+    '/session/status',
+    {
+      state,
+      detail,
+      threadId: options.threadId ?? null,
+      providerSessionId: config.providerSessionId,
+      contextJson: options.contextJson ?? null,
+    },
+    `worker status ${state}`,
+  )
+}
+
+async function heartbeat(detail = null, options = {}) {
+  return postSupervisorBestEffort(
+    '/session/heartbeat',
+    {
+      detail,
+      contextJson: options.contextJson ?? null,
+    },
+    'worker heartbeat',
+  )
+}
+
+async function markDone(summary, options = {}) {
+  return postSupervisorBestEffort(
+    '/session/mark-done',
+    {
+      summary,
+      threadId: options.threadId ?? null,
+      providerSessionId: config.providerSessionId,
+      contextJson: options.contextJson ?? null,
+    },
+    'worker done marker',
+  )
+}
+
+async function withWorkerHeartbeat(detail, options, callback) {
+  const timer = setInterval(() => {
+    void heartbeat(detail, options)
+  }, WORKER_HEARTBEAT_INTERVAL_MS)
+
+  try {
+    return await callback()
+  } finally {
+    clearInterval(timer)
+  }
 }
 
 async function waitForInbox() {
@@ -629,21 +693,51 @@ async function ensureDispatcherReply(originalMessage, previousReplyId, firstTurn
 async function main() {
   process.chdir(config.rootPath)
   writeHostLine(`Watching inbox for ${config.agentName} in ${config.rootPath}`)
+  await publishStatus('launching', 'Bootstrapping Claude Agent SDK worker host.', {
+    contextJson: {
+      resumeExistingSession: config.resumeExistingSession,
+      model: config.model,
+    },
+  })
 
   let hasExecutedTurn = config.resumeExistingSession
   let idleLogged = false
 
   if (!config.resumeExistingSession) {
     writeHostLine('Loading Project Commander MCP tools into the fresh SDK session.')
-    await runTurn(buildToolBootstrapPrompt(), false)
+    await publishStatus('busy', 'Loading Project Commander MCP tools.', {
+      contextJson: { bootstrap: true },
+    })
+    await withWorkerHeartbeat(
+      'Loading Project Commander MCP tools.',
+      {
+        contextJson: { bootstrap: true },
+      },
+      () => runTurn(buildToolBootstrapPrompt(), false),
+    )
     hasExecutedTurn = true
   }
 
   if (config.startupPrompt) {
     writeHostLine('Processing startup prompt.')
-    await runTurn(config.startupPrompt, hasExecutedTurn || config.resumeExistingSession)
+    await publishStatus('busy', 'Processing startup prompt.', {
+      contextJson: { startupPrompt: true },
+    })
+    await withWorkerHeartbeat(
+      'Processing startup prompt.',
+      {
+        contextJson: { startupPrompt: true },
+      },
+      () => runTurn(config.startupPrompt, hasExecutedTurn || config.resumeExistingSession),
+    )
     hasExecutedTurn = true
   }
+
+  await publishStatus('ready', 'Worker host ready and waiting for dispatcher directives.', {
+    contextJson: {
+      resumeExistingSession: config.resumeExistingSession,
+    },
+  })
 
   while (true) {
     const waitResult = await waitForInbox()
@@ -652,6 +746,9 @@ async function main() {
     if (inbox.length === 0) {
       if (!idleLogged && waitResult.timedOut) {
         writeHostLine('Idle. Waiting for dispatcher directives...')
+        await publishStatus('idle', 'Waiting for dispatcher directives.', {
+          contextJson: { waitTimedOut: true },
+        })
         idleLogged = true
       }
       continue
@@ -662,15 +759,44 @@ async function main() {
     const prompt = formatQueuedPrompt(nextMessage)
     const previousReplyId = await fetchDispatcherReplyMarkers(nextMessage)
     renderQueuedPrompt(nextMessage)
-    const turnResult = await runTurn(prompt, hasExecutedTurn || config.resumeExistingSession)
+    await publishStatus('busy', `Handling dispatcher directive ${nextMessage.id}.`, {
+      threadId: nextMessage.threadId,
+      contextJson: {
+        dispatcherMessageId: nextMessage.id,
+        dispatcherMessageType: nextMessage.messageType,
+        fromAgent: nextMessage.fromAgent,
+      },
+    })
+    const turnResult = await withWorkerHeartbeat(
+      `Processing dispatcher directive ${nextMessage.id}.`,
+      {
+        contextJson: {
+          dispatcherMessageId: nextMessage.id,
+        },
+      },
+      () => runTurn(prompt, hasExecutedTurn || config.resumeExistingSession),
+    )
     await ensureDispatcherReply(nextMessage, previousReplyId, turnResult)
     await ackMessages([nextMessage.id])
+    await markDone(`Processed dispatcher directive ${nextMessage.id}.`, {
+      threadId: nextMessage.threadId,
+      contextJson: {
+        dispatcherMessageId: nextMessage.id,
+        dispatcherMessageType: nextMessage.messageType,
+      },
+    })
+    await publishStatus('ready', 'Waiting for dispatcher directives.')
     hasExecutedTurn = true
   }
 }
 
-main().catch((error) => {
+main().catch(async (error) => {
   ensureTrailingNewline()
+  await publishStatus('failed', formatError(error), {
+    contextJson: {
+      phase: 'worker_main',
+    },
+  })
   process.stderr.write(
     `[Project Commander SDK] ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`,
   )

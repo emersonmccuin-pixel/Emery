@@ -33,6 +33,8 @@ Delivered now:
 - Workflow stages and project overrides may now declare explicit vault env bindings; run resolution freezes them, validates them against `needs_secrets` plus the resolved pod's `secret_scopes`, and supervisor stage launch passes them through the existing session-start vault resolver/audit/scrubber path.
 - Vault bindings may now choose `delivery=file` for tools that expect a credential file path; the session host materializes those secrets into per-session runtime files and still redacts the raw values from output/log artifacts.
 - Workflow stage dispatch now reuses the existing managed worktree + session host + supervisor broker path: each stage launches a fresh session on the managed worktree, sends a directive through the broker, waits on threaded replies, persists stage/run status, and tears the session down before the next stage.
+- The shipped artifact-type registry now covers the built-in workflow artifact contracts, resolved stages carry those contract requirements into the Workflows/Runs UI, and workflow-definition validation rejects unknown or impossible stage handoffs before a run starts.
+- Stage completion may now report `contextJson.producedArtifacts`; the runtime validates those artifacts against the declared contract at the stage boundary, persists validation status on the stage row, and auto-schedules retry feedback to the configured earlier stage when a blocked/invalid result still has attempts remaining.
 - A lazy-loaded `Settings -> Vault` surface with trusted-UI deposit / rotate / delete flows.
 - Stronghold-backed vault value storage plus SQLite metadata/audit tables (`vault_entries`, `vault_audit_events`) and a redacted frontend invoke seam for secret writes.
 - Launch-profile `env_json` can now declare vault-backed env bindings that the supervisor resolves at session start with scope checks, audit rows, and PTY/session-output scrubbing.
@@ -42,7 +44,7 @@ Not delivered yet:
 - Visual workflow builder/editor UI.
 - Egress proxying, integration-template execution, and brokered secret delivery beyond env-based session injection.
 - Rich template-driven non-env delivery modes beyond the shipped env/file session-launch path.
-- Artifact-contract validation, negotiated sprint contracts, and generator/evaluator retry loops.
+- Negotiated sprint contracts, richer artifact persistence/export beyond `contextJson.producedArtifacts`, and a broader generator/evaluator retry loop product surface.
 - Repo-backed override YAML files and an override editor UI; the current implementation ships the override seam as SQLite-backed `project_workflow_overrides` rows.
 
 Rule for future work: build on the shipped catalog/adoption foundation instead of bypassing it with ad hoc per-project configs or a second orchestration store.
@@ -332,9 +334,9 @@ Core artifact types:
 - `merge_record` — commit SHAs, worktree cleanup confirmation, downstream invalidation notes.
 - `adr`, `research_brief`, `data_analysis_report`, `doc_audit`, `doc_patchset` — for non-coding workflows.
 
-Artifacts persist to both SQLite (indexed metadata) and the filesystem (`artifacts/<callsign>/<type>-<id>.md`) so they are diff-able and human-readable.
+Current shipped seam: the built-in artifact registry lives in the backend, resolved stages expose the contract metadata directly in run/workflow state, and stage completion may report `contextJson.producedArtifacts` entries for validation + observability. The dedicated `artifact_types` / `artifacts` persistence tables and filesystem export path remain a later phase.
 
-**Contract validation** runs at stage boundaries: if the produced artifact fails schema, the stage is marked `produced_invalid_artifact` and kicked back with a targeted error — this is cheap and catches most "agent declared done but didn't actually do it" failures before an evaluator ever runs.
+**Contract validation** now runs at stage boundaries when a stage reports `producedArtifacts`: the runtime checks that declared outputs are present, required frontmatter keys exist, and required markdown sections are present. Invalid output promotes a nominal `complete` reply to `produced_invalid_artifact`, surfaces the error in the run observability view, and can trigger a retry reset through the stage's existing `retry_policy`.
 
 ## Sprint Contract Negotiation
 
@@ -350,7 +352,7 @@ This is the single cheapest quality improvement the article identifies. It also 
 
 - Evaluator runs on a **sibling worktree** or on a read-only view of the generator's worktree; it has its own MCP access to diff the branch.
 - Scores each rubric criterion from the contract. Hard thresholds cause sprint fail regardless of aggregate.
-- On fail, produces targeted feedback list tied to generator actions. Generator restarts with contract + prior implementation report + eval report; max N attempts (default 3).
+- On fail, produces targeted feedback list tied to generator actions. The shipped runtime now persists that feedback on the configured retry target stage, resets the target plus downstream stages back to `pending`, increments attempts, and re-dispatches through the same supervisor/session-host loop. Generator restarts with contract + prior implementation report + eval report; max N attempts (default 3).
 - On hard fail after N attempts, sprint escalates to user with full artifact chain attached to the work item.
 - On pass, integrator stage runs merge + cleanup.
 

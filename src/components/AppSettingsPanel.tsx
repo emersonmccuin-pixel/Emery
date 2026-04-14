@@ -40,6 +40,9 @@ type Props = {
 const DiagnosticsConsole = lazy(
   () => import("@/components/DiagnosticsConsole"),
 );
+const VaultIntegrationsSection = lazy(
+  () => import("@/components/VaultIntegrationsSection"),
+);
 
 function AppSettingsPanel({ initialTab = "appearance" }: Props) {
   const [activeTab, setActiveTab] = useState<AppSettingsTab>(initialTab);
@@ -286,8 +289,7 @@ function DefaultsTab() {
           </select>
           <p className="stack-form__note">
             Worktree agents launch from this profile, consume dispatcher
-            directives from the Project Commander inbox, and expose a watch-only
-            console in the worktree.
+            directives, and stay watch-only in the worktree.
           </p>
         </label>
 
@@ -309,8 +311,7 @@ function DefaultsTab() {
                 const selected = await open({
                   directory: true,
                   multiple: false,
-                  title:
-                    "Select personal Claude config directory for SDK workers",
+                  title: "Select Claude dir for SDK workers",
                 });
 
                 if (typeof selected === "string") {
@@ -322,10 +323,9 @@ function DefaultsTab() {
             </Button>
           </div>
           <p className="stack-form__note">
-            Claude Agent SDK workers always use this Claude config directory and
-            ignore competing auth env vars like API keys or cloud-provider
-            overrides. Leave it blank only if your personal account already
-            lives in the default
+            Claude Agent SDK workers always use this config dir and ignore
+            competing auth env vars. Leave it blank only if your account lives in
+            the default
             <code> ~/.claude </code>
             home.
           </p>
@@ -452,8 +452,8 @@ function AccountsTab() {
 
               <p className="stack-form__note">
                 {isWorkerLaunchProfileProvider(profile.provider)
-                  ? "This profile launches the SDK worker host. Env JSON may include vault-backed bindings."
-                  : "Env JSON is injected at launch. Individual vars may point at Vault entries instead of literal values."}
+                  ? "This profile launches the SDK worker host. Env JSON may include vault bindings."
+                  : "Env JSON is injected at launch. Vars may point at Vault entries instead of literal values."}
               </p>
 
               <div className="action-row">
@@ -567,15 +567,15 @@ function AccountsTab() {
               rows={5}
               value={profileEnvJson}
               onChange={(event) => setProfileEnvJson(event.target.value)}
-              placeholder={`{"ANTHROPIC_API_KEY":{"source":"vault","vault":"Anthropic Key","scopeTags":["anthropic:api"]}}`}
+              placeholder={`{"OPENAI_API_KEY":{"source":"vault","vault":"OpenAI Key"}}`}
             />
             <p className="stack-form__note">
               Literal values still work. Vault example:
               <code>
                 {" "}
-                {"{\"OPENAI_API_KEY\":{\"source\":\"vault\",\"vault\":\"OpenAI Key\",\"scopeTags\":[\"openai:api\"]}}"}
+                {"{\"OPENAI_API_KEY\":{\"source\":\"vault\",\"vault\":\"OpenAI Key\"}}"}
               </code>
-              . For tools that expect a temp file path instead of the raw secret value, add
+              . For file-path delivery, add
               <code>
                 {" "}
                 {"\"delivery\":\"file\""}
@@ -784,7 +784,7 @@ function VaultTab() {
       <div className="overview-card__header">
         <div>
           <p className="panel__eyebrow">Vault</p>
-          <strong>Stronghold-backed secrets</strong>
+          <strong>Vault secrets</strong>
         </div>
         <Button
           variant="outline"
@@ -801,8 +801,8 @@ function VaultTab() {
       </div>
 
       <p className="stack-form__note">
-        Secret values are deposited from this trusted settings surface and stored
-        in the backend vault snapshot. The UI never reads them back after save.
+        Secret values are stored from this trusted settings surface. The UI
+        never reads them back after save.
       </p>
 
       {error ? <PanelBanner className="mb-4" message={error} /> : null}
@@ -914,8 +914,8 @@ function VaultTab() {
             }
             placeholder={
               form.id === null
-                ? "Paste the secret value once."
-                : "Leave blank to keep the current value, or paste a new one to rotate."
+                ? "Paste the secret once."
+                : "Leave blank to keep the current value, or paste a new one."
             }
             className="hud-input min-h-[8rem] font-mono"
           />
@@ -940,7 +940,7 @@ function VaultTab() {
       {isLoading ? (
         <PanelLoadingState
           className="min-h-[18rem]"
-          detail="Loading vault metadata from the local Stronghold snapshot."
+          detail="Loading vault metadata from the Stronghold snapshot."
           eyebrow="Vault"
           title="Opening secret catalog"
           tone="cyan"
@@ -1002,12 +1002,26 @@ function VaultTab() {
       ) : (
         <PanelEmptyState
           className="min-h-[18rem]"
-          detail="Create the first vault entry here before wiring integrations or workflow-stage secret requirements."
+          detail="Create the first vault entry here before wiring integrations or workflow-stage secret access."
           eyebrow="Vault"
           title="No secrets stored yet"
           tone="cyan"
         />
       )}
+
+      <Suspense
+        fallback={
+          <PanelLoadingState
+            className="min-h-[12rem] mt-6"
+            detail="Loading controls."
+            eyebrow="Integrations"
+            title="Opening"
+            tone="cyan"
+          />
+        }
+      >
+        <VaultIntegrationsSection entries={snapshot?.entries ?? []} />
+      </Suspense>
     </article>
   );
 }

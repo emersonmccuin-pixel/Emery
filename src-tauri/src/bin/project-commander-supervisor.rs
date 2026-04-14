@@ -2,10 +2,10 @@ use clap::{Args, Parser, Subcommand};
 use project_commander_lib::db::{
     AgentMessageRecord, AppState, AppendSessionEventInput, CreateDocumentInput,
     CreateLaunchProfileInput, CreateProjectInput, CreateWorkItemInput, DocumentRecord,
-    ListAgentMessagesFilter, ProjectRecord, ReparentRequest, SendAgentMessageInput, SessionRecord,
-    StorageInfo, UpdateAppSettingsInput, UpdateDocumentInput, UpdateLaunchProfileInput,
-    UpdateProjectInput, UpdateWorkItemInput, UpsertWorktreeRecordInput, WorkItemRecord,
-    WorktreeRecord,
+    ListAgentMessagesFilter, ProjectRecord, ReparentRequest, SendAgentMessageInput,
+    SessionEventRecord, SessionRecord, StorageInfo, UpdateAppSettingsInput, UpdateDocumentInput,
+    UpdateLaunchProfileInput, UpdateProjectInput, UpdateWorkItemInput, UpsertWorktreeRecordInput,
+    WorkItemRecord, WorktreeRecord,
 };
 use project_commander_lib::error::{AppError, AppErrorCode};
 use project_commander_lib::session::build_supervisor_runtime_info;
@@ -18,19 +18,22 @@ use project_commander_lib::supervisor_api::{
     AckAgentMessagesApiInput, AgentInboxApiInput, CleanupActionOutput, CleanupCandidate,
     CleanupCandidateTarget, CleanupRepairOutput, CleanupWorktreeInput, ClearProjectWorktreesInput,
     CreateProjectDocumentInput, CreateProjectWorkItemInput, EnsureProjectWorktreeInput,
-    LaunchProfileTarget, LaunchProjectWorktreeAgentInput, ListAgentMessagesApiInput,
-    ListCleanupCandidatesInput, ListProjectDocumentsInput, ListProjectSessionEventsInput,
-    ListProjectSessionsInput, ListProjectWorkItemsInput, ListProjectWorktreesInput,
-    PinWorktreeInput, ProjectCallSignTarget, ProjectDocumentTarget, ProjectSessionRecordTarget,
-    ProjectWorkItemTarget, ProjectWorktreeTarget, ReconcileProjectTrackerInput, RepairCleanupInput,
-    SendAgentMessageApiInput, SessionCrashReport, SessionRecoveryDetails,
+    HeartbeatSessionInput, LaunchProfileTarget, LaunchProjectWorktreeAgentInput,
+    ListAgentMessagesApiInput, ListCleanupCandidatesInput, ListProjectDocumentsInput,
+    ListProjectSessionEventsInput, ListProjectSessionsInput, ListProjectWorkItemsInput,
+    ListProjectWorktreesInput, MarkSessionWorkerDoneInput, PinWorktreeInput, ProjectCallSignTarget,
+    ProjectDocumentTarget, ProjectSessionRecordTarget, ProjectWorkItemTarget,
+    ProjectWorktreeTarget, PublishSessionWorkerStatusInput, ReconcileProjectTrackerInput,
+    RepairCleanupInput, SendAgentMessageApiInput, SessionCrashReport, SessionRecoveryDetails,
     UpdateProjectDocumentInput, UpdateProjectWorkItemInput, UpdateSessionProviderSessionIdInput,
     WaitAgentMessagesApiInput, WaitAgentMessagesOutput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
 use project_commander_lib::supervisor_mcp::{
     handle_supervisor_mcp_message, run_supervisor_mcp_stdio_with_session,
 };
-use project_commander_lib::vault::VaultAccessBindingRequest;
+use project_commander_lib::vault::{
+    ExecuteVaultHttpIntegrationInput, ExecuteVaultHttpIntegrationOutput, VaultAccessBindingRequest,
+};
 use project_commander_lib::workflow::{
     FailWorkflowRunInput, MarkWorkflowStageDispatchedInput, RecordWorkflowStageResultInput,
     ResolvedWorkflowStageRecord, StartWorkflowRunInput, WorkflowRunRecord,
@@ -40,7 +43,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -56,6 +59,8 @@ const CLEANUP_KIND_STALE_WORKTREE_RECORD: &str = "stale_worktree_record";
 const CLEANUP_KIND_STALE_DONE_WORKTREE: &str = "stale_done_worktree";
 const SUPERVISOR_SLOW_ROUTE_MS: f64 = 500.0;
 const MESSAGE_WAIT_MAX_TIMEOUT_MS: u64 = 300_000;
+const INTEGRATION_HTTP_TIMEOUT: Duration = Duration::from_secs(60);
+const INTEGRATION_HTTP_MAX_RESPONSE_BYTES: u64 = 262_144;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -850,6 +855,32 @@ fn route_request(
                 ))
             })
         }
+        (&Method::Post, "/session/status") => {
+            let input = read_json::<PublishSessionWorkerStatusInput>(request)?;
+            serde_json::to_value(publish_session_worker_status(state, context, input)?)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode worker status event: {error}"))
+                })
+        }
+        (&Method::Post, "/session/heartbeat") => {
+            let input = read_json::<HeartbeatSessionInput>(request)?;
+            serde_json::to_value(refresh_session_worker_heartbeat(state, context, input)?)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!(
+                        "failed to encode session heartbeat response: {error}"
+                    ))
+                })
+        }
+        (&Method::Post, "/session/mark-done") => {
+            let input = read_json::<MarkSessionWorkerDoneInput>(request)?;
+            serde_json::to_value(mark_session_worker_done(state, context, input)?)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!("failed to encode worker done event: {error}"))
+                })
+        }
         (&Method::Post, "/cleanup/list") => {
             let _ = read_json::<ListCleanupCandidatesInput>(request)?;
             let candidates = list_cleanup_candidates(state).map_err(RouteError::from)?;
@@ -1435,6 +1466,19 @@ fn route_request(
                     RouteError::internal(format!("failed to encode pinned worktree: {error}"))
                 })
         }
+        (&Method::Post, "/integration/http") => {
+            let project_id = required_i64_header(request, "x-project-commander-project-id")
+                .map_err(RouteError::bad_request)?;
+            let input = read_json::<ExecuteVaultHttpIntegrationInput>(request)?;
+            let output = handle_http_integration_request(state, context, project_id, input)?;
+            serde_json::to_value(output)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!(
+                        "failed to encode brokered integration response: {error}"
+                    ))
+                })
+        }
         (&Method::Post, "/message/send") => {
             let input = read_json::<SendAgentMessageApiInput>(request)?;
             let result = handle_message_send(state, sessions, context, input)?;
@@ -1539,6 +1583,154 @@ fn require_work_item_for_project(
     }
 
     Ok(work_item)
+}
+
+fn handle_http_integration_request(
+    state: &AppState,
+    context: &RequestContext,
+    project_id: i64,
+    input: ExecuteVaultHttpIntegrationInput,
+) -> Result<ExecuteVaultHttpIntegrationOutput, RouteError> {
+    let started_at = Instant::now();
+    let prepared = state
+        .prepare_vault_http_integration_request(input, &context.source)
+        .map_err(RouteError::from)?;
+    let correlation_id = format!(
+        "integration-http:{}:{}:{}",
+        project_id,
+        prepared.integration_id,
+        started_at.elapsed().as_nanos()
+    );
+
+    state
+        .record_vault_access_bindings(
+            prepared.resolved_bindings.iter(),
+            "broker_http",
+            &format!("integration:{}", prepared.integration_label),
+            &correlation_id,
+            context.session_id,
+        )
+        .map_err(RouteError::from)?;
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(INTEGRATION_HTTP_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| {
+            RouteError::internal(format!("failed to build integration HTTP client: {error}"))
+        })?;
+
+    let method = reqwest::Method::from_bytes(prepared.method.as_bytes()).map_err(|error| {
+        RouteError::bad_request(format!("invalid integration HTTP method: {error}"))
+    })?;
+    let mut request_builder = client.request(method.clone(), &prepared.url);
+    for (name, value) in &prepared.header_map {
+        request_builder = request_builder.header(name, value);
+    }
+    if let Some(body_bytes) = prepared.body_bytes.clone() {
+        request_builder = request_builder.body(body_bytes);
+    }
+
+    let response = match request_builder.send() {
+        Ok(response) => response,
+        Err(error) => {
+            append_project_event(
+                state,
+                context,
+                project_id,
+                "integration.http_error",
+                "integration",
+                prepared.integration_id,
+                &json!({
+                    "integrationId": prepared.integration_id,
+                    "integrationLabel": prepared.integration_label,
+                    "templateSlug": prepared.template_slug,
+                    "method": prepared.method,
+                    "url": prepared.url,
+                    "slotNames": prepared.slot_names,
+                    "egressDomains": prepared.egress_domains,
+                    "durationMs": started_at.elapsed().as_secs_f64() * 1000.0,
+                    "error": error.to_string(),
+                }),
+            );
+            return Err(RouteError::internal(format!(
+                "integration HTTP request failed: {error}"
+            )));
+        }
+    };
+
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(ToOwned::to_owned);
+    let (body_bytes, truncated) = read_integration_response_body(response)?;
+    let body_text = String::from_utf8_lossy(&body_bytes).to_string();
+    let json_body = content_type
+        .as_deref()
+        .filter(|content_type| content_type.contains("json"))
+        .and_then(|_| serde_json::from_slice::<Value>(&body_bytes).ok());
+
+    let output = ExecuteVaultHttpIntegrationOutput {
+        integration_id: prepared.integration_id,
+        integration_label: prepared.integration_label.clone(),
+        template_slug: prepared.template_slug.clone(),
+        method: prepared.method.clone(),
+        url: prepared.url.clone(),
+        status: status.as_u16(),
+        ok: status.is_success(),
+        content_type: content_type.clone(),
+        body_text,
+        json_body,
+        truncated,
+    };
+
+    append_project_event(
+        state,
+        context,
+        project_id,
+        "integration.http_response",
+        "integration",
+        prepared.integration_id,
+        &json!({
+            "integrationId": prepared.integration_id,
+            "integrationLabel": prepared.integration_label,
+            "templateSlug": prepared.template_slug,
+            "method": prepared.method,
+            "url": prepared.url,
+            "status": output.status,
+            "ok": output.ok,
+            "contentType": content_type,
+            "truncated": truncated,
+            "responseBytes": body_bytes.len(),
+            "slotNames": prepared.slot_names,
+            "egressDomains": prepared.egress_domains,
+            "durationMs": started_at.elapsed().as_secs_f64() * 1000.0,
+        }),
+    );
+
+    Ok(output)
+}
+
+fn read_integration_response_body(
+    mut response: reqwest::blocking::Response,
+) -> Result<(Vec<u8>, bool), RouteError> {
+    let mut body_bytes = Vec::new();
+    response
+        .by_ref()
+        .take(INTEGRATION_HTTP_MAX_RESPONSE_BYTES + 1)
+        .read_to_end(&mut body_bytes)
+        .map_err(|error| {
+            RouteError::internal(format!(
+                "failed to read integration HTTP response body: {error}"
+            ))
+        })?;
+    let truncated = body_bytes.len() as u64 > INTEGRATION_HTTP_MAX_RESPONSE_BYTES;
+    if truncated {
+        body_bytes.truncate(INTEGRATION_HTTP_MAX_RESPONSE_BYTES as usize);
+    }
+    Ok((body_bytes, truncated))
 }
 
 fn reconcile_tracker_body(
@@ -2255,18 +2447,39 @@ fn execute_workflow_run(
         }
     };
 
-    for stage in run.resolved_workflow.stages.clone() {
+    loop {
+        if run.status == "completed" {
+            break;
+        }
+        if run.status != "queued" && run.status != "running" {
+            log::warn!(
+                "workflow run paused — run_id={} status={}",
+                run.id,
+                run.status
+            );
+            return;
+        }
+
+        let Some(stage) = next_pending_workflow_stage(&run) else {
+            break;
+        };
         let stage_source = format!("workflow_run:{}", run.id);
         let stage_context = format!("run #{} stage '{}'", run.id, stage.name);
         log::info!(
-            "workflow stage dispatch requested — run_id={} stage={} ordinal={} provider={} model={} worktree_id={} vault_bindings={}",
+            "workflow stage dispatch requested — run_id={} stage={} ordinal={} attempt={} provider={} model={} worktree_id={} vault_bindings={} output_contracts={}",
             run.id,
             stage.name,
             stage.ordinal,
+            run.stages
+                .iter()
+                .find(|candidate| candidate.stage_name == stage.name)
+                .map(|candidate| candidate.attempt)
+                .unwrap_or(1),
             stage.provider,
             stage.model.as_deref().unwrap_or("default"),
             worktree.id,
-            stage.vault_env_bindings.len()
+            stage.vault_env_bindings.len(),
+            stage.output_contracts.len()
         );
 
         let launch_profile_id = match resolve_workflow_launch_profile_id(&state, &stage.provider) {
@@ -2465,6 +2678,22 @@ fn execute_workflow_run(
                 "agentName": agent_name,
                 "threadId": directive_message.thread_id,
                 "launchProfileId": session_snapshot.launch_profile_id,
+                "attempt": run
+                    .stages
+                    .iter()
+                    .find(|candidate| candidate.stage_name == stage.name)
+                    .map(|candidate| candidate.attempt)
+                    .unwrap_or(1),
+                "retrySourceStageName": run
+                    .stages
+                    .iter()
+                    .find(|candidate| candidate.stage_name == stage.name)
+                    .and_then(|candidate| candidate.retry_source_stage_name.clone()),
+                "outputArtifactTypes": stage
+                    .output_contracts
+                    .iter()
+                    .map(|contract| contract.artifact_type.clone())
+                    .collect::<Vec<_>>(),
                 "vaultEnvVars": stage
                     .vault_env_bindings
                     .iter()
@@ -2533,38 +2762,49 @@ fn execute_workflow_run(
             }
         };
 
-        run = match state.record_workflow_stage_result(RecordWorkflowStageResultInput {
-            project_id: run.project_id,
-            run_id: run.id,
-            stage_name: stage.name.clone(),
-            response_message_id: Some(reply.id),
-            completion_message_type: reply.message_type.clone(),
-            completion_summary: Some(reply.body.clone()),
-            completion_context_json: Some(reply.context_json.clone()),
-        }) {
-            Ok(updated) => updated,
-            Err(error) => {
-                let _ = state.fail_workflow_run(FailWorkflowRunInput {
-                    project_id: run.project_id,
-                    run_id: run.id,
-                    stage_name: Some(stage.name.clone()),
-                    failure_reason: format!("failed to persist workflow stage result: {error}"),
-                });
-                log::error!(
-                    "workflow stage result persistence failed — run_id={} stage={} error={}",
-                    run.id,
-                    stage.name,
-                    error
-                );
-                return;
-            }
-        };
-
-        let result_event = if reply.message_type == "complete" {
+        let persisted_result =
+            match state.record_workflow_stage_result(RecordWorkflowStageResultInput {
+                project_id: run.project_id,
+                run_id: run.id,
+                stage_name: stage.name.clone(),
+                response_message_id: Some(reply.id),
+                completion_message_type: reply.message_type.clone(),
+                completion_summary: Some(reply.body.clone()),
+                completion_context_json: Some(reply.context_json.clone()),
+            }) {
+                Ok(updated) => updated,
+                Err(error) => {
+                    let _ = state.fail_workflow_run(FailWorkflowRunInput {
+                        project_id: run.project_id,
+                        run_id: run.id,
+                        stage_name: Some(stage.name.clone()),
+                        failure_reason: format!("failed to persist workflow stage result: {error}"),
+                    });
+                    log::error!(
+                        "workflow stage result persistence failed — run_id={} stage={} error={}",
+                        run.id,
+                        stage.name,
+                        error
+                    );
+                    return;
+                }
+            };
+        run = persisted_result.run;
+        let completed_stage = run
+            .stages
+            .iter()
+            .find(|candidate| candidate.stage_name == stage.name)
+            .cloned();
+        let result_event = if completed_stage
+            .as_ref()
+            .and_then(|candidate| candidate.completion_message_type.as_deref())
+            == Some("complete")
+        {
             "workflow.stage_completed"
         } else {
             "workflow.stage_blocked"
         };
+
         append_workflow_event(
             &state,
             run.project_id,
@@ -2577,10 +2817,52 @@ fn execute_workflow_run(
                 "stageName": stage.name,
                 "sessionId": session_snapshot.session_id,
                 "messageId": reply.id,
-                "messageType": reply.message_type,
+                "messageType": completed_stage
+                    .as_ref()
+                    .and_then(|candidate| candidate.completion_message_type.clone())
+                    .unwrap_or_else(|| reply.message_type.clone()),
                 "summary": reply.body,
+                "artifactValidationStatus": completed_stage
+                    .as_ref()
+                    .and_then(|candidate| candidate.artifact_validation_status.clone()),
+                "artifactValidationError": completed_stage
+                    .as_ref()
+                    .and_then(|candidate| candidate.artifact_validation_error.clone()),
+                "producedArtifactTypes": completed_stage
+                    .as_ref()
+                    .map(|candidate| candidate.produced_artifacts.iter().map(|artifact| artifact.artifact_type.clone()).collect::<Vec<_>>())
+                    .unwrap_or_default(),
             }),
         );
+
+        if let Some(retry) = persisted_result.retry {
+            append_workflow_event(
+                &state,
+                run.project_id,
+                Some(session_snapshot.session_id),
+                "workflow.stage_retry_scheduled",
+                run.id,
+                Some(stage.name.as_str()),
+                &json!({
+                    "runId": run.id,
+                    "stageName": stage.name,
+                    "sourceStageName": retry.source_stage_name,
+                    "targetStageName": retry.target_stage_name,
+                    "nextAttempt": retry.next_attempt,
+                    "maxAttempts": retry.max_attempts,
+                    "feedbackSummary": retry.feedback_summary,
+                }),
+            );
+            log::info!(
+                "workflow stage retry scheduled — run_id={} source_stage={} target_stage={} next_attempt={} max_attempts={}",
+                run.id,
+                retry.source_stage_name,
+                retry.target_stage_name,
+                retry.next_attempt,
+                retry.max_attempts
+            );
+            continue;
+        }
 
         if run.status != "running" && run.status != "completed" {
             log::warn!(
@@ -2615,6 +2897,20 @@ fn execute_workflow_run(
         run.workflow_slug,
         run.status
     );
+}
+
+fn next_pending_workflow_stage(run: &WorkflowRunRecord) -> Option<ResolvedWorkflowStageRecord> {
+    run.resolved_workflow
+        .stages
+        .iter()
+        .find(|resolved_stage| {
+            run.stages
+                .iter()
+                .find(|candidate| candidate.stage_name == resolved_stage.name)
+                .map(|candidate| candidate.status == "pending")
+                .unwrap_or(false)
+        })
+        .cloned()
 }
 
 fn resolve_workflow_launch_profile_id(state: &AppState, provider: &str) -> Result<i64, RouteError> {
@@ -2672,6 +2968,10 @@ fn build_workflow_stage_directive(
     stage: &ResolvedWorkflowStageRecord,
     worktree: &WorktreeRecord,
 ) -> String {
+    let stage_state = run
+        .stages
+        .iter()
+        .find(|candidate| candidate.stage_name == stage.name);
     let work_item = state.get_work_item(run.root_work_item_id).ok();
     let linked_documents = state
         .list_documents(run.project_id)
@@ -2709,17 +3009,34 @@ fn build_workflow_stage_directive(
             stage.role
         ),
         format!(
+            "Attempt: {}{}",
+            stage_state.map(|candidate| candidate.attempt).unwrap_or(1),
+            stage
+                .retry_policy
+                .as_ref()
+                .map(|policy| format!(" / {}", policy.max_attempts))
+                .unwrap_or_default()
+        ),
+        format!(
             "Resolved runtime: provider={} model={} launchProfileTarget={}",
             stage.provider,
             stage.model.as_deref().unwrap_or("profile default"),
             stage.provider
         ),
         "You are operating under the Project Commander worktree-agent bridge. Follow the workflow stage instructions below even if they differ from the generic worktree guidance.".to_string(),
-        "When you reply to the dispatcher, use send_message with the same thread. If the stage succeeds, send messageType=\"complete\". If it cannot proceed or the acceptance criteria fail, send messageType=\"blocked\" with exact feedback. Include workflowRunId and stageName in contextJson when possible.".to_string(),
+        "When you reply to the dispatcher, use send_message with the same thread. If the stage succeeds, send messageType=\"complete\". If it cannot proceed or the acceptance criteria fail, send messageType=\"blocked\" with exact feedback. Include workflowRunId, stageName, and producedArtifacts in contextJson when you produce outputs.".to_string(),
         String::new(),
         "Stage contract:".to_string(),
         format!("- Inputs expected: {}", workflow_token_list(&stage.inputs)),
         format!("- Outputs expected: {}", workflow_token_list(&stage.outputs)),
+        format!(
+            "- Input artifact contracts: {}",
+            workflow_artifact_contract_list(&stage.input_contracts)
+        ),
+        format!(
+            "- Output artifact contracts: {}",
+            workflow_artifact_contract_list(&stage.output_contracts)
+        ),
         format!(
             "- Secrets/capabilities in scope: {}",
             workflow_token_list(&stage.needs_secrets)
@@ -2733,6 +3050,21 @@ fn build_workflow_stage_directive(
             stage.prompt_template_ref.as_deref().unwrap_or("(none)")
         ),
     ];
+
+    if let Some(stage_state) = stage_state {
+        if let Some(retry_source_stage_name) = stage_state.retry_source_stage_name.as_deref() {
+            sections.push(String::new());
+            sections.push("Retry feedback to address:".to_string());
+            sections.push(format!("- Requested by stage: {}", retry_source_stage_name));
+            if let Some(retry_feedback_summary) = stage_state.retry_feedback_summary.as_deref() {
+                sections.push(format!("- Feedback summary: {}", retry_feedback_summary));
+            }
+            if stage_state.retry_feedback_context_json.trim() != "{}" {
+                sections.push("Retry feedback context JSON:".to_string());
+                sections.push(stage_state.retry_feedback_context_json.trim().to_string());
+            }
+        }
+    }
 
     if let Some(work_item) = work_item {
         sections.push(String::new());
@@ -2796,8 +3128,12 @@ fn build_workflow_stage_directive(
             .to_string(),
     );
     sections.push(format!(
-        "- Include a concise markdown summary plus contextJson like {{\"workflowRunId\":{},\"stageName\":\"{}\",\"rootWorkItemId\":{}}}.",
+        "- Include a concise markdown summary plus contextJson like {{\"workflowRunId\":{},\"stageName\":\"{}\",\"rootWorkItemId\":{},\"producedArtifacts\":[...]}}.",
         run.id, stage.name, run.root_work_item_id
+    ));
+    sections.push(format!(
+        "- When you produce outputs, include one producedArtifacts entry per declared output using this shape: {}",
+        workflow_artifact_context_contract(stage)
     ));
     sections
         .push("- Do not continue working after you send the terminal stage result.".to_string());
@@ -2826,6 +3162,28 @@ fn summarize_relevant_prior_stage_outputs(
                 "### {} ({})",
                 candidate.stage_name, candidate.status
             )];
+            if !candidate.produced_artifacts.is_empty() {
+                section.push(format!(
+                    "Artifacts: {}",
+                    candidate
+                        .produced_artifacts
+                        .iter()
+                        .map(|artifact| {
+                            artifact
+                                .summary
+                                .as_deref()
+                                .map(|summary| {
+                                    format!("{} — {}", artifact.artifact_type, summary.trim())
+                                })
+                                .unwrap_or_else(|| artifact.artifact_type.clone())
+                        })
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                ));
+            }
+            if let Some(validation_status) = candidate.artifact_validation_status.as_deref() {
+                section.push(format!("Artifact validation: {}", validation_status));
+            }
             if let Some(summary) = candidate.completion_summary.as_deref() {
                 if !summary.trim().is_empty() {
                     section.push(summary.trim().to_string());
@@ -2848,6 +3206,56 @@ fn workflow_token_list(tokens: &[String]) -> String {
         "(none)".to_string()
     } else {
         tokens.join(", ")
+    }
+}
+
+fn workflow_artifact_contract_list(
+    contracts: &[project_commander_lib::workflow::WorkflowArtifactContractRecord],
+) -> String {
+    if contracts.is_empty() {
+        "(none)".to_string()
+    } else {
+        contracts
+            .iter()
+            .map(|contract| {
+                let mut parts = vec![contract.artifact_type.clone()];
+                if !contract.required_frontmatter_fields.is_empty() {
+                    parts.push(format!(
+                        "frontmatter: {}",
+                        contract.required_frontmatter_fields.join(", ")
+                    ));
+                }
+                if !contract.required_markdown_sections.is_empty() {
+                    parts.push(format!(
+                        "sections: {}",
+                        contract.required_markdown_sections.join(", ")
+                    ));
+                }
+                parts.join(" [") + if parts.len() > 1 { "]" } else { "" }
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+}
+
+fn workflow_artifact_context_contract(stage: &ResolvedWorkflowStageRecord) -> String {
+    if stage.output_contracts.is_empty() {
+        "[{\"type\":\"<declared-output>\",\"summary\":\"...\"}]".to_string()
+    } else {
+        serde_json::to_string(
+            &stage
+                .output_contracts
+                .iter()
+                .map(|contract| {
+                    json!({
+                        "type": contract.artifact_type,
+                        "frontmatter": contract.required_frontmatter_fields,
+                        "requiredSections": contract.required_markdown_sections,
+                    })
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap_or_else(|_| "[]".to_string())
     }
 }
 
@@ -4173,6 +4581,232 @@ fn update_session_provider_session_id(
     }
 
     Ok(updated)
+}
+
+fn require_context_session_id(
+    context: &RequestContext,
+    route_label: &str,
+) -> Result<i64, RouteError> {
+    context.session_id.ok_or_else(|| {
+        RouteError::bad_request(format!(
+            "missing x-project-commander-session-id header for {route_label}"
+        ))
+    })
+}
+
+fn trim_optional_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn normalize_worker_status_state(raw: &str) -> Result<String, RouteError> {
+    let state = raw.trim();
+    let valid = [
+        "launching",
+        "ready",
+        "busy",
+        "waiting_for_tool",
+        "waiting_for_permission",
+        "idle",
+        "blocked",
+        "completed",
+        "failed",
+        "shell_fallback",
+    ];
+
+    if valid.contains(&state) {
+        Ok(state.to_string())
+    } else {
+        Err(RouteError::bad_request(format!(
+            "invalid worker state '{state}'; expected one of: {}",
+            valid.join(", ")
+        )))
+    }
+}
+
+fn maybe_update_worker_provider_session_id(
+    state: &AppState,
+    context: &RequestContext,
+    session_id: i64,
+    provider_session_id: Option<String>,
+) -> Result<Option<SessionRecord>, RouteError> {
+    let Some(provider_session_id) = trim_optional_string(provider_session_id) else {
+        return Ok(None);
+    };
+
+    update_session_provider_session_id(
+        state,
+        context,
+        session_id,
+        UpdateSessionProviderSessionIdInput {
+            provider_session_id,
+        },
+    )
+    .map(Some)
+}
+
+fn refresh_session_worker_heartbeat(
+    state: &AppState,
+    context: &RequestContext,
+    input: HeartbeatSessionInput,
+) -> Result<Value, RouteError> {
+    let session_id = require_context_session_id(context, "session heartbeat")?;
+    let session = state
+        .get_session_record(session_id)
+        .map_err(RouteError::from)?;
+    state
+        .update_session_heartbeat(session_id)
+        .map_err(RouteError::from)?;
+
+    Ok(json!({
+        "sessionId": session.id,
+        "projectId": session.project_id,
+        "worktreeId": session.worktree_id,
+        "heartbeatAt": now_timestamp_string(),
+        "detail": trim_optional_string(input.detail),
+        "hasContext": input.context_json.is_some(),
+    }))
+}
+
+fn publish_session_worker_status(
+    state: &AppState,
+    context: &RequestContext,
+    input: PublishSessionWorkerStatusInput,
+) -> Result<SessionEventRecord, RouteError> {
+    let session_id = require_context_session_id(context, "worker status update")?;
+    let worker_state = normalize_worker_status_state(&input.state)?;
+    let detail = trim_optional_string(input.detail);
+    let thread_id = trim_optional_string(input.thread_id);
+    let mut session = state
+        .get_session_record(session_id)
+        .map_err(RouteError::from)?;
+
+    if let Some(updated) = maybe_update_worker_provider_session_id(
+        state,
+        context,
+        session_id,
+        input.provider_session_id,
+    )? {
+        session = updated;
+    }
+
+    state
+        .update_session_heartbeat(session_id)
+        .map_err(RouteError::from)?;
+
+    let agent_name = resolve_agent_name_from_context(state, context);
+    let payload = json!({
+        "projectId": session.project_id,
+        "sessionId": session.id,
+        "worktreeId": session.worktree_id,
+        "provider": session.provider,
+        "providerSessionId": session.provider_session_id,
+        "profileLabel": session.profile_label,
+        "rootPath": session.root_path,
+        "agentName": agent_name,
+        "workerState": worker_state,
+        "detail": detail,
+        "threadId": thread_id,
+        "contextJson": input.context_json,
+    });
+    let event = state
+        .append_session_event(AppendSessionEventInput {
+            project_id: session.project_id,
+            session_id: Some(session.id),
+            event_type: "session.worker_status".to_string(),
+            entity_type: Some("session".to_string()),
+            entity_id: Some(session.id),
+            source: context.source.clone(),
+            payload_json: payload.to_string(),
+        })
+        .map_err(RouteError::from)?;
+
+    log::info!(
+        "worker status published — session_id={} project_id={} worktree_id={:?} provider={} agent_name={} state={} source={} thread_id={} detail={}",
+        session.id,
+        session.project_id,
+        session.worktree_id,
+        session.provider,
+        agent_name,
+        payload["workerState"].as_str().unwrap_or("unknown"),
+        context.source,
+        payload["threadId"].as_str().unwrap_or("none"),
+        payload["detail"].as_str().unwrap_or("none"),
+    );
+
+    Ok(event)
+}
+
+fn mark_session_worker_done(
+    state: &AppState,
+    context: &RequestContext,
+    input: MarkSessionWorkerDoneInput,
+) -> Result<SessionEventRecord, RouteError> {
+    let session_id = require_context_session_id(context, "worker done marker")?;
+    let summary = input.summary.trim();
+    if summary.is_empty() {
+        return Err(RouteError::bad_request("summary is required for mark_done"));
+    }
+
+    let thread_id = trim_optional_string(input.thread_id);
+    let mut session = state
+        .get_session_record(session_id)
+        .map_err(RouteError::from)?;
+
+    if let Some(updated) = maybe_update_worker_provider_session_id(
+        state,
+        context,
+        session_id,
+        input.provider_session_id,
+    )? {
+        session = updated;
+    }
+
+    state
+        .update_session_heartbeat(session_id)
+        .map_err(RouteError::from)?;
+
+    let agent_name = resolve_agent_name_from_context(state, context);
+    let payload = json!({
+        "projectId": session.project_id,
+        "sessionId": session.id,
+        "worktreeId": session.worktree_id,
+        "provider": session.provider,
+        "providerSessionId": session.provider_session_id,
+        "profileLabel": session.profile_label,
+        "rootPath": session.root_path,
+        "agentName": agent_name,
+        "workerState": "completed",
+        "summary": summary,
+        "threadId": thread_id,
+        "contextJson": input.context_json,
+    });
+    let event = state
+        .append_session_event(AppendSessionEventInput {
+            project_id: session.project_id,
+            session_id: Some(session.id),
+            event_type: "session.worker_done".to_string(),
+            entity_type: Some("session".to_string()),
+            entity_id: Some(session.id),
+            source: context.source.clone(),
+            payload_json: payload.to_string(),
+        })
+        .map_err(RouteError::from)?;
+
+    log::info!(
+        "worker done recorded — session_id={} project_id={} worktree_id={:?} provider={} agent_name={} source={} thread_id={} summary={}",
+        session.id,
+        session.project_id,
+        session.worktree_id,
+        session.provider,
+        agent_name,
+        context.source,
+        payload["threadId"].as_str().unwrap_or("none"),
+        summary,
+    );
+
+    Ok(event)
 }
 
 fn cleanup_stale_runtime_artifacts(runtime_file: &Path) -> Result<Vec<PathBuf>, String> {
@@ -6788,6 +7422,11 @@ mod tests {
             .expect("tools/list should return an array")
             .iter()
             .any(|tool| tool["name"].as_str() == Some("current_project")));
+        assert!(tools["result"]["tools"]
+            .as_array()
+            .expect("tools/list should return an array")
+            .iter()
+            .any(|tool| tool["name"].as_str() == Some("call_http_integration")));
         assert_eq!(current_project["result"]["isError"].as_bool(), Some(false));
         assert_eq!(
             current_project["result"]["structuredContent"]["id"].as_i64(),
@@ -6864,6 +7503,223 @@ mod tests {
             Some("thread-abc-123")
         );
         assert!(event_types.contains(&"session.provider_session_id_updated".to_string()));
+    }
+
+    #[test]
+    fn session_status_route_records_worker_lifecycle_events() {
+        let harness = TestHarness::new("session-status-route", true);
+        let project = harness.create_project("Commander");
+        let work_item = harness.create_work_item(project.id, "Track worker lifecycle");
+        let worktree = ensure_project_worktree(&harness.state, project.id, work_item.id)
+            .expect("worktree should be created");
+        let session = harness
+            .state
+            .create_session_record(CreateSessionRecordInput {
+                project_id: project.id,
+                launch_profile_id: None,
+                worktree_id: Some(worktree.id),
+                process_id: None,
+                supervisor_pid: None,
+                provider: "codex_sdk".to_string(),
+                provider_session_id: None,
+                profile_label: "Codex Worker".to_string(),
+                root_path: worktree.worktree_path.clone(),
+                state: "running".to_string(),
+                startup_prompt: String::new(),
+                started_at: "123456".to_string(),
+            })
+            .expect("session record should be created");
+        let (runtime, handle) = spawn_route_server(harness.state.clone(), 1);
+
+        let response = authorized_client(&runtime)
+            .post(supervisor_url(&runtime, "/session/status"))
+            .header("x-project-commander-token", &runtime.token)
+            .header("x-project-commander-source", "integration_test")
+            .header("x-project-commander-session-id", session.id.to_string())
+            .json(&PublishSessionWorkerStatusInput {
+                state: "busy".to_string(),
+                detail: Some("Processing dispatcher directive 42.".to_string()),
+                thread_id: Some("thread-42".to_string()),
+                provider_session_id: Some("thread-abc-123".to_string()),
+                context_json: Some(json!({
+                    "dispatcherMessageId": 42,
+                    "phase": "worker_turn",
+                })),
+            })
+            .send()
+            .expect("worker status request should succeed")
+            .error_for_status()
+            .expect("worker status route should return success");
+        let event =
+            unwrap_envelope::<SessionEventRecord>(response, "worker status response should decode");
+
+        handle
+            .join()
+            .expect("worker status route server should stop cleanly");
+
+        let stored = harness
+            .state
+            .get_session_record(session.id)
+            .expect("updated session record should load");
+        let payload: Value =
+            serde_json::from_str(&event.payload_json).expect("event payload should decode");
+        let event_types = harness
+            .state
+            .list_session_events(project.id, 20)
+            .expect("session events should load")
+            .into_iter()
+            .map(|event| event.event_type)
+            .collect::<Vec<_>>();
+
+        assert_eq!(event.event_type, "session.worker_status");
+        assert_eq!(
+            stored.provider_session_id.as_deref(),
+            Some("thread-abc-123")
+        );
+        assert!(stored.last_heartbeat_at.is_some());
+        assert_eq!(payload["workerState"].as_str(), Some("busy"));
+        assert_eq!(payload["threadId"].as_str(), Some("thread-42"));
+        assert_eq!(
+            payload["agentName"].as_str(),
+            Some(worktree.agent_name.as_str())
+        );
+        assert_eq!(
+            payload["contextJson"]["dispatcherMessageId"].as_i64(),
+            Some(42)
+        );
+        assert!(event_types.contains(&"session.provider_session_id_updated".to_string()));
+        assert!(event_types.contains(&"session.worker_status".to_string()));
+    }
+
+    #[test]
+    fn session_heartbeat_route_refreshes_last_heartbeat_without_new_event_rows() {
+        let harness = TestHarness::new("session-heartbeat-route", true);
+        let project = harness.create_project("Commander");
+        let session = harness
+            .state
+            .create_session_record(CreateSessionRecordInput {
+                project_id: project.id,
+                launch_profile_id: None,
+                worktree_id: None,
+                process_id: None,
+                supervisor_pid: None,
+                provider: "claude_agent_sdk".to_string(),
+                provider_session_id: Some("provider-session".to_string()),
+                profile_label: "Claude Worker".to_string(),
+                root_path: harness.project_root.display().to_string(),
+                state: "running".to_string(),
+                startup_prompt: String::new(),
+                started_at: "123456".to_string(),
+            })
+            .expect("session record should be created");
+        let (runtime, handle) = spawn_route_server(harness.state.clone(), 1);
+
+        let response = authorized_client(&runtime)
+            .post(supervisor_url(&runtime, "/session/heartbeat"))
+            .header("x-project-commander-token", &runtime.token)
+            .header("x-project-commander-source", "integration_test")
+            .header("x-project-commander-session-id", session.id.to_string())
+            .json(&HeartbeatSessionInput {
+                detail: Some("Still processing.".to_string()),
+                context_json: Some(json!({ "phase": "long_turn" })),
+            })
+            .send()
+            .expect("session heartbeat request should succeed")
+            .error_for_status()
+            .expect("session heartbeat route should return success");
+        let heartbeat = unwrap_envelope::<Value>(response, "heartbeat response should decode");
+
+        handle
+            .join()
+            .expect("session heartbeat route server should stop cleanly");
+
+        let stored = harness
+            .state
+            .get_session_record(session.id)
+            .expect("updated session record should load");
+        let events = harness
+            .state
+            .list_session_events(project.id, 20)
+            .expect("session events should load");
+
+        assert_eq!(heartbeat["sessionId"].as_i64(), Some(session.id));
+        assert_eq!(heartbeat["projectId"].as_i64(), Some(project.id));
+        assert_eq!(heartbeat["detail"].as_str(), Some("Still processing."));
+        assert_eq!(heartbeat["hasContext"].as_bool(), Some(true));
+        assert!(stored.last_heartbeat_at.is_some());
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn session_mark_done_route_records_worker_completion_summary() {
+        let harness = TestHarness::new("session-mark-done-route", true);
+        let project = harness.create_project("Commander");
+        let work_item = harness.create_work_item(project.id, "Capture worker completion");
+        let worktree = ensure_project_worktree(&harness.state, project.id, work_item.id)
+            .expect("worktree should be created");
+        let session = harness
+            .state
+            .create_session_record(CreateSessionRecordInput {
+                project_id: project.id,
+                launch_profile_id: None,
+                worktree_id: Some(worktree.id),
+                process_id: None,
+                supervisor_pid: None,
+                provider: "claude_agent_sdk".to_string(),
+                provider_session_id: Some("provider-session".to_string()),
+                profile_label: "Claude Worker".to_string(),
+                root_path: worktree.worktree_path.clone(),
+                state: "running".to_string(),
+                startup_prompt: String::new(),
+                started_at: "123456".to_string(),
+            })
+            .expect("session record should be created");
+        let (runtime, handle) = spawn_route_server(harness.state.clone(), 1);
+
+        let response = authorized_client(&runtime)
+            .post(supervisor_url(&runtime, "/session/mark-done"))
+            .header("x-project-commander-token", &runtime.token)
+            .header("x-project-commander-source", "integration_test")
+            .header("x-project-commander-session-id", session.id.to_string())
+            .json(&MarkSessionWorkerDoneInput {
+                summary: "Processed dispatcher directive 42.".to_string(),
+                thread_id: Some("thread-42".to_string()),
+                provider_session_id: Some("provider-session".to_string()),
+                context_json: Some(json!({
+                    "dispatcherMessageId": 42,
+                    "replyDelivered": true,
+                })),
+            })
+            .send()
+            .expect("worker done request should succeed")
+            .error_for_status()
+            .expect("worker done route should return success");
+        let event =
+            unwrap_envelope::<SessionEventRecord>(response, "worker done response should decode");
+
+        handle
+            .join()
+            .expect("worker done route server should stop cleanly");
+
+        let stored = harness
+            .state
+            .get_session_record(session.id)
+            .expect("updated session record should load");
+        let payload: Value =
+            serde_json::from_str(&event.payload_json).expect("event payload should decode");
+
+        assert_eq!(event.event_type, "session.worker_done");
+        assert_eq!(
+            payload["summary"].as_str(),
+            Some("Processed dispatcher directive 42.")
+        );
+        assert_eq!(payload["workerState"].as_str(), Some("completed"));
+        assert_eq!(payload["threadId"].as_str(), Some("thread-42"));
+        assert_eq!(
+            payload["agentName"].as_str(),
+            Some(worktree.agent_name.as_str())
+        );
+        assert!(stored.last_heartbeat_at.is_some());
     }
 
     #[test]

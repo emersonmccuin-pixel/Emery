@@ -44,7 +44,10 @@ use supervisor_api::{
     UpdateProjectWorkItemInput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
-use vault::{DeleteVaultEntryInput, UpsertVaultEntryInput, VaultSnapshot};
+use vault::{
+    DeleteVaultEntryInput, DeleteVaultIntegrationInput, UpsertVaultEntryInput,
+    UpsertVaultIntegrationInput, VaultIntegrationSnapshot, VaultSnapshot,
+};
 use workflow::{
     AdoptCatalogEntryInput, CatalogAdoptionTarget, ProjectWorkflowCatalog,
     ProjectWorkflowRunSnapshot, StartWorkflowRunInput, WorkflowLibrarySnapshot, WorkflowRunRecord,
@@ -766,6 +769,15 @@ fn list_vault_entries(state: State<AppState>) -> AppResult<VaultSnapshot> {
 }
 
 #[tauri::command]
+fn list_vault_integrations(state: State<AppState>) -> AppResult<VaultIntegrationSnapshot> {
+    timed_command(
+        "list_vault_integrations",
+        "scope=settings".to_string(),
+        || state.list_vault_integrations(),
+    )
+}
+
+#[tauri::command]
 fn upsert_vault_entry(
     input: UpsertVaultEntryInput,
     state: State<AppState>,
@@ -776,6 +788,18 @@ fn upsert_vault_entry(
 }
 
 #[tauri::command]
+fn upsert_vault_integration(
+    input: UpsertVaultIntegrationInput,
+    state: State<AppState>,
+) -> AppResult<VaultIntegrationSnapshot> {
+    timed_command(
+        "upsert_vault_integration",
+        "scope=settings".to_string(),
+        || state.upsert_vault_integration(input),
+    )
+}
+
+#[tauri::command]
 fn delete_vault_entry(
     input: DeleteVaultEntryInput,
     state: State<AppState>,
@@ -783,6 +807,18 @@ fn delete_vault_entry(
     timed_command("delete_vault_entry", "scope=settings".to_string(), || {
         state.delete_vault_entry(input)
     })
+}
+
+#[tauri::command]
+fn delete_vault_integration(
+    input: DeleteVaultIntegrationInput,
+    state: State<AppState>,
+) -> AppResult<VaultIntegrationSnapshot> {
+    timed_command(
+        "delete_vault_integration",
+        "scope=settings".to_string(),
+        || state.delete_vault_integration(input),
+    )
 }
 
 #[tauri::command]
@@ -1313,8 +1349,11 @@ pub fn run() {
             detach_project_catalog_adoption,
             list_project_workflow_runs,
             list_vault_entries,
+            list_vault_integrations,
             upsert_vault_entry,
+            upsert_vault_integration,
             delete_vault_entry,
+            delete_vault_integration,
             get_session_snapshot,
             launch_project_session,
             write_session_input,
