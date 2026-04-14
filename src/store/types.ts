@@ -111,6 +111,7 @@ export type ProjectSlice = {
 
   editProjectName: string
   editProjectRootPath: string
+  editProjectBaseBranch: string
   projectUpdateError: string | null
   isProjectEditorOpen: boolean
   isUpdatingProject: boolean
@@ -138,6 +139,7 @@ export type ProjectSlice = {
   setSelectedLaunchProfileId: (value: number | null) => void
   setEditProjectName: (value: string) => void
   setEditProjectRootPath: (value: string) => void
+  setEditProjectBaseBranch: (value: string) => void
   setIsProjectEditorOpen: (value: boolean) => void
   setIsProjectCreateOpen: (value: boolean) => void
   setDefaultLaunchProfileSettingId: (value: number | null) => void

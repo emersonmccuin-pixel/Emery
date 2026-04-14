@@ -72,6 +72,7 @@ export type ProjectRecord = {
   sessionCount: number
   workItemPrefix: string | null
   systemPrompt: string
+  baseBranch: string | null
 }
 
 export type LaunchProfileRecord = {

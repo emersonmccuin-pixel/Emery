@@ -1361,6 +1361,38 @@ fn prepare_claude_profile_args(raw: &str) -> Result<Vec<String>, String> {
     Ok(normalized_args)
 }
 
+/// Resolve the base branch for the project.
+/// Uses `project.base_branch` if set; otherwise auto-detects via
+/// `git symbolic-ref refs/remotes/origin/HEAD`; falls back to `"main"`.
+fn resolve_base_branch(project: &crate::db::ProjectRecord, root_path: &str) -> String {
+    if let Some(ref branch) = project.base_branch {
+        let trimmed = branch.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+
+    // Auto-detect: ask git for the remote HEAD
+    let output = std::process::Command::new("git")
+        .args(["symbolic-ref", "refs/remotes/origin/HEAD", "--short"])
+        .current_dir(root_path)
+        .output();
+
+    if let Ok(output) = output {
+        if output.status.success() {
+            let detected = String::from_utf8_lossy(&output.stdout);
+            // strip "origin/" prefix if present
+            let detected = detected.trim();
+            let detected = detected.strip_prefix("origin/").unwrap_or(detected);
+            if !detected.is_empty() {
+                return detected.to_string();
+            }
+        }
+    }
+
+    "main".to_string()
+}
+
 fn build_claude_bridge_system_prompt(
     project: &crate::db::ProjectRecord,
     worktree: Option<&crate::db::WorktreeRecord>,
@@ -1369,6 +1401,7 @@ fn build_claude_bridge_system_prompt(
 ) -> String {
     let namespace = project.work_item_prefix.as_deref().unwrap_or("PROJECT");
     let tracker_call_sign = format!("{namespace}-0");
+    let base_branch = resolve_base_branch(project, launch_root_path);
 
     let mut prompt = format!(
         concat!(
@@ -1490,7 +1523,7 @@ fn build_claude_bridge_system_prompt(
                 "### 5. Review\n",
                 "On agent completion:\n",
                 "- Read the completion message for a summary\n",
-                "- Inspect the diff from the worktree: `git diff dev..<branch_name>`\n",
+                "- Inspect the diff from the worktree: `git diff {}..<branch_name>`\n",
                 "- Verify changes match requirements\n",
                 "- If unsatisfactory, send another directive with feedback and wait for a new complete signal\n\n",
                 "### 6. Merge\n",
@@ -1515,6 +1548,7 @@ fn build_claude_bridge_system_prompt(
             project.name,
             tracker_call_sign,
             tracker_call_sign,  // get_work_item for {}
+            base_branch,        // git diff {}..<branch_name>
             namespace,
             namespace,
             tracker_call_sign,
@@ -2300,6 +2334,7 @@ mod tests {
             session_count: 0,
             work_item_prefix: Some("CMDR".to_string()),
             system_prompt: String::new(),
+            base_branch: None,
         }
     }
 

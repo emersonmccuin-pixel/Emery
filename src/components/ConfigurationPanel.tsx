@@ -168,12 +168,14 @@ function GeneralTab() {
   const selectedProject = useSelectedProject()
   const editProjectName = useAppStore((s) => s.editProjectName)
   const editProjectRootPath = useAppStore((s) => s.editProjectRootPath)
+  const editProjectBaseBranch = useAppStore((s) => s.editProjectBaseBranch)
   const projectUpdateError = useAppStore((s) => s.projectUpdateError)
   const isUpdatingProject = useAppStore((s) => s.isUpdatingProject)
 
   const {
     setEditProjectName,
     setEditProjectRootPath,
+    setEditProjectBaseBranch,
     setProjectUpdateError,
     browseForProjectFolder,
     submitProjectUpdate,
@@ -235,6 +237,16 @@ function GeneralTab() {
                 Browse
               </Button>
             </div>
+          </label>
+
+          <label className="field">
+            <span>Base branch</span>
+            <Input
+              value={editProjectBaseBranch}
+              onChange={(event) => setEditProjectBaseBranch(event.target.value)}
+              placeholder="Auto-detect (main or origin/HEAD)"
+              className="hud-input"
+            />
           </label>
         </div>
 
