@@ -61,3 +61,29 @@ export function testBackupConnection(): Promise<void> {
 export function listBackupRuns(limit = 10): Promise<BackupRunRecord[]> {
   return invoke<BackupRunRecord[]>('list_backup_runs', { limit })
 }
+
+export type RemoteBackup = {
+  objectKey: string
+  size: number
+  lastModified: string
+  scope: string
+}
+
+export type RestoreToken = {
+  token: string
+  expiresAtUnix: number
+  objectKey: string
+  includedFiles: string[]
+}
+
+export function listRemoteBackups(): Promise<RemoteBackup[]> {
+  return invoke<RemoteBackup[]>('list_remote_backups')
+}
+
+export function prepareRestoreFromR2(objectKey: string): Promise<RestoreToken> {
+  return invoke<RestoreToken>('prepare_restore_from_r2', { objectKey })
+}
+
+export function commitRestore(token: string): Promise<void> {
+  return invoke<void>('commit_restore', { token })
+}

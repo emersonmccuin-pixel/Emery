@@ -1367,6 +1367,30 @@ fn list_backup_runs(
     })
 }
 
+#[tauri::command]
+fn list_remote_backups(state: State<AppState>) -> AppResult<Vec<backup::RemoteBackup>> {
+    timed_command("list_remote_backups", "scope=r2", || {
+        backup::BackupService::new(state.inner().clone()).list_remote_backups()
+    })
+}
+
+#[tauri::command]
+fn prepare_restore_from_r2(
+    object_key: String,
+    state: State<AppState>,
+) -> AppResult<backup::RestoreToken> {
+    timed_command("prepare_restore_from_r2", "scope=restore", || {
+        backup::BackupService::new(state.inner().clone()).prepare_restore(&object_key)
+    })
+}
+
+#[tauri::command]
+fn commit_restore(token: String, state: State<AppState>) -> AppResult<()> {
+    timed_command("commit_restore", "scope=restore", || {
+        backup::BackupService::new(state.inner().clone()).commit_restore(&token)
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -1438,7 +1462,10 @@ pub fn run() {
             run_full_backup_now,
             run_diagnostics_backup_now,
             test_backup_connection,
-            list_backup_runs
+            list_backup_runs,
+            list_remote_backups,
+            prepare_restore_from_r2,
+            commit_restore
         ])
         .setup(|app| {
             let storage = ensure_storage_dirs(&app.handle())?;

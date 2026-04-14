@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
+
+const RestoreFromR2Modal = lazy(() => import('./RestoreFromR2Modal'))
 import { PanelBanner, PanelLoadingState } from '@/components/ui/panel-state'
 import {
   backfillEmbeddings,
@@ -177,6 +179,7 @@ function R2BackupSection() {
   const [bucket, setBucket] = useState('')
   const [schedule, setSchedule] = useState<BackupSchedule>('nightly')
   const [includeVaultKey, setIncludeVaultKey] = useState(true)
+  const [restoreOpen, setRestoreOpen] = useState(false)
 
   useEffect(() => {
     void refresh()
@@ -361,6 +364,14 @@ function R2BackupSection() {
             >
               Run diagnostics backup now
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setRestoreOpen(true)}
+              disabled={isBusy || !configured}
+            >
+              Restore from R2…
+            </Button>
           </div>
 
           {actionError ? (
@@ -391,6 +402,11 @@ function R2BackupSection() {
           ) : null}
         </>
       )}
+      {restoreOpen ? (
+        <Suspense fallback={null}>
+          <RestoreFromR2Modal onClose={() => setRestoreOpen(false)} />
+        </Suspense>
+      ) : null}
     </article>
   )
 }

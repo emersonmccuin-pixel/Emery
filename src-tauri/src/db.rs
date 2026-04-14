@@ -492,6 +492,21 @@ impl AppState {
                 .map_err(|error| format!("failed to create database directory: {error}"))?;
         }
 
+        // Apply a pending restore BEFORE opening the main DB connection.
+        // If a marker exists, files are swapped atomically and the marker is
+        // removed. On error the marker is left in place so the user sees the
+        // failure on next boot rather than booting into a partially-restored
+        // state.
+        let app_data_dir = Path::new(&storage.app_data_dir);
+        if let Some(marker) = crate::backup::apply_pending_restore_if_any(app_data_dir)? {
+            log::info!(
+                target: "backup",
+                "applied pending restore from {} (token {})",
+                marker.source_object_key,
+                marker.token_id,
+            );
+        }
+
         let connection = open_connection(&database_path)?;
         migrate(&connection)?;
         seed_defaults(&connection)?;

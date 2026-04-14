@@ -133,6 +133,36 @@ impl R2Client {
         Ok(())
     }
 
+    /// Fetch an object body. Used by Phase C2 restore to pull a backup zip
+    /// back from R2. Bodies are tens of MB so `Vec<u8>` is fine.
+    pub fn get_object(&self, key: &str) -> AppResult<Vec<u8>> {
+        let url = self.object_url(key);
+        let now = now_utc();
+        let signed = build_signed_request(SignInput {
+            method: "GET",
+            host: &self.host(),
+            canonical_uri: &format!("/{}/{}", self.bucket, encode_path(key)),
+            canonical_query: "",
+            payload_sha256: EMPTY_SHA256,
+            now: &now,
+            access_key: &self.access_key,
+            secret_key: &self.secret_key,
+            extra_headers: &[],
+        });
+
+        let response = self
+            .http
+            .get(&url)
+            .headers(signed.into_reqwest_headers()?)
+            .send()
+            .map_err(|error| AppError::supervisor(format!("R2 get_object failed: {error}")))?;
+        let response = expect_success(response, "get_object")?;
+        let bytes = response
+            .bytes()
+            .map_err(|error| AppError::internal(format!("R2 get_object body read failed: {error}")))?;
+        Ok(bytes.to_vec())
+    }
+
     /// List objects, optionally filtered by prefix. Scaffolded for Phase C2
     /// restore-from-remote; not wired through an invoke in Phase C1.
     pub fn list_objects(&self, prefix: Option<&str>) -> AppResult<Vec<R2Object>> {
