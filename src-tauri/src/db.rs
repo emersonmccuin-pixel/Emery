@@ -7,6 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -475,6 +476,11 @@ pub struct AppState {
     storage: StorageInfo,
     database_path: PathBuf,
     agent_message_broker: Arc<AgentMessageBroker>,
+    /// Optional sender used by the embeddings worker. When set, successful
+    /// work-item write paths push the affected work-item id best-effort so the
+    /// worker can recompute vectors in the background. None when no worker is
+    /// attached (e.g. MCP bin which embeds inline).
+    embeddings_dirty: Arc<Mutex<Option<Sender<i64>>>>,
 }
 
 impl AppState {
@@ -496,7 +502,29 @@ impl AppState {
             storage,
             database_path,
             agent_message_broker: Arc::new(AgentMessageBroker::default()),
+            embeddings_dirty: Arc::new(Mutex::new(None)),
         })
+    }
+
+    /// Attach a sender used by the embeddings worker. Subsequent successful
+    /// work-item writes will notify the worker best-effort. Overwrites any
+    /// previously attached sender.
+    pub fn attach_embeddings_sender(&self, sender: Sender<i64>) {
+        if let Ok(mut slot) = self.embeddings_dirty.lock() {
+            *slot = Some(sender);
+        }
+    }
+
+    /// Notify the embeddings worker that a work item's source text may have
+    /// changed. Best-effort; silently drops when no sender is attached or the
+    /// channel is closed.
+    pub(crate) fn notify_embeddings_dirty(&self, work_item_id: i64) {
+        let Ok(slot) = self.embeddings_dirty.lock() else {
+            return;
+        };
+        if let Some(sender) = slot.as_ref() {
+            let _ = sender.send(work_item_id);
+        }
     }
 
     pub fn from_database_path(database_path: PathBuf) -> AppResult<Self> {
@@ -1069,10 +1097,9 @@ impl AppState {
             .map_err(|error| format!("failed to create work item: {error}"))?;
 
         touch_project(&connection, input.project_id)?;
-        Ok(load_work_item_by_id(
-            &connection,
-            connection.last_insert_rowid(),
-        )?)
+        let record = load_work_item_by_id(&connection, connection.last_insert_rowid())?;
+        self.notify_embeddings_dirty(record.id);
+        Ok(record)
     }
 
     pub fn update_work_item(&self, input: UpdateWorkItemInput) -> AppResult<WorkItemRecord> {
@@ -1102,7 +1129,9 @@ impl AppState {
             .map_err(|error| format!("failed to update work item: {error}"))?;
 
         touch_project(&connection, existing.project_id)?;
-        Ok(load_work_item_by_id(&connection, input.id)?)
+        let record = load_work_item_by_id(&connection, input.id)?;
+        self.notify_embeddings_dirty(record.id);
+        Ok(record)
     }
 
     pub fn reparent_work_item(
@@ -1178,7 +1207,7 @@ impl AppState {
     }
 
     pub fn delete_work_item(&self, id: i64) -> AppResult<()> {
-        let connection = self.connect()?;
+        let mut connection = self.connect()?;
         let existing = load_work_item_by_id(&connection, id)?;
         let child_count = connection
             .query_row(
@@ -1194,9 +1223,21 @@ impl AppState {
             ));
         }
 
-        connection
-            .execute("DELETE FROM work_items WHERE id = ?1", [id])
+        // vec0 virtual tables do not participate in SQLite foreign-key cascades,
+        // so the work_item_vectors row must be removed explicitly. Wrap the
+        // deletes in a transaction so a failure leaves no orphan vector row.
+        let tx = connection
+            .transaction()
+            .map_err(|error| format!("failed to start delete transaction: {error}"))?;
+        tx.execute(
+            "DELETE FROM work_item_vectors WHERE work_item_id = ?1",
+            [id],
+        )
+        .map_err(|error| format!("failed to delete work item vector row: {error}"))?;
+        tx.execute("DELETE FROM work_items WHERE id = ?1", [id])
             .map_err(|error| format!("failed to delete work item: {error}"))?;
+        tx.commit()
+            .map_err(|error| format!("failed to commit work item delete: {error}"))?;
 
         touch_project(&connection, existing.project_id)?;
         Ok(())

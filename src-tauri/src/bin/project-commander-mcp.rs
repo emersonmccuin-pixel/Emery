@@ -2,6 +2,7 @@ use project_commander_lib::db::{
     AppState, CreateDocumentInput, CreateWorkItemInput, DocumentRecord, ProjectRecord,
     ReparentRequest, UpdateDocumentInput, UpdateWorkItemInput, WorkItemRecord,
 };
+use project_commander_lib::embeddings::{EmbeddingsService, SearchFilters};
 use project_commander_lib::error::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -202,6 +203,7 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
                 item_type: args.item_type.unwrap_or_else(|| "task".to_string()),
                 status: args.status.unwrap_or_else(|| "backlog".to_string()),
             })?;
+            embed_work_item_best_effort(state, work_item.id);
 
             Ok(serde_json::to_value(work_item).expect("work item should serialize"))
         }),
@@ -239,6 +241,7 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
             } else {
                 work_item
             };
+            embed_work_item_best_effort(state, work_item.id);
 
             Ok(serde_json::to_value(work_item).expect("work item should serialize"))
         }),
@@ -254,6 +257,7 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
                 item_type: existing.item_type,
                 status: "done".to_string(),
             })?;
+            embed_work_item_best_effort(state, work_item.id);
 
             Ok(serde_json::to_value(work_item).expect("work item should serialize"))
         }),
@@ -342,9 +346,61 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
                 "title": existing.title
             }))
         }),
+        "search_work_items" => execute_tool(|| {
+            let args: SearchWorkItemsArgs = decode_args(arguments)?;
+            let project = resolve_project(state)?;
+            let k = args.k.unwrap_or(10).clamp(1, 50);
+            let service = EmbeddingsService::new(state.clone())?;
+            let hits = service.search(
+                project.id,
+                &args.query,
+                k,
+                SearchFilters {
+                    status: args.status,
+                    item_type: args.item_type,
+                    open_only: args.open_only,
+                },
+            )?;
+            let slim: Vec<Value> = hits
+                .into_iter()
+                .map(|hit| {
+                    json!({
+                        "id": hit.work_item_id,
+                        "callSign": hit.call_sign,
+                        "title": hit.title,
+                        "status": hit.status,
+                        "itemType": hit.item_type,
+                        "score": hit.score,
+                    })
+                })
+                .collect();
+            Ok(serde_json::to_value(slim).expect("search hits should serialize"))
+        }),
         _ => Err(McpError::method_not_found(format!(
             "unknown tool: {tool_name}"
         ))),
+    }
+}
+
+/// Inline best-effort embedding refresh after an agent-driven work-item write.
+/// Failure must NEVER abort the MCP tool call — agents accept an eventually
+/// consistent vector index, but losing the write would break their workflow.
+fn embed_work_item_best_effort(state: &AppState, work_item_id: i64) {
+    let service = match EmbeddingsService::new(state.clone()) {
+        Ok(service) => service,
+        Err(error) => {
+            eprintln!(
+                "project-commander-mcp: failed to build embeddings service: {}",
+                error.message
+            );
+            return;
+        }
+    };
+    if let Err(error) = service.embed_work_item(work_item_id) {
+        eprintln!(
+            "project-commander-mcp: embedding for work_item#{} failed: {}",
+            work_item_id, error.message
+        );
     }
 }
 
@@ -603,6 +659,38 @@ fn tool_definitions() -> Vec<Value> {
                 vec!["id"],
             ),
             false,
+        ),
+        tool_definition(
+            "search_work_items",
+            "Semantic / fuzzy search over the active project's work items using Voyage AI embeddings. Use when you need to find work items by meaning — questions like \"anything about refresh churn\" or \"items mentioning session recovery\". Use `list_work_items` instead for plain enumeration filtered by status, type, or hierarchy; `list_work_items` does not understand natural-language queries. Returns slim hits (id, callSign, title, status, itemType, score); fetch full bodies with `get_work_item`.",
+            json_schema_object(
+                json!({
+                    "query": {
+                        "type": "string",
+                        "description": "Natural-language or keyword query."
+                    },
+                    "k": {
+                        "type": "integer",
+                        "description": "Max hits to return (default 10, clamped to 1..50)."
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["backlog", "in_progress", "blocked", "parked", "done"],
+                        "description": "Optional exact status filter."
+                    },
+                    "itemType": {
+                        "type": "string",
+                        "enum": ["bug", "task", "feature", "note"],
+                        "description": "Optional exact type filter."
+                    },
+                    "openOnly": {
+                        "type": "boolean",
+                        "description": "If true, drop work items with status 'done'."
+                    }
+                }),
+                vec!["query"],
+            ),
+            true,
         ),
     ]
 }
@@ -887,6 +975,16 @@ struct UpdateDocumentArgs {
 #[derive(Deserialize)]
 struct DeleteDocumentArgs {
     id: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchWorkItemsArgs {
+    query: String,
+    k: Option<usize>,
+    status: Option<String>,
+    item_type: Option<String>,
+    open_only: Option<bool>,
 }
 
 /// Strip body and metadata from a work item for list responses.

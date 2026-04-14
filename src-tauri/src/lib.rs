@@ -1,5 +1,7 @@
 pub mod db;
 pub mod diagnostics;
+pub mod embeddings;
+pub mod embeddings_worker;
 pub mod error;
 pub mod session;
 pub mod session_api;
@@ -1287,6 +1289,30 @@ fn write_project_file(root_path: String, filename: String, contents: String) -> 
     Ok(())
 }
 
+#[tauri::command]
+fn embeddings_status(
+    state: State<AppState>,
+) -> AppResult<embeddings::EmbeddingsStatus> {
+    timed_command("embeddings_status", "phase=query", || {
+        let service = embeddings::EmbeddingsService::new(state.inner().clone())?;
+        service.status()
+    })
+}
+
+#[tauri::command]
+fn embed_backfill_work_items(
+    project_id: Option<i64>,
+    state: State<AppState>,
+) -> AppResult<embeddings::BackfillReport> {
+    let detail = project_id
+        .map(|id| format!("project_id={id}"))
+        .unwrap_or_else(|| "project_id=all".to_string());
+    timed_command("embed_backfill_work_items", detail, || {
+        let service = embeddings::EmbeddingsService::new(state.inner().clone())?;
+        service.backfill(project_id, |_done, _total| {})
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -1350,7 +1376,9 @@ pub fn run() {
             read_project_file,
             write_project_file,
             save_clipboard_image,
-            get_crash_recovery_manifest
+            get_crash_recovery_manifest,
+            embed_backfill_work_items,
+            embeddings_status
         ])
         .setup(|app| {
             let storage = ensure_storage_dirs(&app.handle())?;
@@ -1429,6 +1457,12 @@ pub fn run() {
                 "Desktop app runtime initialized".to_string(),
                 startup_metadata,
             );
+
+            // Attach the embeddings worker sender BEFORE managing the state so
+            // write paths that fire on this AppState instance route through
+            // the background thread.
+            let embeddings_sender = embeddings_worker::spawn(workflow_state.clone());
+            workflow_state.attach_embeddings_sender(embeddings_sender);
 
             app.manage(diagnostics_runtime.clone());
             app.manage(app_runtime_lifecycle);

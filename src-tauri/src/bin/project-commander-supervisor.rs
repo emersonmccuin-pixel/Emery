@@ -251,6 +251,12 @@ fn run_server(db_path: PathBuf, runtime_file: PathBuf) -> Result<(), String> {
 
     let removed_runtime_artifacts = cleanup_stale_runtime_artifacts(&runtime_file)?;
     let state = AppState::from_database_path(db_path).map_err(|error| error.to_string())?;
+    // The supervisor is the HTTP write path for the desktop UI; attach the
+    // embeddings worker here so UI-originated work-item mutations land in the
+    // background refresh queue. MCP tool calls have their own inline path.
+    let embeddings_sender =
+        project_commander_lib::embeddings_worker::spawn(state.clone());
+    state.attach_embeddings_sender(embeddings_sender);
     // Read clean_shutdown BEFORE reconciliation and before resetting it, so we
     // can detect whether the previous run ended in a crash.
     let previous_clean_shutdown = state
