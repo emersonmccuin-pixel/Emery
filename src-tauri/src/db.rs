@@ -1,4 +1,5 @@
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{ffi::sqlite3_auto_extension, params, Connection, OptionalExtension};
+use sqlite_vec::sqlite3_vec_init;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
@@ -2176,9 +2177,37 @@ impl AppState {
     fn connect(&self) -> Result<Connection, String> {
         open_connection(&self.database_path)
     }
+
+    /// Backend-only accessor for crate code that needs a raw connection
+    /// (e.g. vault internal-release paths for embeddings / backup).
+    pub(crate) fn connect_internal(&self) -> Result<Connection, String> {
+        self.connect()
+    }
+
+    /// Backend-only accessor for the app-data root directory, used by the
+    /// vault storage layer.
+    pub(crate) fn app_data_dir(&self) -> &Path {
+        Path::new(&self.storage.app_data_dir)
+    }
+}
+
+fn register_sqlite_vec_once() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        // Safety: sqlite3_auto_extension registers a global C entry point. The
+        // transmute matches the signature expected by sqlite3 and is the
+        // documented integration pattern for sqlite-vec.
+        unsafe {
+            sqlite3_auto_extension(Some(std::mem::transmute(
+                sqlite3_vec_init as *const (),
+            )));
+        }
+    });
 }
 
 fn open_connection(database_path: &Path) -> Result<Connection, String> {
+    register_sqlite_vec_once();
     let connection = Connection::open(database_path)
         .map_err(|error| format!("failed to open database: {error}"))?;
 
@@ -2637,6 +2666,63 @@ fn migrate(connection: &Connection) -> Result<(), String> {
     backfill_project_work_item_prefixes(connection)?;
     reconcile_work_item_identifiers(connection)?;
     backfill_project_tracker_work_items(connection)?;
+
+    // Vector search + R2 backup foundation (Phase A, migration slot >= 9000 to
+    // steer clear of other in-flight migration work on lower numbers).
+    connection
+        .execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS work_item_embeddings (
+              work_item_id   INTEGER PRIMARY KEY REFERENCES work_items(id) ON DELETE CASCADE,
+              content_hash   TEXT NOT NULL,
+              model          TEXT NOT NULL,
+              dimensions     INTEGER NOT NULL,
+              embedded_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS backup_runs (
+              id              INTEGER PRIMARY KEY AUTOINCREMENT,
+              scope           TEXT NOT NULL,
+              trigger         TEXT NOT NULL,
+              started_at      TEXT NOT NULL,
+              completed_at    TEXT,
+              status          TEXT NOT NULL,
+              bytes_uploaded  INTEGER,
+              object_key      TEXT,
+              error_message   TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS backup_settings (
+              id                          INTEGER PRIMARY KEY CHECK (id = 1),
+              account_id                  TEXT,
+              bucket                      TEXT,
+              region                      TEXT NOT NULL DEFAULT 'auto',
+              endpoint_override           TEXT,
+              schedule                    TEXT NOT NULL DEFAULT 'nightly',
+              include_vault_key           INTEGER NOT NULL DEFAULT 1,
+              diagnostics_retention_days  INTEGER NOT NULL DEFAULT 7,
+              updated_at                  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            ",
+        )
+        .map_err(|error| {
+            format!("failed to run vector-search/backup foundation migrations: {error}")
+        })?;
+
+    // vec0 virtual table depends on the sqlite-vec auto-extension being
+    // registered before the connection was opened (see register_sqlite_vec_once).
+    connection
+        .execute_batch(
+            "
+            CREATE VIRTUAL TABLE IF NOT EXISTS work_item_vectors USING vec0(
+              work_item_id  INTEGER PRIMARY KEY,
+              embedding     FLOAT[1024]
+            );
+            ",
+        )
+        .map_err(|error| {
+            format!("failed to create work_item_vectors vec0 virtual table: {error}")
+        })?;
 
     Ok(())
 }

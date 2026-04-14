@@ -30,6 +30,7 @@ type AppSettingsTab =
   | "appearance"
   | "accounts"
   | "defaults"
+  | "integrations"
   | "vault"
   | "diagnostics";
 
@@ -40,6 +41,7 @@ type Props = {
 const DiagnosticsConsole = lazy(
   () => import("@/components/DiagnosticsConsole"),
 );
+const IntegrationsTab = lazy(() => import("@/components/IntegrationsTab"));
 
 function AppSettingsPanel({ initialTab = "appearance" }: Props) {
   const [activeTab, setActiveTab] = useState<AppSettingsTab>(initialTab);
@@ -55,6 +57,7 @@ function AppSettingsPanel({ initialTab = "appearance" }: Props) {
           <TabsTrigger value="appearance">Appearance</TabsTrigger>
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
           <TabsTrigger value="defaults">Defaults</TabsTrigger>
+          <TabsTrigger value="integrations">Integrations</TabsTrigger>
           <TabsTrigger value="vault">Vault</TabsTrigger>
           <TabsTrigger value="diagnostics">Diagnostics</TabsTrigger>
         </TabsList>
@@ -69,6 +72,11 @@ function AppSettingsPanel({ initialTab = "appearance" }: Props) {
         </TabsContent>
         <TabsContent value="defaults">
           <DefaultsTab />
+        </TabsContent>
+        <TabsContent value="integrations">
+          <Suspense fallback={null}>
+            <IntegrationsTab />
+          </Suspense>
         </TabsContent>
         <TabsContent value="vault">
           <VaultTab />

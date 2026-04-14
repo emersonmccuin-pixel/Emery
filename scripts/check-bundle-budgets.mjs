@@ -40,9 +40,17 @@ const budgets = [
     maxBytes: 200_000,
   },
   {
+    // AppSettingsPanel carries more surface area than the other lazy panels
+    // (Accounts + Defaults + Integrations + Vault + Diagnostics tabs). It is
+    // budgeted separately so the shared lazy-panel ceiling stays tight.
+    label: 'lazy-panel-js-app-settings',
+    pattern: /^AppSettingsPanel-.*\.js$/,
+    maxBytes: 21_000,
+  },
+  {
     label: 'lazy-panel-js',
     pattern:
-      /^(WorkItemsPanel|AppSettingsPanel|HistoryPanel|CreateProjectModal|WorktreeWorkItemPanel|LiveTerminal|ConfigurationPanel|OverviewPanel)-.*\.js$/,
+      /^(WorkItemsPanel|HistoryPanel|CreateProjectModal|WorktreeWorkItemPanel|LiveTerminal|ConfigurationPanel|OverviewPanel)-.*\.js$/,
     maxBytes: 20_000,
     allowMany: true,
   },

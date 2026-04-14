@@ -7,6 +7,9 @@ use std::path::{Path, PathBuf};
 use tauri_plugin_stronghold::stronghold::Stronghold;
 use zeroize::{Zeroize, Zeroizing};
 
+use crate::db::AppState;
+use crate::error::{AppError, AppResult};
+
 const VAULT_DIR_NAME: &str = "vault";
 const VAULT_SNAPSHOT_FILE_NAME: &str = "project-commander-vault.hold";
 const VAULT_KEY_FILE_NAME: &str = "project-commander-vault.key";
@@ -416,6 +419,74 @@ where
             Err(error)
         }
     }
+}
+
+/// Backend-only vault release path for in-process Rust consumers
+/// (e.g. embeddings, backup). Resolves a vault entry by canonical name,
+/// records an audit row tagged with `consumer`, and returns the raw value
+/// wrapped in [`Zeroizing`]. Returns `Ok(None)` when the named entry does
+/// not exist.
+///
+/// MUST NOT be exposed over Tauri IPC or any agent-facing surface.
+pub fn release_for_internal(
+    state: &AppState,
+    consumer: &str,
+    name: &str,
+) -> AppResult<Option<Zeroizing<String>>> {
+    let consumer = consumer.trim();
+    if consumer.is_empty() {
+        return Err(AppError::invalid_input(
+            "release_for_internal requires a non-empty consumer label",
+        ));
+    }
+    let lookup = name.trim();
+    if lookup.is_empty() {
+        return Err(AppError::invalid_input(
+            "release_for_internal requires a non-empty vault entry name",
+        ));
+    }
+
+    let connection = state
+        .connect_internal()
+        .map_err(AppError::database)?;
+
+    let entry = match load_entry_by_name(&connection, lookup) {
+        Ok(entry) => entry,
+        Err(error) if error.contains("does not exist") => return Ok(None),
+        Err(error) => return Err(AppError::database(error)),
+    };
+
+    let value = load_secret_value(state.app_data_dir(), entry.id).map_err(AppError::io)?;
+
+    connection
+        .execute(
+            "
+            UPDATE vault_entries
+            SET last_accessed_at = CURRENT_TIMESTAMP
+            WHERE id = ?1
+            ",
+            [entry.id],
+        )
+        .map_err(|error| {
+            AppError::database(format!(
+                "failed to update last_accessed_at for vault entry {}: {error}",
+                entry.name
+            ))
+        })?;
+
+    append_audit_event(
+        &connection,
+        Some(entry.id),
+        &entry.name,
+        "release",
+        consumer,
+        "internal",
+        "approved",
+        None,
+    )
+    .map_err(AppError::database)?;
+
+    Ok(Some(value))
 }
 
 fn append_audit_event(
