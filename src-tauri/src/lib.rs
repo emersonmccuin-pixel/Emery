@@ -1,8 +1,11 @@
+pub mod backup;
+pub mod backup_scheduler;
 pub mod db;
 pub mod diagnostics;
 pub mod embeddings;
 pub mod embeddings_worker;
 pub mod error;
+pub mod r2_client;
 pub mod session;
 pub mod session_api;
 pub mod session_host;
@@ -1313,6 +1316,57 @@ fn embed_backfill_work_items(
     })
 }
 
+#[tauri::command]
+fn get_backup_settings(state: State<AppState>) -> AppResult<backup::BackupSettings> {
+    timed_command("get_backup_settings", "scope=settings", || {
+        backup::BackupService::new(state.inner().clone()).get_settings()
+    })
+}
+
+#[tauri::command]
+fn update_backup_settings(
+    input: backup::BackupSettingsInput,
+    state: State<AppState>,
+) -> AppResult<backup::BackupSettings> {
+    timed_command("update_backup_settings", "scope=settings", || {
+        backup::BackupService::new(state.inner().clone()).update_settings(input)
+    })
+}
+
+#[tauri::command]
+fn run_full_backup_now(state: State<AppState>) -> AppResult<backup::BackupRunRecord> {
+    timed_command("run_full_backup_now", "scope=full", || {
+        backup::BackupService::new(state.inner().clone())
+            .run_full_backup(backup::BackupTrigger::Manual)
+    })
+}
+
+#[tauri::command]
+fn run_diagnostics_backup_now(state: State<AppState>) -> AppResult<backup::BackupRunRecord> {
+    timed_command("run_diagnostics_backup_now", "scope=diagnostics", || {
+        backup::BackupService::new(state.inner().clone())
+            .run_diagnostics_backup(backup::BackupTrigger::Manual)
+    })
+}
+
+#[tauri::command]
+fn test_backup_connection(state: State<AppState>) -> AppResult<()> {
+    timed_command("test_backup_connection", "scope=r2", || {
+        backup::BackupService::new(state.inner().clone()).test_connection()
+    })
+}
+
+#[tauri::command]
+fn list_backup_runs(
+    limit: Option<usize>,
+    state: State<AppState>,
+) -> AppResult<Vec<backup::BackupRunRecord>> {
+    let limit = limit.unwrap_or(10);
+    timed_command("list_backup_runs", format!("limit={limit}"), || {
+        backup::BackupService::new(state.inner().clone()).list_runs(limit)
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -1378,7 +1432,13 @@ pub fn run() {
             save_clipboard_image,
             get_crash_recovery_manifest,
             embed_backfill_work_items,
-            embeddings_status
+            embeddings_status,
+            get_backup_settings,
+            update_backup_settings,
+            run_full_backup_now,
+            run_diagnostics_backup_now,
+            test_backup_connection,
+            list_backup_runs
         ])
         .setup(|app| {
             let storage = ensure_storage_dirs(&app.handle())?;
@@ -1463,6 +1523,7 @@ pub fn run() {
             // the background thread.
             let embeddings_sender = embeddings_worker::spawn(workflow_state.clone());
             workflow_state.attach_embeddings_sender(embeddings_sender);
+            backup_scheduler::spawn(workflow_state.clone());
 
             app.manage(diagnostics_runtime.clone());
             app.manage(app_runtime_lifecycle);

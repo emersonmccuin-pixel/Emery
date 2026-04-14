@@ -257,6 +257,7 @@ fn run_server(db_path: PathBuf, runtime_file: PathBuf) -> Result<(), String> {
     let embeddings_sender =
         project_commander_lib::embeddings_worker::spawn(state.clone());
     state.attach_embeddings_sender(embeddings_sender);
+    project_commander_lib::backup_scheduler::spawn(state.clone());
     // Read clean_shutdown BEFORE reconciliation and before resetting it, so we
     // can detect whether the previous run ended in a crash.
     let previous_clean_shutdown = state

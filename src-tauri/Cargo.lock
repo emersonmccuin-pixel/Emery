@@ -3599,6 +3599,8 @@ dependencies = [
  "clap",
  "dirs 6.0.0",
  "fern",
+ "hex",
+ "hmac",
  "iota_stronghold",
  "log",
  "notify",
@@ -3617,6 +3619,8 @@ dependencies = [
  "tauri-plugin-log",
  "tauri-plugin-stronghold",
  "tiny_http",
+ "uuid",
+ "walkdir",
  "zeroize",
  "zip 0.6.6",
 ]
