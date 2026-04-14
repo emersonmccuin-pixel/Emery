@@ -90,6 +90,10 @@ function formatIntegrationPlacementLabel(
     template.secretSlots.map((slot) =>
       slot.placement === "authorization_bearer"
         ? "Bearer header"
+        : slot.placement === "env_var"
+          ? slot.envVar
+            ? `Env ${slot.envVar}`
+            : "Environment variable"
         : slot.headerName
           ? `Header ${slot.headerName}`
           : "Header",
@@ -272,7 +276,7 @@ function VaultIntegrationsSection({
       <div className="overview-card__header">
         <div>
           <p className="panel__eyebrow">Integrations</p>
-          <strong>Brokered HTTP templates</strong>
+          <strong>Integration templates</strong>
         </div>
         <Button variant="outline" size="sm" type="button" onClick={() => startNew()}>
           New integration
@@ -280,9 +284,9 @@ function VaultIntegrationsSection({
       </div>
 
       <p className="stack-form__note">
-        These integrations keep auth inside the supervisor. Agents call a
-        brokered template, Project Commander resolves the vault bindings, and
-        outbound HTTPS is restricted to the template&apos;s allowlisted domains.
+        These integrations keep auth inside the supervisor. HTTP templates run
+        as allowlisted brokered requests, and CLI templates run as
+        supervisor-owned child processes with vault-backed env injection.
       </p>
 
       {error ? <PanelBanner className="mb-4" message={error} /> : null}

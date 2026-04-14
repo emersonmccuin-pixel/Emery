@@ -351,7 +351,8 @@ export type VaultIntegrationTemplateKind = "http_broker" | "cli" | "mcp";
 
 export type VaultIntegrationSecretPlacement =
   | "authorization_bearer"
-  | "header";
+  | "header"
+  | "env_var";
 
 export type VaultIntegrationSecretSlotTemplate = {
   slotName: string;
@@ -359,6 +360,7 @@ export type VaultIntegrationSecretSlotTemplate = {
   description: string;
   requiredScopeTags: string[];
   placement: VaultIntegrationSecretPlacement;
+  envVar?: string | null;
   headerName?: string | null;
   headerPrefix?: string | null;
 };
@@ -369,6 +371,9 @@ export type VaultIntegrationTemplateRecord = {
   description: string;
   kind: VaultIntegrationTemplateKind;
   source: string;
+  command?: string | null;
+  defaultArgs: string[];
+  defaultEnv: Record<string, string>;
   baseUrl?: string | null;
   egressDomains: string[];
   supportedMethods: string[];

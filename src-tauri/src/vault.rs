@@ -6,6 +6,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 use std::sync::{Arc, Mutex};
 use tauri_plugin_stronghold::stronghold::Stronghold;
 use zeroize::{Zeroize, Zeroizing};
@@ -13,10 +14,15 @@ use zeroize::{Zeroize, Zeroizing};
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 #[cfg(windows)]
+use std::os::windows::process::CommandExt;
+#[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     MessageBoxW, IDNO, IDOK, IDYES, MB_ICONWARNING, MB_SETFOREGROUND, MB_TASKMODAL,
     MB_YESNO, MB_YESNOCANCEL,
 };
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 const VAULT_DIR_NAME: &str = "vault";
 const VAULT_SNAPSHOT_FILE_NAME: &str = "project-commander-vault.hold";
@@ -76,6 +82,7 @@ pub enum VaultIntegrationTemplateKind {
 pub enum VaultIntegrationSecretPlacement {
     AuthorizationBearer,
     Header,
+    EnvVar,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,6 +93,7 @@ pub struct VaultIntegrationSecretSlotTemplate {
     pub description: String,
     pub required_scope_tags: Vec<String>,
     pub placement: VaultIntegrationSecretPlacement,
+    pub env_var: Option<String>,
     pub header_name: Option<String>,
     pub header_prefix: Option<String>,
 }
@@ -98,6 +106,11 @@ pub struct VaultIntegrationTemplateRecord {
     pub description: String,
     pub kind: VaultIntegrationTemplateKind,
     pub source: String,
+    pub command: Option<String>,
+    #[serde(default)]
+    pub default_args: Vec<String>,
+    #[serde(default)]
+    pub default_env: BTreeMap<String, String>,
     pub base_url: Option<String>,
     pub egress_domains: Vec<String>,
     pub supported_methods: Vec<String>,
@@ -182,6 +195,32 @@ pub struct ExecuteVaultHttpIntegrationOutput {
     pub truncated: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecuteVaultCliIntegrationInput {
+    pub integration_id: i64,
+    #[serde(default)]
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+    pub stdin: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecuteVaultCliIntegrationOutput {
+    pub integration_id: i64,
+    pub integration_label: String,
+    pub template_slug: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+    pub exit_code: Option<i32>,
+    pub success: bool,
+    pub stdout_text: String,
+    pub stderr_text: String,
+    pub truncated: bool,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VaultBindingDelivery {
@@ -253,6 +292,19 @@ pub struct PreparedVaultHttpIntegrationRequest {
     pub resolved_bindings: Vec<ResolvedVaultBinding>,
     pub slot_names: Vec<String>,
     pub egress_domains: Vec<String>,
+}
+
+pub struct PreparedVaultCliIntegrationCommand {
+    pub integration_id: i64,
+    pub integration_label: String,
+    pub template_slug: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+    pub default_env: BTreeMap<String, String>,
+    pub resolved_bindings: Vec<ResolvedVaultBinding>,
+    pub egress_domains: Vec<String>,
+    pub stdin: Option<String>,
 }
 
 fn default_enabled_flag() -> bool {
@@ -497,6 +549,156 @@ pub fn prepare_http_integration_request(
         resolved_bindings,
         slot_names,
         egress_domains: template.egress_domains,
+    })
+}
+
+pub fn prepare_cli_integration_command(
+    connection: &Connection,
+    app_data_dir: &Path,
+    input: ExecuteVaultCliIntegrationInput,
+    source: &str,
+    session_id: Option<i64>,
+    gate_approvals: &Arc<Mutex<HashSet<(i64, i64)>>>,
+) -> Result<PreparedVaultCliIntegrationCommand, String> {
+    let installation = load_integration_installation_by_id(connection, input.integration_id)?;
+    if !installation.enabled {
+        return Err(format!("integration {} is disabled", installation.label));
+    }
+
+    let template =
+        find_built_in_integration_template(&installation.template_slug).ok_or_else(|| {
+            format!(
+                "integration template {} is not available",
+                installation.template_slug
+            )
+        })?;
+
+    if template.kind != VaultIntegrationTemplateKind::Cli {
+        return Err(format!(
+            "integration template {} does not support CLI execution",
+            template.slug
+        ));
+    }
+
+    let command = template
+        .command
+        .clone()
+        .ok_or_else(|| format!("integration template {} does not define a command", template.slug))?;
+    let cwd = input.cwd.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()).map(ToOwned::to_owned);
+    if let Some(ref cwd) = cwd {
+        let path = Path::new(cwd);
+        if !path.is_dir() {
+            return Err(format!("integration working directory does not exist: {cwd}"));
+        }
+    }
+
+    let binding_map = integration_binding_map(&installation.bindings);
+    let mut resolved_bindings = Vec::new();
+
+    for slot in &template.secret_slots {
+        let binding = binding_map.get(&slot.slot_name).ok_or_else(|| {
+            format!(
+                "integration {} is missing a vault binding for secret slot {}",
+                installation.label, slot.slot_name
+            )
+        })?;
+        let env_var = slot.env_var.as_deref().ok_or_else(|| {
+            format!(
+                "integration template {} is missing an env var for secret slot {}",
+                template.slug, slot.slot_name
+            )
+        })?;
+        let resolved = resolve_access_binding(
+            connection,
+            app_data_dir,
+            VaultAccessBindingRequest {
+                env_var: env_var.to_string(),
+                entry_name: binding.entry_name.clone(),
+                required_scope_tags: slot.required_scope_tags.clone(),
+                delivery: VaultBindingDelivery::Env,
+            },
+            source,
+            session_id,
+            &format!("integration:{}", installation.label),
+            gate_approvals,
+        )?;
+        resolved_bindings.push(resolved);
+    }
+
+    Ok(PreparedVaultCliIntegrationCommand {
+        integration_id: installation.id,
+        integration_label: installation.label,
+        template_slug: template.slug,
+        command,
+        args: template
+            .default_args
+            .into_iter()
+            .chain(input.args.into_iter())
+            .collect(),
+        cwd,
+        default_env: template.default_env,
+        resolved_bindings,
+        egress_domains: template.egress_domains,
+        stdin: input.stdin,
+    })
+}
+
+pub fn execute_cli_integration_command(
+    prepared: PreparedVaultCliIntegrationCommand,
+) -> Result<ExecuteVaultCliIntegrationOutput, String> {
+    let mut command = ProcessCommand::new(&prepared.command);
+    command.args(&prepared.args);
+    for (name, value) in &prepared.default_env {
+        command.env(name, value);
+    }
+    for binding in &prepared.resolved_bindings {
+        command.env(&binding.env_var, binding.value.as_str());
+    }
+    if let Some(ref cwd) = prepared.cwd {
+        command.current_dir(cwd);
+    }
+    if prepared.stdin.is_some() {
+        command.stdin(std::process::Stdio::piped());
+    }
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("failed to start {}: {error}", prepared.command))?;
+
+    if let Some(stdin) = prepared.stdin.as_ref() {
+        let mut handle = child.stdin.take().ok_or_else(|| {
+            format!("failed to open stdin pipe for {}", prepared.command)
+        })?;
+        use std::io::Write as _;
+        handle
+            .write_all(stdin.as_bytes())
+            .map_err(|error| format!("failed to write stdin to {}: {error}", prepared.command))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("failed to wait for {}: {error}", prepared.command))?;
+    let stdout_text = redact_cli_output(&String::from_utf8_lossy(&output.stdout), &prepared.resolved_bindings);
+    let stderr_text = redact_cli_output(&String::from_utf8_lossy(&output.stderr), &prepared.resolved_bindings);
+    let (stdout_text, stdout_truncated) = truncate_integration_output(&stdout_text);
+    let (stderr_text, stderr_truncated) = truncate_integration_output(&stderr_text);
+
+    Ok(ExecuteVaultCliIntegrationOutput {
+        integration_id: prepared.integration_id,
+        integration_label: prepared.integration_label,
+        template_slug: prepared.template_slug,
+        command: prepared.command,
+        args: prepared.args,
+        cwd: prepared.cwd,
+        exit_code: output.status.code(),
+        success: output.status.success(),
+        stdout_text,
+        stderr_text,
+        truncated: stdout_truncated || stderr_truncated,
     })
 }
 
@@ -957,6 +1159,9 @@ fn built_in_integration_templates() -> Vec<VaultIntegrationTemplateRecord> {
                     .to_string(),
             kind: VaultIntegrationTemplateKind::HttpBroker,
             source: "built_in".to_string(),
+            command: None,
+            default_args: Vec::new(),
+            default_env: BTreeMap::new(),
             base_url: Some("https://api.github.com".to_string()),
             egress_domains: vec!["api.github.com".to_string()],
             supported_methods: vec![
@@ -975,6 +1180,7 @@ fn built_in_integration_templates() -> Vec<VaultIntegrationTemplateRecord> {
                         .to_string(),
                 required_scope_tags: vec!["github:api".to_string()],
                 placement: VaultIntegrationSecretPlacement::AuthorizationBearer,
+                env_var: None,
                 header_name: None,
                 header_prefix: None,
             }],
@@ -987,6 +1193,9 @@ fn built_in_integration_templates() -> Vec<VaultIntegrationTemplateRecord> {
                     .to_string(),
             kind: VaultIntegrationTemplateKind::HttpBroker,
             source: "built_in".to_string(),
+            command: None,
+            default_args: Vec::new(),
+            default_env: BTreeMap::new(),
             base_url: Some("https://api.openai.com".to_string()),
             egress_domains: vec!["api.openai.com".to_string()],
             supported_methods: vec!["GET".to_string(), "POST".to_string()],
@@ -999,6 +1208,39 @@ fn built_in_integration_templates() -> Vec<VaultIntegrationTemplateRecord> {
                         .to_string(),
                 required_scope_tags: vec!["openai:api".to_string()],
                 placement: VaultIntegrationSecretPlacement::AuthorizationBearer,
+                env_var: None,
+                header_name: None,
+                header_prefix: None,
+            }],
+        },
+        VaultIntegrationTemplateRecord {
+            slug: "github-cli".to_string(),
+            name: "GitHub CLI".to_string(),
+            description:
+                "Execute gh commands through the supervisor with vault-backed GH_TOKEN injection."
+                    .to_string(),
+            kind: VaultIntegrationTemplateKind::Cli,
+            source: "built_in".to_string(),
+            command: Some("gh".to_string()),
+            default_args: vec!["--color".to_string(), "never".to_string()],
+            default_env: BTreeMap::from([("GH_PAGER".to_string(), "cat".to_string())]),
+            base_url: None,
+            egress_domains: vec![
+                "api.github.com".to_string(),
+                "github.com".to_string(),
+                "uploads.github.com".to_string(),
+            ],
+            supported_methods: Vec::new(),
+            default_headers: BTreeMap::new(),
+            secret_slots: vec![VaultIntegrationSecretSlotTemplate {
+                slot_name: "token".to_string(),
+                label: "GitHub token".to_string(),
+                description:
+                    "Used for gh CLI authentication. The supervisor injects it through GH_TOKEN."
+                        .to_string(),
+                required_scope_tags: vec!["github:api".to_string()],
+                placement: VaultIntegrationSecretPlacement::EnvVar,
+                env_var: Some("GH_TOKEN".to_string()),
                 header_name: None,
                 header_prefix: None,
             }],
@@ -1317,6 +1559,12 @@ fn inject_secret_slot_header(
             };
             headers.insert(header_name.to_string(), value);
         }
+        VaultIntegrationSecretPlacement::EnvVar => {
+            return Err(format!(
+                "integration slot {} uses env-var placement and cannot be injected as an HTTP header",
+                slot.slot_name
+            ));
+        }
     }
     Ok(())
 }
@@ -1342,6 +1590,31 @@ fn normalize_http_request_body(
         input.body.as_ref().map(|body| body.as_bytes().to_vec()),
         headers.get("Content-Type").cloned(),
     ))
+}
+
+fn redact_cli_output(value: &str, bindings: &[ResolvedVaultBinding]) -> String {
+    let mut redacted = value.to_string();
+    for binding in bindings {
+        let secret = binding.value.as_str();
+        if !secret.is_empty() {
+            redacted = redacted.replace(secret, &format!("<vault:{}>", binding.entry_name));
+        }
+    }
+    redacted
+}
+
+fn truncate_integration_output(value: &str) -> (String, bool) {
+    const MAX_INTEGRATION_OUTPUT_CHARS: usize = 120_000;
+    let total_chars = value.chars().count();
+    if total_chars <= MAX_INTEGRATION_OUTPUT_CHARS {
+        return (value.to_string(), false);
+    }
+
+    let truncated = value
+        .chars()
+        .take(MAX_INTEGRATION_OUTPUT_CHARS)
+        .collect::<String>();
+    (truncated, true)
 }
 
 fn open_stronghold(app_data_dir: &Path) -> Result<Stronghold, String> {
@@ -1969,5 +2242,86 @@ mod tests {
         assert_eq!(prepared.slot_names, vec!["token".to_string()]);
         assert_eq!(prepared.resolved_bindings.len(), 1);
         assert_eq!(prepared.resolved_bindings[0].entry_name, "GitHub Token");
+    }
+
+    #[test]
+    fn prepared_cli_integration_commands_inject_env_bindings() {
+        let root = temp_root("cli-integration");
+        fs::create_dir_all(&root).expect("temp root should exist");
+        let connection = create_connection();
+        let gate_approvals = Arc::new(Mutex::new(HashSet::new()));
+
+        upsert_entry(
+            &connection,
+            &root,
+            UpsertVaultEntryInput {
+                id: None,
+                name: "GitHub Token".to_string(),
+                kind: "token".to_string(),
+                description: Some("API token".to_string()),
+                scope_tags: vec!["github:api".to_string()],
+                gate_policy: Some("auto".to_string()),
+                value: Some("ghp_cli_value".to_string()),
+            },
+        )
+        .expect("vault entry should save");
+
+        upsert_integration_installation(
+            &connection,
+            UpsertVaultIntegrationInput {
+                id: None,
+                template_slug: "github-cli".to_string(),
+                label: "GitHub CLI".to_string(),
+                bindings: vec![VaultIntegrationBindingRecord {
+                    slot_name: "token".to_string(),
+                    entry_name: "GitHub Token".to_string(),
+                }],
+                enabled: true,
+            },
+        )
+        .expect("integration installation should save");
+
+        let installation = load_integration_snapshot(&connection)
+            .expect("integration snapshot should load")
+            .installations
+            .into_iter()
+            .find(|installation| installation.template_slug == "github-cli")
+            .expect("CLI integration installation should exist");
+
+        let prepared = prepare_cli_integration_command(
+            &connection,
+            &root,
+            ExecuteVaultCliIntegrationInput {
+                integration_id: installation.id,
+                args: vec!["issue".to_string(), "list".to_string()],
+                cwd: None,
+                stdin: None,
+            },
+            "integration_test",
+            None,
+            &gate_approvals,
+        )
+        .expect("CLI integration command should prepare");
+
+        assert_eq!(prepared.integration_label, "GitHub CLI");
+        assert_eq!(prepared.template_slug, "github-cli");
+        assert_eq!(prepared.command, "gh");
+        assert_eq!(
+            prepared.args,
+            vec![
+                "--color".to_string(),
+                "never".to_string(),
+                "issue".to_string(),
+                "list".to_string()
+            ]
+        );
+        assert_eq!(
+            prepared.default_env.get("GH_PAGER").map(String::as_str),
+            Some("cat")
+        );
+        assert_eq!(prepared.resolved_bindings.len(), 1);
+        assert_eq!(prepared.resolved_bindings[0].env_var, "GH_TOKEN");
+        assert_eq!(prepared.resolved_bindings[0].entry_name, "GitHub Token");
+        assert_eq!(prepared.resolved_bindings[0].gate_result, "approved_auto");
     }
 }

@@ -110,6 +110,7 @@ Last updated: April 14, 2026
 - Brokered integration diagnostics:
   - `src-tauri/src/bin/project-commander-supervisor.rs` now appends `integration.http_response` and `integration.http_error` project events for supervisor-owned brokered HTTP templates.
   - Those payloads record integration/template ids, URL, allowlisted egress domains, secret slot names, status, byte counts, and duration only; raw auth headers, vault values, and response bodies are never written to diagnostics.
+  - CLI templates now append `integration.cli_completed` or `integration.cli_failed` with integration/template ids, command, args, exit code, truncated output-byte counts, and secret-slot env var names only; raw secret values and unsanitized stdout/stderr never enter diagnostics.
 - Recovery and cleanup diagnostics:
   - The supervisor now logs worktree-agent launch requests, orphan termination attempts, cleanup-candidate application, and repair-all cleanup runs with structured identifiers and durations.
 - Workflow run diagnostics:
@@ -149,6 +150,8 @@ Last updated: April 14, 2026
   - A Claude Agent SDK launch recorded whether it used the dedicated personal config directory seam or the default home config path.
 - `vault access denied`
   - A native vault permission prompt was denied; inspect the paired `vault_audit_events` row for `gate_denied` plus the consumer/correlation identifiers.
+- `integration.cli_completed` / `integration.cli_failed`
+  - A supervisor-owned CLI integration template finished or failed; inspect the payload for the command, args, exit code, slot env vars, and truncated output sizes.
 - `workflow run started` / `workflow run completed`
   - Supervisor lifecycle entries for workflow-run start and overall completion.
 - `workflow stage dispatch requested`

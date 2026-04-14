@@ -13,7 +13,10 @@ use crate::supervisor_api::{
     UpdateProjectDocumentInput, UpdateProjectWorkItemInput, WaitAgentMessagesApiInput,
     WaitAgentMessagesOutput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
-use crate::vault::{ExecuteVaultHttpIntegrationInput, ExecuteVaultHttpIntegrationOutput};
+use crate::vault::{
+    ExecuteVaultCliIntegrationInput, ExecuteVaultCliIntegrationOutput,
+    ExecuteVaultHttpIntegrationInput, ExecuteVaultHttpIntegrationOutput,
+};
 use reqwest::blocking::Client;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -565,6 +568,34 @@ impl SupervisorMcpClient {
         )
     }
 
+    fn call_cli_integration(
+        &self,
+        integration_id: i64,
+        args: Option<Value>,
+        cwd: Option<String>,
+        stdin: Option<String>,
+    ) -> AppResult<ExecuteVaultCliIntegrationOutput> {
+        let args = args
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| {
+                AppError::invalid_input(format!(
+                    "call_cli_integration args must be an array of strings: {error}"
+                ))
+            })?
+            .unwrap_or_default();
+
+        self.post(
+            "integration/cli",
+            &ExecuteVaultCliIntegrationInput {
+                integration_id,
+                args,
+                cwd,
+                stdin,
+            },
+        )
+    }
+
     fn post<TRequest, TResponse>(&self, route: &str, payload: &TRequest) -> AppResult<TResponse>
     where
         TRequest: Serialize,
@@ -1057,6 +1088,17 @@ fn call_tool(client: &SupervisorMcpClient, tool_name: &str, arguments: Value) ->
         .map_err(|error| {
             AppError::internal(format!(
                 "failed to encode brokered integration response: {error}"
+            ))
+        })?),
+        "call_cli_integration" => Ok(serde_json::to_value(client.call_cli_integration(
+            read_required_i64(&arguments, "integrationId")?,
+            arguments.get("args").cloned(),
+            read_optional_string(&arguments, "cwd"),
+            read_optional_string(&arguments, "stdin"),
+        )?)
+        .map_err(|error| {
+            AppError::internal(format!(
+                "failed to encode CLI integration response: {error}"
             ))
         })?),
         _ => Err(AppError::invalid_input(format!(
@@ -1709,6 +1751,39 @@ fn build_tool_definitions() -> Vec<Value> {
                     }
                 },
                 "required": ["integrationId", "method", "path"],
+                "additionalProperties": false
+            },
+            "_meta": {
+                "anthropic/maxResultSizeChars": 200000
+            }
+        }),
+        json!({
+            "name": "call_cli_integration",
+            "description": "Execute a supervisor-owned CLI integration template. Secrets stay in the Project Commander vault and are injected into template-defined environment variables only inside the supervisor-owned child process.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "integrationId": {
+                        "type": "integer",
+                        "description": "Configured integration id from Settings -> Vault."
+                    },
+                    "args": {
+                        "type": "array",
+                        "description": "Optional extra CLI arguments appended after the template's default args.",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "Optional working directory for the spawned CLI process."
+                    },
+                    "stdin": {
+                        "type": "string",
+                        "description": "Optional stdin payload written to the spawned CLI process."
+                    }
+                },
+                "required": ["integrationId"],
                 "additionalProperties": false
             },
             "_meta": {

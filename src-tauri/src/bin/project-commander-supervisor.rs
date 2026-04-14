@@ -32,7 +32,9 @@ use project_commander_lib::supervisor_mcp::{
     handle_supervisor_mcp_message, run_supervisor_mcp_stdio_with_session,
 };
 use project_commander_lib::vault::{
-    ExecuteVaultHttpIntegrationInput, ExecuteVaultHttpIntegrationOutput, VaultAccessBindingRequest,
+    execute_cli_integration_command, ExecuteVaultCliIntegrationInput,
+    ExecuteVaultCliIntegrationOutput, ExecuteVaultHttpIntegrationInput,
+    ExecuteVaultHttpIntegrationOutput, VaultAccessBindingRequest,
 };
 use project_commander_lib::workflow::{
     FailWorkflowRunInput, MarkWorkflowStageDispatchedInput, RecordWorkflowStageResultInput,
@@ -1479,6 +1481,19 @@ fn route_request(
                     ))
                 })
         }
+        (&Method::Post, "/integration/cli") => {
+            let project_id = required_i64_header(request, "x-project-commander-project-id")
+                .map_err(RouteError::bad_request)?;
+            let input = read_json::<ExecuteVaultCliIntegrationInput>(request)?;
+            let output = handle_cli_integration_request(state, context, project_id, input)?;
+            serde_json::to_value(output)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!(
+                        "failed to encode CLI integration response: {error}"
+                    ))
+                })
+        }
         (&Method::Post, "/message/send") => {
             let input = read_json::<SendAgentMessageApiInput>(request)?;
             let result = handle_message_send(state, sessions, context, input)?;
@@ -1706,6 +1721,71 @@ fn handle_http_integration_request(
             "responseBytes": body_bytes.len(),
             "slotNames": prepared.slot_names,
             "egressDomains": prepared.egress_domains,
+            "durationMs": started_at.elapsed().as_secs_f64() * 1000.0,
+        }),
+    );
+
+    Ok(output)
+}
+
+fn handle_cli_integration_request(
+    state: &AppState,
+    context: &RequestContext,
+    project_id: i64,
+    input: ExecuteVaultCliIntegrationInput,
+) -> Result<ExecuteVaultCliIntegrationOutput, RouteError> {
+    let started_at = Instant::now();
+    let prepared = state
+        .prepare_vault_cli_integration_command(input, &context.source, context.session_id)
+        .map_err(RouteError::from)?;
+    let correlation_id = format!(
+        "integration-cli:{}:{}:{}",
+        project_id,
+        prepared.integration_id,
+        started_at.elapsed().as_nanos()
+    );
+
+    state
+        .record_vault_access_bindings(
+            prepared.resolved_bindings.iter(),
+            "broker_cli",
+            &format!("integration:{}", prepared.integration_label),
+            &correlation_id,
+            context.session_id,
+        )
+        .map_err(RouteError::from)?;
+
+    let slot_names = prepared
+        .resolved_bindings
+        .iter()
+        .map(|binding| binding.env_var.clone())
+        .collect::<Vec<_>>();
+    let output = execute_cli_integration_command(prepared).map_err(RouteError::internal)?;
+
+    append_project_event(
+        state,
+        context,
+        project_id,
+        if output.success {
+            "integration.cli_completed"
+        } else {
+            "integration.cli_failed"
+        },
+        "integration",
+        output.integration_id,
+        &json!({
+            "integrationId": output.integration_id,
+            "integrationLabel": output.integration_label,
+            "templateSlug": output.template_slug,
+            "command": output.command,
+            "args": output.args,
+            "cwd": output.cwd,
+            "exitCode": output.exit_code,
+            "success": output.success,
+            "truncated": output.truncated,
+            "stdoutBytes": output.stdout_text.len(),
+            "stderrBytes": output.stderr_text.len(),
+            "slotNames": slot_names,
             "durationMs": started_at.elapsed().as_secs_f64() * 1000.0,
         }),
     );
@@ -7427,6 +7507,11 @@ mod tests {
             .expect("tools/list should return an array")
             .iter()
             .any(|tool| tool["name"].as_str() == Some("call_http_integration")));
+        assert!(tools["result"]["tools"]
+            .as_array()
+            .expect("tools/list should return an array")
+            .iter()
+            .any(|tool| tool["name"].as_str() == Some("call_cli_integration")));
         assert_eq!(current_project["result"]["isError"].as_bool(), Some(false));
         assert_eq!(
             current_project["result"]["structuredContent"]["id"].as_i64(),

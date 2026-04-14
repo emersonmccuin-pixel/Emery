@@ -18,12 +18,13 @@ The currently shipped slice is the narrowest useful slice of this design:
 - workflow-stage vault env bindings resolved at stage-session start through the same session-host path
 - vault bindings may now declare `delivery=file`, which materializes an ephemeral per-session secret file and injects its path through the configured env var
 - built-in HTTP-broker integration templates with supervisor-owned HTTPS requests, template-bound secret slots, and allowlisted egress domains
+- built-in CLI integration templates with supervisor-owned one-shot command execution and vault-backed env injection
 - persisted integration installs/bindings plus a Settings surface for configuring brokered templates without exposing values
 - Project Commander MCP tooling for brokered HTTP integration calls so agent traffic can stay on the existing supervisor/broker path
 - native vault permission prompts for `confirm_session` / `confirm_each_use`, with per-session approval caching for interactive launches and brokered integration calls
 - PTY/session-output scrubbing for injected secret values before terminal buffers and output logs are updated
 - no generic agent-readable `get_secret` API
-- no generic forward proxy for arbitrary child-process egress or non-HTTP template execution yet
+- no generic forward proxy for arbitrary child-process egress or MCP/custom/imported non-HTTP template execution yet
 
 That slice is intentionally chosen so the app can start storing secrets safely before the remaining generic egress controls, richer template execution, and permission layers land.
 
@@ -86,10 +87,11 @@ Three template sources:
 One supervisor primitive does all the work: `spawn_with_secrets(binary, args, vault_ids, scope_tags)` — handles env injection, temp-dir config files, stdio scrubber, cleanup on exit, proxy injection.
 
 Current shipped brokered-template subset:
-- built-in templates currently cover supervisor-owned `http-broker` requests rather than arbitrary `cli` or `mcp` launch templates
-- template secret slots are injected only into supervisor-built request headers today
-- requests are constrained to the template's configured HTTPS domains and redirects are disabled
-- vault use is still audited through the existing append-only audit table with integration/slot identifiers only
+- built-in templates currently cover supervisor-owned `http-broker` requests plus one-shot `cli` execution rather than full `mcp`, custom, or imported template execution
+- HTTP template secret slots are injected only into supervisor-built request headers today
+- CLI template secret slots are injected only into template-defined env vars inside the spawned supervisor-owned child process
+- HTTP requests are constrained to the template's configured HTTPS domains and redirects are disabled; generic child-process proxy enforcement is still pending
+- vault use is still audited through the existing append-only audit table with integration/slot identifiers only, and CLI stdout/stderr is redacted before it returns to the caller
 
 ## Deposit flow (the "dispatcher" pattern)
 
@@ -113,7 +115,7 @@ Rate-limit dispatcher deposit requests per session to block modal-fatigue attack
 
 - **Settings → Vault** panel: list, add, edit, delete, test-connection, rotate.
 - **Integrations panel**: browse catalog, add custom, import; shows each integration's required secrets, scope tags, egress domains.
-  Current status: a brokered integration section now lives under `Settings -> Vault` for built-in HTTP templates; custom/imported template management is still later work.
+  Current status: a brokered integration section now lives under `Settings -> Vault` for built-in HTTP and CLI templates; custom/imported template management and MCP templates are still later work.
 - **Deposit modal**: paste or file-drop; shows exact integration and scope the secret will be bound to. Never re-displays value after save.
 - **Diagnostics**: new `vault` source; scrubber always on; audit events filterable.
 - **Permission prompts**: "session X wants to use secret Y for integration Z" — Allow once / Allow for session / Deny. Default gate = per-session.
@@ -136,7 +138,7 @@ Rate-limit dispatcher deposit requests per session to block modal-fatigue attack
 3. **Egress proxy**: localhost HTTPS forward proxy with per-session allowlist. Non-negotiable for v1 because users bring arbitrary tools.
    Current status: partially shipped through the supervisor-owned HTTP broker path for built-in templates; the generic child-process `HTTPS_PROXY` layer is still pending.
 4. **Integration template schema + built-in catalog** (~5 templates: Snowflake CLI, gh, aws, one HTTP-broker example, one MCP example).
-   Current status: partially shipped with a built-in HTTP-broker catalog plus persisted installs/bindings in `Settings -> Vault`; `cli`, `mcp`, custom, and imported templates are still pending.
+   Current status: partially shipped with built-in HTTP-broker plus CLI templates and persisted installs/bindings in `Settings -> Vault`; `mcp`, custom, and imported templates are still pending.
 5. **Dispatcher deposit flow**: `open_vault_deposit` tool + native deposit modal wired through the same Tauri command as the Settings UI.
 6. **Custom integration UI**: user-authored templates with network-access prompt as the key security question.
 7. **Template import** (URL/file) with diff review. Last, highest-risk surface.

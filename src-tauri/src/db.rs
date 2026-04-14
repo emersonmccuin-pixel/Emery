@@ -14,7 +14,8 @@ use std::os::windows::process::CommandExt;
 
 use crate::error::{AppError, AppResult};
 use crate::vault::{
-    self, DeleteVaultEntryInput, DeleteVaultIntegrationInput, ExecuteVaultHttpIntegrationInput,
+    self, DeleteVaultEntryInput, DeleteVaultIntegrationInput, ExecuteVaultCliIntegrationInput,
+    ExecuteVaultHttpIntegrationInput, PreparedVaultCliIntegrationCommand,
     PreparedVaultHttpIntegrationRequest, ResolvedVaultBinding, UpsertVaultEntryInput,
     UpsertVaultIntegrationInput, VaultAccessBindingRequest, VaultIntegrationSnapshot,
     VaultSnapshot,
@@ -773,6 +774,23 @@ impl AppState {
     ) -> AppResult<PreparedVaultHttpIntegrationRequest> {
         let connection = self.connect()?;
         Ok(vault::prepare_http_integration_request(
+            &connection,
+            Path::new(&self.storage.app_data_dir),
+            input,
+            source,
+            session_id,
+            &self.vault_gate_approvals,
+        )?)
+    }
+
+    pub fn prepare_vault_cli_integration_command(
+        &self,
+        input: ExecuteVaultCliIntegrationInput,
+        source: &str,
+        session_id: Option<i64>,
+    ) -> AppResult<PreparedVaultCliIntegrationCommand> {
+        let connection = self.connect()?;
+        Ok(vault::prepare_cli_integration_command(
             &connection,
             Path::new(&self.storage.app_data_dir),
             input,
