@@ -22,8 +22,10 @@ use crate::vault::{
 use crate::workflow::{
     self, AdoptCatalogEntryInput, CatalogAdoptionTarget, FailWorkflowRunInput,
     MarkWorkflowStageDispatchedInput, ProjectWorkflowCatalog, ProjectWorkflowRunSnapshot,
-    RecordWorkflowStageResultInput, RecordWorkflowStageResultOutput, StartWorkflowRunInput,
-    WorkflowLibrarySnapshot, WorkflowRunRecord,
+    ProjectWorkflowOverrideDocument, ProjectWorkflowOverrideTarget,
+    RecordWorkflowStageResultInput, RecordWorkflowStageResultOutput,
+    SaveProjectWorkflowOverrideInput, StartWorkflowRunInput, WorkflowLibrarySnapshot,
+    WorkflowRunRecord,
 };
 
 #[cfg(windows)]
@@ -559,6 +561,50 @@ impl AppState {
         Ok(workflow::load_project_catalog(&connection, project_id)?)
     }
 
+    pub fn get_project_workflow_override_document(
+        &self,
+        project_id: i64,
+        workflow_slug: &str,
+    ) -> AppResult<ProjectWorkflowOverrideDocument> {
+        let connection = self.connect()?;
+        let project = self.get_project(project_id)?;
+        workflow::sync_library_catalog(&connection, Path::new(&self.storage.app_data_dir))?;
+        Ok(workflow::load_project_workflow_override_document(
+            &connection,
+            project_id,
+            Path::new(&project.root_path),
+            workflow_slug,
+        )?)
+    }
+
+    pub fn save_project_workflow_override_document(
+        &self,
+        input: SaveProjectWorkflowOverrideInput,
+    ) -> AppResult<ProjectWorkflowOverrideDocument> {
+        let connection = self.connect()?;
+        let project = self.get_project(input.project_id)?;
+        workflow::sync_library_catalog(&connection, Path::new(&self.storage.app_data_dir))?;
+        Ok(workflow::save_project_workflow_override_document(
+            &connection,
+            Path::new(&project.root_path),
+            &input,
+        )?)
+    }
+
+    pub fn clear_project_workflow_override_document(
+        &self,
+        input: ProjectWorkflowOverrideTarget,
+    ) -> AppResult<ProjectWorkflowOverrideDocument> {
+        let connection = self.connect()?;
+        let project = self.get_project(input.project_id)?;
+        workflow::sync_library_catalog(&connection, Path::new(&self.storage.app_data_dir))?;
+        Ok(workflow::clear_project_workflow_override_document(
+            &connection,
+            Path::new(&project.root_path),
+            &input,
+        )?)
+    }
+
     pub fn adopt_catalog_entry(
         &self,
         input: AdoptCatalogEntryInput,
@@ -611,8 +657,13 @@ impl AppState {
 
     pub fn start_workflow_run(&self, input: StartWorkflowRunInput) -> AppResult<WorkflowRunRecord> {
         let connection = self.connect()?;
+        let project = self.get_project(input.project_id)?;
         workflow::sync_library_catalog(&connection, Path::new(&self.storage.app_data_dir))?;
-        Ok(workflow::start_workflow_run(&connection, &input)?)
+        Ok(workflow::start_workflow_run_with_project_root(
+            &connection,
+            &input,
+            Some(Path::new(&project.root_path)),
+        )?)
     }
 
     pub fn mark_workflow_stage_dispatched(

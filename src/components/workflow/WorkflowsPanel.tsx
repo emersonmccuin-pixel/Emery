@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Button } from "@/components/ui/button";
+import { invoke } from "@/lib/tauri";
 import {
   PanelBanner,
   PanelEmptyState,
@@ -11,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAppStore, useSelectedProject, useVisibleWorktrees } from "@/store";
 import type {
   PodRecord,
+  ProjectWorkflowOverrideDocument,
   ProjectPodRecord,
   ProjectWorkflowRecord,
   TerminalExitEvent,
@@ -199,6 +201,14 @@ function WorkflowsPanel() {
   const [selectedRootWorkItemId, setSelectedRootWorkItemId] = useState<number | null>(
     null,
   );
+  const [overrideDocument, setOverrideDocument] =
+    useState<ProjectWorkflowOverrideDocument | null>(null);
+  const [overrideYaml, setOverrideYaml] = useState("");
+  const [overrideError, setOverrideError] = useState<string | null>(null);
+  const [overrideMessage, setOverrideMessage] = useState<string | null>(null);
+  const [isLoadingOverrideDocument, setIsLoadingOverrideDocument] = useState(false);
+  const [isSavingOverrideDocument, setIsSavingOverrideDocument] = useState(false);
+  const [isClearingOverrideDocument, setIsClearingOverrideDocument] = useState(false);
 
   useEffect(() => {
     if (!selectedProject) {
@@ -377,6 +387,140 @@ function WorkflowsPanel() {
     entityTab === "runs"
       ? (projectRuns.find((run) => run.id === selectedRunId) ?? projectRuns[0] ?? null)
       : null;
+  const selectedWorkflowAdoption =
+    selectedWorkflow ? (projectWorkflowLookup.get(selectedWorkflow.slug) ?? undefined) : undefined;
+  const selectedProjectId = selectedProject?.id ?? null;
+  const selectedWorkflowSlugForOverride = selectedWorkflow?.slug ?? null;
+
+  useEffect(() => {
+    if (
+      !selectedProject ||
+      scope !== "project" ||
+      entityTab !== "workflows" ||
+      !selectedWorkflow ||
+      !selectedWorkflowAdoption
+    ) {
+      setOverrideDocument(null);
+      setOverrideYaml("");
+      setOverrideError(null);
+      setOverrideMessage(null);
+      setIsLoadingOverrideDocument(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingOverrideDocument(true);
+    setOverrideError(null);
+    setOverrideMessage(null);
+
+    void invoke<ProjectWorkflowOverrideDocument>(
+      "get_project_workflow_override_document",
+      {
+        projectId: selectedProject.id,
+        workflowSlug: selectedWorkflow.slug,
+      },
+    )
+      .then((document) => {
+        if (cancelled) {
+          return;
+        }
+        setOverrideDocument(document);
+        setOverrideYaml(document.yaml);
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+        setOverrideDocument(null);
+        setOverrideYaml("");
+        setOverrideError(
+          typeof error === "string"
+            ? error
+            : (error as { message?: string })?.message ??
+                "Failed to load workflow overrides.",
+        );
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingOverrideDocument(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    entityTab,
+    scope,
+    selectedProjectId,
+    selectedWorkflowAdoption !== undefined,
+    selectedWorkflowSlugForOverride,
+  ]);
+
+  async function saveWorkflowOverrideDocument(projectId: number, workflowSlug: string) {
+    setIsSavingOverrideDocument(true);
+    setOverrideError(null);
+    setOverrideMessage(null);
+
+    try {
+      const document = await invoke<ProjectWorkflowOverrideDocument>(
+        "save_project_workflow_override_document",
+        {
+          input: {
+            projectId,
+            workflowSlug,
+            yaml: overrideYaml,
+          },
+        },
+      );
+      setOverrideDocument(document);
+      setOverrideYaml(document.yaml);
+      setOverrideMessage(`Saved overrides to ${document.filePath}.`);
+    } catch (error) {
+      setOverrideError(
+        typeof error === "string"
+          ? error
+          : (error as { message?: string })?.message ??
+              "Failed to save workflow overrides.",
+      );
+    } finally {
+      setIsSavingOverrideDocument(false);
+    }
+  }
+
+  async function clearWorkflowOverrideDocument(projectId: number, workflowSlug: string) {
+    if (!confirm(`Clear overrides for workflow "${workflowSlug}"?`)) {
+      return;
+    }
+
+    setIsClearingOverrideDocument(true);
+    setOverrideError(null);
+    setOverrideMessage(null);
+
+    try {
+      const document = await invoke<ProjectWorkflowOverrideDocument>(
+        "clear_project_workflow_override_document",
+        {
+          input: {
+            projectId,
+            workflowSlug,
+          },
+        },
+      );
+      setOverrideDocument(document);
+      setOverrideYaml(document.yaml);
+      setOverrideMessage(`Cleared overrides for ${workflowSlug}.`);
+    } catch (error) {
+      setOverrideError(
+        typeof error === "string"
+          ? error
+          : (error as { message?: string })?.message ??
+              "Failed to clear workflow overrides.",
+      );
+    } finally {
+      setIsClearingOverrideDocument(false);
+    }
+  }
 
   const libraryPathLabel =
     workflowLibrary === null
@@ -489,17 +633,37 @@ function WorkflowsPanel() {
                       projectId={selectedProject.id}
                       scope={scope}
                       workflow={selectedWorkflow}
-                      adoption={projectWorkflowLookup.get(selectedWorkflow.slug)}
+                      adoption={selectedWorkflowAdoption}
                       workflowRuns={projectRuns}
                       launchableWorkItems={launchableWorkItems}
                       selectedRootWorkItemId={selectedRootWorkItemId}
                       isLoadingWorkItems={isLoadingWorkItems}
+                      overrideDocument={overrideDocument}
+                      overrideYaml={overrideYaml}
+                      overrideError={overrideError}
+                      overrideMessage={overrideMessage}
+                      isLoadingOverrideDocument={isLoadingOverrideDocument}
+                      isSavingOverrideDocument={isSavingOverrideDocument}
+                      isClearingOverrideDocument={isClearingOverrideDocument}
                       activeWorkflowActionKey={activeWorkflowActionKey}
                       activeWorkflowRunKey={activeWorkflowRunKey}
                       onSelectRootWorkItemId={setSelectedRootWorkItemId}
+                      onOverrideYamlChange={setOverrideYaml}
                       onAdopt={adoptProjectCatalogEntry}
                       onDetach={detachProjectCatalogAdoption}
                       onUpgrade={upgradeProjectCatalogAdoption}
+                      onClearOverrideDocument={() =>
+                        void clearWorkflowOverrideDocument(
+                          selectedProject.id,
+                          selectedWorkflow.slug,
+                        )
+                      }
+                      onSaveOverrideDocument={() =>
+                        void saveWorkflowOverrideDocument(
+                          selectedProject.id,
+                          selectedWorkflow.slug,
+                        )
+                      }
                       onOpenRun={(runId) => {
                         setScope("project");
                         setEntityTab("runs");
@@ -849,11 +1013,21 @@ function WorkflowDetailCard({
   launchableWorkItems,
   selectedRootWorkItemId,
   isLoadingWorkItems,
+  overrideDocument,
+  overrideYaml,
+  overrideError,
+  overrideMessage,
+  isLoadingOverrideDocument,
+  isSavingOverrideDocument,
+  isClearingOverrideDocument,
   activeWorkflowActionKey,
   activeWorkflowRunKey,
   onSelectRootWorkItemId,
+  onOverrideYamlChange,
   onAdopt,
+  onClearOverrideDocument,
   onDetach,
+  onSaveOverrideDocument,
   onUpgrade,
   onOpenRun,
   onStartRun,
@@ -866,20 +1040,30 @@ function WorkflowDetailCard({
   launchableWorkItems: WorkItemRecord[];
   selectedRootWorkItemId: number | null;
   isLoadingWorkItems: boolean;
+  overrideDocument: ProjectWorkflowOverrideDocument | null;
+  overrideYaml: string;
+  overrideError: string | null;
+  overrideMessage: string | null;
+  isLoadingOverrideDocument: boolean;
+  isSavingOverrideDocument: boolean;
+  isClearingOverrideDocument: boolean;
   activeWorkflowActionKey: string | null;
   activeWorkflowRunKey: string | null;
   onSelectRootWorkItemId: (workItemId: number | null) => void;
+  onOverrideYamlChange: (value: string) => void;
   onAdopt: (
     projectId: number,
     entityType: "workflow",
     slug: string,
     mode?: "linked" | "forked",
   ) => Promise<void>;
+  onClearOverrideDocument: () => void;
   onDetach: (
     projectId: number,
     entityType: "workflow",
     slug: string,
   ) => Promise<void>;
+  onSaveOverrideDocument: () => void;
   onUpgrade: (
     projectId: number,
     entityType: "workflow",
@@ -1032,6 +1216,87 @@ function WorkflowDetailCard({
             </div>
           </div>
           <p className="workflow-inline-note">{runHint}</p>
+        </section>
+      ) : null}
+      {scope === "project" && adoption ? (
+        <section className="workflow-override-editor">
+          <div className="workflow-launcher__header">
+            <div>
+              <p className="panel__eyebrow">Overrides</p>
+              <strong>Repo-backed override YAML</strong>
+            </div>
+            <div className="workflow-card__badges">
+              {overrideDocument ? (
+                <>
+                  <span className="workflow-badge">
+                    {overrideDocument.source === "repo"
+                      ? "repo"
+                      : overrideDocument.source === "database"
+                        ? "db fallback"
+                        : "empty"}
+                  </span>
+                  {overrideDocument.hasOverrides ? (
+                    <span className="workflow-badge workflow-badge--accent">
+                      {overrideDocument.stageOverrideCount} override
+                      {overrideDocument.stageOverrideCount === 1 ? "" : "s"}
+                    </span>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          </div>
+          {isLoadingOverrideDocument ? (
+            <PanelLoadingState
+              className="min-h-[16rem]"
+              detail="Loading the project override document for this adopted workflow."
+              eyebrow="Overrides"
+              title="Opening override editor"
+              tone="cyan"
+            />
+          ) : (
+            <>
+              {overrideError ? <PanelBanner message={overrideError} /> : null}
+              {overrideDocument?.validationError ? (
+                <PanelBanner message={overrideDocument.validationError} />
+              ) : null}
+              {overrideMessage ? (
+                <p className="workflow-inline-note workflow-inline-note--success">
+                  {overrideMessage}
+                </p>
+              ) : null}
+              <div className="workflow-override-editor__meta">
+                <span className="workflow-inline-note">
+                  {overrideDocument?.filePath ??
+                    "Overrides save into .project-commander/overrides/<workflow>.yaml"}
+                </span>
+                <span className="workflow-inline-note">
+                  Valid stages: {workflow.stages.map((stage) => stage.name).join(", ")}
+                </span>
+              </div>
+              <textarea
+                className="workflow-override-editor__textarea"
+                spellCheck={false}
+                value={overrideYaml}
+                onChange={(event) => onOverrideYamlChange(event.target.value)}
+              />
+              <div className="workflow-override-editor__actions">
+                <Button
+                  variant="default"
+                  disabled={isSavingOverrideDocument || isClearingOverrideDocument}
+                  onClick={onSaveOverrideDocument}
+                >
+                  {isSavingOverrideDocument ? "Saving..." : "Save Override File"}
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={isSavingOverrideDocument || isClearingOverrideDocument}
+                  onClick={onClearOverrideDocument}
+                >
+                  {isClearingOverrideDocument ? "Clearing..." : "Clear Overrides"}
+                </Button>
+              </div>
+            </>
+          )}
         </section>
       ) : null}
       <TokenRail tokens={workflow.categories} tone="cyan" />

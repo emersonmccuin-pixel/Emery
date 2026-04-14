@@ -487,6 +487,18 @@ export type ProjectWorkflowCatalog = {
   pods: ProjectPodRecord[];
 };
 
+export type ProjectWorkflowOverrideDocument = {
+  projectId: number;
+  workflowSlug: string;
+  filePath: string;
+  exists: boolean;
+  source: string;
+  yaml: string;
+  hasOverrides: boolean;
+  stageOverrideCount: number;
+  validationError?: string | null;
+};
+
 export type ResolvedWorkflowStageRecord = {
   ordinal: number;
   name: string;

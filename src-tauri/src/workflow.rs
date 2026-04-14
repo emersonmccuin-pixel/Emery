@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 const LIBRARY_DIR_NAME: &str = "library";
 const WORKFLOW_DIR_NAME: &str = "workflows";
 const POD_DIR_NAME: &str = "pods";
+const PROJECT_COMMANDER_DIR_NAME: &str = ".project-commander";
+const PROJECT_OVERRIDE_DIR_NAME: &str = "overrides";
 
 const SHIPPED_CATEGORIES: &[(&str, &str)] = &[
     (
@@ -703,6 +705,7 @@ struct CatalogAdoptionRow {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WorkflowStageOverrideRecord {
+    #[serde(alias = "stage_name")]
     stage_name: String,
     #[serde(default, alias = "pod_ref", alias = "podRef")]
     pod_ref: Option<String>,
@@ -712,7 +715,7 @@ struct WorkflowStageOverrideRecord {
     model: Option<String>,
     #[serde(default, alias = "prompt_template_ref", alias = "promptTemplateRef")]
     prompt_template_ref: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "needs_secrets")]
     needs_secrets: Option<Vec<String>>,
     #[serde(
         default,
@@ -728,8 +731,37 @@ struct WorkflowStageOverrideRecord {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WorkflowOverrideSetRecord {
-    #[serde(default)]
+    #[serde(default, alias = "stage_overrides")]
     stage_overrides: Vec<WorkflowStageOverrideRecord>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectWorkflowOverrideDocument {
+    pub project_id: i64,
+    pub workflow_slug: String,
+    pub file_path: String,
+    pub exists: bool,
+    pub source: String,
+    pub yaml: String,
+    pub has_overrides: bool,
+    pub stage_override_count: i64,
+    pub validation_error: Option<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveProjectWorkflowOverrideInput {
+    pub project_id: i64,
+    pub workflow_slug: String,
+    pub yaml: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectWorkflowOverrideTarget {
+    pub project_id: i64,
+    pub workflow_slug: String,
 }
 
 pub fn library_root(app_data_dir: &Path) -> PathBuf {
@@ -742,6 +774,80 @@ pub fn workflow_dir(app_data_dir: &Path) -> PathBuf {
 
 pub fn pod_dir(app_data_dir: &Path) -> PathBuf {
     library_root(app_data_dir).join(POD_DIR_NAME)
+}
+
+pub fn project_workflow_override_dir(project_root: &Path) -> PathBuf {
+    project_root
+        .join(PROJECT_COMMANDER_DIR_NAME)
+        .join(PROJECT_OVERRIDE_DIR_NAME)
+}
+
+fn project_workflow_override_path(project_root: &Path, workflow_slug: &str) -> Result<PathBuf, String> {
+    let normalized_slug = normalize_required(workflow_slug, "workflow override slug")?;
+    if normalized_slug.contains('/')
+        || normalized_slug.contains('\\')
+        || normalized_slug.contains("..")
+    {
+        return Err(format!(
+            "workflow override slug '{normalized_slug}' contains an unsafe path segment"
+        ));
+    }
+
+    Ok(project_workflow_override_dir(project_root).join(format!("{normalized_slug}.yaml")))
+}
+
+fn render_override_yaml(overrides: &WorkflowOverrideSetRecord) -> Result<String, String> {
+    let mut yaml = serde_yaml::to_string(overrides)
+        .map_err(|error| format!("failed to encode workflow override YAML: {error}"))?;
+    if let Some(rest) = yaml.strip_prefix("---\n") {
+        yaml = rest.to_string();
+    }
+    Ok(yaml)
+}
+
+fn resolve_adopted_workflow_for_editor(
+    connection: &Connection,
+    adoption: &CatalogAdoptionRow,
+) -> Result<WorkflowRecord, String> {
+    match adoption.mode.as_str() {
+        "linked" => load_library_workflow_by_slug(connection, &adoption.entity_slug),
+        "forked" => {
+            let detached_yaml = adoption.detached_yaml.as_deref().ok_or_else(|| {
+                format!(
+                    "forked workflow '{}' is missing its detached YAML snapshot",
+                    adoption.entity_slug
+                )
+            })?;
+            parse_detached_workflow(&adoption.entity_slug, detached_yaml)
+        }
+        other => Err(format!(
+            "workflow adoption '{}' uses unsupported mode '{other}'",
+            adoption.entity_slug
+        )),
+    }
+}
+
+fn canonicalize_override_set(
+    workflow: &WorkflowRecord,
+    overrides: WorkflowOverrideSetRecord,
+) -> Result<WorkflowOverrideSetRecord, String> {
+    let lookup = normalize_override_lookup(workflow, Some(overrides))?;
+    let stage_overrides = workflow
+        .stages
+        .iter()
+        .filter_map(|stage| lookup.get(&stage.name).cloned())
+        .collect::<Vec<_>>();
+
+    Ok(WorkflowOverrideSetRecord { stage_overrides })
+}
+
+fn parse_override_yaml_for_workflow(
+    workflow: &WorkflowRecord,
+    yaml: &str,
+) -> Result<WorkflowOverrideSetRecord, String> {
+    let overrides = serde_yaml::from_str::<WorkflowOverrideSetRecord>(yaml)
+        .map_err(|error| format!("failed to parse workflow override YAML: {error}"))?;
+    canonicalize_override_set(workflow, overrides)
 }
 
 pub fn seed_library_files(app_data_dir: &Path) -> Result<(), String> {
@@ -968,11 +1074,23 @@ pub fn start_workflow_run(
     connection: &Connection,
     input: &StartWorkflowRunInput,
 ) -> Result<WorkflowRunRecord, String> {
+    start_workflow_run_with_project_root(connection, input, None)
+}
+
+pub fn start_workflow_run_with_project_root(
+    connection: &Connection,
+    input: &StartWorkflowRunInput,
+    project_root: Option<&Path>,
+) -> Result<WorkflowRunRecord, String> {
     ensure_project_exists(connection, input.project_id)?;
     let (work_item_id, work_item_call_sign) =
         load_work_item_for_run(connection, input.project_id, input.root_work_item_id)?;
-    let resolved_workflow =
-        resolve_effective_workflow(connection, input.project_id, &input.workflow_slug)?;
+    let resolved_workflow = resolve_effective_workflow_with_project_root(
+        connection,
+        input.project_id,
+        &input.workflow_slug,
+        project_root,
+    )?;
 
     if load_active_workflow_run_for_work_item(
         connection,
@@ -2582,6 +2700,240 @@ fn load_workflow_overrides(
     .transpose()
 }
 
+fn persist_workflow_overrides(
+    connection: &Connection,
+    project_id: i64,
+    workflow_slug: &str,
+    overrides: &WorkflowOverrideSetRecord,
+) -> Result<(), String> {
+    if overrides.stage_overrides.is_empty() {
+        connection
+            .execute(
+                "
+                DELETE FROM project_workflow_overrides
+                WHERE project_id = ?1 AND workflow_slug = ?2
+                ",
+                params![project_id, workflow_slug],
+            )
+            .map_err(|error| {
+                format!(
+                    "failed to clear workflow overrides for project #{project_id} workflow '{workflow_slug}': {error}"
+                )
+            })?;
+        return Ok(());
+    }
+
+    let overrides_json = serde_json::to_string(overrides).map_err(|error| {
+        format!(
+            "failed to encode workflow overrides for project #{project_id} workflow '{workflow_slug}': {error}"
+        )
+    })?;
+
+    connection
+        .execute(
+            "
+            INSERT INTO project_workflow_overrides (project_id, workflow_slug, overrides_json)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT(project_id, workflow_slug) DO UPDATE SET
+              overrides_json = excluded.overrides_json,
+              updated_at = CURRENT_TIMESTAMP
+            ",
+            params![project_id, workflow_slug, overrides_json],
+        )
+        .map_err(|error| {
+            format!(
+                "failed to persist workflow overrides for project #{project_id} workflow '{workflow_slug}': {error}"
+            )
+        })?;
+
+    Ok(())
+}
+
+fn preferred_workflow_overrides(
+    connection: &Connection,
+    project_id: i64,
+    workflow: &WorkflowRecord,
+    project_root: Option<&Path>,
+) -> Result<Option<WorkflowOverrideSetRecord>, String> {
+    if let Some(project_root) = project_root {
+        let override_path = project_workflow_override_path(project_root, &workflow.slug)?;
+        if override_path.is_file() {
+            let yaml = fs::read_to_string(&override_path).map_err(|error| {
+                format!(
+                    "failed to read workflow override file {}: {error}",
+                    override_path.display()
+                )
+            })?;
+            let overrides = parse_override_yaml_for_workflow(workflow, &yaml)?;
+            persist_workflow_overrides(connection, project_id, &workflow.slug, &overrides)?;
+            return Ok(Some(overrides));
+        }
+    }
+
+    load_workflow_overrides(connection, project_id, &workflow.slug)?
+        .map(|overrides| canonicalize_override_set(workflow, overrides))
+        .transpose()
+}
+
+pub fn load_project_workflow_override_document(
+    connection: &Connection,
+    project_id: i64,
+    project_root: &Path,
+    workflow_slug: &str,
+) -> Result<ProjectWorkflowOverrideDocument, String> {
+    let workflow_adoption =
+        load_project_adoption(connection, project_id, "workflow", workflow_slug)?;
+    let workflow = resolve_adopted_workflow_for_editor(connection, &workflow_adoption)?;
+    let override_path = project_workflow_override_path(project_root, workflow_slug)?;
+
+    if override_path.is_file() {
+        let yaml = fs::read_to_string(&override_path).map_err(|error| {
+            format!(
+                "failed to read workflow override file {}: {error}",
+                override_path.display()
+            )
+        })?;
+
+        match parse_override_yaml_for_workflow(&workflow, &yaml) {
+            Ok(overrides) => {
+                persist_workflow_overrides(connection, project_id, workflow_slug, &overrides)?;
+                Ok(ProjectWorkflowOverrideDocument {
+                    project_id,
+                    workflow_slug: workflow.slug,
+                    file_path: override_path.display().to_string(),
+                    exists: true,
+                    source: "repo".to_string(),
+                    yaml,
+                    has_overrides: !overrides.stage_overrides.is_empty(),
+                    stage_override_count: overrides.stage_overrides.len() as i64,
+                    validation_error: None,
+                })
+            }
+            Err(error) => {
+                let has_overrides = !yaml.trim().is_empty();
+                Ok(ProjectWorkflowOverrideDocument {
+                    project_id,
+                    workflow_slug: workflow.slug,
+                    file_path: override_path.display().to_string(),
+                    exists: true,
+                    source: "repo".to_string(),
+                    yaml,
+                    has_overrides,
+                    stage_override_count: 0,
+                    validation_error: Some(error),
+                })
+            }
+        }
+    } else if let Some(overrides) = load_workflow_overrides(connection, project_id, workflow_slug)?
+    {
+        let overrides = canonicalize_override_set(&workflow, overrides)?;
+        Ok(ProjectWorkflowOverrideDocument {
+            project_id,
+            workflow_slug: workflow.slug,
+            file_path: override_path.display().to_string(),
+            exists: false,
+            source: "database".to_string(),
+            yaml: render_override_yaml(&overrides)?,
+            has_overrides: !overrides.stage_overrides.is_empty(),
+            stage_override_count: overrides.stage_overrides.len() as i64,
+            validation_error: None,
+        })
+    } else {
+        let empty = WorkflowOverrideSetRecord::default();
+        Ok(ProjectWorkflowOverrideDocument {
+            project_id,
+            workflow_slug: workflow.slug,
+            file_path: override_path.display().to_string(),
+            exists: false,
+            source: "empty".to_string(),
+            yaml: render_override_yaml(&empty)?,
+            has_overrides: false,
+            stage_override_count: 0,
+            validation_error: None,
+        })
+    }
+}
+
+pub fn save_project_workflow_override_document(
+    connection: &Connection,
+    project_root: &Path,
+    input: &SaveProjectWorkflowOverrideInput,
+) -> Result<ProjectWorkflowOverrideDocument, String> {
+    let workflow_adoption =
+        load_project_adoption(connection, input.project_id, "workflow", &input.workflow_slug)?;
+    let workflow = resolve_adopted_workflow_for_editor(connection, &workflow_adoption)?;
+    let override_path = project_workflow_override_path(project_root, &input.workflow_slug)?;
+
+    if !project_root.is_dir() {
+        return Err(format!(
+            "project root {} is not available for workflow override editing",
+            project_root.display()
+        ));
+    }
+
+    let overrides = parse_override_yaml_for_workflow(&workflow, &input.yaml)?;
+    let canonical_yaml = render_override_yaml(&overrides)?;
+
+    fs::create_dir_all(project_workflow_override_dir(project_root)).map_err(|error| {
+        format!(
+            "failed to create workflow override directory {}: {error}",
+            project_workflow_override_dir(project_root).display()
+        )
+    })?;
+    fs::write(&override_path, canonical_yaml.as_bytes()).map_err(|error| {
+        format!(
+            "failed to write workflow override file {}: {error}",
+            override_path.display()
+        )
+    })?;
+
+    persist_workflow_overrides(connection, input.project_id, &workflow.slug, &overrides)?;
+    load_project_workflow_override_document(
+        connection,
+        input.project_id,
+        project_root,
+        &workflow.slug,
+    )
+}
+
+pub fn clear_project_workflow_override_document(
+    connection: &Connection,
+    project_root: &Path,
+    input: &ProjectWorkflowOverrideTarget,
+) -> Result<ProjectWorkflowOverrideDocument, String> {
+    let override_path = project_workflow_override_path(project_root, &input.workflow_slug)?;
+    if override_path.exists() {
+        fs::remove_file(&override_path).map_err(|error| {
+            format!(
+                "failed to remove workflow override file {}: {error}",
+                override_path.display()
+            )
+        })?;
+    }
+
+    connection
+        .execute(
+            "
+            DELETE FROM project_workflow_overrides
+            WHERE project_id = ?1 AND workflow_slug = ?2
+            ",
+            params![input.project_id, input.workflow_slug],
+        )
+        .map_err(|error| {
+            format!(
+                "failed to clear workflow overrides for project #{} workflow '{}': {error}",
+                input.project_id, input.workflow_slug
+            )
+        })?;
+
+    load_project_workflow_override_document(
+        connection,
+        input.project_id,
+        project_root,
+        &input.workflow_slug,
+    )
+}
+
 fn normalize_override_lookup(
     workflow: &WorkflowRecord,
     overrides: Option<WorkflowOverrideSetRecord>,
@@ -2709,17 +3061,18 @@ fn resolve_adopted_pod_for_run(
     }
 }
 
-fn resolve_effective_workflow(
+fn resolve_effective_workflow_with_project_root(
     connection: &Connection,
     project_id: i64,
     workflow_slug: &str,
+    project_root: Option<&Path>,
 ) -> Result<ResolvedWorkflowRecord, String> {
     let workflow_adoption =
         load_project_adoption(connection, project_id, "workflow", workflow_slug)?;
     let workflow = resolve_adopted_workflow_for_run(connection, &workflow_adoption)?;
     let stage_overrides = normalize_override_lookup(
         &workflow,
-        load_workflow_overrides(connection, project_id, workflow_slug)?,
+        preferred_workflow_overrides(connection, project_id, &workflow, project_root)?,
     )?;
     let pod_adoptions = load_project_adoption_rows(connection, project_id)?
         .into_iter()
@@ -3827,6 +4180,15 @@ mod tests {
         .expect("pod adoption should succeed");
     }
 
+    fn set_project_root(connection: &Connection, root: &Path) {
+        connection
+            .execute(
+                "UPDATE projects SET root_path = ?1 WHERE id = 1",
+                [root.display().to_string()],
+            )
+            .expect("project root should update");
+    }
+
     #[test]
     fn sync_library_catalog_loads_seeded_workflows_and_pods() {
         let root = temp_dir("seeded-catalog");
@@ -3954,6 +4316,7 @@ mod tests {
     fn workflow_run_resolution_applies_project_overrides() {
         let root = temp_dir("run-overrides");
         let connection = create_connection();
+        set_project_root(&connection, &root);
         sync_library_catalog(&connection, &root).expect("workflow sync should succeed");
         adopt_feature_dev(&connection);
         adopt_pod(&connection, "generator.opus.crosscutting");
@@ -4063,6 +4426,178 @@ mod tests {
                 .as_ref()
                 .and_then(|policy| policy.on_fail_feedback_to.as_deref()),
             Some("generate")
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn workflow_override_document_exports_db_overrides_and_round_trips_repo_file() {
+        let root = temp_dir("override-doc");
+        fs::create_dir_all(&root).expect("project root should exist");
+        let connection = create_connection();
+        set_project_root(&connection, &root);
+        sync_library_catalog(&connection, &root).expect("workflow sync should succeed");
+        adopt_feature_dev(&connection);
+
+        connection
+            .execute(
+                "
+                INSERT INTO project_workflow_overrides (project_id, workflow_slug, overrides_json)
+                VALUES (?1, ?2, ?3)
+                ",
+                params![
+                    1,
+                    "feature-dev",
+                    serde_json::json!({
+                        "stageOverrides": [
+                            {
+                                "stageName": "evaluate",
+                                "retryPolicy": {
+                                    "maxAttempts": 5,
+                                    "onFailFeedbackTo": "generate"
+                                }
+                            }
+                        ]
+                    })
+                    .to_string()
+                ],
+            )
+            .expect("workflow overrides should insert");
+
+        let document = load_project_workflow_override_document(&connection, 1, &root, "feature-dev")
+            .expect("override document should load");
+        assert!(!document.exists);
+        assert_eq!(document.source, "database");
+        assert!(document.has_overrides);
+        assert!(document.yaml.contains("stageOverrides"));
+        assert!(document.yaml.contains("evaluate"));
+
+        let saved = save_project_workflow_override_document(
+            &connection,
+            &root,
+            &SaveProjectWorkflowOverrideInput {
+                project_id: 1,
+                workflow_slug: "feature-dev".to_string(),
+                yaml: document.yaml.clone(),
+            },
+        )
+        .expect("override document should save");
+        assert!(saved.exists);
+        assert_eq!(saved.source, "repo");
+        assert!(Path::new(&saved.file_path).is_file());
+
+        let cleared = clear_project_workflow_override_document(
+            &connection,
+            &root,
+            &ProjectWorkflowOverrideTarget {
+                project_id: 1,
+                workflow_slug: "feature-dev".to_string(),
+            },
+        )
+        .expect("override document should clear");
+        assert!(!cleared.exists);
+        assert_eq!(cleared.source, "empty");
+        assert!(
+            load_workflow_overrides(&connection, 1, "feature-dev")
+                .expect("db overrides should inspect")
+                .is_none()
+        );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn repo_override_file_takes_precedence_at_run_start() {
+        let root = temp_dir("repo-override-run");
+        fs::create_dir_all(&root).expect("project root should exist");
+        let connection = create_connection();
+        set_project_root(&connection, &root);
+        sync_library_catalog(&connection, &root).expect("workflow sync should succeed");
+        adopt_feature_dev(&connection);
+
+        connection
+            .execute(
+                "
+                INSERT INTO project_workflow_overrides (project_id, workflow_slug, overrides_json)
+                VALUES (?1, ?2, ?3)
+                ",
+                params![
+                    1,
+                    "feature-dev",
+                    serde_json::json!({
+                        "stageOverrides": [
+                            {
+                                "stageName": "evaluate",
+                                "retryPolicy": {
+                                    "maxAttempts": 2,
+                                    "onFailFeedbackTo": "generate"
+                                }
+                            }
+                        ]
+                    })
+                    .to_string()
+                ],
+            )
+            .expect("db override should insert");
+
+        save_project_workflow_override_document(
+            &connection,
+            &root,
+            &SaveProjectWorkflowOverrideInput {
+                project_id: 1,
+                workflow_slug: "feature-dev".to_string(),
+                yaml: serde_yaml::to_string(&serde_json::json!({
+                    "stageOverrides": [
+                        {
+                            "stageName": "evaluate",
+                            "retryPolicy": {
+                                "maxAttempts": 6,
+                                "onFailFeedbackTo": "generate"
+                            }
+                        }
+                    ]
+                }))
+                .expect("yaml should encode"),
+            },
+        )
+        .expect("repo override should save");
+
+        let run = start_workflow_run_with_project_root(
+            &connection,
+            &StartWorkflowRunInput {
+                project_id: 1,
+                workflow_slug: "feature-dev".to_string(),
+                root_work_item_id: 1,
+                root_worktree_id: None,
+            },
+            Some(&root),
+        )
+        .expect("workflow run should start from repo override");
+
+        let evaluate_stage = run
+            .stages
+            .iter()
+            .find(|stage| stage.stage_name == "evaluate")
+            .expect("evaluate stage should exist");
+        assert_eq!(
+            evaluate_stage
+                .resolved_stage
+                .retry_policy
+                .as_ref()
+                .map(|policy| policy.max_attempts),
+            Some(6)
+        );
+
+        let persisted = load_workflow_overrides(&connection, 1, "feature-dev")
+            .expect("db overrides should inspect")
+            .expect("db overrides should persist");
+        assert_eq!(
+            persisted.stage_overrides[0]
+                .retry_policy
+                .as_ref()
+                .map(|policy| policy.max_attempts),
+            Some(6)
         );
 
         let _ = fs::remove_dir_all(root);

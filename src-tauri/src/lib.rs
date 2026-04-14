@@ -50,7 +50,9 @@ use vault::{
 };
 use workflow::{
     AdoptCatalogEntryInput, CatalogAdoptionTarget, ProjectWorkflowCatalog,
-    ProjectWorkflowRunSnapshot, StartWorkflowRunInput, WorkflowLibrarySnapshot, WorkflowRunRecord,
+    ProjectWorkflowOverrideDocument, ProjectWorkflowOverrideTarget,
+    ProjectWorkflowRunSnapshot, SaveProjectWorkflowOverrideInput, StartWorkflowRunInput,
+    WorkflowLibrarySnapshot, WorkflowRunRecord,
 };
 
 const TAURI_SLOW_COMMAND_MS: f64 = 500.0;
@@ -702,6 +704,46 @@ fn list_project_workflow_catalog(
 }
 
 #[tauri::command]
+fn get_project_workflow_override_document(
+    project_id: i64,
+    workflow_slug: String,
+    state: State<AppState>,
+) -> AppResult<ProjectWorkflowOverrideDocument> {
+    let detail = format!("project_id={} workflow_slug={workflow_slug}", project_id);
+    timed_command("get_project_workflow_override_document", detail, || {
+        state.get_project_workflow_override_document(project_id, &workflow_slug)
+    })
+}
+
+#[tauri::command]
+fn save_project_workflow_override_document(
+    input: SaveProjectWorkflowOverrideInput,
+    state: State<AppState>,
+) -> AppResult<ProjectWorkflowOverrideDocument> {
+    let detail = format!(
+        "project_id={} workflow_slug={}",
+        input.project_id, input.workflow_slug
+    );
+    timed_command("save_project_workflow_override_document", detail, || {
+        state.save_project_workflow_override_document(input)
+    })
+}
+
+#[tauri::command]
+fn clear_project_workflow_override_document(
+    input: ProjectWorkflowOverrideTarget,
+    state: State<AppState>,
+) -> AppResult<ProjectWorkflowOverrideDocument> {
+    let detail = format!(
+        "project_id={} workflow_slug={}",
+        input.project_id, input.workflow_slug
+    );
+    timed_command("clear_project_workflow_override_document", detail, || {
+        state.clear_project_workflow_override_document(input)
+    })
+}
+
+#[tauri::command]
 fn adopt_project_catalog_entry(
     input: AdoptCatalogEntryInput,
     state: State<AppState>,
@@ -1344,6 +1386,9 @@ pub fn run() {
             delete_launch_profile,
             list_workflow_library,
             list_project_workflow_catalog,
+            get_project_workflow_override_document,
+            save_project_workflow_override_document,
+            clear_project_workflow_override_document,
             adopt_project_catalog_entry,
             upgrade_project_catalog_adoption,
             detach_project_catalog_adoption,

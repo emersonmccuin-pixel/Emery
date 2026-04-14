@@ -29,12 +29,14 @@ Delivered now:
 - A lazy-loaded **Workflows** workspace surface with `Library` / `This Project` scopes, workflow vs. pod tabs, link-status badges, and YAML inspection.
 - A project-scoped **Runs** tab with workflow run history, per-stage status/detail, and start-run controls on adopted workflows.
 - Linked workflow adoption automatically pulls referenced pods into the project catalog and pins the resolved versions.
-- Workflow run resolution now freezes the adopted workflow plus adopted pods, applies the current SQLite-backed override seam, validates generator/evaluator provider separation, and rejects outdated linked adoptions before dispatch.
+- Repo-backed project override YAML documents now live at `.project-commander/overrides/<workflow-slug>.yaml`, with the backend validating/canonicalizing them against the adopted workflow and mirroring the parsed result into `project_workflow_overrides` as a runtime cache/compatibility seam.
+- Workflow run resolution now freezes the adopted workflow plus adopted pods, prefers repo-backed override YAML when present, falls back to the cached DB seam when it is not, validates generator/evaluator provider separation, and rejects outdated linked adoptions before dispatch.
 - Workflow stages and project overrides may now declare explicit vault env bindings; run resolution freezes them, validates them against `needs_secrets` plus the resolved pod's `secret_scopes`, and supervisor stage launch passes them through the existing session-start vault resolver/audit/scrubber path.
 - Vault bindings may now choose `delivery=file` for tools that expect a credential file path; the session host materializes those secrets into per-session runtime files and still redacts the raw values from output/log artifacts.
 - Workflow stage dispatch now reuses the existing managed worktree + session host + supervisor broker path: each stage launches a fresh session on the managed worktree, sends a directive through the broker, waits on threaded replies, persists stage/run status, and tears the session down before the next stage.
 - The shipped artifact-type registry now covers the built-in workflow artifact contracts, resolved stages carry those contract requirements into the Workflows/Runs UI, and workflow-definition validation rejects unknown or impossible stage handoffs before a run starts.
 - Stage completion may now report `contextJson.producedArtifacts`; the runtime validates those artifacts against the declared contract at the stage boundary, persists validation status on the stage row, and auto-schedules retry feedback to the configured earlier stage when a blocked/invalid result still has attempts remaining.
+- The project-scoped Workflows detail view now exposes an inline override editor that loads/saves/clears those repo-backed YAML documents without adding a second workflow-authoring surface or broad refresh path.
 - A lazy-loaded `Settings -> Vault` surface with trusted-UI deposit / rotate / delete flows.
 - Stronghold-backed vault value storage plus SQLite metadata/audit tables (`vault_entries`, `vault_audit_events`) and a redacted frontend invoke seam for secret writes.
 - Launch-profile `env_json` can now declare vault-backed env bindings that the supervisor resolves at session start with scope checks, audit rows, and PTY/session-output scrubbing.
@@ -45,7 +47,6 @@ Not delivered yet:
 - Egress proxying, integration-template execution, and brokered secret delivery beyond env-based session injection.
 - Rich template-driven non-env delivery modes beyond the shipped env/file session-launch path.
 - Negotiated sprint contracts, richer artifact persistence/export beyond `contextJson.producedArtifacts`, and a broader generator/evaluator retry loop product surface.
-- Repo-backed override YAML files and an override editor UI; the current implementation ships the override seam as SQLite-backed `project_workflow_overrides` rows.
 
 Rule for future work: build on the shipped catalog/adoption foundation instead of bypassing it with ad hoc per-project configs or a second orchestration store.
 
@@ -166,8 +167,8 @@ Projects shouldn't have to fork to make small adjustments. Supported overrides a
 - Override retry/budget policy per stage
 - Set workflow-level parameter defaults
 
-Target end-state: overrides are small YAML files in `.project-commander/overrides/<workflow-name>.yaml`, diff-able and version-controlled with the project.
-Current shipped seam: overrides live in SQLite-backed `project_workflow_overrides` rows so run resolution and future UI work can layer changes without forcing a workflow fork yet.
+Shipped path: overrides are small YAML files in `.project-commander/overrides/<workflow-name>.yaml`, diff-able and version-controlled with the project.
+Runtime compatibility seam: the backend also mirrors the validated/canonicalized override set into SQLite-backed `project_workflow_overrides` rows so run resolution, migrations, and older data can reuse the same effective-override logic.
 
 ### Resolution at run time
 
@@ -198,7 +199,7 @@ Adoption flow: from the Library, click a workflow → **Adopt in project** → p
 
 ## Data Model (SQLite additions)
 
-Implementation note: the catalog/adoption subset, workflow-run subset, and vault-core subset are now live. Specifically, `workflow_categories`, `library_workflows`, `library_pods`, their category-assignment tables, `project_catalog_adoptions`, `project_workflow_overrides`, `workflow_runs`, `workflow_run_stages`, `vault_entries`, and `vault_audit_events` are implemented. Artifact tables, runtime secret-grant tables, and repo-backed override files remain planned follow-on work.
+Implementation note: the catalog/adoption subset, workflow-run subset, and vault-core subset are now live. Specifically, `workflow_categories`, `library_workflows`, `library_pods`, their category-assignment tables, `project_catalog_adoptions`, `project_workflow_overrides`, `workflow_runs`, `workflow_run_stages`, `vault_entries`, and `vault_audit_events` are implemented, and project overrides now have a repo-backed authoring path under `.project-commander/overrides/` with the SQLite row retained as a cache/compatibility layer. Artifact tables and runtime secret-grant tables remain planned follow-on work.
 
 New tables (names tentative):
 
