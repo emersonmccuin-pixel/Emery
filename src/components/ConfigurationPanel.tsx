@@ -7,9 +7,24 @@ import { PanelBanner, PanelEmptyState, PanelLoadingState } from '@/components/ui
 import { MarkdownEditor } from '@/components/ui/markdown-editor'
 import { invoke } from '@/lib/tauri'
 import { useAppStore, useSelectedProject } from '../store'
+import ProjectWorkflowConfigPanel from './workflow/ProjectWorkflowConfigPanel'
 import './panel-surfaces.css'
 
-type ConfigurationTab = 'general' | 'system_prompt' | 'claude' | 'agents_md'
+type ConfigurationTab = 'general' | 'workflow' | 'system_prompt' | 'claude' | 'agents_md'
+
+function syncProjectRecord(project: import('../types').ProjectRecord) {
+  useAppStore.setState((state) => ({
+    projects: [project, ...state.projects.filter((candidate) => candidate.id !== project.id)],
+    editProjectName:
+      state.selectedProjectId === project.id ? project.name : state.editProjectName,
+    editProjectRootPath:
+      state.selectedProjectId === project.id ? project.rootPath : state.editProjectRootPath,
+    editProjectBaseBranch:
+      state.selectedProjectId === project.id
+        ? (project.baseBranch ?? '')
+        : state.editProjectBaseBranch,
+  }))
+}
 
 function ConfigurationPanel() {
   const selectedProject = useSelectedProject()
@@ -36,6 +51,7 @@ function ConfigurationPanel() {
       <nav className="workspace-tabs--shell flex items-center h-10 px-4 shrink-0">
         <TabsList>
           <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger value="workflow">Workflow</TabsTrigger>
           <TabsTrigger value="system_prompt">System Prompt</TabsTrigger>
           <TabsTrigger value="claude">CLAUDE.md</TabsTrigger>
           <TabsTrigger value="agents_md">AGENTS.md</TabsTrigger>
@@ -44,6 +60,9 @@ function ConfigurationPanel() {
       <div className="flex-1 min-h-0 overflow-auto scrollbar-thin p-6">
         <TabsContent value="general">
           <GeneralTab />
+        </TabsContent>
+        <TabsContent value="workflow">
+          <ProjectWorkflowConfigPanel />
         </TabsContent>
         <TabsContent value="system_prompt">
           <SystemPromptTab key={`sysprompt-${selectedProject.id}`} />
@@ -103,9 +122,10 @@ function SystemPromptTab() {
           name: selectedProject.name,
           rootPath: selectedProject.rootPath,
           systemPrompt: contents,
+          baseBranch: selectedProject.baseBranch,
         },
       })
-      useAppStore.getState().projectCreated(updated)
+      syncProjectRecord(updated)
       setOriginal(contents)
       setMessage('System prompt saved.')
     } catch (err) {

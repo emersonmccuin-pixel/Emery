@@ -337,6 +337,8 @@ export type AppSettingsTab =
   | "appearance"
   | "accounts"
   | "defaults"
+  | "workflows"
+  | "vault"
   | "diagnostics";
 
 export type ProjectRefreshTarget =

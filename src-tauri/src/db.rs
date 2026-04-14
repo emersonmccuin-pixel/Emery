@@ -21,10 +21,11 @@ use crate::vault::{
     VaultSnapshot,
 };
 use crate::workflow::{
-    self, AdoptCatalogEntryInput, CatalogAdoptionTarget, FailWorkflowRunInput,
-    MarkWorkflowStageDispatchedInput, ProjectWorkflowCatalog, ProjectWorkflowRunSnapshot,
-    ProjectWorkflowOverrideDocument, ProjectWorkflowOverrideTarget,
-    RecordWorkflowStageResultInput, RecordWorkflowStageResultOutput,
+    self, AdoptCatalogEntryInput, CatalogAdoptionTarget, DeleteLibraryWorkflowInput,
+    FailWorkflowRunInput, MarkWorkflowStageDispatchedInput, ProjectWorkflowCatalog,
+    ProjectWorkflowRunSnapshot, ProjectWorkflowOverrideDocument,
+    ProjectWorkflowOverrideTarget, RecordWorkflowStageResultInput,
+    RecordWorkflowStageResultOutput, SaveLibraryWorkflowInput,
     SaveProjectWorkflowOverrideInput, StartWorkflowRunInput, WorkflowLibrarySnapshot,
     WorkflowRunRecord,
 };
@@ -83,6 +84,7 @@ pub struct ProjectRecord {
     pub work_item_prefix: Option<String>,
     pub system_prompt: String,
     pub base_branch: Option<String>,
+    pub default_workflow_slug: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -251,6 +253,13 @@ pub struct UpdateProjectInput {
     pub root_path: String,
     pub system_prompt: Option<String>,
     pub base_branch: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateProjectWorkflowSettingsInput {
+    pub project_id: i64,
+    pub default_workflow_slug: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -571,6 +580,30 @@ impl AppState {
         Ok(workflow::load_library_snapshot(
             &connection,
             Path::new(&self.storage.app_data_dir),
+        )?)
+    }
+
+    pub fn save_library_workflow(
+        &self,
+        input: SaveLibraryWorkflowInput,
+    ) -> AppResult<WorkflowLibrarySnapshot> {
+        let connection = self.connect()?;
+        Ok(workflow::save_library_workflow(
+            &connection,
+            Path::new(&self.storage.app_data_dir),
+            &input,
+        )?)
+    }
+
+    pub fn delete_library_workflow(
+        &self,
+        input: DeleteLibraryWorkflowInput,
+    ) -> AppResult<WorkflowLibrarySnapshot> {
+        let connection = self.connect()?;
+        Ok(workflow::delete_library_workflow(
+            &connection,
+            Path::new(&self.storage.app_data_dir),
+            &input,
         )?)
     }
 
@@ -995,6 +1028,40 @@ impl AppState {
 
         ensure_project_work_item_prefix(&connection, existing_project.id, name)?;
         Ok(load_project_by_id(&connection, input.id)?)
+    }
+
+    pub fn update_project_workflow_settings(
+        &self,
+        input: UpdateProjectWorkflowSettingsInput,
+    ) -> AppResult<ProjectRecord> {
+        let connection = self.connect()?;
+        load_project_by_id(&connection, input.project_id)?;
+
+        let default_workflow_slug = input
+            .default_workflow_slug
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+
+        if let Some(slug) = default_workflow_slug.as_deref() {
+            workflow::sync_library_catalog(&connection, Path::new(&self.storage.app_data_dir))?;
+            workflow::ensure_project_workflow_available(&connection, input.project_id, slug)?;
+        }
+
+        connection
+            .execute(
+                "
+                UPDATE projects
+                SET default_workflow_slug = ?1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?2
+                ",
+                params![default_workflow_slug, input.project_id],
+            )
+            .map_err(|error| format!("failed to update project workflow settings: {error}"))?;
+
+        Ok(load_project_by_id(&connection, input.project_id)?)
     }
 
     pub fn create_launch_profile(
@@ -2360,6 +2427,7 @@ fn migrate(connection: &Connection) -> Result<(), String> {
               name TEXT NOT NULL,
               root_path TEXT NOT NULL UNIQUE,
               work_item_prefix TEXT,
+              default_workflow_slug TEXT,
               created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
               updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -2747,6 +2815,7 @@ fn migrate(connection: &Connection) -> Result<(), String> {
         "INTEGER REFERENCES worktrees(id) ON DELETE SET NULL",
     )?;
     ensure_column_exists(connection, "projects", "work_item_prefix", "TEXT")?;
+    ensure_column_exists(connection, "projects", "default_workflow_slug", "TEXT")?;
     ensure_column_exists(
         connection,
         "work_items",
@@ -3043,7 +3112,8 @@ fn load_projects(connection: &Connection) -> Result<Vec<ProjectRecord>, String> 
               (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS session_count,
               p.work_item_prefix,
               p.system_prompt,
-              p.base_branch
+              p.base_branch,
+              p.default_workflow_slug
             FROM projects p
             ORDER BY p.updated_at DESC, p.id DESC
             ",
@@ -3066,6 +3136,7 @@ fn load_projects(connection: &Connection) -> Result<Vec<ProjectRecord>, String> 
                 work_item_prefix: row.get(8)?,
                 system_prompt: row.get(9)?,
                 base_branch: row.get(10)?,
+                default_workflow_slug: row.get(11)?,
             })
         })
         .map_err(|error| format!("failed to load projects: {error}"))?;
@@ -3089,7 +3160,8 @@ fn load_project_by_id(connection: &Connection, id: i64) -> Result<ProjectRecord,
               (SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id) AS session_count,
               p.work_item_prefix,
               p.system_prompt,
-              p.base_branch
+              p.base_branch,
+              p.default_workflow_slug
             FROM projects p
             WHERE p.id = ?1
             ",
@@ -3109,6 +3181,7 @@ fn load_project_by_id(connection: &Connection, id: i64) -> Result<ProjectRecord,
                     work_item_prefix: row.get(8)?,
                     system_prompt: row.get(9)?,
                     base_branch: row.get(10)?,
+                    default_workflow_slug: row.get(11)?,
                 })
             },
         )

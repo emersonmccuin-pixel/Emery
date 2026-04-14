@@ -3569,6 +3569,7 @@ mod tests {
             work_item_prefix: Some("CMDR".to_string()),
             system_prompt: String::new(),
             base_branch: None,
+            default_workflow_slug: None,
         }
     }
 

@@ -12,8 +12,8 @@ pub mod workflow;
 use db::{
     AppSettings, AppState, BootstrapData, CreateLaunchProfileInput, CreateProjectInput,
     DocumentRecord, LaunchProfileRecord, ProjectRecord, SessionRecord, StorageInfo,
-    UpdateAppSettingsInput, UpdateLaunchProfileInput, UpdateProjectInput, WorkItemRecord,
-    WorktreeRecord,
+    UpdateAppSettingsInput, UpdateLaunchProfileInput, UpdateProjectInput,
+    UpdateProjectWorkflowSettingsInput, WorkItemRecord, WorktreeRecord,
 };
 use diagnostics::{
     app_runtime_state_path, append_diagnostics_entries as persist_diagnostics_entries,
@@ -49,10 +49,11 @@ use vault::{
     UpsertVaultIntegrationInput, VaultIntegrationSnapshot, VaultSnapshot,
 };
 use workflow::{
-    AdoptCatalogEntryInput, CatalogAdoptionTarget, ProjectWorkflowCatalog,
-    ProjectWorkflowOverrideDocument, ProjectWorkflowOverrideTarget,
-    ProjectWorkflowRunSnapshot, SaveProjectWorkflowOverrideInput, StartWorkflowRunInput,
-    WorkflowLibrarySnapshot, WorkflowRunRecord,
+    AdoptCatalogEntryInput, CatalogAdoptionTarget, DeleteLibraryWorkflowInput,
+    ProjectWorkflowCatalog, ProjectWorkflowOverrideDocument, ProjectWorkflowOverrideTarget,
+    ProjectWorkflowRunSnapshot, SaveLibraryWorkflowInput,
+    SaveProjectWorkflowOverrideInput, StartWorkflowRunInput, WorkflowLibrarySnapshot,
+    WorkflowRunRecord,
 };
 
 const TAURI_SLOW_COMMAND_MS: f64 = 500.0;
@@ -664,6 +665,22 @@ fn update_project(
 }
 
 #[tauri::command]
+fn update_project_workflow_settings(
+    input: UpdateProjectWorkflowSettingsInput,
+    state: State<AppState>,
+) -> AppResult<ProjectRecord> {
+    timed_command(
+        "update_project_workflow_settings",
+        format!(
+            "project_id={} default_workflow_slug={}",
+            input.project_id,
+            input.default_workflow_slug.as_deref().unwrap_or("(none)")
+        ),
+        || state.update_project_workflow_settings(input),
+    )
+}
+
+#[tauri::command]
 fn create_launch_profile(
     input: CreateLaunchProfileInput,
     state: State<SupervisorClient>,
@@ -688,6 +705,26 @@ fn delete_launch_profile(id: i64, state: State<SupervisorClient>) -> AppResult<(
 fn list_workflow_library(state: State<AppState>) -> AppResult<WorkflowLibrarySnapshot> {
     timed_command("list_workflow_library", "scope=library", || {
         state.list_workflow_library()
+    })
+}
+
+#[tauri::command]
+fn save_library_workflow(
+    input: SaveLibraryWorkflowInput,
+    state: State<AppState>,
+) -> AppResult<WorkflowLibrarySnapshot> {
+    timed_command("save_library_workflow", format!("slug={}", input.slug), || {
+        state.save_library_workflow(input)
+    })
+}
+
+#[tauri::command]
+fn delete_library_workflow(
+    input: DeleteLibraryWorkflowInput,
+    state: State<AppState>,
+) -> AppResult<WorkflowLibrarySnapshot> {
+    timed_command("delete_library_workflow", format!("slug={}", input.slug), || {
+        state.delete_library_workflow(input)
     })
 }
 
@@ -1381,10 +1418,13 @@ pub fn run() {
             update_app_settings,
             create_project,
             update_project,
+            update_project_workflow_settings,
             create_launch_profile,
             update_launch_profile,
             delete_launch_profile,
             list_workflow_library,
+            save_library_workflow,
+            delete_library_workflow,
             list_project_workflow_catalog,
             get_project_workflow_override_document,
             save_project_workflow_override_document,

@@ -582,8 +582,10 @@ pub struct FailWorkflowRunInput {
     pub failure_reason: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct WorkflowDefinitionYaml {
+    #[serde(default)]
+    slug: Option<String>,
     name: String,
     kind: String,
     version: i64,
@@ -598,7 +600,7 @@ struct WorkflowDefinitionYaml {
     stages: Vec<WorkflowStageYaml>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct WorkflowStageYaml {
     name: String,
     role: String,
@@ -627,7 +629,7 @@ struct WorkflowStageYaml {
     retry_policy: Option<RetryPolicyYaml>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct RetryPolicyYaml {
     #[serde(default)]
     max_attempts: Option<i64>,
@@ -759,6 +761,50 @@ pub struct SaveProjectWorkflowOverrideInput {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LibraryWorkflowStageInput {
+    pub name: String,
+    pub role: String,
+    pub pod_ref: Option<String>,
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub prompt_template_ref: Option<String>,
+    #[serde(default)]
+    pub inputs: Vec<String>,
+    #[serde(default)]
+    pub outputs: Vec<String>,
+    #[serde(default)]
+    pub needs_secrets: Vec<String>,
+    #[serde(default)]
+    pub vault_env_bindings: Vec<VaultAccessBindingRequest>,
+    #[serde(default)]
+    pub retry_policy: Option<WorkflowStageRetryPolicyRecord>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveLibraryWorkflowInput {
+    pub slug: String,
+    pub name: String,
+    pub kind: String,
+    pub version: i64,
+    pub description: String,
+    pub template: bool,
+    #[serde(default)]
+    pub categories: Vec<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub stages: Vec<LibraryWorkflowStageInput>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteLibraryWorkflowInput {
+    pub slug: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProjectWorkflowOverrideTarget {
     pub project_id: i64,
     pub workflow_slug: String,
@@ -799,6 +845,68 @@ fn project_workflow_override_path(project_root: &Path, workflow_slug: &str) -> R
 fn render_override_yaml(overrides: &WorkflowOverrideSetRecord) -> Result<String, String> {
     let mut yaml = serde_yaml::to_string(overrides)
         .map_err(|error| format!("failed to encode workflow override YAML: {error}"))?;
+    if let Some(rest) = yaml.strip_prefix("---\n") {
+        yaml = rest.to_string();
+    }
+    Ok(yaml)
+}
+
+fn render_workflow_yaml(input: &SaveLibraryWorkflowInput) -> Result<String, String> {
+    let document = WorkflowDefinitionYaml {
+        slug: Some(normalize_slug(&input.slug, "workflow slug")?),
+        name: normalize_required(&input.name, "workflow name")?.to_string(),
+        kind: normalize_required(&input.kind, "workflow kind")?.to_string(),
+        version: input.version.max(1),
+        description: input.description.trim().to_string(),
+        template: input.template,
+        categories: normalize_category_list(&input.categories)?,
+        tags: normalize_string_list(&input.tags, "workflow tag")?,
+        stages: input
+            .stages
+            .iter()
+            .map(|stage| {
+                let retry_policy = match stage.retry_policy.as_ref() {
+                    Some(policy) => Some(RetryPolicyYaml {
+                        max_attempts: Some(policy.max_attempts.max(1)),
+                        on_fail_feedback_to: policy
+                            .on_fail_feedback_to
+                            .as_deref()
+                            .map(|value| normalize_required(value, "retry feedback target"))
+                            .transpose()?
+                            .map(str::to_string),
+                    }),
+                    None => None,
+                };
+                Ok(WorkflowStageYaml {
+                    name: normalize_required(&stage.name, "workflow stage name")?.to_string(),
+                    role: normalize_required(&stage.role, "workflow stage role")?.to_string(),
+                    pod_ref: stage
+                        .pod_ref
+                        .as_deref()
+                        .map(|value| normalize_required(value, "workflow pod ref"))
+                        .transpose()?
+                        .map(str::to_string),
+                    provider: normalize_optional(&stage.provider),
+                    model: normalize_optional(&stage.model),
+                    prompt_template_ref: normalize_optional(&stage.prompt_template_ref),
+                    inputs: normalize_string_list(&stage.inputs, "workflow inputs")?,
+                    outputs: normalize_string_list(&stage.outputs, "workflow outputs")?,
+                    needs_secrets: normalize_string_list(
+                        &stage.needs_secrets,
+                        "workflow secrets",
+                    )?,
+                    vault_env_bindings: normalize_vault_binding_requests(
+                        &stage.vault_env_bindings,
+                        "workflow stage vault binding",
+                    )?,
+                    retry_policy,
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?,
+    };
+
+    let mut yaml = serde_yaml::to_string(&document)
+        .map_err(|error| format!("failed to encode workflow YAML: {error}"))?;
     if let Some(rest) = yaml.strip_prefix("---\n") {
         yaml = rest.to_string();
     }
@@ -1068,6 +1176,156 @@ pub fn load_project_run_snapshot(
         project_id,
         runs: load_workflow_runs(connection, project_id)?,
     })
+}
+
+pub fn save_library_workflow(
+    connection: &Connection,
+    app_data_dir: &Path,
+    input: &SaveLibraryWorkflowInput,
+) -> Result<WorkflowLibrarySnapshot, String> {
+    ensure_seed_categories(connection)?;
+    seed_library_files(app_data_dir)?;
+    sync_library_catalog(connection, app_data_dir)?;
+
+    let workflow_dir = workflow_dir(app_data_dir);
+    fs::create_dir_all(&workflow_dir).map_err(|error| {
+        format!(
+            "failed to create workflow library directory {}: {error}",
+            workflow_dir.display()
+        )
+    })?;
+
+    let normalized_slug = normalize_slug(&input.slug, "workflow slug")?;
+    let existing = load_library_workflows(connection)?
+        .into_iter()
+        .find(|workflow| workflow.slug == normalized_slug);
+
+    if existing.as_ref().map(|workflow| workflow.source.as_str()) == Some("shipped") {
+        return Err(format!(
+            "workflow '{}' is app-shipped; clone it into a new slug instead of editing it in place",
+            normalized_slug
+        ));
+    }
+
+    let mut normalized_input = input.clone();
+    normalized_input.slug = normalized_slug.clone();
+    if let Some(existing_workflow) = existing.as_ref() {
+        if normalized_input.version <= existing_workflow.version {
+            normalized_input.version = existing_workflow.version + 1;
+        }
+    } else if normalized_input.version < 1 {
+        normalized_input.version = 1;
+    }
+
+    let yaml = render_workflow_yaml(&normalized_input)?;
+    let parsed = parse_workflow_yaml_for_detached(&yaml)?;
+    let known_pods = load_library_pods(connection)?
+        .into_iter()
+        .map(|pod| pod.slug)
+        .collect::<BTreeSet<_>>();
+    for pod_ref in &parsed.pod_refs {
+        if !known_pods.contains(pod_ref) {
+            return Err(format!(
+                "workflow '{}' references unknown pod '{}'",
+                normalized_input.slug, pod_ref
+            ));
+        }
+    }
+
+    let target_path = workflow_dir.join(format!("{}.yaml", normalized_input.slug));
+    fs::write(&target_path, yaml.as_bytes()).map_err(|error| {
+        format!(
+            "failed to write workflow library file {}: {error}",
+            target_path.display()
+        )
+    })?;
+
+    sync_library_catalog(connection, app_data_dir)?;
+    load_library_snapshot(connection, app_data_dir)
+}
+
+pub fn delete_library_workflow(
+    connection: &Connection,
+    app_data_dir: &Path,
+    input: &DeleteLibraryWorkflowInput,
+) -> Result<WorkflowLibrarySnapshot, String> {
+    sync_library_catalog(connection, app_data_dir)?;
+    let slug = normalize_slug(&input.slug, "workflow slug")?;
+    let workflow = load_library_workflow_by_slug(connection, &slug)?;
+    if workflow.source == "shipped" {
+        return Err(format!(
+            "workflow '{}' is app-shipped and cannot be deleted",
+            workflow.slug
+        ));
+    }
+
+    let adoption_count = connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM project_catalog_adoptions
+            WHERE entity_type = 'workflow' AND entity_slug = ?1
+            ",
+            params![workflow.slug],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| {
+            format!(
+                "failed to inspect workflow adoptions for '{}': {error}",
+                workflow.slug
+            )
+        })?;
+    if adoption_count > 0 {
+        return Err(format!(
+            "workflow '{}' is still adopted by {adoption_count} project(s); detach or switch those projects before deleting it",
+            workflow.slug
+        ));
+    }
+
+    let assigned_count = connection
+        .query_row(
+            "
+            SELECT COUNT(*)
+            FROM projects
+            WHERE default_workflow_slug = ?1
+            ",
+            params![workflow.slug],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| {
+            format!(
+                "failed to inspect default workflow assignments for '{}': {error}",
+                workflow.slug
+            )
+        })?;
+    if assigned_count > 0 {
+        return Err(format!(
+            "workflow '{}' is still configured as the default workflow for {assigned_count} project(s)",
+            workflow.slug
+        ));
+    }
+
+    let file_path = PathBuf::from(&workflow.file_path);
+    if file_path.is_file() {
+        fs::remove_file(&file_path).map_err(|error| {
+            format!(
+                "failed to delete workflow library file {}: {error}",
+                file_path.display()
+            )
+        })?;
+    }
+
+    sync_library_catalog(connection, app_data_dir)?;
+    load_library_snapshot(connection, app_data_dir)
+}
+
+pub fn ensure_project_workflow_available(
+    connection: &Connection,
+    project_id: i64,
+    workflow_slug: &str,
+) -> Result<WorkflowRecord, String> {
+    let adoption = load_project_adoption(connection, project_id, "workflow", workflow_slug)?;
+    resolve_adopted_workflow_for_editor(connection, &adoption)
 }
 
 pub fn start_workflow_run(
@@ -1991,7 +2249,11 @@ fn parse_workflow_definition(
         )
     })?;
 
-    let slug = normalize_required(&parsed.name, "workflow name")?.to_string();
+    let display_name = normalize_required(&parsed.name, "workflow name")?.to_string();
+    let slug = match parsed.slug.as_deref() {
+        Some(value) => normalize_slug(value, "workflow slug")?,
+        None => normalize_slug(&display_name, "workflow name")?,
+    };
     let kind = normalize_required(&parsed.kind, "workflow kind")?.to_string();
 
     if parsed.version < 1 {
@@ -2096,7 +2358,7 @@ fn parse_workflow_definition(
 
     Ok(ParsedWorkflowDefinition {
         slug: slug.clone(),
-        name: slug,
+        name: display_name,
         kind,
         version: parsed.version,
         description: parsed.description.trim().to_string(),
@@ -2190,6 +2452,56 @@ fn normalize_required<'a>(value: &'a str, label: &str) -> Result<&'a str, String
         return Err(format!("{label} is required"));
     }
     Ok(trimmed)
+}
+
+fn normalize_slug(value: &str, label: &str) -> Result<String, String> {
+    let trimmed = normalize_required(value, label)?;
+    let mut normalized = String::with_capacity(trimmed.len());
+    let mut pending_hyphen = false;
+
+    for character in trimmed.chars() {
+        if character.is_ascii_alphanumeric() {
+            if pending_hyphen && !normalized.is_empty() && !normalized.ends_with('-') {
+                normalized.push('-');
+            }
+            normalized.push(character.to_ascii_lowercase());
+            pending_hyphen = false;
+            continue;
+        }
+
+        match character {
+            '-' | '.' => {
+                if !normalized.is_empty()
+                    && !normalized.ends_with('-')
+                    && !normalized.ends_with('.')
+                {
+                    normalized.push(character);
+                }
+                pending_hyphen = false;
+            }
+            ' ' | '_' => {
+                pending_hyphen = true;
+            }
+            _ => {
+                return Err(format!(
+                    "{label} contains unsupported character '{character}'; use letters, numbers, spaces, '-', '_' or '.'"
+                ));
+            }
+        }
+    }
+
+    let normalized = normalized
+        .trim_matches(|character| character == '-' || character == '.')
+        .to_string();
+
+    if normalized.is_empty() {
+        return Err(format!("{label} must contain at least one letter or number"));
+    }
+    if normalized.contains("..") || normalized.contains('/') || normalized.contains('\\') {
+        return Err(format!("{label} contains an unsafe path segment"));
+    }
+
+    Ok(normalized)
 }
 
 fn normalize_optional(value: &Option<String>) -> Option<String> {
@@ -3765,7 +4077,11 @@ fn parse_detached_pod(slug: &str, yaml: &str) -> Result<PodRecord, String> {
 fn parse_workflow_yaml_for_detached(yaml: &str) -> Result<ParsedWorkflowDefinition, String> {
     let parsed = serde_yaml::from_str::<WorkflowDefinitionYaml>(yaml)
         .map_err(|error| format!("failed to parse detached workflow snapshot: {error}"))?;
-    let slug = normalize_required(&parsed.name, "workflow name")?.to_string();
+    let display_name = normalize_required(&parsed.name, "workflow name")?.to_string();
+    let slug = match parsed.slug.as_deref() {
+        Some(value) => normalize_slug(value, "workflow slug")?,
+        None => normalize_slug(&display_name, "workflow name")?,
+    };
     let kind = normalize_required(&parsed.kind, "workflow kind")?.to_string();
     let categories = normalize_category_list(&parsed.categories)?;
     let tags = normalize_string_list(&parsed.tags, "workflow tags")?;
@@ -3832,7 +4148,7 @@ fn parse_workflow_yaml_for_detached(yaml: &str) -> Result<ParsedWorkflowDefiniti
 
     Ok(ParsedWorkflowDefinition {
         slug: slug.clone(),
-        name: slug,
+        name: display_name,
         kind,
         version: parsed.version,
         description: parsed.description.trim().to_string(),

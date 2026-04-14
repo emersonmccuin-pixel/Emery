@@ -9,14 +9,14 @@ Turn Project Commander from a session/mailbox substrate into a true **harness** 
 
 1. **Role-typed agents** — planner, generator, evaluator as first-class concepts with independent model/provider routing.
 2. **Global library of workflows and agent pods** — reusable, versioned primitives that projects adopt into their own scope.
-3. **Workflow builder** — data-driven workflows (coding, documentation, planning, data analysis) stored in SQLite, using work items + ADRs + artifacts as the handoff medium.
+3. **Workflow builder** — data-driven workflows (coding, documentation, planning, data analysis) stored as library YAML synced into SQLite, using work items + ADRs + artifacts as the handoff medium.
 4. **Env vault** — secure, auditable secret access so agents can reach tools without secrets leaking into context, logs, or diagnostics.
 
 This plan does not touch the A+ guardrails (no new polling, no orchestration monoliths, reuse shared primitives).
 
 ## Implementation Snapshot (2026-04-14)
 
-Phase 0/1 is now shipped in the app as the **catalog + adoption foundation**. Later sections in this document still describe the intended end-state, but they are not all implemented yet.
+Phase 0/1 plus the first workflow-product slice are now shipped in the app as the **catalog + adoption + builder foundation**. Later sections in this document still describe the intended end-state, but they are not all implemented yet.
 
 Delivered now:
 
@@ -25,9 +25,12 @@ Delivered now:
 - SQLite-backed catalog/adoption state for `workflow_categories`, `library_workflows`, `library_pods`, category assignments, and `project_catalog_adoptions`.
 - SQLite-backed workflow execution state for `project_workflow_overrides`, `workflow_runs`, and `workflow_run_stages`, with frozen resolved workflow JSON persisted at run start.
 - Tauri commands for library reads plus project adopt / upgrade / detach flows.
+- Tauri commands to save/delete user-authored library workflows and to persist one optional `default_workflow_slug` per project.
 - Tauri/supervisor commands to start workflow runs and list project run history.
 - A lazy-loaded **Workflows** workspace surface with `Library` / `This Project` scopes, workflow vs. pod tabs, link-status badges, and YAML inspection.
 - A project-scoped **Runs** tab with workflow run history, per-stage status/detail, and start-run controls on adopted workflows.
+- A lazy-loaded **Settings -> Workflows** builder/editor for named library workflows, including blank-create, clone, save, and delete flows on top of the shipped workflow schema instead of a second UI-only model.
+- A **Project -> Configuration -> Workflow** surface that lets a project opt into one default workflow for now, auto-adopts the chosen library workflow if needed, and shows a work-item-centered pipeline with latest run/stage state plus manual start controls.
 - Linked workflow adoption automatically pulls referenced pods into the project catalog and pins the resolved versions.
 - Repo-backed project override YAML documents now live at `.project-commander/overrides/<workflow-slug>.yaml`, with the backend validating/canonicalizing them against the adopted workflow and mirroring the parsed result into `project_workflow_overrides` as a runtime cache/compatibility seam.
 - Workflow run resolution now freezes the adopted workflow plus adopted pods, prefers repo-backed override YAML when present, falls back to the cached DB seam when it is not, validates generator/evaluator provider separation, and rejects outdated linked adoptions before dispatch.
@@ -43,12 +46,13 @@ Delivered now:
 
 Not delivered yet:
 
-- Visual workflow builder/editor UI.
 - Egress proxying, integration-template execution, and brokered secret delivery beyond env-based session injection.
 - Rich template-driven non-env delivery modes beyond the shipped env/file session-launch path.
 - Negotiated sprint contracts, richer artifact persistence/export beyond `contextJson.producedArtifacts`, and a broader generator/evaluator retry loop product surface.
+- Automatic workflow enrollment/routing from work-item type, multi-workflow-per-project assignment, and the higher-level workflow-operations polish on top of the shipped one-default-workflow-per-project model.
+- Full freeform DAG/canvas builder polish, dry-run simulation, and other advanced graph-authoring ergonomics beyond the shipped structured builder/editor.
 
-Rule for future work: build on the shipped catalog/adoption foundation instead of bypassing it with ad hoc per-project configs or a second orchestration store.
+Rule for future work: build on the shipped catalog/adoption/builder foundation instead of bypassing it with ad hoc per-project configs or a second orchestration store.
 
 ## Guiding Principles
 
@@ -297,7 +301,7 @@ Templates shipped in-repo for:
 - `data-analysis` (scoper → analyst → reviewer → report-writer)
 - `research-brief` (scoper → researcher → synthesizer → critic)
 
-A **workflow builder UI** (Phase 4) produces/edits these YAML files visually but never owns a separate schema.
+The shipped workflow builder UI in `Settings -> Workflows` produces/edits these YAML definitions visually but never owns a separate schema; any future graph-canvas editing must stay on that same contract.
 
 ## Role → Provider/Model Routing
 
@@ -406,24 +410,33 @@ For tools that read credentials from env or from a file path passed through env,
 
 ## Workflow Builder UX
 
-Two surfaces, both operating on the same YAML files:
+Three surfaces, all operating on the same workflow schema:
 
-1. **YAML-first (Phase 1–3):** workflows are files in `workflows/`; the app hot-reloads on file change. Source of truth.
-2. **Visual builder (Phase 4):** in-app graph editor that round-trips to YAML — no hidden state.
+1. **Settings -> Workflows (shipped):** the library builder/editor for named reusable workflows stored under `<app-data>/library/workflows/` and synced into SQLite.
+2. **Project -> Configuration -> Workflow (shipped):** optional one-default-workflow-per-project assignment, plus a work-item-centered pipeline view with run-start controls.
+3. **Future graph-canvas refinement:** a richer DAG editor can layer on later, but it must still round-trip to the same YAML contract with no hidden state.
 
 ### Entry point
 
-New top-level tab **Workflows** (uses the shared `Tabs` primitive). Top-level scope switcher: **Library** / **This Project**. Three sub-tabs:
+Current shipped entry points:
+
+- **Settings -> Workflows** for creating, cloning, renaming, editing, and deleting named library workflows.
+- **Project -> Configuration -> Workflow** for opting a project into one default workflow, assigning that workflow, and operating the project pipeline around work items.
+- Top-level **Workflows** for catalog/adoption inspection, override editing, and the project-scoped run history/observability surface.
+
+In the top-level **Workflows** view, the scope switcher remains **Library** / **This Project**. Three sub-tabs:
 
 - **Runs** — live + historical workflow runs for the current project (observability view).
 - **Workflows** — workflow definitions at the selected scope.
 - **Pods** — agent pod definitions at the selected scope.
 
-In **Library** scope, you author and version global workflows + pods, including the app-shipped templates ("Feature Dev", "ADR", "Documentation Pass", "Data Analysis", "Research Brief"). Each library entry has an **Adopt in project** action.
+In **Library** scope, you inspect global workflows + pods, including the app-shipped templates ("Feature Dev", "ADR", "Documentation Pass", "Data Analysis", "Research Brief"). Authoring now primarily happens in `Settings -> Workflows`, while each library entry still has an **Adopt in project** action.
 
 In **This Project** scope, you see what the project has adopted, each with a badge (`linked @v3`, `forked`, `outdated @v2 → v4 available`). Actions per adoption: **Upgrade to latest**, **Edit overrides**, **Detach (fork)**, **Remove**.
 
-### The canvas
+### Future graph-canvas refinement
+
+The current shipped builder is a structured editor rather than a freeform canvas. If and when we add the richer graph surface, it should work like this:
 
 Left-to-right DAG editor. Three regions:
 
@@ -475,7 +488,9 @@ Above the canvas:
 
 ### Running a workflow
 
-From the work-item panel, new button **Run workflow ▾**. Menu lists workflows whose `kind` matches the work item type plus an "All workflows" option. Modal confirms:
+Current shipped path: `Project -> Configuration -> Workflow` shows the project work-item pipeline and lets the operator start the project's default workflow for any work item that is not already on an active run.
+
+Future polish can add a direct **Run workflow ▾** action from the work-item panel. That menu would list workflows whose `kind` matches the work item type plus an "All workflows" option, then confirm:
 
 - Root work item (pre-filled)
 - Any workflow-level parameters the YAML exposes
@@ -496,11 +511,11 @@ Top strip: total cost, elapsed, iterations used vs. budget, next expected stage.
 
 ### Template gallery
 
-Templates are plain workflow YAML files shipped with the app. "Use template" clones the YAML into `workflows/` as a new file; you edit from there. The builder never produces anything a human couldn't have written by hand.
+Templates are plain workflow YAML files shipped with the app under the library catalog. "Use template" in the shipped builder clones the selected library workflow into a new user-authored library workflow under `<app-data>/library/workflows/`; you edit from there. The builder never produces anything a human couldn't have written by hand.
 
 ### Authoring without the builder
 
-Because YAML is the source of truth, advanced users skip the builder entirely. Drop a YAML file in `workflows/`, the app hot-reloads, validates, and it appears in Library. Builder and text editor stay in sync because they operate on the same files.
+Because YAML remains the source of truth, advanced users can still edit the library workflow YAML under `<app-data>/library/workflows/` and the project override YAML under `.project-commander/overrides/`. The builder and the file-based flows stay in sync because they operate on the same schema and the backend re-syncs the catalog from disk.
 
 ### Principles driving the UX
 
@@ -509,15 +524,16 @@ Because YAML is the source of truth, advanced users skip the builder entirely. D
 - **Cheap safety nets before tokens.** Validate + Dry run catch most authoring mistakes before any real run spends money.
 - **Templates are starting points, not magic.** A template is a YAML file you own after cloning.
 
-### Phase 1 MVP (defer the visual editor)
+### Current shipped builder/product baseline
 
-Skip the full visual builder for Phase 1. Ship:
+The app now ships:
 
-1. YAML hot-reload from `workflows/`
-2. Library list view (read-only) with a "View as graph" rendering
-3. Full run view with the live DAG + stage drawers
+1. A lazy `Settings -> Workflows` builder/editor for named library workflows.
+2. A project configuration workflow surface with one optional default workflow per project.
+3. A work-item-centered pipeline list showing latest run/stage state plus start controls.
+4. The existing top-level Workflows/Runs observability and override-editing surfaces.
 
-That delivers the entire experience except in-app editing — which happens in VS Code against the YAML files for the first few weeks. Visual builder lands in Phase 4 once the schema is stable enough that a UI on top is worth building.
+What is still future work is the richer freeform graph editor, dry-run authoring workflow, and broader workflow-operations automation on top of that baseline.
 
 ## Observability / Harness Metrics
 
@@ -583,8 +599,9 @@ Each phase must leave the app green (`npm test`, `npm run build`, `cargo test`) 
 - `adr-authoring`, `documentation-pass`, `data-analysis`, `research-brief`.
 - Per-workflow artifact-type registry extensions.
 
-**Phase 4 — Visual workflow builder.**
-- Graph editor, validation, YAML round-trip, dry-run mode.
+**Phase 4 — Workflow builder product surface.**
+- Shipped: structured builder/editor in `Settings -> Workflows`, named reusable templates, library clone/save/delete flows, project default workflow assignment, and project workflow pipeline operations around work items.
+- Follow-on: freeform graph editor, richer validation UX, YAML diff review, and dry-run mode.
 
 **Phase 5 — Harness telemetry dashboard.**
 - Per-definition metrics, context-anxiety proxy, cost tracking, eval-pass trends.
@@ -601,7 +618,7 @@ Each phase must leave the app green (`npm test`, `npm run build`, `cargo test`) 
 
 ## Risks
 
-- **Complexity creep.** Workflow engine + vault + builder is a lot. Phase 0–1 must be usable standalone before Phase 4 is started.
+- **Complexity creep.** Workflow engine + vault + builder is a lot. The shipped structured builder should remain usable on its own before we add the larger graph-canvas refinement.
 - **Context leakage via artifacts.** If artifact bodies grow too large, handoffs recreate the compaction problem. Enforce size budgets per artifact type.
 - **Evaluator provider unavailability.** Codex CLI outage should not stall a run indefinitely — need a documented fallback provider and a "degraded" badge on the run.
 - **Secret misuse.** A rogue prompt could request a brokered integration it should not have. Mitigations: capability-tag enforcement, per-session confirmation gates, runtime audit events, and no generic raw-secret fetch primitive.

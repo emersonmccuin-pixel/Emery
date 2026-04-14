@@ -88,6 +88,7 @@ export type ProjectRecord = {
   workItemPrefix: string | null;
   systemPrompt: string;
   baseBranch: string | null;
+  defaultWorkflowSlug: string | null;
 };
 
 export type LaunchProfileRecord = {

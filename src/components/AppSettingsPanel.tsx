@@ -21,7 +21,6 @@ import {
   getWorkerLaunchProfiles,
   isWorkerLaunchProfileProvider,
 } from "../store/utils";
-import { themes } from "../themes";
 import type { VaultEntryRecord, VaultSnapshot } from "../types";
 import "./panel-surfaces.css";
 import "./app-settings.css";
@@ -30,6 +29,7 @@ type AppSettingsTab =
   | "appearance"
   | "accounts"
   | "defaults"
+  | "workflows"
   | "vault"
   | "diagnostics";
 
@@ -39,6 +39,12 @@ type Props = {
 
 const DiagnosticsConsole = lazy(
   () => import("@/components/DiagnosticsConsole"),
+);
+const AppearanceSettingsTab = lazy(
+  () => import("@/components/settings/AppearanceSettingsTab"),
+);
+const WorkflowSettingsTab = lazy(
+  () => import("@/components/workflow/WorkflowSettingsTab"),
 );
 const VaultIntegrationsSection = lazy(
   () => import("@/components/VaultIntegrationsSection"),
@@ -58,6 +64,7 @@ function AppSettingsPanel({ initialTab = "appearance" }: Props) {
           <TabsTrigger value="appearance">Appearance</TabsTrigger>
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
           <TabsTrigger value="defaults">Defaults</TabsTrigger>
+          <TabsTrigger value="workflows">Workflows</TabsTrigger>
           <TabsTrigger value="vault">Vault</TabsTrigger>
           <TabsTrigger value="diagnostics">Diagnostics</TabsTrigger>
         </TabsList>
@@ -65,13 +72,20 @@ function AppSettingsPanel({ initialTab = "appearance" }: Props) {
       <div className="flex-1 min-h-0 overflow-auto scrollbar-thin p-6">
         <Banner />
         <TabsContent value="appearance">
-          <AppearanceTab />
+          <Suspense fallback={null}>
+            <AppearanceSettingsTab />
+          </Suspense>
         </TabsContent>
         <TabsContent value="accounts">
           <AccountsTab />
         </TabsContent>
         <TabsContent value="defaults">
           <DefaultsTab />
+        </TabsContent>
+        <TabsContent value="workflows">
+          <Suspense fallback={null}>
+            <WorkflowSettingsTab />
+          </Suspense>
         </TabsContent>
         <TabsContent value="vault">
           <VaultTab />
@@ -99,102 +113,6 @@ function Banner() {
         </p>
       ) : null}
     </>
-  );
-}
-
-function AppearanceTab() {
-  const activeThemeId = useAppStore((s) => s.activeThemeId);
-
-  return (
-    <article className="overview-card">
-      <div className="overview-card__header">
-        <div>
-          <p className="panel__eyebrow">Appearance</p>
-          <strong>Theme</strong>
-        </div>
-      </div>
-      <div className="theme-picker-grid">
-        {Object.entries(themes).map(([id, theme]) => {
-          const isActive = id === activeThemeId;
-          return (
-            <button
-              key={id}
-              type="button"
-              className={`theme-card${isActive ? " theme-card--active" : ""}`}
-              style={
-                isActive
-                  ? {
-                      borderColor: theme["--center-tint"],
-                      boxShadow: `0 0 0 1px ${theme["--center-tint"]}, 0 0 16px color-mix(in srgb, ${theme["--center-tint"]} 40%, transparent)`,
-                    }
-                  : undefined
-              }
-              onClick={() => useAppStore.getState().setActiveThemeId(id)}
-            >
-              {/* Mini 3-panel preview */}
-              <div
-                className="theme-card__preview"
-                style={{ background: theme["--hud-bg"] }}
-              >
-                <div
-                  className="theme-card__preview-panel"
-                  style={{
-                    background: theme["--hud-panel-bg"],
-                    borderColor: theme["--rail-projects-tint"],
-                  }}
-                />
-                <div
-                  className="theme-card__preview-panel theme-card__preview-panel--center"
-                  style={{
-                    background: theme["--hud-panel-bg"],
-                    borderColor: theme["--center-tint"],
-                  }}
-                />
-                <div
-                  className="theme-card__preview-panel"
-                  style={{
-                    background: theme["--hud-panel-bg"],
-                    borderColor: theme["--rail-sessions-tint"],
-                  }}
-                />
-              </div>
-
-              {/* Theme name + swatches row */}
-              <div className="theme-card__footer">
-                <span className="theme-card__label">{theme.label}</span>
-                <div className="theme-card__swatches">
-                  {(
-                    [
-                      "--rail-projects-tint",
-                      "--center-tint",
-                      "--rail-sessions-tint",
-                      "--hud-amber",
-                      "--hud-purple",
-                    ] as const
-                  ).map((key) => (
-                    <span
-                      key={key}
-                      className="theme-card__swatch"
-                      style={{ backgroundColor: theme[key] }}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              {/* Active checkmark */}
-              {isActive && (
-                <div
-                  className="theme-card__check"
-                  style={{ color: theme["--center-tint"] }}
-                >
-                  ✓
-                </div>
-              )}
-            </button>
-          );
-        })}
-      </div>
-    </article>
   );
 }
 
