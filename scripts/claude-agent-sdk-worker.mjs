@@ -8,6 +8,8 @@ const BROKER_MESSAGE_SENTINEL = 'PROJECT_COMMANDER_MESSAGE'
 const PROJECT_COMMANDER_TOOL_SELECTORS = [
   'mcp__project-commander__send_message',
   'mcp__project-commander__get_messages',
+  'mcp__project-commander__wait_for_messages',
+  'mcp__project-commander__search_work_items',
   'mcp__project-commander__get_work_item',
   'mcp__project-commander__list_work_items',
   'mcp__project-commander__update_work_item',

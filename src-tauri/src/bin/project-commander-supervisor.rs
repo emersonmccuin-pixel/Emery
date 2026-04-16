@@ -7,6 +7,7 @@ use project_commander_lib::db::{
     UpdateProjectInput, UpdateWorkItemInput, UpsertWorktreeRecordInput, WorkItemRecord,
     WorktreeRecord,
 };
+use project_commander_lib::embeddings::{EmbeddingsService, SearchFilters};
 use project_commander_lib::error::{AppError, AppErrorCode};
 use project_commander_lib::runtime_cleanup::{
     list_cleanup_candidates as runtime_list_cleanup_candidates,
@@ -31,10 +32,10 @@ use project_commander_lib::supervisor_api::{
     ListProjectSessionEventsInput, ListProjectSessionsInput, ListProjectWorkItemsInput,
     ListProjectWorktreesInput, PinWorktreeInput, ProjectCallSignTarget, ProjectDocumentTarget,
     ProjectSessionRecordTarget, ProjectWorkItemTarget, ProjectWorktreeTarget,
-    ReconcileProjectTrackerInput, RepairCleanupInput, SendAgentMessageApiInput, SessionCrashReport,
-    SessionRecoveryDetails, UpdateProjectDocumentInput, UpdateProjectWorkItemInput,
-    UpdateSessionProviderSessionIdInput, WaitAgentMessagesApiInput, WaitAgentMessagesOutput,
-    WorkItemDetailOutput, WorktreeLaunchOutput,
+    ReconcileProjectTrackerInput, RepairCleanupInput, SearchProjectWorkItemsInput,
+    SendAgentMessageApiInput, SessionCrashReport, SessionRecoveryDetails,
+    UpdateProjectDocumentInput, UpdateProjectWorkItemInput, UpdateSessionProviderSessionIdInput,
+    WaitAgentMessagesApiInput, WaitAgentMessagesOutput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
 use project_commander_lib::supervisor_mcp::{
     handle_supervisor_mcp_message, run_supervisor_mcp_stdio_with_session,
@@ -965,6 +966,31 @@ fn route_request(
                 .map(|data| json!({ "ok": true, "data": data }))
                 .map_err(|error| {
                     RouteError::internal(format!("failed to encode work items: {error}"))
+                })
+        }
+        (&Method::Post, "/work-item/search") => {
+            let input = read_json::<SearchProjectWorkItemsInput>(request)?;
+            state.get_project(input.project_id)?;
+            let service = EmbeddingsService::new(state.clone()).map_err(RouteError::from)?;
+            let hits = service
+                .search(
+                    input.project_id,
+                    &input.query,
+                    input.k.unwrap_or(10).clamp(1, 50),
+                    SearchFilters {
+                        status: input.status,
+                        item_type: input.item_type,
+                        open_only: input.open_only,
+                    },
+                )
+                .map_err(RouteError::from)?;
+
+            serde_json::to_value(hits)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!(
+                        "failed to encode work item semantic search results: {error}"
+                    ))
                 })
         }
         (&Method::Post, "/work-item/get") => {

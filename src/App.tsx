@@ -41,8 +41,8 @@ function App() {
     autoRepairSetting,
     selectedProjectId,
     selectedTerminalWorktreeId,
-    stagedWorktreesLength,
-    worktreesLength,
+    stagedWorktrees,
+    worktrees,
     liveSessionCount,
     activeView,
     isAgentGuideOpen,
@@ -62,8 +62,8 @@ function App() {
       autoRepairSetting: s.appSettings.autoRepairSafeCleanupOnStartup,
       selectedProjectId: s.selectedProjectId,
       selectedTerminalWorktreeId: s.selectedTerminalWorktreeId,
-      stagedWorktreesLength: s.stagedWorktrees.length,
-      worktreesLength: s.worktrees.length,
+      stagedWorktrees: s.stagedWorktrees,
+      worktrees: s.worktrees,
       liveSessionCount: s.liveSessionSnapshots.length,
       activeView: s.activeView,
       isAgentGuideOpen: s.isAgentGuideOpen,
@@ -504,14 +504,18 @@ function App() {
 
   // Sync: clean up staged worktrees
   useEffect(() => {
-    if (stagedWorktreesLength === 0 || worktreesLength === 0) return
+    if (stagedWorktrees.length === 0) return
 
-    useAppStore.setState((s) => ({
-      stagedWorktrees: s.stagedWorktrees.filter(
-        (staged) => !s.worktrees.some((w) => w.id === staged.id),
-      ),
-    }))
-  }, [stagedWorktreesLength, worktreesLength])
+    const persistedIds = new Set(worktrees.map((worktree) => worktree.id))
+    const nextStagedWorktrees =
+      persistedIds.size === 0
+        ? []
+        : stagedWorktrees.filter((staged) => !persistedIds.has(staged.id))
+
+    if (nextStagedWorktrees.length === stagedWorktrees.length) return
+
+    useAppStore.setState({ stagedWorktrees: nextStagedWorktrees })
+  }, [stagedWorktrees, worktrees])
 
   // Load live sessions on project change
   useEffect(() => {
