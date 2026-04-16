@@ -220,9 +220,9 @@
 .side-rail--projects {
   border: 1px solid color-mix(in srgb, var(--rail-projects-tint) 50%, transparent);
   background: linear-gradient(170deg,
-    color-mix(in srgb, var(--rail-projects-tint) 55%, transparent) 0%,
-    color-mix(in srgb, var(--rail-projects-tint) 40%, transparent) 35%,
-    color-mix(in srgb, var(--rail-projects-tint) 20%, transparent) 65%,
+    color-mix(in srgb, var(--rail-projects-tint) 50%, transparent) 0%,
+    color-mix(in srgb, var(--rail-projects-tint) 18%, transparent) 15%,
+    var(--hud-panel-bg) 40%,
     var(--hud-panel-bg) 100%
   );
   box-shadow:
@@ -234,9 +234,9 @@
 .center-stage {
   border: 1px solid color-mix(in srgb, var(--center-tint) 45%, transparent);
   background: linear-gradient(180deg,
-    color-mix(in srgb, var(--center-tint) 55%, transparent) 0%,
-    color-mix(in srgb, var(--center-tint) 40%, transparent) 35%,
-    color-mix(in srgb, var(--center-tint) 20%, transparent) 65%,
+    color-mix(in srgb, var(--center-tint) 50%, transparent) 0%,
+    color-mix(in srgb, var(--center-tint) 18%, transparent) 15%,
+    var(--hud-panel-bg) 40%,
     var(--hud-panel-bg) 100%
   );
   box-shadow:
@@ -249,9 +249,9 @@
 .side-rail--sessions {
   border: 1px solid color-mix(in srgb, var(--rail-sessions-tint) 50%, transparent);
   background: linear-gradient(190deg,
-    color-mix(in srgb, var(--rail-sessions-tint) 55%, transparent) 0%,
-    color-mix(in srgb, var(--rail-sessions-tint) 40%, transparent) 35%,
-    color-mix(in srgb, var(--rail-sessions-tint) 20%, transparent) 65%,
+    color-mix(in srgb, var(--rail-sessions-tint) 50%, transparent) 0%,
+    color-mix(in srgb, var(--rail-sessions-tint) 18%, transparent) 15%,
+    var(--hud-panel-bg) 40%,
     var(--hud-panel-bg) 100%
   );
   box-shadow:
@@ -1119,31 +1119,31 @@
   }
 }
 
-/* ── 5. Panel fade-to-black — deeper gradient ── */
+/* ── 5. Panel fade-to-black — compressed gradient (tint top 40% only) ── */
 .side-rail--projects {
   background: linear-gradient(170deg,
-    color-mix(in srgb, var(--rail-projects-tint) 55%, transparent) 0%,
-    color-mix(in srgb, var(--rail-projects-tint) 40%, transparent) 35%,
-    color-mix(in srgb, var(--rail-projects-tint) 20%, transparent) 65%,
-    var(--hud-panel-bg) 90%
+    color-mix(in srgb, var(--rail-projects-tint) 50%, transparent) 0%,
+    color-mix(in srgb, var(--rail-projects-tint) 18%, transparent) 15%,
+    var(--hud-panel-bg) 40%,
+    var(--hud-panel-bg) 100%
   );
 }
 
 .center-stage {
   background: linear-gradient(180deg,
-    color-mix(in srgb, var(--center-tint) 55%, transparent) 0%,
-    color-mix(in srgb, var(--center-tint) 40%, transparent) 35%,
-    color-mix(in srgb, var(--center-tint) 20%, transparent) 65%,
-    var(--hud-panel-bg) 90%
+    color-mix(in srgb, var(--center-tint) 50%, transparent) 0%,
+    color-mix(in srgb, var(--center-tint) 18%, transparent) 15%,
+    var(--hud-panel-bg) 40%,
+    var(--hud-panel-bg) 100%
   );
 }
 
 .side-rail--sessions {
   background: linear-gradient(190deg,
-    color-mix(in srgb, var(--rail-sessions-tint) 55%, transparent) 0%,
-    color-mix(in srgb, var(--rail-sessions-tint) 40%, transparent) 35%,
-    color-mix(in srgb, var(--rail-sessions-tint) 20%, transparent) 65%,
-    var(--hud-panel-bg) 90%
+    color-mix(in srgb, var(--rail-sessions-tint) 50%, transparent) 0%,
+    color-mix(in srgb, var(--rail-sessions-tint) 18%, transparent) 15%,
+    var(--hud-panel-bg) 40%,
+    var(--hud-panel-bg) 100%
   );
 }
 
