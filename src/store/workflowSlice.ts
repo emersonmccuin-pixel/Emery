@@ -236,10 +236,10 @@ export const createWorkflowSlice: StateCreator<
         },
       });
 
-      await Promise.all([
-        get().refreshProjectWorkflowRuns(projectId),
-        get().refreshWorktrees(projectId),
-        get().refreshLiveSessions(projectId),
+      await get().refreshSelectedProjectData([
+        "workflowRuns",
+        "worktrees",
+        "liveSessions",
       ]);
 
       return run;

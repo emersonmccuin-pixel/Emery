@@ -36,6 +36,19 @@ export const createWorktreeSlice: StateCreator<AppStore, [], [], WorktreeSlice> 
         worktrees: areWorktreeListsEqual(state.worktrees, nextWorktrees) ? state.worktrees : nextWorktrees,
         isLoadingWorktrees: false,
       }))
+
+      const selectionState = get()
+      const selectedTargetStillVisible =
+        selectionState.selectedTerminalWorktreeId === null ||
+        nextWorktrees.some((worktree) => worktree.id === selectionState.selectedTerminalWorktreeId) ||
+        selectionState.stagedWorktrees.some(
+          (worktree) => worktree.id === selectionState.selectedTerminalWorktreeId,
+        )
+
+      if (!selectedTargetStillVisible) {
+        get().focusTerminalTarget(null)
+      }
+
       return items
     } catch (error) {
       if (requestId === get().worktreeRequestId) {
@@ -85,9 +98,11 @@ export const createWorktreeSlice: StateCreator<AppStore, [], [], WorktreeSlice> 
         input: { projectId: selectedProject.id, worktreeId: worktree.id },
       })
 
+      if (get().selectedTerminalWorktreeId === worktree.id) {
+        get().focusTerminalTarget(null)
+      }
+
       set((s) => ({
-        selectedTerminalWorktreeId:
-          s.selectedTerminalWorktreeId === worktree.id ? null : s.selectedTerminalWorktreeId,
         sessionSnapshot:
           s.sessionSnapshot &&
           s.sessionSnapshot.projectId === selectedProject.id &&
@@ -131,11 +146,14 @@ export const createWorktreeSlice: StateCreator<AppStore, [], [], WorktreeSlice> 
       })
 
       get().upsertTrackedWorktree(recreated)
+      if (
+        get().selectedTerminalWorktreeId === worktree.id ||
+        !worktree.pathAvailable
+      ) {
+        get().focusTerminalTarget(recreated.id)
+      }
+
       set((s) => ({
-        selectedTerminalWorktreeId:
-          s.selectedTerminalWorktreeId === worktree.id || !worktree.pathAvailable
-            ? recreated.id
-            : s.selectedTerminalWorktreeId,
         sessionError:
           s.sessionError ===
           'selected worktree path no longer exists. Recreate the worktree before launching.'
@@ -171,9 +189,11 @@ export const createWorktreeSlice: StateCreator<AppStore, [], [], WorktreeSlice> 
         input: { projectId: selectedProject.id, worktreeId: worktree.id },
       })
 
+      if (get().selectedTerminalWorktreeId === worktree.id) {
+        get().focusTerminalTarget(null)
+      }
+
       set((s) => ({
-        selectedTerminalWorktreeId:
-          s.selectedTerminalWorktreeId === worktree.id ? null : s.selectedTerminalWorktreeId,
         sessionSnapshot:
           s.sessionSnapshot &&
           s.sessionSnapshot.projectId === selectedProject.id &&

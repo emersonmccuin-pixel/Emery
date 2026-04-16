@@ -6,7 +6,7 @@
 //! a row in `backup_runs`. Restore lives in Phase C2.
 
 use rusqlite::backup::Backup;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -24,6 +24,7 @@ use crate::vault;
 
 pub const RESTORE_MARKER_FILE: &str = "restore-pending.json";
 pub const RESTORE_STAGING_DIR: &str = "restore-staging";
+const RESTORE_PREPARE_FILE: &str = "restore-prepare.json";
 const RESTORE_TOKEN_TTL_SECS: u64 = 300;
 
 pub const VAULT_CONSUMER: &str = "backup";
@@ -134,6 +135,16 @@ pub struct RestoreMarker {
     pub token_id: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreparedRestoreRecord {
+    pub token_id: String,
+    pub source_object_key: String,
+    pub prepared_at: String,
+    pub expires_at_unix: u64,
+    pub included_files: Vec<String>,
+}
+
 #[derive(Clone, Debug)]
 pub struct PendingRestore {
     pub token: String,
@@ -158,6 +169,58 @@ fn now_unix_secs() -> u64 {
         .unwrap_or(0)
 }
 
+fn restore_token_dir(app_data_dir: &Path, token: &str) -> PathBuf {
+    app_data_dir.join(RESTORE_STAGING_DIR).join(token)
+}
+
+fn restore_prepare_path(staging_path: &Path) -> PathBuf {
+    staging_path.join(RESTORE_PREPARE_FILE)
+}
+
+fn persist_pending_restore(pending: &PendingRestore) -> AppResult<()> {
+    let record = PreparedRestoreRecord {
+        token_id: pending.token.clone(),
+        source_object_key: pending.object_key.clone(),
+        prepared_at: iso8601_utc_now(),
+        expires_at_unix: pending.expires_at_unix,
+        included_files: pending.included_files.clone(),
+    };
+    let json = serde_json::to_string_pretty(&record).map_err(|error| {
+        AppError::internal(format!("failed to serialize prepared restore: {error}"))
+    })?;
+    fs::write(restore_prepare_path(&pending.staging_path), json).map_err(|error| {
+        AppError::io(format!(
+            "failed to persist prepared restore metadata: {error}"
+        ))
+    })?;
+    Ok(())
+}
+
+fn load_pending_restore_from_disk(
+    app_data_dir: &Path,
+    token: &str,
+) -> AppResult<Option<PendingRestore>> {
+    let staging_path = restore_token_dir(app_data_dir, token);
+    let record_path = restore_prepare_path(&staging_path);
+    if !record_path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&record_path).map_err(|error| {
+        AppError::io(format!("failed to read prepared restore metadata: {error}"))
+    })?;
+    let record: PreparedRestoreRecord = serde_json::from_str(&raw).map_err(|error| {
+        AppError::invalid_input(format!("corrupt prepared restore metadata: {error}"))
+    })?;
+    Ok(Some(PendingRestore {
+        token: record.token_id,
+        staging_path: staging_path.clone(),
+        extracted_path: staging_path.join("extracted"),
+        object_key: record.source_object_key,
+        expires_at_unix: record.expires_at_unix,
+        included_files: record.included_files,
+    }))
+}
+
 /// Factory for building an [`R2Client`] from a `BackupService`; tests inject
 /// a stub to avoid hitting the network.
 pub trait R2Factory: Send + Sync {
@@ -175,11 +238,15 @@ pub trait R2Uploader: Send + Sync {
     fn head_bucket(&self) -> AppResult<()>;
     fn list_objects(&self, prefix: Option<&str>) -> AppResult<Vec<crate::r2_client::R2Object>> {
         let _ = prefix;
-        Err(AppError::internal("list_objects not implemented for this uploader"))
+        Err(AppError::internal(
+            "list_objects not implemented for this uploader",
+        ))
     }
     fn get_object(&self, key: &str) -> AppResult<Vec<u8>> {
         let _ = key;
-        Err(AppError::internal("get_object not implemented for this uploader"))
+        Err(AppError::internal(
+            "get_object not implemented for this uploader",
+        ))
     }
 }
 
@@ -265,7 +332,9 @@ impl BackupService {
                     ))
                 },
             )
-            .map_err(|error| AppError::database(format!("failed to load backup settings: {error}")))?;
+            .map_err(|error| {
+                AppError::database(format!("failed to load backup settings: {error}"))
+            })?;
 
         let has_access_key =
             vault::release_for_internal(&self.state, VAULT_CONSUMER, VAULT_ENTRY_ACCESS_KEY)?
@@ -301,10 +370,7 @@ impl BackupService {
                 )));
             }
         };
-        let retention = input
-            .diagnostics_retention_days
-            .unwrap_or(7)
-            .clamp(1, 365);
+        let retention = input.diagnostics_retention_days.unwrap_or(7).clamp(1, 365);
 
         connection
             .execute(
@@ -318,19 +384,33 @@ impl BackupService {
                      updated_at = CURRENT_TIMESTAMP
                  WHERE id = 1",
                 rusqlite::params![
-                    input.account_id.as_deref().map(str::trim).filter(|s| !s.is_empty()),
-                    input.bucket.as_deref().map(str::trim).filter(|s| !s.is_empty()),
+                    input
+                        .account_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty()),
+                    input
+                        .bucket
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty()),
                     input
                         .endpoint_override
                         .as_deref()
                         .map(str::trim)
                         .filter(|s| !s.is_empty()),
                     schedule,
-                    if input.include_vault_key.unwrap_or(true) { 1_i64 } else { 0_i64 },
+                    if input.include_vault_key.unwrap_or(true) {
+                        1_i64
+                    } else {
+                        0_i64
+                    },
                     retention,
                 ],
             )
-            .map_err(|error| AppError::database(format!("failed to update backup settings: {error}")))?;
+            .map_err(|error| {
+                AppError::database(format!("failed to update backup settings: {error}"))
+            })?;
         drop(connection);
         self.get_settings()
     }
@@ -344,7 +424,9 @@ impl BackupService {
                         bytes_uploaded, object_key, error_message
                  FROM backup_runs ORDER BY id DESC LIMIT ?1",
             )
-            .map_err(|error| AppError::database(format!("failed to prepare backup runs query: {error}")))?;
+            .map_err(|error| {
+                AppError::database(format!("failed to prepare backup runs query: {error}"))
+            })?;
         let rows = statement
             .query_map([limit as i64], |row| {
                 Ok(BackupRunRecord {
@@ -360,8 +442,9 @@ impl BackupService {
                 })
             })
             .map_err(|error| AppError::database(format!("failed to query backup_runs: {error}")))?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| AppError::database(format!("failed to read backup_runs rows: {error}")))
+        rows.collect::<Result<Vec<_>, _>>().map_err(|error| {
+            AppError::database(format!("failed to read backup_runs rows: {error}"))
+        })
     }
 
     pub fn has_running_row(&self) -> AppResult<bool> {
@@ -372,7 +455,9 @@ impl BackupService {
                 [],
                 |row| row.get(0),
             )
-            .map_err(|error| AppError::database(format!("failed to check running backups: {error}")))?;
+            .map_err(|error| {
+                AppError::database(format!("failed to check running backups: {error}"))
+            })?;
         Ok(count > 0)
     }
 
@@ -448,9 +533,8 @@ impl BackupService {
             .map_err(|error| AppError::io(format!("failed to write staged zip: {error}")))?;
 
         let extracted = staging.join("extracted");
-        fs::create_dir_all(&extracted).map_err(|error| {
-            AppError::io(format!("failed to create extracted dir: {error}"))
-        })?;
+        fs::create_dir_all(&extracted)
+            .map_err(|error| AppError::io(format!("failed to create extracted dir: {error}")))?;
         let included_files = extract_and_validate_zip(&zip_path, &extracted)?;
 
         let expires_at = now_unix_secs() + RESTORE_TOKEN_TTL_SECS;
@@ -462,6 +546,7 @@ impl BackupService {
             expires_at_unix: expires_at,
             included_files: included_files.clone(),
         };
+        persist_pending_restore(&pending)?;
         global_tokens()
             .lock()
             .map_err(|_| AppError::internal("restore token map poisoned"))?
@@ -476,11 +561,14 @@ impl BackupService {
     }
 
     pub fn commit_restore(&self, token: &str) -> AppResult<()> {
-        let pending = {
-            let mut map = global_tokens()
-                .lock()
-                .map_err(|_| AppError::internal("restore token map poisoned"))?;
-            map.remove(token).ok_or_else(|| {
+        let pending = if let Some(pending) = global_tokens()
+            .lock()
+            .map_err(|_| AppError::internal("restore token map poisoned"))?
+            .remove(token)
+        {
+            pending
+        } else {
+            load_pending_restore_from_disk(self.state.app_data_dir(), token)?.ok_or_else(|| {
                 AppError::invalid_input("restore token is unknown or already consumed")
             })?
         };
@@ -501,6 +589,7 @@ impl BackupService {
             .map_err(|error| AppError::internal(format!("failed to serialize marker: {error}")))?;
         fs::write(&marker_path, json)
             .map_err(|error| AppError::io(format!("failed to write restore marker: {error}")))?;
+        let _ = fs::remove_file(restore_prepare_path(&pending.staging_path));
         Ok(())
     }
 
@@ -519,6 +608,27 @@ impl BackupService {
                 let _ = fs::remove_dir_all(&pending.staging_path);
             }
         }
+
+        let staging_root = self.state.app_data_dir().join(RESTORE_STAGING_DIR);
+        let Ok(entries) = fs::read_dir(&staging_root) else {
+            return;
+        };
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let record_path = restore_prepare_path(&path);
+            let Ok(raw) = fs::read_to_string(&record_path) else {
+                continue;
+            };
+            let Ok(record) = serde_json::from_str::<PreparedRestoreRecord>(&raw) else {
+                continue;
+            };
+            if record.expires_at_unix < now {
+                let _ = fs::remove_dir_all(&path);
+            }
+        }
     }
 
     pub fn run_full_backup(&self, trigger: BackupTrigger) -> AppResult<BackupRunRecord> {
@@ -529,11 +639,7 @@ impl BackupService {
         self.run_backup(BackupScope::Diagnostics, trigger)
     }
 
-    fn run_backup(
-        &self,
-        scope: BackupScope,
-        trigger: BackupTrigger,
-    ) -> AppResult<BackupRunRecord> {
+    fn run_backup(&self, scope: BackupScope, trigger: BackupTrigger) -> AppResult<BackupRunRecord> {
         let started_at = iso8601_utc_now();
         let run_id = self.insert_running_row(scope, trigger, &started_at)?;
 
@@ -582,17 +688,17 @@ impl BackupService {
             AppError::io(format!("failed to create staging vault dir: {error}"))
         })?;
         if hold.exists() {
-            fs::copy(&hold, staged_vault.join("project-commander-vault.hold"))
-                .map_err(|error| AppError::io(format!("failed to stage vault snapshot: {error}")))?;
+            fs::copy(&hold, staged_vault.join("project-commander-vault.hold")).map_err(
+                |error| AppError::io(format!("failed to stage vault snapshot: {error}")),
+            )?;
         }
 
         let include_key = self.get_settings()?.include_vault_key;
         if include_key {
             let key_path = vault_dir.join("project-commander-vault.key");
             if key_path.exists() {
-                fs::copy(&key_path, staged_vault.join("project-commander-vault.key")).map_err(
-                    |error| AppError::io(format!("failed to stage vault key: {error}")),
-                )?;
+                fs::copy(&key_path, staged_vault.join("project-commander-vault.key"))
+                    .map_err(|error| AppError::io(format!("failed to stage vault key: {error}")))?;
             }
         }
 
@@ -606,8 +712,14 @@ impl BackupService {
             .unwrap_or(std::time::UNIX_EPOCH);
 
         let roots: Vec<(&str, PathBuf)> = vec![
-            ("logs", PathBuf::from(&self.state.storage().db_dir).join("logs")),
-            ("crash-reports", self.state.app_data_dir().join("crash-reports")),
+            (
+                "logs",
+                PathBuf::from(&self.state.storage().db_dir).join("logs"),
+            ),
+            (
+                "crash-reports",
+                self.state.app_data_dir().join("crash-reports"),
+            ),
             (
                 "session-output",
                 self.state.app_data_dir().join("session-output"),
@@ -653,9 +765,10 @@ impl BackupService {
 
     fn require_bucket_config(&self) -> AppResult<(String, String)> {
         let settings = self.get_settings()?;
-        let account_id = settings.account_id.clone().ok_or_else(|| {
-            AppError::invalid_input("R2 account_id is not configured")
-        })?;
+        let account_id = settings
+            .account_id
+            .clone()
+            .ok_or_else(|| AppError::invalid_input("R2 account_id is not configured"))?;
         let bucket = settings
             .bucket
             .clone()
@@ -664,14 +777,20 @@ impl BackupService {
     }
 
     fn require_credentials(&self) -> AppResult<(Zeroizing<String>, Zeroizing<String>)> {
-        let access = vault::release_for_internal(&self.state, VAULT_CONSUMER, VAULT_ENTRY_ACCESS_KEY)?
-            .ok_or_else(|| AppError::invalid_input(
-                "R2 access key is not configured (expected vault entry 'r2-access-key')",
-            ))?;
-        let secret = vault::release_for_internal(&self.state, VAULT_CONSUMER, VAULT_ENTRY_SECRET_KEY)?
-            .ok_or_else(|| AppError::invalid_input(
-                "R2 secret key is not configured (expected vault entry 'r2-secret-key')",
-            ))?;
+        let access =
+            vault::release_for_internal(&self.state, VAULT_CONSUMER, VAULT_ENTRY_ACCESS_KEY)?
+                .ok_or_else(|| {
+                    AppError::invalid_input(
+                        "R2 access key is not configured (expected vault entry 'r2-access-key')",
+                    )
+                })?;
+        let secret =
+            vault::release_for_internal(&self.state, VAULT_CONSUMER, VAULT_ENTRY_SECRET_KEY)?
+                .ok_or_else(|| {
+                    AppError::invalid_input(
+                        "R2 secret key is not configured (expected vault entry 'r2-secret-key')",
+                    )
+                })?;
         Ok((access, secret))
     }
 
@@ -716,7 +835,9 @@ impl BackupService {
                  WHERE id = ?4",
                 rusqlite::params![iso8601_utc_now(), bytes, object_key, id],
             )
-            .map_err(|error| AppError::database(format!("failed to mark backup_run success: {error}")))?;
+            .map_err(|error| {
+                AppError::database(format!("failed to mark backup_run success: {error}"))
+            })?;
         Ok(())
     }
 
@@ -731,7 +852,9 @@ impl BackupService {
                  WHERE id = ?3",
                 rusqlite::params![iso8601_utc_now(), truncate(message, 2000), id],
             )
-            .map_err(|error| AppError::database(format!("failed to mark backup_run failure: {error}")))?;
+            .map_err(|error| {
+                AppError::database(format!("failed to mark backup_run failure: {error}"))
+            })?;
         Ok(())
     }
 
@@ -762,6 +885,20 @@ impl BackupService {
 }
 
 fn ensure_settings_row(connection: &Connection) -> AppResult<()> {
+    let already_seeded = connection
+        .query_row("SELECT 1 FROM backup_settings WHERE id = 1", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .optional()
+        .map_err(|error| {
+            AppError::database(format!("failed to check backup_settings seed row: {error}"))
+        })?
+        .is_some();
+
+    if already_seeded {
+        return Ok(());
+    }
+
     connection
         .execute(
             "INSERT OR IGNORE INTO backup_settings (id, schedule) VALUES (1, 'nightly')",
@@ -772,10 +909,12 @@ fn ensure_settings_row(connection: &Connection) -> AppResult<()> {
 }
 
 fn snapshot_sqlite(src: &Path, dst: &Path) -> AppResult<()> {
-    let source = Connection::open(src)
-        .map_err(|error| AppError::database(format!("failed to open source db for snapshot: {error}")))?;
-    let mut dest = Connection::open(dst)
-        .map_err(|error| AppError::database(format!("failed to open dest db for snapshot: {error}")))?;
+    let source = Connection::open(src).map_err(|error| {
+        AppError::database(format!("failed to open source db for snapshot: {error}"))
+    })?;
+    let mut dest = Connection::open(dst).map_err(|error| {
+        AppError::database(format!("failed to open dest db for snapshot: {error}"))
+    })?;
     let backup = Backup::new(&source, &mut dest)
         .map_err(|error| AppError::database(format!("failed to init sqlite backup: {error}")))?;
     backup
@@ -788,8 +927,8 @@ fn zip_dir(staging: &Path) -> AppResult<Vec<u8>> {
     let buffer: Vec<u8> = Vec::new();
     let cursor = std::io::Cursor::new(buffer);
     let mut zip = zip::ZipWriter::new(cursor);
-    let options = zip::write::FileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+    let options =
+        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
     for entry in WalkDir::new(staging).into_iter().filter_map(Result::ok) {
         let path = entry.path();
@@ -827,9 +966,9 @@ fn extract_and_validate_zip(zip_path: &Path, dst_root: &Path) -> AppResult<Vec<S
         .map_err(|error| AppError::invalid_input(format!("invalid backup zip: {error}")))?;
     let mut written: Vec<String> = Vec::new();
     for i in 0..archive.len() {
-        let mut entry = archive
-            .by_index(i)
-            .map_err(|error| AppError::invalid_input(format!("failed to read zip entry: {error}")))?;
+        let mut entry = archive.by_index(i).map_err(|error| {
+            AppError::invalid_input(format!("failed to read zip entry: {error}"))
+        })?;
         let name = entry.name().replace('\\', "/");
         if name.contains("..") {
             return Err(AppError::invalid_input(format!(
@@ -841,12 +980,12 @@ fn extract_and_validate_zip(zip_path: &Path, dst_root: &Path) -> AppResult<Vec<S
         }
         let target = dst_root.join(&name);
         if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|error| {
-                AppError::io(format!("failed to create extract dir: {error}"))
-            })?;
+            fs::create_dir_all(parent)
+                .map_err(|error| AppError::io(format!("failed to create extract dir: {error}")))?;
         }
-        let mut out = File::create(&target)
-            .map_err(|error| AppError::io(format!("failed to create {}: {error}", target.display())))?;
+        let mut out = File::create(&target).map_err(|error| {
+            AppError::io(format!("failed to create {}: {error}", target.display()))
+        })?;
         std::io::copy(&mut entry, &mut out).map_err(|error| {
             AppError::io(format!("failed to extract {}: {error}", target.display()))
         })?;
@@ -894,17 +1033,18 @@ pub fn apply_pending_restore_if_any(app_data_dir: &Path) -> AppResult<Option<Res
     // Map known files from staging to their destinations. Anything else in
     // the staging dir is ignored for safety.
     let mut moves: Vec<(PathBuf, PathBuf)> = Vec::new();
-    let db_target = app_data_dir.join("db").join("pc.sqlite3");
+    let db_target = app_data_dir.join("db").join("project-commander.sqlite3");
     moves.push((staged_db, db_target));
 
-    let staged_vault_hold = staging_root.join("vault").join("project-commander-vault.hold");
+    let staged_vault_hold = staging_root
+        .join("vault")
+        .join("project-commander-vault.hold");
     if staged_vault_hold.exists() {
-        moves.push((
-            staged_vault_hold,
-            vault::vault_snapshot_path(app_data_dir),
-        ));
+        moves.push((staged_vault_hold, vault::vault_snapshot_path(app_data_dir)));
     }
-    let staged_vault_key = staging_root.join("vault").join("project-commander-vault.key");
+    let staged_vault_key = staging_root
+        .join("vault")
+        .join("project-commander-vault.key");
     if staged_vault_key.exists() {
         moves.push((
             staged_vault_key,
@@ -922,10 +1062,7 @@ pub fn apply_pending_restore_if_any(app_data_dir: &Path) -> AppResult<Option<Res
         if target.exists() {
             let bak = target.with_extension(format!(
                 "{}.bak",
-                target
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("")
+                target.extension().and_then(|e| e.to_str()).unwrap_or("")
             ));
             let _ = fs::remove_file(&bak);
             fs::rename(target, &bak).map_err(|error| {
@@ -1016,7 +1153,7 @@ mod tests {
     }
 
     fn new_state(dir: &Path) -> AppState {
-        let db_path = dir.join("db").join("pc.sqlite3");
+        let db_path = dir.join("db").join("project-commander.sqlite3");
         fs::create_dir_all(db_path.parent().unwrap()).unwrap();
         AppState::new(StorageInfo {
             app_data_dir: dir.display().to_string(),
@@ -1032,7 +1169,10 @@ mod tests {
     }
     impl R2Uploader for StubUploader {
         fn put_object(&self, key: &str, body: Vec<u8>) -> AppResult<()> {
-            self.calls.lock().unwrap().push((key.to_string(), body.len()));
+            self.calls
+                .lock()
+                .unwrap()
+                .push((key.to_string(), body.len()));
             if self.fail_on_put {
                 Err(AppError::supervisor("stub put failure"))
             } else {
@@ -1165,7 +1305,10 @@ mod tests {
                         .starts_with("backup-staging-")
                 })
                 .collect();
-            assert!(leftover.is_empty(), "staging dir must be removed on failure");
+            assert!(
+                leftover.is_empty(),
+                "staging dir must be removed on failure"
+            );
         }
     }
 
@@ -1263,8 +1406,8 @@ mod tests {
         let buffer: Vec<u8> = Vec::new();
         let cursor = std::io::Cursor::new(buffer);
         let mut zip = zip::ZipWriter::new(cursor);
-        let options = zip::write::FileOptions::default()
-            .compression_method(zip::CompressionMethod::Stored);
+        let options =
+            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
         zip.start_file("db.sqlite", options).unwrap();
         zip.write_all(b"SQLite format 3\0fake").unwrap();
         if include_vault {
@@ -1272,6 +1415,31 @@ mod tests {
                 .unwrap();
             zip.write_all(b"fake-vault").unwrap();
         }
+        zip.finish().unwrap().into_inner()
+    }
+
+    fn build_backup_zip_from_app_data(dir: &Path, include_vault: bool) -> Vec<u8> {
+        let buffer: Vec<u8> = Vec::new();
+        let cursor = std::io::Cursor::new(buffer);
+        let mut zip = zip::ZipWriter::new(cursor);
+        let options =
+            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+
+        let db_bytes = fs::read(dir.join("db").join("project-commander.sqlite3"))
+            .expect("source database bytes should be readable");
+        zip.start_file("db.sqlite", options).unwrap();
+        zip.write_all(&db_bytes).unwrap();
+
+        if include_vault {
+            let vault_path = dir.join("vault").join("project-commander-vault.hold");
+            if vault_path.exists() {
+                let vault_bytes = fs::read(vault_path).expect("vault bytes should be readable");
+                zip.start_file("vault/project-commander-vault.hold", options)
+                    .unwrap();
+                zip.write_all(&vault_bytes).unwrap();
+            }
+        }
+
         zip.finish().unwrap().into_inner()
     }
 
@@ -1332,6 +1500,79 @@ mod tests {
     }
 
     #[test]
+    fn commit_restore_survives_process_local_token_loss() {
+        let dir = unique_dir("restore-restart");
+        let state = new_state(&dir);
+        seed_vault_creds(&state);
+        let factory = Arc::new(RestoreStubFactory {
+            zip_bytes: build_valid_backup_zip(false),
+        });
+        let svc = BackupService::with_factory(state.clone(), factory);
+        configure_settings(&svc);
+
+        let token = svc
+            .prepare_restore("pc-full-2026-04-14T00-00-00Z.zip")
+            .unwrap();
+
+        global_tokens().lock().unwrap().clear();
+
+        svc.commit_restore(&token.token).unwrap();
+        assert!(state.app_data_dir().join(RESTORE_MARKER_FILE).exists());
+    }
+
+    #[test]
+    fn restore_prepare_commit_and_restart_applies_restored_database_to_live_runtime() {
+        let source_dir = unique_dir("restore-source-live");
+        let source_state = new_state(&source_dir);
+        let restored_root = source_dir.join("restored-project");
+        fs::create_dir_all(&restored_root).unwrap();
+        source_state
+            .create_project(crate::db::CreateProjectInput {
+                name: "Restored Project".to_string(),
+                root_path: restored_root.display().to_string(),
+                work_item_prefix: None,
+            })
+            .unwrap();
+        let zip_bytes = build_backup_zip_from_app_data(&source_dir, false);
+
+        let target_dir = unique_dir("restore-target-live");
+        let target_state = new_state(&target_dir);
+        let stale_root = target_dir.join("stale-project");
+        fs::create_dir_all(&stale_root).unwrap();
+        target_state
+            .create_project(crate::db::CreateProjectInput {
+                name: "Stale Project".to_string(),
+                root_path: stale_root.display().to_string(),
+                work_item_prefix: None,
+            })
+            .unwrap();
+        seed_vault_creds(&target_state);
+        let svc = BackupService::with_factory(
+            target_state.clone(),
+            Arc::new(RestoreStubFactory { zip_bytes }),
+        );
+        configure_settings(&svc);
+
+        let token = svc
+            .prepare_restore("pc-full-2026-04-14T00-00-00Z.zip")
+            .unwrap();
+        svc.commit_restore(&token.token).unwrap();
+
+        let restarted_state = new_state(&target_dir);
+        let projects = restarted_state.list_projects().unwrap();
+        let names = projects
+            .iter()
+            .map(|project| project.name.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(
+            !target_dir.join(RESTORE_MARKER_FILE).exists(),
+            "restart should consume the restore marker"
+        );
+        assert_eq!(names, vec!["Restored Project"]);
+    }
+
+    #[test]
     fn list_remote_backups_maps_scope_from_prefix() {
         let dir = unique_dir("restore-list");
         let state = new_state(&dir);
@@ -1351,7 +1592,7 @@ mod tests {
     fn apply_pending_restore_swaps_files_and_removes_marker() {
         let dir = unique_dir("restore-apply-ok");
         fs::create_dir_all(dir.join("db")).unwrap();
-        fs::write(dir.join("db").join("pc.sqlite3"), b"OLD-DB").unwrap();
+        fs::write(dir.join("db").join("project-commander.sqlite3"), b"OLD-DB").unwrap();
 
         // Build a staging directory and marker.
         let token_dir = dir.join(RESTORE_STAGING_DIR).join("tok-123");
@@ -1380,7 +1621,7 @@ mod tests {
         let applied = apply_pending_restore_if_any(&dir).unwrap();
         assert!(applied.is_some());
         assert!(!dir.join(RESTORE_MARKER_FILE).exists());
-        let new_db = fs::read(dir.join("db").join("pc.sqlite3")).unwrap();
+        let new_db = fs::read(dir.join("db").join("project-commander.sqlite3")).unwrap();
         assert_eq!(new_db, b"NEW-DB");
         // Staging dir removed.
         assert!(!token_dir.exists());

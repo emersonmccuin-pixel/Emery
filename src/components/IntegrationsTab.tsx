@@ -1,5 +1,6 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 
 const RestoreFromR2Modal = lazy(() => import('./RestoreFromR2Modal'))
 import { PanelBanner, PanelLoadingState } from '@/components/ui/panel-state'
@@ -9,6 +10,7 @@ import {
   type BackfillReport,
   type EmbeddingsStatus,
 } from '@/lib/embeddings'
+import { invoke } from '@/lib/tauri'
 import {
   getBackupSettings,
   listBackupRuns,
@@ -20,12 +22,29 @@ import {
   type BackupSchedule,
   type BackupSettings,
 } from '@/lib/backup'
+import type { VaultEntryRecord, VaultSnapshot } from '@/types'
 
-// Integrations tab: Voyage AI vector search today. Cloudflare R2 backup lands
-// in Phase C. Frontend surface is intentionally thin — secrets flow only
-// through the Vault deposit form on the sibling Vault tab.
+const VOYAGE_ENTRY_NAME = 'voyage-ai'
+const VOYAGE_ENTRY_KIND = 'api-key'
+const VOYAGE_ENTRY_SCOPE_TAGS = ['embeddings:semantic-search', 'voyage:api']
+const VOYAGE_ENTRY_DESCRIPTION =
+  'Voyage AI API key used for work-item embeddings and semantic search.'
+
+function findVoyageEntry(snapshot: VaultSnapshot | null): VaultEntryRecord | null {
+  if (!snapshot) {
+    return null
+  }
+
+  return snapshot.entries.find((entry) => entry.name === VOYAGE_ENTRY_NAME) ?? null
+}
+
 export default function IntegrationsTab() {
   const [status, setStatus] = useState<EmbeddingsStatus | null>(null)
+  const [voyageEntry, setVoyageEntry] = useState<VaultEntryRecord | null>(null)
+  const [voyageKeyDraft, setVoyageKeyDraft] = useState('')
+  const [isSavingVoyageKey, setIsSavingVoyageKey] = useState(false)
+  const [voyageKeyNotice, setVoyageKeyNotice] = useState<string | null>(null)
+  const [voyageKeyError, setVoyageKeyError] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isBackfilling, setIsBackfilling] = useState(false)
@@ -40,11 +59,79 @@ export default function IntegrationsTab() {
     setIsLoading(true)
     setLoadError(null)
     try {
-      setStatus(await embeddingsStatus())
+      const [nextStatus, snapshot] = await Promise.all([
+        embeddingsStatus(),
+        invoke<VaultSnapshot>('list_vault_entries'),
+      ])
+      setStatus(nextStatus)
+      setVoyageEntry(findVoyageEntry(snapshot))
     } catch (err) {
       setLoadError(formatError(err, 'Failed to load embeddings status'))
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  async function saveVoyageKey(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const value = voyageKeyDraft.trim()
+
+    if (!value) {
+      setVoyageKeyError('Enter a Voyage API key before saving.')
+      setVoyageKeyNotice(null)
+      return
+    }
+
+    setIsSavingVoyageKey(true)
+    setVoyageKeyError(null)
+    setVoyageKeyNotice(null)
+
+    try {
+      const snapshot = await invoke<VaultSnapshot>(
+        'upsert_vault_entry',
+        {
+          input: {
+            id: voyageEntry?.id ?? null,
+            name: VOYAGE_ENTRY_NAME,
+            kind: VOYAGE_ENTRY_KIND,
+            description: VOYAGE_ENTRY_DESCRIPTION,
+            scopeTags: VOYAGE_ENTRY_SCOPE_TAGS,
+            gatePolicy: 'auto',
+            value,
+          },
+        },
+        {
+          diagnosticsArgs: {
+            input: {
+              id: voyageEntry?.id ?? null,
+              name: VOYAGE_ENTRY_NAME,
+              kind: VOYAGE_ENTRY_KIND,
+              description: VOYAGE_ENTRY_DESCRIPTION,
+              scopeTags: VOYAGE_ENTRY_SCOPE_TAGS,
+              gatePolicy: 'auto',
+              value: '<redacted>',
+            },
+          },
+        },
+      )
+
+      setVoyageEntry(findVoyageEntry(snapshot))
+      setVoyageKeyDraft('')
+      setVoyageKeyNotice(
+        voyageEntry
+          ? 'Voyage API key rotated in the vault.'
+          : 'Voyage API key saved to the vault.',
+      )
+
+      try {
+        setStatus(await embeddingsStatus())
+      } catch (statusError) {
+        setLoadError(formatError(statusError, 'Failed to refresh embeddings status'))
+      }
+    } catch (err) {
+      setVoyageKeyError(formatError(err, 'Failed to save Voyage API key'))
+    } finally {
+      setIsSavingVoyageKey(false)
     }
   }
 
@@ -75,11 +162,82 @@ export default function IntegrationsTab() {
         <p className="stack-form__note">
           Voyage AI embeds work items for semantic search across the MCP tool
           <code> search_work_items </code>. The API key is stored in the Vault
-          (<code>voyage-ai</code>, kind <code>api-key</code>). Add or rotate the
-          value on the Vault tab.
+          as <code>{VOYAGE_ENTRY_NAME}</code> and can be added or rotated here
+          without leaving Integrations.
         </p>
 
         {loadError ? <PanelBanner className="mb-4" message={loadError} /> : null}
+        {voyageKeyError ? (
+          <PanelBanner className="mb-4" message={voyageKeyError} />
+        ) : null}
+        {voyageKeyNotice ? (
+          <p className="stack-form__note settings-banner settings-banner--success">
+            {voyageKeyNotice}
+          </p>
+        ) : null}
+
+        <form className="stack-form settings-profile-form mb-4" onSubmit={saveVoyageKey}>
+          <label className="field">
+            <span>{voyageEntry ? 'Rotate Voyage API key' : 'Voyage API key'}</span>
+            <Input
+              type="password"
+              value={voyageKeyDraft}
+              onChange={(event) => setVoyageKeyDraft(event.target.value)}
+              placeholder={
+                voyageEntry
+                  ? 'Paste the replacement key to rotate the current vault value.'
+                  : 'Paste the Voyage API key once.'
+              }
+              className="hud-input"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={isSavingVoyageKey}
+            />
+          </label>
+
+          <div className="settings-path-list">
+            <div className="settings-path-row">
+              <span>Vault entry</span>
+              <code>{VOYAGE_ENTRY_NAME}</code>
+            </div>
+            <div className="settings-path-row">
+              <span>Kind</span>
+              <code>{VOYAGE_ENTRY_KIND}</code>
+            </div>
+            <div className="settings-path-row">
+              <span>Gate policy</span>
+              <code>auto</code>
+            </div>
+            <div className="settings-path-row">
+              <span>Last updated</span>
+              <code>{voyageEntry?.updatedAt ?? 'Not saved yet'}</code>
+            </div>
+          </div>
+
+          <div className="action-row">
+            <Button type="submit" variant="default" disabled={isSavingVoyageKey}>
+              {isSavingVoyageKey
+                ? 'Saving…'
+                : voyageEntry
+                  ? 'Rotate key'
+                  : 'Save key'}
+            </Button>
+            {voyageKeyDraft ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setVoyageKeyDraft('')
+                  setVoyageKeyError(null)
+                  setVoyageKeyNotice(null)
+                }}
+                disabled={isSavingVoyageKey}
+              >
+                Clear
+              </Button>
+            ) : null}
+          </div>
+        </form>
 
         {isLoading ? (
           <PanelLoadingState
@@ -94,6 +252,10 @@ export default function IntegrationsTab() {
             <div className="settings-path-row">
               <span>API key</span>
               <code>{status.configured ? 'Configured' : 'Not configured'}</code>
+            </div>
+            <div className="settings-path-row">
+              <span>Vault metadata</span>
+              <code>{voyageEntry ? 'Present' : 'Missing'}</code>
             </div>
             <div className="settings-path-row">
               <span>Work items</span>

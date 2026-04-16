@@ -5,7 +5,10 @@ import HistoryStage from './HistoryStage'
 import TerminalStage from './TerminalStage'
 import WorkItemsStage from './WorkItemsStage'
 
+const PANEL_FALLBACK_LABEL = 'Load'
+
 const ConfigurationPanel = lazy(() => import('../ConfigurationPanel'))
+const FilesPanel = lazy(() => import('../FilesPanel'))
 const OverviewPanel = lazy(() => import('../OverviewPanel'))
 const WorktreeWorkItemPanel = lazy(() => import('../WorktreeWorkItemPanel'))
 const WorkflowsPanel = lazy(() => import('../workflow/WorkflowsPanel'))
@@ -18,7 +21,7 @@ function WorktreeWorkItemStage() {
   }
 
   return (
-    <Suspense fallback={<PanelFallback label="Loading work item..." />}>
+    <Suspense fallback={<PanelFallback label={PANEL_FALLBACK_LABEL} />}>
       <WorktreeWorkItemPanel worktree={selectedWorktree} />
     </Suspense>
   )
@@ -30,8 +33,14 @@ function WorkspaceActiveStage() {
   switch (activeView) {
     case 'overview':
       return (
-        <Suspense fallback={<PanelFallback label="Loading overview..." />}>
+        <Suspense fallback={<PanelFallback label={PANEL_FALLBACK_LABEL} />}>
           <OverviewPanel />
+        </Suspense>
+      )
+    case 'files':
+      return (
+        <Suspense fallback={<PanelFallback label={PANEL_FALLBACK_LABEL} />}>
+          <FilesPanel />
         </Suspense>
       )
     case 'terminal':
@@ -40,13 +49,13 @@ function WorkspaceActiveStage() {
       return <HistoryStage />
     case 'configuration':
       return (
-        <Suspense fallback={<PanelFallback label="Loading configuration..." />}>
+        <Suspense fallback={<PanelFallback label={PANEL_FALLBACK_LABEL} />}>
           <ConfigurationPanel />
         </Suspense>
       )
     case 'workflows':
       return (
-        <Suspense fallback={<PanelFallback label="Loading workflows..." />}>
+        <Suspense fallback={<PanelFallback label={PANEL_FALLBACK_LABEL} />}>
           <WorkflowsPanel />
         </Suspense>
       )

@@ -68,7 +68,10 @@ fn process_batch(state: &AppState, batch: HashSet<i64>) {
     let service = match EmbeddingsService::new(state.clone()) {
         Ok(service) => service,
         Err(error) => {
-            log::warn!("embeddings worker: failed to build service: {}", error.message);
+            log::warn!(
+                "embeddings worker: failed to build service: {}",
+                error.message
+            );
             return;
         }
     };

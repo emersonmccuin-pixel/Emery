@@ -8,6 +8,21 @@ import ProjectRail from './workspace-shell/ProjectRail'
 import SessionRail from './workspace-shell/SessionRail'
 import WorkspaceCenter from './workspace-shell/WorkspaceCenter'
 
+const PROJECT_SHORTCUT_VIEWS = [
+  'overview',
+  'terminal',
+  'workItems',
+  'history',
+  'configuration',
+  'workflows',
+] as const
+
+const WORKTREE_SHORTCUT_VIEWS = [
+  'overview',
+  'terminal',
+  'worktreeWorkItem',
+] as const
+
 function isEditableTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) {
     return false
@@ -25,22 +40,12 @@ function isEditableTarget(target: EventTarget | null) {
 }
 
 function resolveWorkspaceViewShortcut(key: string, hasSelectedWorktree: boolean) {
-  switch (key) {
-    case '1':
-      return 'overview'
-    case '2':
-      return 'terminal'
-    case '3':
-      return hasSelectedWorktree ? 'worktreeWorkItem' : 'workItems'
-    case '4':
-      return hasSelectedWorktree ? null : 'history'
-    case '5':
-      return hasSelectedWorktree ? null : 'configuration'
-    case '6':
-      return hasSelectedWorktree ? null : 'workflows'
-    default:
-      return null
+  const index = key.charCodeAt(0) - 49
+  if (index < 0 || index > 5) {
+    return null
   }
+
+  return (hasSelectedWorktree ? WORKTREE_SHORTCUT_VIEWS : PROJECT_SHORTCUT_VIEWS)[index] ?? null
 }
 
 function WorkspaceShell() {

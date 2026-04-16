@@ -780,38 +780,38 @@ pub fn start_workflow_run(
     connection: &Connection,
     input: &StartWorkflowRunInput,
 ) -> Result<WorkflowRunRecord, String> {
-    ensure_project_exists(connection, input.project_id)?;
-    let (work_item_id, work_item_call_sign) =
-        load_work_item_for_run(connection, input.project_id, input.root_work_item_id)?;
-    let resolved_workflow =
-        resolve_effective_workflow(connection, input.project_id, &input.workflow_slug)?;
-
-    if load_active_workflow_run_for_work_item(
-        connection,
-        input.project_id,
-        input.root_work_item_id,
-    )?
-    .is_some()
-    {
-        return Err(format!(
-            "work item {} already has an active workflow run; finish or fail that run before starting another",
-            work_item_call_sign
-        ));
-    }
-
-    let resolved_workflow_json =
-        serde_json::to_string_pretty(&resolved_workflow).map_err(|error| {
-            format!(
-                "failed to encode resolved workflow '{}' for run start: {error}",
-                resolved_workflow.slug
-            )
-        })?;
-
     connection
         .execute_batch("BEGIN IMMEDIATE")
         .map_err(|error| format!("failed to begin workflow run transaction: {error}"))?;
 
     let run_result = (|| {
+        ensure_project_exists(connection, input.project_id)?;
+        let (work_item_id, work_item_call_sign) =
+            load_work_item_for_run(connection, input.project_id, input.root_work_item_id)?;
+        let resolved_workflow =
+            resolve_effective_workflow(connection, input.project_id, &input.workflow_slug)?;
+
+        if load_active_workflow_run_for_work_item(
+            connection,
+            input.project_id,
+            input.root_work_item_id,
+        )?
+        .is_some()
+        {
+            return Err(format!(
+                "work item {} already has an active workflow run; finish or fail that run before starting another",
+                work_item_call_sign
+            ));
+        }
+
+        let resolved_workflow_json =
+            serde_json::to_string_pretty(&resolved_workflow).map_err(|error| {
+                format!(
+                    "failed to encode resolved workflow '{}' for run start: {error}",
+                    resolved_workflow.slug
+                )
+            })?;
+
         connection
             .execute(
                 "
@@ -915,162 +915,200 @@ pub fn mark_workflow_stage_dispatched(
     connection: &Connection,
     input: &MarkWorkflowStageDispatchedInput,
 ) -> Result<WorkflowRunRecord, String> {
-    let run = load_workflow_run_for_project(connection, input.project_id, input.run_id)?;
-    ensure_stage_exists(&run, &input.stage_name)?;
-
     connection
-        .execute(
-            "
-            UPDATE workflow_run_stages
-            SET worktree_id = COALESCE(?1, worktree_id),
-                session_id = ?2,
-                agent_name = ?3,
-                thread_id = ?4,
-                directive_message_id = ?5,
-                status = 'running',
-                started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE run_id = ?6 AND stage_name = ?7
-            ",
-            params![
-                input.worktree_id,
-                input.session_id,
-                input.agent_name,
-                input.thread_id,
-                input.directive_message_id,
-                input.run_id,
-                input.stage_name,
-            ],
-        )
-        .map_err(|error| {
-            format!(
-                "failed to mark workflow stage '{}' dispatched for run #{}: {error}",
-                input.stage_name, input.run_id
-            )
-        })?;
+        .execute_batch("BEGIN IMMEDIATE")
+        .map_err(|error| format!("failed to begin workflow stage dispatch transaction: {error}"))?;
 
-    connection
-        .execute(
-            "
-            UPDATE workflow_runs
-            SET status = 'running',
-                root_worktree_id = COALESCE(?1, root_worktree_id),
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?2
-            ",
-            params![input.worktree_id, input.run_id],
-        )
-        .map_err(|error| {
-            format!(
-                "failed to update workflow run #{} after stage dispatch: {error}",
-                input.run_id
-            )
-        })?;
+    let dispatch_result = (|| {
+        let run = load_workflow_run_for_project(connection, input.project_id, input.run_id)?;
+        ensure_stage_exists(&run, &input.stage_name)?;
 
-    load_workflow_run_by_id(connection, input.run_id)
+        connection
+            .execute(
+                "
+                UPDATE workflow_run_stages
+                SET worktree_id = COALESCE(?1, worktree_id),
+                    session_id = ?2,
+                    agent_name = ?3,
+                    thread_id = ?4,
+                    directive_message_id = ?5,
+                    status = 'running',
+                    started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE run_id = ?6 AND stage_name = ?7
+                ",
+                params![
+                    input.worktree_id,
+                    input.session_id,
+                    input.agent_name,
+                    input.thread_id,
+                    input.directive_message_id,
+                    input.run_id,
+                    input.stage_name,
+                ],
+            )
+            .map_err(|error| {
+                format!(
+                    "failed to mark workflow stage '{}' dispatched for run #{}: {error}",
+                    input.stage_name, input.run_id
+                )
+            })?;
+
+        connection
+            .execute(
+                "
+                UPDATE workflow_runs
+                SET status = 'running',
+                    root_worktree_id = COALESCE(?1, root_worktree_id),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?2
+                ",
+                params![input.worktree_id, input.run_id],
+            )
+            .map_err(|error| {
+                format!(
+                    "failed to update workflow run #{} after stage dispatch: {error}",
+                    input.run_id
+                )
+            })?;
+
+        load_workflow_run_by_id(connection, input.run_id)
+    })();
+
+    match dispatch_result {
+        Ok(run) => {
+            connection
+                .execute_batch("COMMIT")
+                .map_err(|error| format!("failed to commit workflow stage dispatch: {error}"))?;
+            Ok(run)
+        }
+        Err(error) => {
+            let _ = connection.execute_batch("ROLLBACK");
+            Err(error)
+        }
+    }
 }
 
 pub fn record_workflow_stage_result(
     connection: &Connection,
     input: &RecordWorkflowStageResultInput,
 ) -> Result<WorkflowRunRecord, String> {
-    let run = load_workflow_run_for_project(connection, input.project_id, input.run_id)?;
-    let stage = run
-        .stages
-        .iter()
-        .find(|candidate| candidate.stage_name == input.stage_name)
-        .cloned()
-        .ok_or_else(|| {
-            format!(
-                "workflow run #{} does not contain stage '{}'",
-                input.run_id, input.stage_name
-            )
-        })?;
-    let completion_message_type = normalize_required(
-        &input.completion_message_type,
-        "workflow stage completion message type",
-    )?
-    .to_string();
-    let completion_context_json = input
-        .completion_context_json
-        .as_deref()
-        .map(normalize_completion_context_json)
-        .transpose()?
-        .unwrap_or_else(|| "{}".to_string());
-    let completion_summary = input
-        .completion_summary
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned);
-    let (stage_status, run_status, failure_reason) = if completion_message_type == "complete" {
-        if stage.stage_ordinal == run.resolved_workflow.stages.len() as i64 {
-            ("completed", "completed", None)
+    connection
+        .execute_batch("BEGIN IMMEDIATE")
+        .map_err(|error| format!("failed to begin workflow stage result transaction: {error}"))?;
+
+    let result_update = (|| {
+        let run = load_workflow_run_for_project(connection, input.project_id, input.run_id)?;
+        let stage = run
+            .stages
+            .iter()
+            .find(|candidate| candidate.stage_name == input.stage_name)
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "workflow run #{} does not contain stage '{}'",
+                    input.run_id, input.stage_name
+                )
+            })?;
+        let completion_message_type = normalize_required(
+            &input.completion_message_type,
+            "workflow stage completion message type",
+        )?
+        .to_string();
+        let completion_context_json = input
+            .completion_context_json
+            .as_deref()
+            .map(normalize_completion_context_json)
+            .transpose()?
+            .unwrap_or_else(|| "{}".to_string());
+        let completion_summary = input
+            .completion_summary
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
+        let (stage_status, run_status, failure_reason) = if completion_message_type == "complete" {
+            if stage.stage_ordinal == run.resolved_workflow.stages.len() as i64 {
+                ("completed", "completed", None)
+            } else {
+                ("completed", "running", None)
+            }
         } else {
-            ("completed", "running", None)
+            ("blocked", "blocked", completion_summary.clone())
+        };
+
+        connection
+            .execute(
+                "
+                UPDATE workflow_run_stages
+                SET response_message_id = ?1,
+                    status = ?2,
+                    completion_message_type = ?3,
+                    completion_summary = ?4,
+                    completion_context_json = ?5,
+                    failure_reason = ?6,
+                    completed_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE run_id = ?7 AND stage_name = ?8
+                ",
+                params![
+                    input.response_message_id,
+                    stage_status,
+                    completion_message_type,
+                    completion_summary,
+                    completion_context_json,
+                    failure_reason,
+                    input.run_id,
+                    input.stage_name,
+                ],
+            )
+            .map_err(|error| {
+                format!(
+                    "failed to record workflow stage result for '{}' on run #{}: {error}",
+                    input.stage_name, input.run_id
+                )
+            })?;
+
+        let run_completed = run_status == "completed";
+        connection
+            .execute(
+                "
+                UPDATE workflow_runs
+                SET status = ?1,
+                    failure_reason = ?2,
+                    completed_at = CASE WHEN ?3 THEN CURRENT_TIMESTAMP ELSE completed_at END,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?4
+                ",
+                params![
+                    run_status,
+                    failure_reason,
+                    run_completed as i64,
+                    input.run_id
+                ],
+            )
+            .map_err(|error| {
+                format!(
+                    "failed to update workflow run #{} after stage result: {error}",
+                    input.run_id
+                )
+            })?;
+
+        load_workflow_run_by_id(connection, input.run_id)
+    })();
+
+    match result_update {
+        Ok(run) => {
+            connection
+                .execute_batch("COMMIT")
+                .map_err(|error| format!("failed to commit workflow stage result: {error}"))?;
+            Ok(run)
         }
-    } else {
-        ("blocked", "blocked", completion_summary.clone())
-    };
-
-    connection
-        .execute(
-            "
-            UPDATE workflow_run_stages
-            SET response_message_id = ?1,
-                status = ?2,
-                completion_message_type = ?3,
-                completion_summary = ?4,
-                completion_context_json = ?5,
-                failure_reason = ?6,
-                completed_at = CURRENT_TIMESTAMP,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE run_id = ?7 AND stage_name = ?8
-            ",
-            params![
-                input.response_message_id,
-                stage_status,
-                completion_message_type,
-                completion_summary,
-                completion_context_json,
-                failure_reason,
-                input.run_id,
-                input.stage_name,
-            ],
-        )
-        .map_err(|error| {
-            format!(
-                "failed to record workflow stage result for '{}' on run #{}: {error}",
-                input.stage_name, input.run_id
-            )
-        })?;
-
-    let run_completed = run_status == "completed";
-    connection
-        .execute(
-            "
-            UPDATE workflow_runs
-            SET status = ?1,
-                failure_reason = ?2,
-                completed_at = CASE WHEN ?3 THEN CURRENT_TIMESTAMP ELSE completed_at END,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?4
-            ",
-            params![
-                run_status,
-                failure_reason,
-                run_completed as i64,
-                input.run_id
-            ],
-        )
-        .map_err(|error| {
-            format!(
-                "failed to update workflow run #{} after stage result: {error}",
-                input.run_id
-            )
-        })?;
-
-    load_workflow_run_by_id(connection, input.run_id)
+        Err(error) => {
+            let _ = connection.execute_batch("ROLLBACK");
+            Err(error)
+        }
+    }
 }
 
 pub fn fail_workflow_run(
@@ -2953,8 +2991,20 @@ mod tests {
         std::env::temp_dir().join(format!("project-commander-workflow-{name}-{nanos}"))
     }
 
-    fn create_connection() -> Connection {
-        let connection = Connection::open_in_memory().expect("in-memory sqlite should open");
+    fn configure_test_connection(connection: &Connection) {
+        connection
+            .execute_batch(
+                "
+                PRAGMA foreign_keys = ON;
+                PRAGMA journal_mode = WAL;
+                PRAGMA synchronous = NORMAL;
+                PRAGMA busy_timeout = 5000;
+                ",
+            )
+            .expect("test sqlite pragmas should apply");
+    }
+
+    fn initialize_test_schema(connection: &Connection) {
         connection
             .execute_batch(
                 "
@@ -3123,7 +3173,65 @@ mod tests {
                 ",
             )
             .expect("test schema should initialize");
+    }
+
+    fn create_connection() -> Connection {
+        let connection = Connection::open_in_memory().expect("in-memory sqlite should open");
+        configure_test_connection(&connection);
+        initialize_test_schema(&connection);
         connection
+    }
+
+    fn create_file_database(database_path: &Path) {
+        if let Some(parent) = database_path.parent() {
+            fs::create_dir_all(parent).expect("database parent directory should exist");
+        }
+        let connection = Connection::open(database_path).expect("file sqlite should open");
+        configure_test_connection(&connection);
+        initialize_test_schema(&connection);
+    }
+
+    fn open_file_connection(database_path: &Path) -> Connection {
+        let connection = Connection::open(database_path).expect("file sqlite should open");
+        configure_test_connection(&connection);
+        connection
+    }
+
+    fn insert_active_workflow_run(connection: &Connection, status: &str) {
+        connection
+            .execute(
+                "
+                INSERT INTO workflow_runs (
+                  project_id,
+                  workflow_slug,
+                  workflow_name,
+                  workflow_kind,
+                  workflow_version,
+                  root_work_item_id,
+                  root_work_item_call_sign,
+                  root_worktree_id,
+                  source_adoption_mode,
+                  status,
+                  has_overrides,
+                  resolved_workflow_json
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                ",
+                params![
+                    1,
+                    "feature-dev",
+                    "Feature Dev",
+                    "workflow",
+                    1,
+                    1,
+                    "ALPHA-1",
+                    Option::<i64>::None,
+                    "linked",
+                    status,
+                    0,
+                    "{}",
+                ],
+            )
+            .expect("active workflow run should insert");
     }
 
     fn adopt_feature_dev(connection: &Connection) {
@@ -3244,6 +3352,68 @@ mod tests {
     }
 
     #[test]
+    fn start_workflow_run_rechecks_active_run_after_waiting_for_write_lock() {
+        let root = temp_dir("run-concurrent");
+        let database_path = root.join("workflow.sqlite3");
+        create_file_database(&database_path);
+
+        let setup_connection = open_file_connection(&database_path);
+        sync_library_catalog(&setup_connection, &root).expect("workflow sync should succeed");
+        adopt_feature_dev(&setup_connection);
+        drop(setup_connection);
+
+        let lock_connection = open_file_connection(&database_path);
+        lock_connection
+            .execute_batch("BEGIN IMMEDIATE")
+            .expect("write lock should be acquired");
+
+        let database_path_for_thread = database_path.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let connection = open_file_connection(&database_path_for_thread);
+            started_tx
+                .send(())
+                .expect("thread start signal should send");
+            let result = start_workflow_run(
+                &connection,
+                &StartWorkflowRunInput {
+                    project_id: 1,
+                    workflow_slug: "feature-dev".to_string(),
+                    root_work_item_id: 1,
+                    root_worktree_id: None,
+                },
+            )
+            .map(|run| run.id);
+            result_tx.send(result).expect("thread result should send");
+        });
+
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("thread should start promptly");
+        std::thread::sleep(std::time::Duration::from_millis(250));
+
+        insert_active_workflow_run(&lock_connection, "queued");
+        lock_connection
+            .execute_batch("COMMIT")
+            .expect("write lock should commit");
+
+        let error = result_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("thread should finish")
+            .expect_err("second workflow run start should be rejected");
+        assert!(error.contains("already has an active workflow run"));
+
+        let run_count: i64 = lock_connection
+            .query_row("SELECT COUNT(*) FROM workflow_runs", [], |row| row.get(0))
+            .expect("workflow run count should load");
+        assert_eq!(run_count, 1);
+
+        handle.join().expect("thread should join cleanly");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn start_workflow_run_rejects_outdated_linked_adoption() {
         let root = temp_dir("run-outdated");
         let connection = create_connection();
@@ -3271,6 +3441,145 @@ mod tests {
 
         assert!(error.contains("pinned to v1"));
         assert!(error.contains("upgrade or detach"));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mark_workflow_stage_dispatched_rolls_back_if_run_update_fails() {
+        let root = temp_dir("dispatch-rollback");
+        let connection = create_connection();
+        sync_library_catalog(&connection, &root).expect("workflow sync should succeed");
+        adopt_feature_dev(&connection);
+
+        let run = start_workflow_run(
+            &connection,
+            &StartWorkflowRunInput {
+                project_id: 1,
+                workflow_slug: "feature-dev".to_string(),
+                root_work_item_id: 1,
+                root_worktree_id: None,
+            },
+        )
+        .expect("workflow run should start");
+
+        connection
+            .execute_batch(
+                "
+                CREATE TEMP TRIGGER fail_workflow_run_update
+                BEFORE UPDATE ON workflow_runs
+                BEGIN
+                  SELECT RAISE(ABORT, 'forced workflow run update failure');
+                END;
+                ",
+            )
+            .expect("failure trigger should install");
+
+        let error = match mark_workflow_stage_dispatched(
+            &connection,
+            &MarkWorkflowStageDispatchedInput {
+                project_id: 1,
+                run_id: run.id,
+                stage_name: "plan".to_string(),
+                worktree_id: Some(11),
+                session_id: Some(22),
+                agent_name: Some("planner".to_string()),
+                thread_id: Some("thread-1".to_string()),
+                directive_message_id: Some(33),
+            },
+        ) {
+            Ok(_) => panic!("stage dispatch should fail when run update aborts"),
+            Err(error) => error,
+        };
+        assert!(error.contains("forced workflow run update failure"));
+
+        let persisted = load_workflow_run_by_id(&connection, run.id).expect("run should reload");
+        let stage = persisted
+            .stages
+            .iter()
+            .find(|stage| stage.stage_name == "plan")
+            .expect("plan stage should exist");
+        assert_eq!(stage.status, "pending");
+        assert_eq!(stage.worktree_id, None);
+        assert_eq!(stage.session_id, None);
+        assert_eq!(persisted.status, "queued");
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn record_workflow_stage_result_rolls_back_if_run_update_fails() {
+        let root = temp_dir("result-rollback");
+        let connection = create_connection();
+        sync_library_catalog(&connection, &root).expect("workflow sync should succeed");
+        adopt_feature_dev(&connection);
+
+        let run = start_workflow_run(
+            &connection,
+            &StartWorkflowRunInput {
+                project_id: 1,
+                workflow_slug: "feature-dev".to_string(),
+                root_work_item_id: 1,
+                root_worktree_id: None,
+            },
+        )
+        .expect("workflow run should start");
+
+        let run = mark_workflow_stage_dispatched(
+            &connection,
+            &MarkWorkflowStageDispatchedInput {
+                project_id: 1,
+                run_id: run.id,
+                stage_name: "plan".to_string(),
+                worktree_id: Some(11),
+                session_id: Some(22),
+                agent_name: Some("planner".to_string()),
+                thread_id: Some("thread-1".to_string()),
+                directive_message_id: Some(33),
+            },
+        )
+        .expect("stage dispatch should succeed");
+        assert_eq!(run.status, "running");
+
+        connection
+            .execute_batch(
+                "
+                CREATE TEMP TRIGGER fail_workflow_run_update
+                BEFORE UPDATE ON workflow_runs
+                BEGIN
+                  SELECT RAISE(ABORT, 'forced workflow run update failure');
+                END;
+                ",
+            )
+            .expect("failure trigger should install");
+
+        let error = match record_workflow_stage_result(
+            &connection,
+            &RecordWorkflowStageResultInput {
+                project_id: 1,
+                run_id: run.id,
+                stage_name: "plan".to_string(),
+                response_message_id: Some(44),
+                completion_message_type: "complete".to_string(),
+                completion_summary: Some("stage done".to_string()),
+                completion_context_json: Some("{\"ok\":true}".to_string()),
+            },
+        ) {
+            Ok(_) => panic!("stage result should fail when run update aborts"),
+            Err(error) => error,
+        };
+        assert!(error.contains("forced workflow run update failure"));
+
+        let persisted = load_workflow_run_by_id(&connection, run.id).expect("run should reload");
+        let stage = persisted
+            .stages
+            .iter()
+            .find(|stage| stage.stage_name == "plan")
+            .expect("plan stage should exist");
+        assert_eq!(stage.status, "running");
+        assert_eq!(stage.response_message_id, None);
+        assert_eq!(stage.completion_message_type, None);
+        assert_eq!(persisted.status, "running");
 
         let _ = fs::remove_dir_all(root);
     }

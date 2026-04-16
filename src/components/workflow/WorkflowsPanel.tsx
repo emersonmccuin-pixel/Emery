@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { Button } from "@/components/ui/button";
 import {
   PanelBanner,
@@ -13,7 +12,6 @@ import type {
   PodRecord,
   ProjectPodRecord,
   ProjectWorkflowRecord,
-  TerminalExitEvent,
   VaultAccessBindingRequest,
   WorkItemRecord,
   WorkflowRecord,
@@ -140,12 +138,10 @@ function WorkflowsPanel() {
   const isLoadingWorkflowRuns = useAppStore((s) => s.isLoadingWorkflowRuns);
   const activeWorkflowActionKey = useAppStore((s) => s.activeWorkflowActionKey);
   const activeWorkflowRunKey = useAppStore((s) => s.activeWorkflowRunKey);
-  const liveSessionCount = useAppStore((s) => s.liveSessionSnapshots.length);
   const workItems = useAppStore((s) => s.workItems);
   const isLoadingWorkItems = useAppStore((s) => s.isLoadingWorkItems);
   const loadWorkflowCatalog = useAppStore((s) => s.loadWorkflowCatalog);
   const loadWorkflowRuns = useAppStore((s) => s.loadWorkflowRuns);
-  const loadWorkItems = useAppStore((s) => s.loadWorkItems);
   const startWorkflowRun = useAppStore((s) => s.startWorkflowRun);
   const adoptProjectCatalogEntry = useAppStore((s) => s.adoptProjectCatalogEntry);
   const upgradeProjectCatalogAdoption = useAppStore(
@@ -169,35 +165,9 @@ function WorkflowsPanel() {
       return;
     }
 
-    void Promise.all([
-      loadWorkflowCatalog(selectedProject.id),
-      loadWorkflowRuns(selectedProject.id),
-    ]);
-  }, [loadWorkflowCatalog, loadWorkflowRuns, selectedProject]);
-
-  useEffect(() => {
-    if (!selectedProject || scope !== "project" || liveSessionCount === 0) {
-      return;
-    }
-
+    void loadWorkflowCatalog(selectedProject.id);
     void loadWorkflowRuns(selectedProject.id);
-  }, [liveSessionCount, loadWorkflowRuns, scope, selectedProject]);
-
-  useEffect(() => {
-    if (!selectedProject || scope !== "project") {
-      return;
-    }
-
-    if (workItems.length === 0 && !isLoadingWorkItems) {
-      void loadWorkItems(selectedProject.id);
-    }
-  }, [
-    isLoadingWorkItems,
-    loadWorkItems,
-    scope,
-    selectedProject,
-    workItems.length,
-  ]);
+  }, [loadWorkflowCatalog, loadWorkflowRuns, selectedProject]);
 
   useEffect(() => {
     if (scope === "library" && entityTab === "runs") {
@@ -258,43 +228,6 @@ function WorkflowsPanel() {
     selectedRunId,
     selectedWorkflowSlug,
   ]);
-
-  useEffect(() => {
-    if (!selectedProject || scope !== "project") {
-      return;
-    }
-
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    let refreshTimeout: number | null = null;
-
-    const bind = async () => {
-      unlisten = await listen<TerminalExitEvent>("terminal-exit", (event) => {
-        if (disposed || event.payload.projectId !== selectedProject.id) {
-          return;
-        }
-
-        if (refreshTimeout !== null) {
-          window.clearTimeout(refreshTimeout);
-        }
-
-        refreshTimeout = window.setTimeout(() => {
-          refreshTimeout = null;
-          void loadWorkflowRuns(selectedProject.id);
-        }, 150);
-      });
-    };
-
-    void bind();
-
-    return () => {
-      disposed = true;
-      if (refreshTimeout !== null) {
-        window.clearTimeout(refreshTimeout);
-      }
-      unlisten?.();
-    };
-  }, [loadWorkflowRuns, scope, selectedProject]);
 
   useEffect(() => {
     const hasSelection = launchableWorkItems.some(

@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { PanelEmptyState } from '@/components/ui/panel-state'
+import { VirtualList } from '@/components/ui/virtual-list'
 import { useAppStore, useSelectedProject, useVisibleWorktrees } from '../../store'
 import type { WorktreeRecord } from '../../types'
 import { shortCallSign } from './shared'
@@ -159,31 +160,6 @@ function VirtualWorktreeSessionList({
   selectWorktreeTerminal: (worktreeId: number) => void
   worktrees: WorktreeRecord[]
 }) {
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const [scrollTop, setScrollTop] = useState(0)
-  const [viewportHeight, setViewportHeight] = useState(0)
-
-  useEffect(() => {
-    const element = scrollRef.current
-
-    if (!element) {
-      return
-    }
-
-    const updateViewportHeight = () => {
-      setViewportHeight(element.clientHeight)
-    }
-
-    updateViewportHeight()
-
-    const resizeObserver = new ResizeObserver(updateViewportHeight)
-    resizeObserver.observe(element)
-
-    return () => {
-      resizeObserver.disconnect()
-    }
-  }, [])
-
   if (worktrees.length === 0) {
     return (
       <PanelEmptyState
@@ -197,51 +173,23 @@ function VirtualWorktreeSessionList({
     )
   }
 
-  const itemHeight = 104
-  const overscan = 4
-  const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - overscan)
-  const endIndex = Math.min(
-    worktrees.length,
-    Math.ceil((scrollTop + viewportHeight) / itemHeight) + overscan,
-  )
-  const visibleWorktrees = worktrees.slice(startIndex, endIndex)
-
   return (
-    <div
-      ref={scrollRef}
-      className="flex-1 hud-scrollarea overflow-auto"
-      onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
-    >
-      <div
-        className="relative w-full"
-        style={{
-          height: `${worktrees.length * itemHeight}px`,
-        }}
-      >
-        {visibleWorktrees.map((worktree, index) => {
-          const absoluteIndex = startIndex + index
-
-          return (
-            <div
-              key={worktree.id}
-              className="absolute left-0 w-full box-border"
-              style={{
-                height: `${itemHeight}px`,
-                paddingBottom: absoluteIndex === worktrees.length - 1 ? 0 : 4,
-                top: `${absoluteIndex * itemHeight}px`,
-              }}
-            >
-              <WorktreeSessionCard
-                className="h-full"
-                worktree={worktree}
-                isActive={selectedTerminalWorktreeId === worktree.id}
-                onSelect={() => selectWorktreeTerminal(worktree.id)}
-              />
-            </div>
-          )
-        })}
-      </div>
-    </div>
+    <VirtualList
+      className="flex-1 hud-scrollarea"
+      estimateSize={() => 108}
+      getItemKey={(worktree) => worktree.id}
+      items={worktrees}
+      overscan={4}
+      renderItem={(worktree, index) => (
+        <div className={index === worktrees.length - 1 ? undefined : 'pb-1'}>
+          <WorktreeSessionCard
+            worktree={worktree}
+            isActive={selectedTerminalWorktreeId === worktree.id}
+            onSelect={() => selectWorktreeTerminal(worktree.id)}
+          />
+        </div>
+      )}
+    />
   )
 }
 

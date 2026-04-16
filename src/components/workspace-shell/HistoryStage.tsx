@@ -34,8 +34,7 @@ function HistoryStage() {
   const {
     setSelectedHistorySessionId,
     openSessionTarget,
-    resumeSessionRecord,
-    recoverOrphanedSession,
+    resumeRecoverableSession,
     fetchSessionRecoveryDetails,
   } = useAppStore.getState()
 
@@ -75,8 +74,8 @@ function HistoryStage() {
             isLoading={isLoadingHistory}
             onSelectSessionId={setSelectedHistorySessionId}
             onOpenTarget={openSessionTarget}
-            onResumeSession={resumeSessionRecord}
-            onRecoverSession={recoverOrphanedSession}
+            onResumeSession={resumeRecoverableSession}
+            onRecoverSession={resumeRecoverableSession}
           />
         </Suspense>
       </div>

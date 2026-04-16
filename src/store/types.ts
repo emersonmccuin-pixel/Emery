@@ -23,6 +23,7 @@ import type {
 
 export type WorkspaceView =
   | "overview"
+  | "files"
   | "terminal"
   | "history"
   | "configuration"
@@ -222,6 +223,10 @@ export type SessionSlice = {
     projectId: number,
     worktreeId: number | null,
   ) => void;
+  focusTerminalTarget: (
+    worktreeId: number | null,
+    preferredView?: WorkspaceView,
+  ) => void;
   restartSessionTargetNow: (
     projectId: number,
     worktreeId: number | null,
@@ -307,8 +312,11 @@ export type HistorySlice = {
   loadCleanupCandidates: () => Promise<void>;
   openHistoryForSession: (sessionId: number | null) => void;
   openSessionTarget: (record: SessionRecord) => void;
+  resumeRecoverableSession: (
+    record: SessionRecord,
+  ) => Promise<SessionSnapshot | null>;
   terminateRecoveredSession: (sessionId: number) => Promise<void>;
-  recoverOrphanedSession: (record: SessionRecord) => Promise<void>;
+  recoverOrphanedSession: (record: SessionRecord) => Promise<SessionSnapshot | null>;
   removeStaleArtifact: (candidate: CleanupCandidate) => Promise<void>;
   repairCleanupCandidates: () => Promise<void>;
 };
@@ -330,7 +338,6 @@ export type RecoverySlice = {
     projectId: number,
     sessionId: number,
   ) => Promise<SessionRecoveryDetails | null>;
-  continueSession: (sessionId: number) => Promise<void>;
 };
 
 export type AppSettingsTab =

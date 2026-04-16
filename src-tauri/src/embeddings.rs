@@ -7,12 +7,14 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::time::Duration;
 use zeroize::Zeroizing;
 
-use crate::db::AppState;
+use crate::db::{AppState, DocumentRecord, WorkItemRecord};
 use crate::error::{AppError, AppResult};
 use crate::vault;
+use crate::{document_store, work_item_store};
 
 pub const VOYAGE_MODEL: &str = "voyage-3-large";
 pub const VOYAGE_DIMENSIONS: usize = 1024;
@@ -107,9 +109,9 @@ impl ReqwestVoyageClient {
         let http = reqwest::blocking::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .build()
-            .map_err(|error| AppError::internal(format!(
-                "failed to build Voyage HTTP client: {error}"
-            )))?;
+            .map_err(|error| {
+                AppError::internal(format!("failed to build Voyage HTTP client: {error}"))
+            })?;
         Ok(Self { http })
     }
 }
@@ -154,9 +156,9 @@ impl VoyageClient for ReqwestVoyageClient {
             data: Vec<VoyageDatum>,
         }
 
-        let parsed: VoyageResponse = response
-            .json()
-            .map_err(|error| AppError::internal(format!("failed to decode Voyage response: {error}")))?;
+        let parsed: VoyageResponse = response.json().map_err(|error| {
+            AppError::internal(format!("failed to decode Voyage response: {error}"))
+        })?;
 
         Ok(parsed.data.into_iter().map(|d| d.embedding).collect())
     }
@@ -165,6 +167,12 @@ impl VoyageClient for ReqwestVoyageClient {
 pub struct EmbeddingsService {
     state: AppState,
     client: Box<dyn VoyageClient>,
+}
+
+struct PendingBackfillItem {
+    work_item_id: i64,
+    content_hash: String,
+    text: String,
 }
 
 impl EmbeddingsService {
@@ -185,21 +193,7 @@ impl EmbeddingsService {
         vault::release_for_internal(&self.state, VAULT_CONSUMER, VAULT_ENTRY_NAME)
     }
 
-    /// Assemble the embeddable text for a work item: title + body + linked
-    /// document bodies, separated by `\n\n---\n\n`, truncated at
-    /// [`MAX_INPUT_CHARS`].
-    ///
-    /// NOTE: no work-item comments table exists in the Phase A schema; when
-    /// one lands, extend this function to append comment bodies too.
-    pub fn assemble_work_item_text(&self, work_item_id: i64) -> AppResult<String> {
-        let item = self.state.get_work_item(work_item_id)?;
-        let documents = self
-            .state
-            .list_documents(item.project_id)?
-            .into_iter()
-            .filter(|doc| doc.work_item_id == Some(item.id))
-            .collect::<Vec<_>>();
-
+    fn compose_work_item_text(item: &WorkItemRecord, documents: &[DocumentRecord]) -> String {
         let mut sections: Vec<String> = Vec::with_capacity(2 + documents.len());
         sections.push(item.title.clone());
         if !item.body.trim().is_empty() {
@@ -215,8 +209,32 @@ impl EmbeddingsService {
             sections.push(block);
         }
 
-        let joined = sections.join("\n\n---\n\n");
-        Ok(truncate_chars(&joined, MAX_INPUT_CHARS))
+        truncate_chars(&sections.join("\n\n---\n\n"), MAX_INPUT_CHARS)
+    }
+
+    /// Assemble the embeddable text for a work item: title + body + linked
+    /// document bodies, separated by `\n\n---\n\n`, truncated at
+    /// [`MAX_INPUT_CHARS`].
+    ///
+    /// NOTE: no work-item comments table exists in the Phase A schema; when
+    /// one lands, extend this function to append comment bodies too.
+    pub fn assemble_work_item_text(&self, work_item_id: i64) -> AppResult<String> {
+        let connection = self.state.connect_internal().map_err(AppError::database)?;
+        let item = work_item_store::load_record_by_id(&connection, work_item_id)
+            .map_err(AppError::database)?;
+        let documents = document_store::list_records_for_work_item(&connection, work_item_id)
+            .map_err(AppError::database)?;
+        Ok(Self::compose_work_item_text(&item, &documents))
+    }
+
+    fn embed_inputs(
+        &self,
+        api_key: &str,
+        model: &str,
+        inputs: &[String],
+        input_type: EmbeddingInputType,
+    ) -> AppResult<Vec<Vec<f32>>> {
+        self.client.embed(api_key, model, inputs, input_type)
     }
 
     /// Embed a single raw text blob. Propagates
@@ -232,12 +250,10 @@ impl EmbeddingsService {
                 "Voyage API key is not configured. Add a vault entry named 'voyage-ai'.",
             )
         })?;
-        let mut result = self
-            .client
-            .embed(&key, model, &[input.to_string()], input_type)?;
-        result.pop().ok_or_else(|| {
-            AppError::internal("Voyage response contained no embedding data")
-        })
+        let mut result = self.embed_inputs(&key, model, &[input.to_string()], input_type)?;
+        result
+            .pop()
+            .ok_or_else(|| AppError::internal("Voyage response contained no embedding data"))
     }
 
     /// Recompute + persist the embedding for one work item. Short-circuits
@@ -245,10 +261,7 @@ impl EmbeddingsService {
     pub fn embed_work_item(&self, work_item_id: i64) -> AppResult<EmbedOutcome> {
         let text = self.assemble_work_item_text(work_item_id)?;
         let content_hash = sha256_hex(&text);
-        let connection = self
-            .state
-            .connect_internal()
-            .map_err(AppError::database)?;
+        let connection = self.state.connect_internal().map_err(AppError::database)?;
 
         let existing: Option<String> = connection
             .query_row(
@@ -313,10 +326,7 @@ impl EmbeddingsService {
             )));
         }
 
-        let connection = self
-            .state
-            .connect_internal()
-            .map_err(AppError::database)?;
+        let connection = self.state.connect_internal().map_err(AppError::database)?;
 
         // Over-fetch to leave room for post-filter trimming; vec0 MATCH uses k
         // as an exact limit so we need at least capped_k results after SQL
@@ -389,9 +399,125 @@ impl EmbeddingsService {
         Ok(hits)
     }
 
-    /// Re-embed every work item (optionally scoped to one project). Voyage
-    /// allows up to 128 inputs per request; we batch to minimize API cost but
-    /// still short-circuit per-item when the hash matches.
+    fn flush_backfill_batch(
+        &self,
+        api_key: &str,
+        connection: &Connection,
+        pending: &mut Vec<PendingBackfillItem>,
+        report: &mut BackfillReport,
+    ) -> usize {
+        if pending.is_empty() {
+            return 0;
+        }
+
+        let inputs = pending
+            .iter()
+            .map(|item| item.text.clone())
+            .collect::<Vec<_>>();
+        let work_item_ids = pending
+            .iter()
+            .map(|item| item.work_item_id)
+            .collect::<Vec<_>>();
+
+        let embeddings =
+            match self.embed_inputs(api_key, VOYAGE_MODEL, &inputs, EmbeddingInputType::Document) {
+                Ok(embeddings) => embeddings,
+                Err(error) => {
+                    for work_item_id in work_item_ids {
+                        report.failed += 1;
+                        if report.errors.len() < 20 {
+                            report
+                                .errors
+                                .push(format!("work_item#{work_item_id}: {}", error.message));
+                        }
+                        log::warn!(
+                            "embeddings backfill failed for work_item#{}: {}",
+                            work_item_id,
+                            error.message
+                        );
+                    }
+                    let processed = pending.len();
+                    pending.clear();
+                    return processed;
+                }
+            };
+
+        if embeddings.len() != pending.len() {
+            let error = format!(
+                "Voyage API returned {} embeddings for {} requested work items",
+                embeddings.len(),
+                pending.len()
+            );
+            for work_item_id in work_item_ids {
+                report.failed += 1;
+                if report.errors.len() < 20 {
+                    report
+                        .errors
+                        .push(format!("work_item#{work_item_id}: {error}"));
+                }
+                log::warn!(
+                    "embeddings backfill failed for work_item#{}: {}",
+                    work_item_id,
+                    error
+                );
+            }
+            let processed = pending.len();
+            pending.clear();
+            return processed;
+        }
+
+        let batch = pending.drain(..).collect::<Vec<_>>();
+        for (pending_item, embedding) in batch.into_iter().zip(embeddings.into_iter()) {
+            if embedding.len() != VOYAGE_DIMENSIONS {
+                let error = format!(
+                    "Voyage returned {} dimensions; expected {VOYAGE_DIMENSIONS}",
+                    embedding.len()
+                );
+                report.failed += 1;
+                if report.errors.len() < 20 {
+                    report
+                        .errors
+                        .push(format!("work_item#{}: {error}", pending_item.work_item_id));
+                }
+                log::warn!(
+                    "embeddings backfill failed for work_item#{}: {}",
+                    pending_item.work_item_id,
+                    error
+                );
+                continue;
+            }
+
+            match persist_embedding(
+                connection,
+                pending_item.work_item_id,
+                &pending_item.content_hash,
+                &embedding,
+            ) {
+                Ok(()) => report.embedded += 1,
+                Err(error) => {
+                    report.failed += 1;
+                    if report.errors.len() < 20 {
+                        report.errors.push(format!(
+                            "work_item#{}: {}",
+                            pending_item.work_item_id, error.message
+                        ));
+                    }
+                    log::warn!(
+                        "embeddings backfill failed for work_item#{}: {}",
+                        pending_item.work_item_id,
+                        error.message
+                    );
+                }
+            }
+        }
+
+        work_item_ids.len()
+    }
+
+    /// Re-embed every work item (optionally scoped to one project). The
+    /// backfill path loads the Voyage secret once, skips unchanged rows by
+    /// content hash, and batches API requests to avoid repeated vault churn
+    /// and unnecessary round trips while the UI is open.
     pub fn backfill(
         &self,
         project_id: Option<i64>,
@@ -405,10 +531,14 @@ impl EmbeddingsService {
             let connection = self.state.connect_internal().map_err(AppError::database)?;
             let mut statement = connection
                 .prepare("SELECT id FROM work_items ORDER BY id ASC")
-                .map_err(|error| AppError::database(format!("failed to list work items: {error}")))?;
+                .map_err(|error| {
+                    AppError::database(format!("failed to list work items: {error}"))
+                })?;
             let rows = statement
                 .query_map([], |row| row.get::<_, i64>(0))
-                .map_err(|error| AppError::database(format!("failed to read work item ids: {error}")))?;
+                .map_err(|error| {
+                    AppError::database(format!("failed to read work item ids: {error}"))
+                })?;
             let mut ids = Vec::new();
             for row in rows {
                 let id = row.map_err(|error| {
@@ -431,28 +561,72 @@ impl EmbeddingsService {
             ..Default::default()
         };
 
-        for (idx, item) in items.iter().enumerate() {
-            match self.embed_work_item(item.id) {
-                Ok(outcome) => {
-                    if outcome.changed {
-                        report.embedded += 1;
-                    } else {
-                        report.skipped += 1;
-                    }
-                }
+        if total == 0 {
+            return Ok(report);
+        }
+
+        let api_key = self.voyage_api_key()?.ok_or_else(|| {
+            AppError::invalid_input(
+                "Voyage API key is not configured. Add a vault entry named 'voyage-ai'.",
+            )
+        })?;
+        let connection = self.state.connect_internal().map_err(AppError::database)?;
+        let existing_hashes = load_existing_embedding_hashes(&connection)?;
+        let mut pending: Vec<PendingBackfillItem> = Vec::with_capacity(VOYAGE_BATCH_LIMIT);
+        let mut processed = 0;
+
+        for item in &items {
+            let documents = match document_store::list_records_for_work_item(&connection, item.id) {
+                Ok(documents) => documents,
                 Err(error) => {
                     report.failed += 1;
                     if report.errors.len() < 20 {
-                        report.errors.push(format!("work_item#{}: {}", item.id, error.message));
+                        report
+                            .errors
+                            .push(format!("work_item#{}: {error}", item.id));
                     }
                     log::warn!(
                         "embeddings backfill failed for work_item#{}: {}",
                         item.id,
-                        error.message
+                        error
                     );
+                    processed += 1;
+                    progress(processed, total);
+                    continue;
+                }
+            };
+
+            let text = Self::compose_work_item_text(item, &documents);
+            let content_hash = sha256_hex(&text);
+
+            if existing_hashes.get(&item.id).map(String::as_str) == Some(content_hash.as_str()) {
+                report.skipped += 1;
+                processed += 1;
+                progress(processed, total);
+                continue;
+            }
+
+            pending.push(PendingBackfillItem {
+                work_item_id: item.id,
+                content_hash,
+                text,
+            });
+
+            if pending.len() >= VOYAGE_BATCH_LIMIT {
+                let batch_processed =
+                    self.flush_backfill_batch(&api_key, &connection, &mut pending, &mut report);
+                for _ in 0..batch_processed {
+                    processed += 1;
+                    progress(processed, total);
                 }
             }
-            progress(idx + 1, total);
+        }
+
+        let batch_processed =
+            self.flush_backfill_batch(&api_key, &connection, &mut pending, &mut report);
+        for _ in 0..batch_processed {
+            processed += 1;
+            progress(processed, total);
         }
 
         Ok(report)
@@ -460,25 +634,20 @@ impl EmbeddingsService {
 
     /// Summarize embedding coverage for the status UI.
     pub fn status(&self) -> AppResult<EmbeddingsStatus> {
-        let configured = self.voyage_api_key()?.is_some();
-        let connection = self
-            .state
-            .connect_internal()
-            .map_err(AppError::database)?;
+        let configured = vault::has_entry_for_internal(&self.state, VAULT_ENTRY_NAME)?;
+        let connection = self.state.connect_internal().map_err(AppError::database)?;
 
         let total_items: i64 = connection
             .query_row("SELECT COUNT(*) FROM work_items", [], |row| row.get(0))
-            .map_err(|error| {
-                AppError::database(format!("failed to count work items: {error}"))
-            })?;
+            .map_err(|error| AppError::database(format!("failed to count work items: {error}")))?;
         let embedded_items: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM work_item_embeddings",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM work_item_embeddings", [], |row| {
+                row.get(0)
+            })
             .map_err(|error| {
-                AppError::database(format!("failed to count work_item_embeddings rows: {error}"))
+                AppError::database(format!(
+                    "failed to count work_item_embeddings rows: {error}"
+                ))
             })?;
 
         let total_items = total_items.max(0) as usize;
@@ -530,7 +699,9 @@ fn persist_embedding(
                 VOYAGE_DIMENSIONS as i64
             ],
         )
-        .map_err(|error| AppError::database(format!("failed to upsert work_item_embeddings: {error}")))?;
+        .map_err(|error| {
+            AppError::database(format!("failed to upsert work_item_embeddings: {error}"))
+        })?;
 
     // vec0 virtual tables do not support ON CONFLICT / UPSERT cleanly; a
     // DELETE-then-INSERT within a single transaction is the documented pattern.
@@ -540,15 +711,49 @@ fn persist_embedding(
             "DELETE FROM work_item_vectors WHERE work_item_id = ?1",
             [work_item_id],
         )
-        .map_err(|error| AppError::database(format!("failed to clear old work_item_vectors row: {error}")))?;
+        .map_err(|error| {
+            AppError::database(format!(
+                "failed to clear old work_item_vectors row: {error}"
+            ))
+        })?;
     connection
         .execute(
             "INSERT INTO work_item_vectors (work_item_id, embedding) VALUES (?1, ?2)",
             params![work_item_id, blob],
         )
-        .map_err(|error| AppError::database(format!("failed to insert work_item_vectors row: {error}")))?;
+        .map_err(|error| {
+            AppError::database(format!("failed to insert work_item_vectors row: {error}"))
+        })?;
 
     Ok(())
+}
+
+fn load_existing_embedding_hashes(connection: &Connection) -> AppResult<HashMap<i64, String>> {
+    let mut statement = connection
+        .prepare("SELECT work_item_id, content_hash FROM work_item_embeddings")
+        .map_err(|error| {
+            AppError::database(format!(
+                "failed to prepare existing embedding hash query: {error}"
+            ))
+        })?;
+
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| {
+            AppError::database(format!(
+                "failed to query existing embedding hashes: {error}"
+            ))
+        })?;
+
+    let pairs = rows.collect::<Result<Vec<_>, _>>().map_err(|error| {
+        AppError::database(format!(
+            "failed to collect existing embedding hashes: {error}"
+        ))
+    })?;
+
+    Ok(pairs.into_iter().collect())
 }
 
 fn encode_f32_vec(values: &[f32]) -> Vec<u8> {
@@ -809,6 +1014,123 @@ mod tests {
             hits.is_empty(),
             "open_only filter must drop done work items, got {hits:?}"
         );
+    }
+
+    #[test]
+    fn status_uses_vault_metadata_probe_without_releasing_secret() {
+        let dir = unique_temp_dir("status-metadata-probe");
+        let (state, _project_id) = new_state(&dir);
+        let vault_root = std::path::Path::new(&state.storage().app_data_dir).join("vault");
+        let snapshot_path = vault_root.join("project-commander-vault.hold");
+        let key_path = vault_root.join("project-commander-vault.key");
+
+        std::fs::remove_file(&snapshot_path).unwrap();
+        std::fs::remove_file(&key_path).unwrap();
+
+        let svc = EmbeddingsService::with_client(
+            state.clone(),
+            Box::new(StubVoyage {
+                calls: Arc::new(Mutex::new(Vec::new())),
+                dims: VOYAGE_DIMENSIONS,
+            }),
+        );
+
+        let status = svc
+            .status()
+            .expect("status should not require secret release");
+        assert!(
+            status.configured,
+            "metadata presence still marks embeddings configured"
+        );
+        assert!(
+            svc.voyage_api_key().is_err(),
+            "real secret release should still fail when the stronghold artifacts are gone"
+        );
+    }
+
+    #[test]
+    fn backfill_releases_voyage_secret_once_per_run() {
+        let dir = unique_temp_dir("backfill-release-once");
+        let (state, project_id) = new_state(&dir);
+
+        for index in 0..3 {
+            state
+                .create_work_item(CreateWorkItemInput {
+                    project_id,
+                    parent_work_item_id: None,
+                    title: format!("Item {index}"),
+                    body: "Embeddings should batch this.".to_string(),
+                    item_type: "task".to_string(),
+                    status: "backlog".to_string(),
+                })
+                .unwrap();
+        }
+
+        let svc = EmbeddingsService::with_client(
+            state.clone(),
+            Box::new(StubVoyage {
+                calls: Arc::new(Mutex::new(Vec::new())),
+                dims: VOYAGE_DIMENSIONS,
+            }),
+        );
+
+        let report = svc.backfill(None, |_done, _total| {}).unwrap();
+        assert_eq!(report.embedded, report.total);
+        assert_eq!(report.failed, 0);
+
+        let connection = state.connect_internal().unwrap();
+        let release_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM vault_audit_events WHERE action = 'release' AND consumer = ?1",
+                [VAULT_CONSUMER],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            release_count, 1,
+            "backfill should release the Voyage secret once"
+        );
+    }
+
+    #[test]
+    fn backfill_batches_voyage_requests() {
+        let dir = unique_temp_dir("backfill-batches");
+        let (state, project_id) = new_state(&dir);
+
+        for index in 0..(VOYAGE_BATCH_LIMIT + 1) {
+            state
+                .create_work_item(CreateWorkItemInput {
+                    project_id,
+                    parent_work_item_id: None,
+                    title: format!("Batch Item {index}"),
+                    body: "Embeddings batch coverage.".to_string(),
+                    item_type: "task".to_string(),
+                    status: "backlog".to_string(),
+                })
+                .unwrap();
+        }
+
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let svc = EmbeddingsService::with_client(
+            state,
+            Box::new(StubVoyage {
+                calls: calls.clone(),
+                dims: VOYAGE_DIMENSIONS,
+            }),
+        );
+
+        let report = svc.backfill(None, |_done, _total| {}).unwrap();
+        assert_eq!(report.embedded, report.total);
+        assert_eq!(report.failed, 0);
+
+        let calls = calls.lock().unwrap();
+        assert_eq!(
+            calls.len(),
+            2,
+            "129 work items should batch into 2 Voyage calls"
+        );
+        assert_eq!(calls[0].2.len(), VOYAGE_BATCH_LIMIT);
+        assert_eq!(calls[1].2.len(), report.total - VOYAGE_BATCH_LIMIT);
     }
 
     #[test]

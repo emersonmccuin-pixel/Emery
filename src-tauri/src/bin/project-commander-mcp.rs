@@ -173,7 +173,7 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
             }
 
             let slim: Vec<Value> = work_items.into_iter().map(slim_work_item).collect();
-            Ok(serde_json::to_value(slim).expect("work items should serialize"))
+            Ok(json!({ "workItems": slim }))
         }),
         "get_work_item" => execute_tool(|| {
             let args: GetWorkItemArgs = decode_args(arguments)?;
@@ -271,7 +271,7 @@ fn handle_tool_call(state: &AppState, params: Value) -> Result<Value, McpError> 
             }
 
             let slim: Vec<Value> = documents.into_iter().map(slim_document).collect();
-            Ok(serde_json::to_value(slim).expect("documents should serialize"))
+            Ok(json!({ "documents": slim }))
         }),
         "create_document" => execute_tool(|| {
             let args: CreateDocumentArgs = decode_args(arguments)?;

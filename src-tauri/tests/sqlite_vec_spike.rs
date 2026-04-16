@@ -32,7 +32,9 @@ fn sqlite_vec_loads_and_roundtrips_vector() {
     let query: Vec<f32> = vec![0.1, 0.2, 0.3, 0.41];
     let query_bytes: Vec<u8> = query.iter().flat_map(|f| f.to_le_bytes()).collect();
     let mut stmt = conn
-        .prepare("SELECT rowid, distance FROM vtest WHERE embedding MATCH ? ORDER BY distance LIMIT 1")
+        .prepare(
+            "SELECT rowid, distance FROM vtest WHERE embedding MATCH ? ORDER BY distance LIMIT 1",
+        )
         .expect("prepare knn query");
     let (rowid, distance): (i64, f64) = stmt
         .query_row(rusqlite::params![query_bytes], |row| {

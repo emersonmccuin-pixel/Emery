@@ -88,8 +88,5 @@ fn is_due_since(service: &BackupService, window: Duration) -> bool {
         return true;
     };
     let elapsed = Utc::now().signed_duration_since(parsed.with_timezone(&Utc));
-    elapsed
-        .to_std()
-        .map(|d| d >= window)
-        .unwrap_or(false)
+    elapsed.to_std().map(|d| d >= window).unwrap_or(false)
 }

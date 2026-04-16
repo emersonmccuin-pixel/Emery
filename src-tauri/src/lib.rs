@@ -1,18 +1,33 @@
+pub mod agent_message_broker;
+pub mod agent_message_store;
+pub mod agent_signal_store;
+pub mod app_settings_store;
 pub mod backup;
 pub mod backup_scheduler;
 pub mod db;
 pub mod diagnostics;
+pub mod document_store;
 pub mod embeddings;
 pub mod embeddings_worker;
 pub mod error;
+pub mod file_browser;
+pub mod launch_profile_store;
+pub mod project_store;
 pub mod r2_client;
+pub mod runtime_cleanup;
 pub mod session;
 pub mod session_api;
+pub mod session_cleanup;
 pub mod session_host;
+pub mod session_reconciliation;
+pub mod session_recovery;
+pub mod session_store;
 pub mod supervisor_api;
 pub mod supervisor_mcp;
 pub mod vault;
+pub mod work_item_store;
 pub mod workflow;
+pub mod worktree_store;
 
 use db::{
     AppSettings, AppState, BootstrapData, CreateLaunchProfileInput, CreateProjectInput,
@@ -807,6 +822,18 @@ fn get_session_snapshot(
 }
 
 #[tauri::command]
+fn set_terminal_surface_active(active: bool, state: State<SupervisorClient>) -> AppResult<()> {
+    timed_command(
+        "set_terminal_surface_active",
+        format!("active={active}"),
+        || {
+            state.set_terminal_surface_active(active);
+            Ok(())
+        },
+    )
+}
+
+#[tauri::command]
 fn launch_project_session(
     input: LaunchSessionInput,
     session_state: State<SupervisorClient>,
@@ -1293,9 +1320,47 @@ fn write_project_file(root_path: String, filename: String, contents: String) -> 
 }
 
 #[tauri::command]
-fn embeddings_status(
-    state: State<AppState>,
-) -> AppResult<embeddings::EmbeddingsStatus> {
+fn fs_list_dir(
+    root_path: String,
+    relative_path: Option<String>,
+    show_ignored: bool,
+) -> AppResult<Vec<file_browser::ProjectFileEntry>> {
+    let relative_path = relative_path.unwrap_or_default();
+    timed_command(
+        "fs_list_dir",
+        format!("path={} show_ignored={show_ignored}", relative_path),
+        || file_browser::list_dir(&root_path, &relative_path, show_ignored),
+    )
+}
+
+#[tauri::command]
+fn fs_read_file(
+    root_path: String,
+    relative_path: String,
+) -> AppResult<file_browser::ProjectFileReadResult> {
+    timed_command("fs_read_file", format!("path={relative_path}"), || {
+        file_browser::read_file(&root_path, &relative_path)
+    })
+}
+
+#[tauri::command]
+fn fs_write_file(root_path: String, relative_path: String, content: String) -> AppResult<()> {
+    timed_command("fs_write_file", format!("path={relative_path}"), || {
+        file_browser::write_file(&root_path, &relative_path, &content)
+    })
+}
+
+#[tauri::command]
+fn fs_reveal_in_file_explorer(root_path: String, relative_path: String) -> AppResult<()> {
+    timed_command(
+        "fs_reveal_in_file_explorer",
+        format!("path={relative_path}"),
+        || file_browser::reveal_in_file_explorer(&root_path, &relative_path),
+    )
+}
+
+#[tauri::command]
+fn embeddings_status(state: State<AppState>) -> AppResult<embeddings::EmbeddingsStatus> {
     timed_command("embeddings_status", "phase=query", || {
         let service = embeddings::EmbeddingsService::new(state.inner().clone())?;
         service.status()
@@ -1420,6 +1485,7 @@ pub fn run() {
             upsert_vault_entry,
             delete_vault_entry,
             get_session_snapshot,
+            set_terminal_surface_active,
             launch_project_session,
             write_session_input,
             resize_session,
@@ -1453,6 +1519,10 @@ pub fn run() {
             check_project_folder,
             read_project_file,
             write_project_file,
+            fs_list_dir,
+            fs_read_file,
+            fs_write_file,
+            fs_reveal_in_file_explorer,
             save_clipboard_image,
             get_crash_recovery_manifest,
             embed_backfill_work_items,

@@ -49,7 +49,9 @@ impl R2Client {
         let http = Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .build()
-            .map_err(|error| AppError::internal(format!("failed to build R2 HTTP client: {error}")))?;
+            .map_err(|error| {
+                AppError::internal(format!("failed to build R2 HTTP client: {error}"))
+            })?;
         Ok(Self {
             account_id: account_id.into(),
             bucket: bucket.into(),
@@ -64,7 +66,12 @@ impl R2Client {
     }
 
     fn object_url(&self, key: &str) -> String {
-        format!("https://{}/{}/{}", self.host(), self.bucket, encode_path(key))
+        format!(
+            "https://{}/{}/{}",
+            self.host(),
+            self.bucket,
+            encode_path(key)
+        )
     }
 
     fn bucket_url(&self) -> String {
@@ -75,19 +82,17 @@ impl R2Client {
     pub fn head_bucket(&self) -> AppResult<()> {
         let url = self.bucket_url();
         let now = now_utc();
-        let signed = build_signed_request(
-            SignInput {
-                method: "HEAD",
-                host: &self.host(),
-                canonical_uri: &format!("/{}", self.bucket),
-                canonical_query: "",
-                payload_sha256: EMPTY_SHA256,
-                now: &now,
-                access_key: &self.access_key,
-                secret_key: &self.secret_key,
-                extra_headers: &[],
-            },
-        );
+        let signed = build_signed_request(SignInput {
+            method: "HEAD",
+            host: &self.host(),
+            canonical_uri: &format!("/{}", self.bucket),
+            canonical_query: "",
+            payload_sha256: EMPTY_SHA256,
+            now: &now,
+            access_key: &self.access_key,
+            secret_key: &self.secret_key,
+            extra_headers: &[],
+        });
 
         let response = self
             .http
@@ -157,9 +162,9 @@ impl R2Client {
             .send()
             .map_err(|error| AppError::supervisor(format!("R2 get_object failed: {error}")))?;
         let response = expect_success(response, "get_object")?;
-        let bytes = response
-            .bytes()
-            .map_err(|error| AppError::internal(format!("R2 get_object body read failed: {error}")))?;
+        let bytes = response.bytes().map_err(|error| {
+            AppError::internal(format!("R2 get_object body read failed: {error}"))
+        })?;
         Ok(bytes.to_vec())
     }
 
@@ -192,9 +197,9 @@ impl R2Client {
             .send()
             .map_err(|error| AppError::supervisor(format!("R2 list_objects failed: {error}")))?;
         let response = expect_success(response, "list_objects")?;
-        let body = response
-            .text()
-            .map_err(|error| AppError::internal(format!("R2 list_objects body read failed: {error}")))?;
+        let body = response.text().map_err(|error| {
+            AppError::internal(format!("R2 list_objects body read failed: {error}"))
+        })?;
         Ok(parse_list_bucket_result(&body))
     }
 }
@@ -239,10 +244,12 @@ impl SignedRequest {
     fn into_reqwest_headers(self) -> AppResult<HeaderMap> {
         let mut map = HeaderMap::new();
         for (name, value) in self.headers {
-            let header_name = HeaderName::from_bytes(name.as_bytes())
-                .map_err(|error| AppError::internal(format!("invalid header name {name}: {error}")))?;
-            let header_value = HeaderValue::from_str(&value)
-                .map_err(|error| AppError::internal(format!("invalid header value for {name}: {error}")))?;
+            let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
+                AppError::internal(format!("invalid header name {name}: {error}"))
+            })?;
+            let header_value = HeaderValue::from_str(&value).map_err(|error| {
+                AppError::internal(format!("invalid header value for {name}: {error}"))
+            })?;
             map.insert(header_name, header_value);
         }
         Ok(map)
@@ -399,7 +406,11 @@ fn parse_list_bucket_result(xml: &str) -> Vec<R2Object> {
             .unwrap_or(0);
         let last_modified = extract_tag(block, "LastModified").unwrap_or_default();
         if !key.is_empty() {
-            out.push(R2Object { key, size, last_modified });
+            out.push(R2Object {
+                key,
+                size,
+                last_modified,
+            });
         }
         cursor = content_end + "</Contents>".len();
     }
@@ -462,9 +473,8 @@ mod tests {
             .map(|(n, _)| n.as_str())
             .collect::<Vec<_>>()
             .join(";");
-        let canonical_request = format!(
-            "GET\n/test.txt\n\n{canonical_headers}\n{signed_headers}\n{payload}"
-        );
+        let canonical_request =
+            format!("GET\n/test.txt\n\n{canonical_headers}\n{signed_headers}\n{payload}");
         let credential_scope = format!("{}/us-east-1/s3/aws4_request", now.amz_date);
         let string_to_sign = format!(
             "AWS4-HMAC-SHA256\n{}\n{}\n{}",

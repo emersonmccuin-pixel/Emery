@@ -1,14 +1,13 @@
 import { useState } from 'react'
-import { invoke } from '@/lib/tauri'
 import { useAppStore, useSelectedProject } from '../store'
 import './panel-surfaces.css'
 import { MarkdownEditor } from '@/components/ui/markdown-editor'
 import { PanelEmptyState } from '@/components/ui/panel-state'
-import type { WorkItemRecord } from '../types'
 
 function OverviewPanel() {
   const selectedProject = useSelectedProject()
   const workItems = useAppStore((s) => s.workItems)
+  const updateWorkItem = useAppStore((s) => s.updateWorkItem)
   const [saveError, setSaveError] = useState<string | null>(null)
 
   if (!selectedProject) {
@@ -41,21 +40,19 @@ function OverviewPanel() {
   }
 
   const handleChange = async (newBody: string) => {
+    if (newBody === (tracker.body ?? '')) {
+      return
+    }
+
     setSaveError(null)
     try {
-      const updated = await invoke<WorkItemRecord>('update_work_item', {
-        input: {
-          projectId: tracker.projectId,
-          id: tracker.id,
-          title: tracker.title,
-          body: newBody,
-          itemType: tracker.itemType,
-          status: tracker.status,
-        },
+      await updateWorkItem({
+        id: tracker.id,
+        title: tracker.title,
+        body: newBody,
+        itemType: tracker.itemType,
+        status: tracker.status,
       })
-      useAppStore.setState((s) => ({
-        workItems: s.workItems.map((w) => (w.id === updated.id ? updated : w)),
-      }))
     } catch (err) {
       setSaveError(typeof err === 'string' ? err : (err as { message?: string })?.message ?? 'Failed to save.')
     }

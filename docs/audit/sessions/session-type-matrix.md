@@ -1,0 +1,12 @@
+# Session Type Matrix
+
+Last updated: April 14, 2026
+
+| Session family | Runtime identity | Direct owners | Direct systems touched | Indirect systems touched | Key artifacts | Recovery / cleanup path |
+| --- | --- | --- | --- | --- | --- | --- |
+| Dispatcher | project session | `sessionSlice`, `TerminalStage`, `SupervisorClient`, `SessionRegistry` | launch profile selection, PTY runtime, live terminal, session records, session events | history, diagnostics, refresh coordination, recovery banner | session record, output buffer/log, crash report, MCP config, secret temp files | stop, crash recovery, native resume, relaunch with context |
+| Worktree agent | worktree session | `sessionSlice`, `SessionRail`, `WorktreeWorkItemPanel`, `SessionRegistry` | managed worktree path, work item context, PTY runtime, worktree/session coupling | history, cleanup candidates, worktree pin/cleanup rules, refresh coordination | session record, output/crash artifacts, worktree association, secret temp files | stop, crash recovery, orphan cleanup, worktree cleanup |
+| Workflow stage | workflow-managed worktree session | workflow runtime, supervisor, `SessionRegistry` | resolved workflow stages, agent messages, per-stage session launch, per-stage vault bindings | workflow runs, worktrees, history/events, diagnostics | workflow run rows, stage rows, directive/reply ids, thread ids, stage session artifacts | stage completion, stage failure, run failure, stage session termination |
+| Interrupted / failed historical session | recovery state over a prior session | history and recovery slices, recovery UI | recovery details lookup, resume/relaunch action, auto-restart state | diagnostics, refresh coordination, crash artifacts | session record, crash report, output log, recovery startup prompt | resume native session or relaunch with context |
+| Orphaned session | recovery state over a prior session with lost ownership | recovery slice, history slice, supervisor recovery routes | orphan listing, orphan terminate/recover, crash manifest, target reopen | cleanup candidates, worktree state, history, startup reconciliation | session record, crash manifest, recovery details | terminate orphan, then resume or relaunch |
+| Bootstrap / restore context | pre-launch environment for all later sessions | app bootstrap, backup/restore service | restore marker, staged db/vault swap, runtime startup state | every future launch and recovery path | restore marker, staged files, backup archive contents | apply-on-boot or restart restore flow |
