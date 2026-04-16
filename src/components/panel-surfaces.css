@@ -9,6 +9,19 @@
   padding: 16px;
 }
 
+.overview-card--full,
+.overview-card--summary {
+  /* BEM modifiers — inherit .overview-card base; no extra styles needed yet */
+}
+
+.overview-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
 .settings-banner {
   margin-bottom: 12px;
 }

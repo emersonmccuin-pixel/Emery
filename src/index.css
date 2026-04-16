@@ -76,6 +76,14 @@
   --bg-grid-opacity: 0.06;
 
   --panel-gap: 12px;
+  --panel-radius: 6px;
+
+  /* Glow colors — used as the color component in box-shadow utilities */
+  --glow-primary: color-mix(in srgb, var(--hud-green) 45%, transparent);
+  --glow-danger: color-mix(in srgb, var(--destructive) 50%, transparent);
+
+  /* Semantic status */
+  --success: var(--hud-green);
 }
 
 /* ── Background ── */
@@ -770,6 +778,102 @@
   padding: 1px 3px;
   border-radius: 3px;
   background: rgba(255, 255, 255, 0.06);
+}
+
+/* ── Form layout classes ── */
+.stack-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.stack-form__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.stack-form__note {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+
+.field-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted-foreground);
+}
+
+.input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.action-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding-top: 4px;
+}
+
+.form-error {
+  color: var(--destructive);
+  font-size: 0.75rem;
+}
+
+.panel__eyebrow {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: var(--muted-foreground);
+}
+
+/* ── Overview layout classes ── */
+.overview-view {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.overview-grid {
+  display: grid;
+  gap: 16px;
+}
+
+.overview-inline-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.7rem;
+  color: var(--muted-foreground);
+}
+
+.overview-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.overview-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 @media (max-width: 1220px) {
