@@ -23,6 +23,46 @@ type HoverState = {
   containerRect: DOMRect
 }
 
+function lastProjectCommanderHostLine(output: string): string | null {
+  if (!output) {
+    return null
+  }
+
+  const pattern = /^\[Project Commander[^\]]*\]\s*(.+)$/gm
+  let lastMatch: string | null = null
+
+  for (const match of output.matchAll(pattern)) {
+    const candidate = match[1]?.trim()
+    if (candidate) {
+      lastMatch = candidate
+    }
+  }
+
+  return lastMatch
+}
+
+function formatActivityAge(ageMs: number | null) {
+  if (ageMs === null) {
+    return 'Waiting for worker output'
+  }
+
+  const seconds = Math.max(0, Math.floor(ageMs / 1000))
+  if (seconds < 5) {
+    return 'Updated just now'
+  }
+  if (seconds < 60) {
+    return `Updated ${seconds}s ago`
+  }
+
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) {
+    return `Updated ${minutes}m ago`
+  }
+
+  const hours = Math.floor(minutes / 60)
+  return `Updated ${hours}h ago`
+}
+
 function getTerminalErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message.trim()) {
     return error.message
@@ -56,7 +96,27 @@ function LiveTerminal({ snapshot, onSessionExit, workItemPrefix, readOnly = fals
   const [terminalError, setTerminalError] = useState<string | null>(null)
   const [hoverState, setHoverState] = useState<HoverState | null>(null)
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null)
+  const [lastWorkerActivityAt, setLastWorkerActivityAt] = useState<number | null>(
+    snapshot.isRunning ? Date.now() : null,
+  )
+  const [lastWorkerHostLine, setLastWorkerHostLine] = useState<string | null>(
+    () => lastProjectCommanderHostLine(snapshot.output) ?? null,
+  )
+  const [activityClock, setActivityClock] = useState(() => Date.now())
   const sessionKey = `${snapshot.projectId}:${snapshot.worktreeId ?? 'project'}:${snapshot.startedAt}`
+
+  const workerActivityAgeMs =
+    lastWorkerActivityAt === null ? null : Math.max(0, activityClock - lastWorkerActivityAt)
+  const workerPhase = !snapshot.isRunning
+    ? 'Exited'
+    : workerActivityAgeMs === null || workerActivityAgeMs < 15_000
+      ? 'Active'
+      : 'Idle'
+  const workerStatusSummary =
+    lastWorkerHostLine ??
+    (snapshot.isRunning
+      ? 'Watch-only SDK worker console. Send directives from the dispatcher.'
+      : 'Worker session exited.')
 
   useEffect(() => {
     onSessionExitRef.current = onSessionExit
@@ -73,7 +133,9 @@ function LiveTerminal({ snapshot, onSessionExit, workItemPrefix, readOnly = fals
 
     const terminal = new Terminal({
       cursorBlink: !readOnly,
-      convertEol: true,
+      // Preserve raw PTY newline / carriage-return semantics so ANSI-heavy SDK
+      // redraws do not smear or duplicate lines in the watch console.
+      convertEol: false,
       disableStdin: readOnly,
       fontFamily: 'JetBrains Mono, Consolas, monospace',
       fontSize: 13,
@@ -373,7 +435,10 @@ function LiveTerminal({ snapshot, onSessionExit, workItemPrefix, readOnly = fals
       }
 
       setTerminalError(null)
-      terminal.write((latestSnapshot ?? snapshot).output)
+      const boundSnapshot = latestSnapshot ?? snapshot
+      setLastWorkerHostLine(lastProjectCommanderHostLine(boundSnapshot.output))
+      setLastWorkerActivityAt(boundSnapshot.isRunning ? Date.now() : null)
+      terminal.write(boundSnapshot.output)
       focusTerminal()
 
       outputUnlisten = await listen<TerminalOutputEvent>('terminal-output', (event) => {
@@ -384,6 +449,11 @@ function LiveTerminal({ snapshot, onSessionExit, workItemPrefix, readOnly = fals
           return
         }
 
+        setLastWorkerActivityAt(Date.now())
+        const nextHostLine = lastProjectCommanderHostLine(event.payload.data)
+        if (nextHostLine) {
+          setLastWorkerHostLine(nextHostLine)
+        }
         terminal.write(event.payload.data)
       })
 
@@ -395,6 +465,7 @@ function LiveTerminal({ snapshot, onSessionExit, workItemPrefix, readOnly = fals
           return
         }
 
+        setLastWorkerActivityAt(null)
         onSessionExitRef.current(event.payload)
       })
 
@@ -424,6 +495,21 @@ function LiveTerminal({ snapshot, onSessionExit, workItemPrefix, readOnly = fals
       fitAddonRef.current = null
     }
   }, [readOnly, sessionKey, snapshot.projectId])
+
+  useEffect(() => {
+    if (!readOnly || !snapshot.isRunning) {
+      setActivityClock(Date.now())
+      return
+    }
+
+    const timer = window.setInterval(() => {
+      setActivityClock(Date.now())
+    }, 5_000)
+
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [readOnly, sessionKey, snapshot.isRunning])
 
   useEffect(() => {
     const terminal = terminalRef.current
@@ -503,7 +589,16 @@ function LiveTerminal({ snapshot, onSessionExit, workItemPrefix, readOnly = fals
           className="rounded border border-hud-cyan/30 bg-hud-cyan/10 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-hud-cyan"
           role="status"
         >
-          Watch-only SDK worker console. Send directives from the dispatcher.
+          <div className="flex items-center justify-between gap-3">
+            <span>Worker {workerPhase}</span>
+            <span className="text-white/60">{formatActivityAge(workerActivityAgeMs)}</span>
+          </div>
+          <p
+            className="mt-1 text-[11px] text-white/80"
+            style={{ letterSpacing: 0, textTransform: 'none' }}
+          >
+            {workerStatusSummary}
+          </p>
         </div>
       ) : null}
       {terminalError ? (

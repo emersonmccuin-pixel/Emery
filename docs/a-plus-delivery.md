@@ -16,6 +16,8 @@ Use these files together:
   - Source of truth for refresh ownership and invalidation rules.
 - `docs/observability.md`
   - Source of truth for supervisor/perf logging and how to inspect it.
+- `docs/session-runtime-contract.md`
+  - Source of truth for session-runtime authority boundaries across `lib.rs`, `session.rs`, `session_host.rs`, `db.rs`, and the supervisor binary.
 - `CLAUDE.md`
   - Claude-specific project rules.
 - `AGENTS.md`
@@ -112,11 +114,13 @@ If you touch:
 
 - `src-tauri/src/lib.rs`
 - `src-tauri/src/session_host.rs`
+- `src-tauri/src/session.rs`
 - `src-tauri/src/bin/project-commander-supervisor.rs`
 - `src-tauri/src/db.rs`
 
 Then:
 
+ - read `docs/session-runtime-contract.md` first
 - preserve timing/diagnostic logging on hot paths
 - keep route and command boundaries observable
 - avoid introducing silent failure modes in launch, recovery, or cleanup paths

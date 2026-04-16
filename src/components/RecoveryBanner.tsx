@@ -22,6 +22,7 @@ type SessionCardProps = {
   workItem: WorkItemRecord | null
   result: 'pending' | 'resumed' | 'skipped' | 'failed' | undefined
   isActive: boolean
+  isBusy: boolean
   resumeLabel: string
   resumeHint: string
   onResume: () => void
@@ -34,6 +35,7 @@ function SessionCard({
   workItem,
   result,
   isActive,
+  isBusy,
   resumeLabel,
   resumeHint,
   onResume,
@@ -114,7 +116,7 @@ function SessionCard({
             variant="outline"
             size="sm"
             className="h-6 text-[8px] font-black uppercase tracking-widest hud-button--cyan px-2"
-            disabled={isActive}
+            disabled={isActive || isBusy}
             onClick={onResume}
           >
             {isActive ? 'RESUMING...' : resumeLabel}
@@ -123,6 +125,7 @@ function SessionCard({
             variant="ghost"
             size="sm"
             className="h-6 text-[8px] font-black uppercase tracking-widest text-white/40 hover:text-white/70 px-2"
+            disabled={isBusy}
             onClick={onSkip}
           >
             SKIP
@@ -161,6 +164,7 @@ export default function RecoveryBanner({
   const allSessions = [...manifest.interruptedSessions, ...manifest.orphanedSessions]
   const totalCount = allSessions.length
   const hasFallbackRelaunch = allSessions.some((session) => !hasNativeSessionResume(session))
+  const isBusy = activeSessionId !== null
 
   function getWorktree(session: SessionRecord): WorktreeRecord | null {
     if (session.worktreeId == null) return null
@@ -186,7 +190,7 @@ export default function RecoveryBanner({
           <AlertTriangle size={14} className="text-amber-400 shrink-0" />
           <div className="min-w-0">
             <p className="text-[10px] font-black uppercase tracking-[0.15em] text-amber-400">
-              Unclean Shutdown Detected
+              Unclean Shutdown
             </p>
             <p className="text-[9px] text-white/60 uppercase tracking-widest">
               {totalCount} session{totalCount !== 1 ? 's' : ''} {totalCount === 1 ? 'was' : 'were'} interrupted.{' '}
@@ -201,7 +205,6 @@ export default function RecoveryBanner({
           size="icon"
           className="h-6 w-6 shrink-0 text-white/40 hover:text-white/80"
           onClick={onDismiss}
-          title="Dismiss recovery banner"
         >
           <X size={12} />
         </Button>
@@ -230,6 +233,7 @@ export default function RecoveryBanner({
                   workItem={getWorkItem(session)}
                   result={recoveryResults[session.id]}
                   isActive={activeSessionId === session.id}
+                  isBusy={isBusy}
                   resumeLabel={resumeLabel}
                   resumeHint={resumeHint}
                   onResume={() => onResume(session)}
@@ -248,6 +252,7 @@ export default function RecoveryBanner({
             variant="outline"
             size="sm"
             className="h-7 text-[9px] font-black uppercase tracking-widest border-amber-500/40 text-amber-400 hover:bg-amber-500/10 px-3"
+            disabled={isBusy}
             onClick={onResumeAll}
           >
             RESUME ALL

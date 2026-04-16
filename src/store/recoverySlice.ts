@@ -69,12 +69,4 @@ export const createRecoverySlice: StateCreator<AppStore, [], [], RecoverySlice> 
       return null
     }
   },
-
-  continueSession: async (sessionId) => {
-    const record = get().sessionRecords.find((candidate) => candidate.id === sessionId)
-    if (!record) {
-      return
-    }
-    await get().resumeSessionRecord(record)
-  },
 })

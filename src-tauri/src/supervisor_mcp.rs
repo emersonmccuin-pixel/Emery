@@ -1,6 +1,7 @@
 use crate::db::{
     DocumentRecord, ProjectRecord, SessionEventRecord, WorkItemRecord, WorktreeRecord,
 };
+use crate::embeddings::SearchHit;
 use crate::error::{AppError, AppErrorCode, AppResult};
 use crate::session_api::ProjectSessionTarget;
 use crate::supervisor_api::{
@@ -12,6 +13,7 @@ use crate::supervisor_api::{
     PublishSessionWorkerStatusInput, ReconcileProjectTrackerInput, SendAgentMessageApiInput,
     UpdateProjectDocumentInput, UpdateProjectWorkItemInput, WaitAgentMessagesApiInput,
     WaitAgentMessagesOutput, WorkItemDetailOutput, WorktreeLaunchOutput,
+    SearchProjectWorkItemsInput,
 };
 use crate::vault::{
     ExecuteVaultCliIntegrationInput, ExecuteVaultCliIntegrationOutput,
@@ -27,6 +29,7 @@ use std::time::Duration;
 const MCP_SERVER_NAME: &str = "project-commander";
 const MCP_SERVER_VERSION: &str = "0.1.0";
 const MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+const MCP_WAIT_REQUEST_GRACE_MS: u64 = 5_000;
 
 pub fn handle_supervisor_mcp_message(
     port: u16,
@@ -232,6 +235,27 @@ impl SupervisorMcpClient {
         )
     }
 
+    fn search_work_items(
+        &self,
+        query: String,
+        k: Option<usize>,
+        status: Option<String>,
+        item_type: Option<String>,
+        open_only: Option<bool>,
+    ) -> AppResult<Vec<SearchHit>> {
+        self.post(
+            "work-item/search",
+            &SearchProjectWorkItemsInput {
+                project_id: self.project_id,
+                query,
+                k,
+                status,
+                item_type,
+                open_only,
+            },
+        )
+    }
+
     fn list_documents(&self, work_item_id: Option<i64>) -> AppResult<Vec<DocumentRecord>> {
         self.post(
             "document/list",
@@ -431,7 +455,7 @@ impl SupervisorMcpClient {
         limit: Option<i64>,
         timeout_ms: Option<u64>,
     ) -> AppResult<WaitAgentMessagesOutput> {
-        self.post(
+        self.post_with_timeout(
             "message/wait",
             &WaitAgentMessagesApiInput {
                 project_id: self.project_id,
@@ -443,6 +467,7 @@ impl SupervisorMcpClient {
                 limit,
                 timeout_ms,
             },
+            wait_request_timeout(timeout_ms),
         )
     }
 
@@ -601,9 +626,23 @@ impl SupervisorMcpClient {
         TRequest: Serialize,
         TResponse: DeserializeOwned,
     {
+        self.post_with_timeout(route, payload, MCP_REQUEST_TIMEOUT)
+    }
+
+    fn post_with_timeout<TRequest, TResponse>(
+        &self,
+        route: &str,
+        payload: &TRequest,
+        timeout: Duration,
+    ) -> AppResult<TResponse>
+    where
+        TRequest: Serialize,
+        TResponse: DeserializeOwned,
+    {
         let response = self
             .client
             .post(format!("{}/{}", self.base_url, route))
+            .timeout(timeout)
             .header("x-project-commander-token", &self.token)
             .header("x-project-commander-source", "agent_mcp")
             .header(
@@ -624,6 +663,13 @@ impl SupervisorMcpClient {
                 ))
             })?;
 
+        Self::decode_response(response)
+    }
+
+    fn decode_response<TResponse>(response: reqwest::blocking::Response) -> AppResult<TResponse>
+    where
+        TResponse: DeserializeOwned,
+    {
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let body = response
@@ -646,6 +692,12 @@ impl SupervisorMcpClient {
             ))
         })
     }
+}
+
+fn wait_request_timeout(timeout_ms: Option<u64>) -> Duration {
+    let requested = timeout_ms.unwrap_or(30_000);
+    Duration::from_millis(requested.saturating_add(MCP_WAIT_REQUEST_GRACE_MS))
+        .max(MCP_REQUEST_TIMEOUT)
 }
 
 fn handle_message(client: &SupervisorMcpClient, message: Value) -> AppResult<Option<Value>> {
@@ -859,6 +911,29 @@ fn call_tool(client: &SupervisorMcpClient, tool_name: &str, arguments: Value) ->
                     AppError::internal(format!("failed to encode closed work item: {error}"))
                 })?,
             )
+        }
+        "search_work_items" => {
+            let hits = client.search_work_items(
+                read_required_string(&arguments, "query")?,
+                arguments
+                    .get("k")
+                    .and_then(Value::as_u64)
+                    .and_then(|value| usize::try_from(value).ok()),
+                read_optional_string(&arguments, "status"),
+                read_optional_string(&arguments, "itemType"),
+                arguments.get("openOnly").and_then(Value::as_bool),
+            )?;
+            Ok(json!(hits
+                .into_iter()
+                .map(|hit| json!({
+                    "id": hit.work_item_id,
+                    "callSign": hit.call_sign,
+                    "title": hit.title,
+                    "status": hit.status,
+                    "itemType": hit.item_type,
+                    "score": hit.score,
+                }))
+                .collect::<Vec<_>>()))
         }
         "list_documents" => {
             let docs: Vec<Value> = client
@@ -1271,6 +1346,42 @@ fn build_tool_definitions() -> Vec<Value> {
                 },
                 "required": [],
                 "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "search_work_items",
+            "description": "Semantic / fuzzy search over the active project's work items using Voyage AI embeddings. Use when you need to find work items by meaning, not just exact title matches or status filters. Returns slim hits (id, callSign, title, status, itemType, score); call get_work_item for the full body and linked documents.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Natural-language or keyword query."
+                    },
+                    "k": {
+                        "type": "integer",
+                        "description": "Maximum hits to return. Defaults to 10 and is clamped to 1..50."
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["backlog", "in_progress", "blocked", "parked", "done"],
+                        "description": "Optional exact status filter."
+                    },
+                    "itemType": {
+                        "type": "string",
+                        "enum": ["bug", "task", "feature", "note"],
+                        "description": "Optional exact work item type filter."
+                    },
+                    "openOnly": {
+                        "type": "boolean",
+                        "description": "When true, exclude done work items."
+                    }
+                },
+                "required": ["query"],
+                "additionalProperties": false
+            },
+            "_meta": {
+                "anthropic/maxResultSizeChars": 200000
             }
         }),
         json!({
@@ -2010,5 +2121,11 @@ mod tests {
 
         assert_eq!(decoded["method"], "ping");
         assert_eq!(decoded["id"], 1);
+    }
+
+    #[test]
+    fn wait_request_timeout_extends_the_long_poll_window() {
+        assert_eq!(wait_request_timeout(Some(30_000)), Duration::from_secs(35));
+        assert_eq!(wait_request_timeout(Some(1_000)), Duration::from_secs(15));
     }
 }

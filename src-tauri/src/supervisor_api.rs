@@ -110,6 +110,17 @@ pub struct ProjectCallSignTarget {
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SearchProjectWorkItemsInput {
+    pub project_id: i64,
+    pub query: String,
+    pub k: Option<usize>,
+    pub status: Option<String>,
+    pub item_type: Option<String>,
+    pub open_only: Option<bool>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateProjectWorkItemInput {
     pub project_id: i64,
     pub title: String,

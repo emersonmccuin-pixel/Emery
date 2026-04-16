@@ -1,13 +1,33 @@
+pub mod agent_message_broker;
+pub mod agent_message_store;
+pub mod agent_signal_store;
+pub mod app_settings_store;
+pub mod backup;
+pub mod backup_scheduler;
 pub mod db;
 pub mod diagnostics;
+pub mod document_store;
+pub mod embeddings;
+pub mod embeddings_worker;
 pub mod error;
+pub mod file_browser;
+pub mod launch_profile_store;
+pub mod project_store;
+pub mod r2_client;
+pub mod runtime_cleanup;
 pub mod session;
 pub mod session_api;
+pub mod session_cleanup;
 pub mod session_host;
+pub mod session_reconciliation;
+pub mod session_recovery;
+pub mod session_store;
 pub mod supervisor_api;
 pub mod supervisor_mcp;
 pub mod vault;
+pub mod work_item_store;
 pub mod workflow;
+pub mod worktree_store;
 
 use db::{
     AppSettings, AppState, BootstrapData, CreateLaunchProfileInput, CreateProjectInput,
@@ -917,6 +937,18 @@ fn get_session_snapshot(
 }
 
 #[tauri::command]
+fn set_terminal_surface_active(active: bool, state: State<SupervisorClient>) -> AppResult<()> {
+    timed_command(
+        "set_terminal_surface_active",
+        format!("active={active}"),
+        || {
+            state.set_terminal_surface_active(active);
+            Ok(())
+        },
+    )
+}
+
+#[tauri::command]
 fn launch_project_session(
     input: LaunchSessionInput,
     session_state: State<SupervisorClient>,
@@ -1402,6 +1434,143 @@ fn write_project_file(root_path: String, filename: String, contents: String) -> 
     Ok(())
 }
 
+#[tauri::command]
+fn fs_list_dir(
+    root_path: String,
+    relative_path: Option<String>,
+    show_ignored: bool,
+) -> AppResult<Vec<file_browser::ProjectFileEntry>> {
+    let relative_path = relative_path.unwrap_or_default();
+    timed_command(
+        "fs_list_dir",
+        format!("path={} show_ignored={show_ignored}", relative_path),
+        || file_browser::list_dir(&root_path, &relative_path, show_ignored),
+    )
+}
+
+#[tauri::command]
+fn fs_read_file(
+    root_path: String,
+    relative_path: String,
+) -> AppResult<file_browser::ProjectFileReadResult> {
+    timed_command("fs_read_file", format!("path={relative_path}"), || {
+        file_browser::read_file(&root_path, &relative_path)
+    })
+}
+
+#[tauri::command]
+fn fs_write_file(root_path: String, relative_path: String, content: String) -> AppResult<()> {
+    timed_command("fs_write_file", format!("path={relative_path}"), || {
+        file_browser::write_file(&root_path, &relative_path, &content)
+    })
+}
+
+#[tauri::command]
+fn fs_reveal_in_file_explorer(root_path: String, relative_path: String) -> AppResult<()> {
+    timed_command(
+        "fs_reveal_in_file_explorer",
+        format!("path={relative_path}"),
+        || file_browser::reveal_in_file_explorer(&root_path, &relative_path),
+    )
+}
+
+#[tauri::command]
+fn embeddings_status(state: State<AppState>) -> AppResult<embeddings::EmbeddingsStatus> {
+    timed_command("embeddings_status", "phase=query", || {
+        let service = embeddings::EmbeddingsService::new(state.inner().clone())?;
+        service.status()
+    })
+}
+
+#[tauri::command]
+fn embed_backfill_work_items(
+    project_id: Option<i64>,
+    state: State<AppState>,
+) -> AppResult<embeddings::BackfillReport> {
+    let detail = project_id
+        .map(|id| format!("project_id={id}"))
+        .unwrap_or_else(|| "project_id=all".to_string());
+    timed_command("embed_backfill_work_items", detail, || {
+        let service = embeddings::EmbeddingsService::new(state.inner().clone())?;
+        service.backfill(project_id, |_done, _total| {})
+    })
+}
+
+#[tauri::command]
+fn get_backup_settings(state: State<AppState>) -> AppResult<backup::BackupSettings> {
+    timed_command("get_backup_settings", "scope=settings", || {
+        backup::BackupService::new(state.inner().clone()).get_settings()
+    })
+}
+
+#[tauri::command]
+fn update_backup_settings(
+    input: backup::BackupSettingsInput,
+    state: State<AppState>,
+) -> AppResult<backup::BackupSettings> {
+    timed_command("update_backup_settings", "scope=settings", || {
+        backup::BackupService::new(state.inner().clone()).update_settings(input)
+    })
+}
+
+#[tauri::command]
+fn run_full_backup_now(state: State<AppState>) -> AppResult<backup::BackupRunRecord> {
+    timed_command("run_full_backup_now", "scope=full", || {
+        backup::BackupService::new(state.inner().clone())
+            .run_full_backup(backup::BackupTrigger::Manual)
+    })
+}
+
+#[tauri::command]
+fn run_diagnostics_backup_now(state: State<AppState>) -> AppResult<backup::BackupRunRecord> {
+    timed_command("run_diagnostics_backup_now", "scope=diagnostics", || {
+        backup::BackupService::new(state.inner().clone())
+            .run_diagnostics_backup(backup::BackupTrigger::Manual)
+    })
+}
+
+#[tauri::command]
+fn test_backup_connection(state: State<AppState>) -> AppResult<()> {
+    timed_command("test_backup_connection", "scope=r2", || {
+        backup::BackupService::new(state.inner().clone()).test_connection()
+    })
+}
+
+#[tauri::command]
+fn list_backup_runs(
+    limit: Option<usize>,
+    state: State<AppState>,
+) -> AppResult<Vec<backup::BackupRunRecord>> {
+    let limit = limit.unwrap_or(10);
+    timed_command("list_backup_runs", format!("limit={limit}"), || {
+        backup::BackupService::new(state.inner().clone()).list_runs(limit)
+    })
+}
+
+#[tauri::command]
+fn list_remote_backups(state: State<AppState>) -> AppResult<Vec<backup::RemoteBackup>> {
+    timed_command("list_remote_backups", "scope=r2", || {
+        backup::BackupService::new(state.inner().clone()).list_remote_backups()
+    })
+}
+
+#[tauri::command]
+fn prepare_restore_from_r2(
+    object_key: String,
+    state: State<AppState>,
+) -> AppResult<backup::RestoreToken> {
+    timed_command("prepare_restore_from_r2", "scope=restore", || {
+        backup::BackupService::new(state.inner().clone()).prepare_restore(&object_key)
+    })
+}
+
+#[tauri::command]
+fn commit_restore(token: String, state: State<AppState>) -> AppResult<()> {
+    timed_command("commit_restore", "scope=restore", || {
+        backup::BackupService::new(state.inner().clone()).commit_restore(&token)
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -1440,6 +1609,7 @@ pub fn run() {
             delete_vault_entry,
             delete_vault_integration,
             get_session_snapshot,
+            set_terminal_surface_active,
             launch_project_session,
             write_session_input,
             resize_session,
@@ -1473,8 +1643,23 @@ pub fn run() {
             check_project_folder,
             read_project_file,
             write_project_file,
+            fs_list_dir,
+            fs_read_file,
+            fs_write_file,
+            fs_reveal_in_file_explorer,
             save_clipboard_image,
-            get_crash_recovery_manifest
+            get_crash_recovery_manifest,
+            embed_backfill_work_items,
+            embeddings_status,
+            get_backup_settings,
+            update_backup_settings,
+            run_full_backup_now,
+            run_diagnostics_backup_now,
+            test_backup_connection,
+            list_backup_runs,
+            list_remote_backups,
+            prepare_restore_from_r2,
+            commit_restore
         ])
         .setup(|app| {
             let storage = ensure_storage_dirs(&app.handle())?;
@@ -1553,6 +1738,13 @@ pub fn run() {
                 "Desktop app runtime initialized".to_string(),
                 startup_metadata,
             );
+
+            // Attach the embeddings worker sender BEFORE managing the state so
+            // write paths that fire on this AppState instance route through
+            // the background thread.
+            let embeddings_sender = embeddings_worker::spawn(workflow_state.clone());
+            workflow_state.attach_embeddings_sender(embeddings_sender);
+            backup_scheduler::spawn(workflow_state.clone());
 
             app.manage(diagnostics_runtime.clone());
             app.manage(app_runtime_lifecycle);

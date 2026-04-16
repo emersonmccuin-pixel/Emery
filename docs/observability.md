@@ -1,6 +1,6 @@
 # Observability Notes
 
-Last updated: April 14, 2026
+Last updated: April 15, 2026
 
 ## Supervisor Log Location
 
@@ -104,8 +104,10 @@ Last updated: April 14, 2026
   - Claude launch requests now include `launch_mode=fresh|resume` plus the provider session UUID when available, so true-resume behavior after a full app restart is visible in logs.
   - Claude Agent SDK launches now append `session.claude_sdk_auth_configured`, recording whether the worker used a dedicated personal config directory or the default home path.
   - SDK worker hosts can now call `session/status`, `session/heartbeat`, and `session/mark-done`; the supervisor persists those as `session.worker_status` / `session.worker_done` events and keeps `last_heartbeat_at` fresh even when the worker is mostly blocked on broker waits.
+  - Launch-time vault access auditing is now fail-closed: if the durable `vault_audit_events` rows cannot be recorded, the launch logs `stage=record_vault_access_audit` and aborts before child-process spawn.
   - `session.vault_env_injected` now covers both launch-profile bindings and workflow-stage launch bindings; the event payload records env-var names and vault-entry names without ever logging the raw value.
   - `session.vault_file_injected` records the env vars and vault entries whose secrets were materialized into per-session temp files, again without exposing the raw value or file contents.
+  - Launch-time temp secret files and generated Project Commander MCP config now share one cleanup guard, and post-spawn setup failures (`open_pty_reader`, `open_pty_writer`, `persist_runtime_metadata`, `register_session`) all attempt to terminate the partially launched child before returning the error.
   - Vault gate denials now emit a `vault access denied` warning with entry, source, session, and consumer metadata only; the raw value still never reaches logs or diagnostics.
 - Brokered integration diagnostics:
   - `src-tauri/src/bin/project-commander-supervisor.rs` now appends `integration.http_response` and `integration.http_error` project events for supervisor-owned brokered HTTP templates.
@@ -142,6 +144,14 @@ Last updated: April 14, 2026
   - Session launch failed while assembling the child process command.
 - `stage=spawn_command`
   - Session launch failed while spawning the child process.
+- `stage=record_vault_access_audit`
+  - Session launch aborted before spawn because the vault-access audit rows could not be persisted.
+- `stage=open_pty_reader`
+  - Session launch spawned the child, but PTY reader setup failed and the runtime attempted to terminate the partial launch.
+- `stage=open_pty_writer`
+  - Session launch spawned the child, but PTY writer setup failed and the runtime attempted to terminate the partial launch.
+- `stage=register_session`
+  - Session launch reached runtime registration, but the in-process session registry rejected the handoff and the runtime attempted to terminate the partial launch.
 - `session.provider_session_id_updated`
   - A worker host discovered or refreshed the provider-native resume id (for example, a Codex thread id) and persisted it for later recovery.
 - `session.worker_status` / `session.worker_done`

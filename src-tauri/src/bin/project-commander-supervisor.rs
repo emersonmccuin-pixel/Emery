@@ -7,13 +7,22 @@ use project_commander_lib::db::{
     UpdateLaunchProfileInput, UpdateProjectInput, UpdateWorkItemInput, UpsertWorktreeRecordInput,
     WorkItemRecord, WorktreeRecord,
 };
+use project_commander_lib::embeddings::{EmbeddingsService, SearchFilters};
 use project_commander_lib::error::{AppError, AppErrorCode};
+use project_commander_lib::runtime_cleanup::{
+    list_cleanup_candidates as runtime_list_cleanup_candidates,
+    remove_cleanup_candidate as runtime_remove_cleanup_candidate,
+    repair_cleanup_candidates as runtime_repair_cleanup_candidates,
+};
 use project_commander_lib::session::build_supervisor_runtime_info;
 use project_commander_lib::session_api::{
     LaunchSessionInput, ProjectSessionTarget, ResizeSessionInput, SessionInput, SessionPollInput,
     SupervisorHealth, SupervisorRuntimeInfo, SUPERVISOR_PROTOCOL_VERSION,
 };
+use project_commander_lib::session_cleanup::terminate_orphaned_session as cleanup_orphaned_session;
 use project_commander_lib::session_host::{now_timestamp_string, SessionRegistry};
+use project_commander_lib::session_reconciliation::reconcile_orphaned_running_sessions;
+use project_commander_lib::session_recovery::build_crash_recovery_manifest;
 use project_commander_lib::supervisor_api::{
     AckAgentMessagesApiInput, AgentInboxApiInput, CleanupActionOutput, CleanupCandidate,
     CleanupCandidateTarget, CleanupRepairOutput, CleanupWorktreeInput, ClearProjectWorktreesInput,
@@ -24,7 +33,8 @@ use project_commander_lib::supervisor_api::{
     ListProjectWorktreesInput, MarkSessionWorkerDoneInput, PinWorktreeInput, ProjectCallSignTarget,
     ProjectDocumentTarget, ProjectSessionRecordTarget, ProjectWorkItemTarget,
     ProjectWorktreeTarget, PublishSessionWorkerStatusInput, ReconcileProjectTrackerInput,
-    RepairCleanupInput, SendAgentMessageApiInput, SessionCrashReport, SessionRecoveryDetails,
+    CrashRecoveryManifest, RepairCleanupInput, SearchProjectWorkItemsInput, SendAgentMessageApiInput,
+    SessionCrashReport, SessionRecoveryDetails,
     UpdateProjectDocumentInput, UpdateProjectWorkItemInput, UpdateSessionProviderSessionIdInput,
     WaitAgentMessagesApiInput, WaitAgentMessagesOutput, WorkItemDetailOutput, WorktreeLaunchOutput,
 };
@@ -55,10 +65,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
-const CLEANUP_KIND_RUNTIME_ARTIFACT: &str = "runtime_artifact";
+#[cfg(test)]
 const CLEANUP_KIND_STALE_MANAGED_WORKTREE_DIR: &str = "stale_managed_worktree_dir";
+#[cfg(test)]
 const CLEANUP_KIND_STALE_WORKTREE_RECORD: &str = "stale_worktree_record";
-const CLEANUP_KIND_STALE_DONE_WORKTREE: &str = "stale_done_worktree";
 const SUPERVISOR_SLOW_ROUTE_MS: f64 = 500.0;
 const MESSAGE_WAIT_MAX_TIMEOUT_MS: u64 = 300_000;
 const INTEGRATION_HTTP_TIMEOUT: Duration = Duration::from_secs(60);
@@ -107,16 +117,6 @@ struct RouteError {
 struct RequestContext {
     source: String,
     session_id: Option<i64>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct CrashRecoveryManifest {
-    was_crash: bool,
-    interrupted_sessions: Vec<SessionRecord>,
-    orphaned_sessions: Vec<SessionRecord>,
-    affected_worktrees: Vec<WorktreeRecord>,
-    affected_work_items: Vec<WorkItemRecord>,
 }
 
 impl RouteError {
@@ -258,14 +258,19 @@ fn run_server(db_path: PathBuf, runtime_file: PathBuf) -> Result<(), String> {
 
     let removed_runtime_artifacts = cleanup_stale_runtime_artifacts(&runtime_file)?;
     let state = AppState::from_database_path(db_path).map_err(|error| error.to_string())?;
+    // The supervisor is the HTTP write path for the desktop UI; attach the
+    // embeddings worker here so UI-originated work-item mutations land in the
+    // background refresh queue. MCP tool calls have their own inline path.
+    let embeddings_sender = project_commander_lib::embeddings_worker::spawn(state.clone());
+    state.attach_embeddings_sender(embeddings_sender);
+    project_commander_lib::backup_scheduler::spawn(state.clone());
     // Read clean_shutdown BEFORE reconciliation and before resetting it, so we
     // can detect whether the previous run ended in a crash.
     let previous_clean_shutdown = state
         .get_clean_shutdown_setting()
         .map_err(|error| error.to_string())?;
-    let reconciled = state
-        .reconcile_orphaned_running_sessions()
-        .map_err(|error| error.to_string())?;
+    let reconciled =
+        reconcile_orphaned_running_sessions(&state).map_err(|error| error.to_string())?;
     let startup_settings = state
         .get_app_settings()
         .map_err(|error| error.to_string())?;
@@ -994,6 +999,31 @@ fn route_request(
                 .map(|data| json!({ "ok": true, "data": data }))
                 .map_err(|error| {
                     RouteError::internal(format!("failed to encode work items: {error}"))
+                })
+        }
+        (&Method::Post, "/work-item/search") => {
+            let input = read_json::<SearchProjectWorkItemsInput>(request)?;
+            state.get_project(input.project_id)?;
+            let service = EmbeddingsService::new(state.clone()).map_err(RouteError::from)?;
+            let hits = service
+                .search(
+                    input.project_id,
+                    &input.query,
+                    input.k.unwrap_or(10).clamp(1, 50),
+                    SearchFilters {
+                        status: input.status,
+                        item_type: input.item_type,
+                        open_only: input.open_only,
+                    },
+                )
+                .map_err(RouteError::from)?;
+
+            serde_json::to_value(hits)
+                .map(|data| json!({ "ok": true, "data": data }))
+                .map_err(|error| {
+                    RouteError::internal(format!(
+                        "failed to encode work item semantic search results: {error}"
+                    ))
                 })
         }
         (&Method::Post, "/work-item/get") => {
@@ -2295,8 +2325,12 @@ fn launch_worktree_agent(
         let _work_item =
             require_work_item_for_project(state, input.project_id, input.work_item_id)?;
         let worktree = ensure_project_worktree(state, input.project_id, input.work_item_id)?;
-        let launch_profile_id =
-            resolve_worktree_launch_profile_id(state, context.session_id, input.launch_profile_id)?;
+        let launch_profile_id = resolve_worktree_launch_profile_id(
+            state,
+            context.session_id,
+            input.launch_profile_id,
+            input.model.as_deref(),
+        )?;
         let session = sessions
             .launch(
                 LaunchSessionInput {
@@ -3486,6 +3520,7 @@ fn resolve_worktree_launch_profile_id(
     state: &AppState,
     source_session_id: Option<i64>,
     requested_launch_profile_id: Option<i64>,
+    requested_model: Option<&str>,
 ) -> Result<i64, RouteError> {
     if let Some(launch_profile_id) = requested_launch_profile_id {
         state.get_launch_profile(launch_profile_id)?;
@@ -3507,6 +3542,17 @@ fn resolve_worktree_launch_profile_id(
 
     if let Some(launch_profile_id) = bootstrap.settings.default_worker_launch_profile_id {
         return Ok(launch_profile_id);
+    }
+
+    if let Some(provider) = infer_worker_provider_from_model(requested_model) {
+        if let Some(launch_profile_id) = bootstrap
+            .launch_profiles
+            .iter()
+            .find(|profile| profile.provider == provider)
+            .map(|profile| profile.id)
+        {
+            return Ok(launch_profile_id);
+        }
     }
 
     if let Some(profile) = bootstrap
@@ -3534,6 +3580,35 @@ fn resolve_worktree_launch_profile_id(
         .ok_or_else(|| {
             RouteError::bad_request("no launch profile is available for worktree launch")
         })
+}
+
+fn infer_worker_provider_from_model(model: Option<&str>) -> Option<&'static str> {
+    let normalized = model?.trim();
+    if normalized.is_empty() || normalized.eq_ignore_ascii_case("default") {
+        return None;
+    }
+
+    let lower = normalized.to_ascii_lowercase();
+    if lower.starts_with("gpt-") {
+        return Some("codex_sdk");
+    }
+
+    let mut chars = lower.chars();
+    if matches!(chars.next(), Some('o'))
+        && matches!(chars.next(), Some(second) if second.is_ascii_digit())
+    {
+        return Some("codex_sdk");
+    }
+
+    if lower.starts_with("claude-")
+        || lower.contains("sonnet")
+        || lower.contains("opus")
+        || lower.contains("haiku")
+    {
+        return Some("claude_agent_sdk");
+    }
+
+    None
 }
 
 fn is_worker_launch_profile_provider(provider: &str) -> bool {
@@ -4071,230 +4146,71 @@ fn terminate_orphaned_session(
     context: &RequestContext,
     input: ProjectSessionRecordTarget,
 ) -> Result<project_commander_lib::db::SessionRecord, RouteError> {
-    state.get_project(input.project_id)?;
-
-    let session = state.get_session_record(input.session_id)?;
-
-    if session.project_id != input.project_id {
-        return Err(RouteError::not_found(format!(
-            "session #{} is not part of project #{}",
-            input.session_id, input.project_id
-        )));
-    }
-
-    if session.state != "orphaned" {
-        return Err(RouteError::bad_request(format!(
-            "session #{} is not orphaned",
-            input.session_id
-        )));
-    }
-
     let started_at = Instant::now();
     log::info!(
-        "orphan cleanup requested — project_id={} session_id={} worktree_id={:?} process_id={:?} root={} source={}",
-        session.project_id,
-        session.id,
-        session.worktree_id,
-        session.process_id,
-        session.root_path,
+        "orphan cleanup requested — project_id={} session_id={} source={}",
+        input.project_id,
+        input.session_id,
         context.source
     );
+    match cleanup_orphaned_session(state, input.project_id, input.session_id, &context.source) {
+        Ok(result) => {
+            let duration_ms = started_at.elapsed().as_secs_f64() * 1000.0;
+            if duration_ms >= SUPERVISOR_SLOW_ROUTE_MS {
+                log::warn!(
+                    target: "perf",
+                    "orphan_cleanup status=ok slow=true duration_ms={:.2} project_id={} session_id={} final_state={} process_was_alive={} source={}",
+                    duration_ms,
+                    result.session.project_id,
+                    result.session.id,
+                    result.session.state,
+                    result.process_was_alive,
+                    context.source
+                );
+            } else {
+                log::info!(
+                    "orphan cleanup completed — project_id={} session_id={} final_state={} process_was_alive={} duration_ms={:.2} source={}",
+                    result.session.project_id,
+                    result.session.id,
+                    result.session.state,
+                    result.process_was_alive,
+                    duration_ms,
+                    context.source
+                );
+            }
 
-    append_supervisor_session_event(
-        state,
-        &session,
-        "session.orphan_cleanup_requested",
-        &context.source,
-        &json!({
-            "projectId": session.project_id,
-            "sessionId": session.id,
-            "worktreeId": session.worktree_id,
-            "launchProfileId": session.launch_profile_id,
-            "processId": session.process_id,
-            "supervisorPid": session.supervisor_pid,
-            "profileLabel": session.profile_label,
-            "rootPath": session.root_path,
-            "startedAt": session.started_at,
-            "endedAt": session.ended_at,
-            "previousState": session.state,
-        }),
-    );
-
-    let process_id = session
-        .process_id
-        .and_then(|process_id| u32::try_from(process_id).ok());
-    let process_was_alive = process_id.map(supervisor_process_is_alive).unwrap_or(false);
-    let mut terminated_process = false;
-
-    if let Some(process_id) = process_id {
-        if process_was_alive {
-            match terminate_process_tree(process_id) {
-                Ok(()) => {
-                    if !wait_for_process_exit(process_id, Duration::from_secs(2)) {
-                        append_supervisor_session_event(
-                            state,
-                            &session,
-                            "session.orphan_cleanup_failed",
-                            "supervisor_runtime",
-                            &json!({
-                                "projectId": session.project_id,
-                                "sessionId": session.id,
-                                "worktreeId": session.worktree_id,
-                                "processId": session.process_id,
-                                "supervisorPid": session.supervisor_pid,
-                                "rootPath": session.root_path,
-                                "startedAt": session.started_at,
-                                "endedAt": session.ended_at,
-                                "previousState": session.state,
-                                "requestedBy": context.source,
-                                "error": "timed out waiting for orphaned process to exit",
-                            }),
-                        );
-
-                        log::error!(
-                            "orphan cleanup failed — project_id={} session_id={} worktree_id={:?} process_id={:?} duration_ms={:.2} source={} reason=timeout_waiting_for_exit",
-                            session.project_id,
-                            session.id,
-                            session.worktree_id,
-                            session.process_id,
-                            started_at.elapsed().as_secs_f64() * 1000.0,
-                            context.source
-                        );
-
-                        return Err(RouteError::internal(format!(
-                            "timed out waiting for orphaned session #{} to exit",
-                            session.id
-                        )));
-                    }
-
-                    terminated_process = true;
+            Ok(result.session)
+        }
+        Err(error) => {
+            let duration_ms = started_at.elapsed().as_secs_f64() * 1000.0;
+            match error.code {
+                AppErrorCode::InvalidInput | AppErrorCode::NotFound => {
+                    log::warn!(
+                        "orphan cleanup rejected — project_id={} session_id={} duration_ms={:.2} source={} code={:?} message={}",
+                        input.project_id,
+                        input.session_id,
+                        duration_ms,
+                        context.source,
+                        error.code,
+                        error.message
+                    );
                 }
-                Err(error) => {
-                    if supervisor_process_is_alive(process_id) {
-                        append_supervisor_session_event(
-                            state,
-                            &session,
-                            "session.orphan_cleanup_failed",
-                            "supervisor_runtime",
-                            &json!({
-                                "projectId": session.project_id,
-                                "sessionId": session.id,
-                                "worktreeId": session.worktree_id,
-                                "processId": session.process_id,
-                                "supervisorPid": session.supervisor_pid,
-                                "rootPath": session.root_path,
-                                "startedAt": session.started_at,
-                                "endedAt": session.ended_at,
-                                "previousState": session.state,
-                                "requestedBy": context.source,
-                                "error": error,
-                            }),
-                        );
-
-                        log::error!(
-                            "orphan cleanup failed — project_id={} session_id={} worktree_id={:?} process_id={:?} duration_ms={:.2} source={} error={}",
-                            session.project_id,
-                            session.id,
-                            session.worktree_id,
-                            session.process_id,
-                            started_at.elapsed().as_secs_f64() * 1000.0,
-                            context.source,
-                            error
-                        );
-
-                        return Err(RouteError::internal(format!(
-                            "failed to terminate orphaned session #{}",
-                            session.id
-                        )));
-                    }
-
-                    terminated_process = process_was_alive;
+                _ => {
+                    log::error!(
+                        "orphan cleanup failed — project_id={} session_id={} duration_ms={:.2} source={} code={:?} message={}",
+                        input.project_id,
+                        input.session_id,
+                        duration_ms,
+                        context.source,
+                        error.code,
+                        error.message
+                    );
                 }
             }
+
+            Err(RouteError::from(error))
         }
     }
-
-    let ended_at = if terminated_process {
-        now_timestamp_string()
-    } else {
-        session
-            .ended_at
-            .clone()
-            .unwrap_or_else(now_timestamp_string)
-    };
-    let state_name = if terminated_process {
-        "terminated"
-    } else {
-        "interrupted"
-    };
-    let event_type = if terminated_process {
-        "session.orphan_terminated"
-    } else {
-        "session.orphan_reconciled"
-    };
-    let reason = if terminated_process {
-        "orphaned session process terminated by supervisor"
-    } else {
-        "recorded orphaned process was no longer running when cleanup was requested"
-    };
-    let updated = state
-        .finish_session_record(project_commander_lib::db::FinishSessionRecordInput {
-            id: session.id,
-            state: state_name.to_string(),
-            ended_at: Some(ended_at.clone()),
-            exit_code: None,
-            exit_success: Some(false),
-        })
-        .map_err(RouteError::from)?;
-
-    append_supervisor_session_event(
-        state,
-        &updated,
-        event_type,
-        "supervisor_runtime",
-        &json!({
-            "projectId": updated.project_id,
-            "sessionId": updated.id,
-            "worktreeId": updated.worktree_id,
-            "launchProfileId": updated.launch_profile_id,
-            "processId": updated.process_id,
-            "supervisorPid": updated.supervisor_pid,
-            "profileLabel": updated.profile_label,
-            "rootPath": updated.root_path,
-            "startedAt": updated.started_at,
-            "endedAt": updated.ended_at,
-            "previousState": session.state,
-            "requestedBy": context.source,
-            "processWasAlive": process_was_alive,
-            "reason": reason,
-        }),
-    );
-
-    let duration_ms = started_at.elapsed().as_secs_f64() * 1000.0;
-    if duration_ms >= SUPERVISOR_SLOW_ROUTE_MS {
-        log::warn!(
-            target: "perf",
-            "orphan_cleanup status=ok slow=true duration_ms={:.2} project_id={} session_id={} final_state={} process_was_alive={} source={}",
-            duration_ms,
-            updated.project_id,
-            updated.id,
-            updated.state,
-            process_was_alive,
-            context.source
-        );
-    } else {
-        log::info!(
-            "orphan cleanup completed — project_id={} session_id={} final_state={} process_was_alive={} duration_ms={:.2} source={}",
-            updated.project_id,
-            updated.id,
-            updated.state,
-            process_was_alive,
-            duration_ms,
-            context.source
-        );
-    }
-
-    Ok(updated)
 }
 
 #[derive(Default)]
@@ -4931,41 +4847,24 @@ fn cleanup_stale_runtime_artifacts(runtime_file: &Path) -> Result<Vec<PathBuf>, 
 }
 
 fn list_cleanup_candidates(state: &AppState) -> Result<Vec<CleanupCandidate>, String> {
-    let mut candidates = collect_runtime_cleanup_candidates(state)?;
-    candidates.extend(collect_stale_managed_worktree_candidates(state)?);
-    candidates.extend(collect_stale_worktree_record_candidates(state)?);
-    candidates.extend(collect_stale_done_worktree_candidates(state)?);
-    candidates.sort_by(|left, right| {
-        left.kind
-            .cmp(&right.kind)
-            .then_with(|| left.path.cmp(&right.path))
-    });
-    Ok(candidates)
+    runtime_list_cleanup_candidates(state)
 }
 
 fn repair_cleanup_candidates(
     state: &AppState,
     context: &RequestContext,
 ) -> Result<CleanupRepairOutput, RouteError> {
-    let candidates = list_cleanup_candidates(state).map_err(RouteError::from)?;
-    log::info!(
-        "repair cleanup requested — candidate_count={} source={}",
-        candidates.len(),
-        context.source
-    );
-    let mut actions = Vec::with_capacity(candidates.len());
-
-    for candidate in candidates {
-        actions.push(apply_cleanup_candidate(state, context, candidate)?);
-    }
+    log::info!("repair cleanup requested — source={}", context.source);
+    let result =
+        runtime_repair_cleanup_candidates(state, &context.source).map_err(RouteError::from)?;
 
     log::info!(
         "repair cleanup completed — repaired_count={} source={}",
-        actions.len(),
+        result.actions.len(),
         context.source
     );
 
-    Ok(CleanupRepairOutput { actions })
+    Ok(result)
 }
 
 fn remove_cleanup_candidate(
@@ -4973,165 +4872,38 @@ fn remove_cleanup_candidate(
     context: &RequestContext,
     input: CleanupCandidateTarget,
 ) -> Result<CleanupActionOutput, RouteError> {
-    let candidates = list_cleanup_candidates(state).map_err(RouteError::from)?;
-    let candidate = candidates
-        .into_iter()
-        .find(|candidate| candidate.kind == input.kind && candidate.path == input.path)
-        .ok_or_else(|| {
-            RouteError::not_found(format!(
-                "cleanup candidate not found: {} {}",
-                input.kind, input.path
-            ))
-        })?;
-
-    apply_cleanup_candidate(state, context, candidate)
-}
-
-fn apply_cleanup_candidate(
-    state: &AppState,
-    context: &RequestContext,
-    candidate: CleanupCandidate,
-) -> Result<CleanupActionOutput, RouteError> {
-    let candidate_path = PathBuf::from(&candidate.path);
-    let candidate_kind = candidate.kind.clone();
-    let candidate_path_text = candidate.path.clone();
-    let candidate_project_id = candidate.project_id;
-    let candidate_worktree_id = candidate.worktree_id;
     let started_at = Instant::now();
-
     log::info!(
-        "cleanup candidate apply requested — kind={} path={} project_id={:?} worktree_id={:?} source={}",
-        candidate_kind,
-        candidate_path_text,
-        candidate_project_id,
-        candidate_worktree_id,
+        "cleanup candidate remove requested — kind={} path={} source={}",
+        input.kind,
+        input.path,
         context.source
     );
+    let result = runtime_remove_cleanup_candidate(state, &input.kind, &input.path, &context.source)
+        .map_err(RouteError::from);
+    log_cleanup_candidate_result(
+        &result,
+        started_at,
+        &input.kind,
+        &input.path,
+        None,
+        None,
+        &context.source,
+    );
+    result
+}
 
-    let result = (|| {
-        match candidate.kind.as_str() {
-            CLEANUP_KIND_RUNTIME_ARTIFACT => {
-                let runtime_root = PathBuf::from(state.storage().app_data_dir).join("runtime");
-                remove_cleanup_path(&runtime_root, &candidate_path)?;
-            }
-            CLEANUP_KIND_STALE_MANAGED_WORKTREE_DIR => {
-                let worktree_root = PathBuf::from(state.storage().app_data_dir).join("worktrees");
-                remove_cleanup_path(&worktree_root, &candidate_path)?;
-
-                if let Some(parent) = candidate_path.parent() {
-                    remove_empty_ancestor_dirs(&worktree_root, parent)?;
-                }
-            }
-            CLEANUP_KIND_STALE_WORKTREE_RECORD => {
-                let project_id = candidate.project_id.ok_or_else(|| {
-                    RouteError::internal(
-                        "stale worktree record candidate is missing project id".to_string(),
-                    )
-                })?;
-                let worktree_id = candidate.worktree_id.ok_or_else(|| {
-                    RouteError::internal(
-                        "stale worktree record candidate is missing worktree id".to_string(),
-                    )
-                })?;
-                let worktree = require_worktree_for_project(state, project_id, worktree_id)?;
-
-                state
-                    .delete_worktree(worktree_id)
-                    .map_err(RouteError::from)?;
-                append_project_audit_event(
-                    state,
-                    project_id,
-                    "worktree.record_reconciled",
-                    "worktree",
-                    worktree_id,
-                    &context.source,
-                    &json!({
-                        "kind": candidate.kind,
-                        "path": candidate.path,
-                        "projectId": project_id,
-                        "worktreeId": worktree_id,
-                        "branchName": worktree.branch_name,
-                        "workItemId": worktree.work_item_id,
-                        "reason": candidate.reason,
-                    }),
-                );
-            }
-            CLEANUP_KIND_STALE_DONE_WORKTREE => {
-                let project_id = candidate.project_id.ok_or_else(|| {
-                    RouteError::internal(
-                        "stale done worktree candidate is missing project id".to_string(),
-                    )
-                })?;
-                let worktree_id = candidate.worktree_id.ok_or_else(|| {
-                    RouteError::internal(
-                        "stale done worktree candidate is missing worktree id".to_string(),
-                    )
-                })?;
-                let worktree = require_worktree_for_project(state, project_id, worktree_id)?;
-
-                // Re-verify safety conditions at apply time (defense in depth).
-                if worktree.has_uncommitted_changes {
-                    return Err(RouteError::bad_request(format!(
-                        "worktree #{worktree_id} has uncommitted changes; skipping auto-cleanup"
-                    )));
-                }
-                if worktree.has_unmerged_commits {
-                    return Err(RouteError::bad_request(format!(
-                        "worktree #{worktree_id} has unmerged commits; skipping auto-cleanup"
-                    )));
-                }
-
-                let project = state.get_project(project_id)?;
-                let project_git_root = resolve_git_root(&project.root_path)?;
-                let worktree_root = PathBuf::from(state.storage().app_data_dir).join("worktrees");
-
-                remove_worktree_path_artifacts(
-                    &project_git_root,
-                    &worktree_root,
-                    Path::new(&worktree.worktree_path),
-                )?;
-
-                // Best-effort branch deletion: -d (not -D) refuses unmerged branches.
-                let _ =
-                    run_git_command(&project_git_root, &["branch", "-d", &worktree.branch_name]);
-
-                state
-                    .delete_worktree(worktree_id)
-                    .map_err(RouteError::from)?;
-                append_project_audit_event(
-                    state,
-                    project_id,
-                    "worktree.auto_cleaned",
-                    "worktree",
-                    worktree_id,
-                    &context.source,
-                    &json!({
-                        "kind": candidate.kind,
-                        "path": candidate.path,
-                        "projectId": project_id,
-                        "worktreeId": worktree_id,
-                        "branchName": worktree.branch_name,
-                        "workItemId": worktree.work_item_id,
-                        "reason": candidate.reason,
-                    }),
-                );
-            }
-            _ => {
-                return Err(RouteError::bad_request(format!(
-                    "unsupported cleanup candidate kind: {}",
-                    candidate.kind
-                )))
-            }
-        }
-
-        Ok(CleanupActionOutput {
-            removed: true,
-            candidate,
-        })
-    })();
-
+fn log_cleanup_candidate_result(
+    result: &Result<CleanupActionOutput, RouteError>,
+    started_at: Instant,
+    candidate_kind: &str,
+    candidate_path_text: &str,
+    candidate_project_id: Option<i64>,
+    candidate_worktree_id: Option<i64>,
+    source: &str,
+) {
     let duration_ms = started_at.elapsed().as_secs_f64() * 1000.0;
-    match &result {
+    match result {
         Ok(_) if duration_ms >= SUPERVISOR_SLOW_ROUTE_MS => log::warn!(
             target: "perf",
             "cleanup_candidate status=ok slow=true duration_ms={:.2} kind={} path={} project_id={:?} worktree_id={:?} source={}",
@@ -5140,7 +4912,7 @@ fn apply_cleanup_candidate(
             candidate_path_text,
             candidate_project_id,
             candidate_worktree_id,
-            context.source
+            source
         ),
         Ok(_) => log::info!(
             "cleanup candidate applied — kind={} path={} project_id={:?} worktree_id={:?} duration_ms={:.2} source={}",
@@ -5149,7 +4921,7 @@ fn apply_cleanup_candidate(
             candidate_project_id,
             candidate_worktree_id,
             duration_ms,
-            context.source
+            source
         ),
         Err(error) if error.status >= 500 => log::error!(
             "cleanup candidate failed — kind={} path={} project_id={:?} worktree_id={:?} duration_ms={:.2} source={} code={:?} message={}",
@@ -5158,7 +4930,7 @@ fn apply_cleanup_candidate(
             candidate_project_id,
             candidate_worktree_id,
             duration_ms,
-            context.source,
+            source,
             error.code,
             error.message
         ),
@@ -5169,256 +4941,11 @@ fn apply_cleanup_candidate(
             candidate_project_id,
             candidate_worktree_id,
             duration_ms,
-            context.source,
+            source,
             error.code,
             error.message
         ),
     }
-
-    result
-}
-
-fn collect_runtime_cleanup_candidates(state: &AppState) -> Result<Vec<CleanupCandidate>, String> {
-    let runtime_dir = PathBuf::from(state.storage().app_data_dir).join("runtime");
-
-    if !runtime_dir.is_dir() {
-        return Ok(Vec::new());
-    }
-
-    let mut candidates = Vec::new();
-    let entries = fs::read_dir(&runtime_dir)
-        .map_err(|error| format!("failed to read runtime cleanup directory: {error}"))?;
-
-    for entry in entries {
-        let entry = entry
-            .map_err(|error| format!("failed to inspect runtime cleanup artifact: {error}"))?;
-        let path = entry.path();
-
-        if path.file_name().and_then(|name| name.to_str()) == Some("supervisor.json") {
-            continue;
-        }
-
-        candidates.push(CleanupCandidate {
-            kind: CLEANUP_KIND_RUNTIME_ARTIFACT.to_string(),
-            path: path.display().to_string(),
-            project_id: None,
-            worktree_id: None,
-            session_id: None,
-            reason: "unexpected artifact inside the supervisor-owned runtime directory".to_string(),
-        });
-    }
-
-    Ok(candidates)
-}
-
-fn collect_stale_managed_worktree_candidates(
-    state: &AppState,
-) -> Result<Vec<CleanupCandidate>, String> {
-    let worktree_root = PathBuf::from(state.storage().app_data_dir).join("worktrees");
-
-    if !worktree_root.is_dir() {
-        return Ok(Vec::new());
-    }
-
-    let projects = state.list_projects().map_err(|error| error.to_string())?;
-    let mut tracked_paths = HashSet::new();
-    let (protected_worktree_ids, protected_paths) = collect_protected_worktree_state(state)?;
-
-    for project in projects {
-        for worktree in state
-            .list_worktrees(project.id)
-            .map_err(|error| error.to_string())?
-        {
-            tracked_paths.insert(normalize_cleanup_path_key(Path::new(
-                &worktree.worktree_path,
-            )));
-        }
-    }
-
-    let _ = protected_worktree_ids;
-
-    let mut candidates = Vec::new();
-    let project_dirs = fs::read_dir(&worktree_root)
-        .map_err(|error| format!("failed to read managed worktree root: {error}"))?;
-
-    for project_dir in project_dirs {
-        let project_dir = project_dir
-            .map_err(|error| format!("failed to inspect managed worktree root: {error}"))?;
-
-        if !project_dir
-            .file_type()
-            .map_err(|error| format!("failed to inspect managed worktree directory: {error}"))?
-            .is_dir()
-        {
-            continue;
-        }
-
-        let worktree_dirs = fs::read_dir(project_dir.path()).map_err(|error| {
-            format!(
-                "failed to read managed worktree project directory {}: {error}",
-                project_dir.path().display()
-            )
-        })?;
-
-        for worktree_dir in worktree_dirs {
-            let worktree_dir = worktree_dir.map_err(|error| {
-                format!("failed to inspect managed worktree candidate directory: {error}")
-            })?;
-            let worktree_path = worktree_dir.path();
-
-            if !worktree_dir
-                .file_type()
-                .map_err(|error| format!("failed to inspect managed worktree artifact: {error}"))?
-                .is_dir()
-            {
-                continue;
-            }
-
-            let path_key = normalize_cleanup_path_key(&worktree_path);
-
-            if tracked_paths.contains(&path_key) || protected_paths.contains(&path_key) {
-                continue;
-            }
-
-            candidates.push(CleanupCandidate {
-                kind: CLEANUP_KIND_STALE_MANAGED_WORKTREE_DIR.to_string(),
-                path: worktree_path.display().to_string(),
-                project_id: None,
-                worktree_id: None,
-                session_id: None,
-                reason:
-                    "managed worktree directory is not referenced by any stored worktree or active session"
-                        .to_string(),
-            });
-        }
-    }
-
-    Ok(candidates)
-}
-
-fn collect_stale_worktree_record_candidates(
-    state: &AppState,
-) -> Result<Vec<CleanupCandidate>, String> {
-    let projects = state.list_projects().map_err(|error| error.to_string())?;
-    let (protected_worktree_ids, protected_paths) = collect_protected_worktree_state(state)?;
-    let mut candidates = Vec::new();
-
-    for project in projects {
-        for worktree in state
-            .list_worktrees(project.id)
-            .map_err(|error| error.to_string())?
-        {
-            if worktree.path_available {
-                continue;
-            }
-
-            if protected_worktree_ids.contains(&worktree.id)
-                || protected_paths.contains(&normalize_cleanup_path_key(Path::new(
-                    &worktree.worktree_path,
-                )))
-            {
-                continue;
-            }
-
-            candidates.push(CleanupCandidate {
-                kind: CLEANUP_KIND_STALE_WORKTREE_RECORD.to_string(),
-                path: worktree.worktree_path.clone(),
-                project_id: Some(project.id),
-                worktree_id: Some(worktree.id),
-                session_id: None,
-                reason:
-                    "stored worktree record points at a missing path and is not protected by any live or orphaned session"
-                        .to_string(),
-            });
-        }
-    }
-
-    Ok(candidates)
-}
-
-fn collect_stale_done_worktree_candidates(
-    state: &AppState,
-) -> Result<Vec<CleanupCandidate>, String> {
-    let projects = state.list_projects().map_err(|error| error.to_string())?;
-    let (protected_worktree_ids, _) = collect_protected_worktree_state(state)?;
-    let mut candidates = Vec::new();
-
-    for project in projects {
-        for worktree in state
-            .list_worktrees(project.id)
-            .map_err(|error| error.to_string())?
-        {
-            // Only clean up worktrees whose work item is fully done.
-            if worktree.work_item_status != "done" {
-                continue;
-            }
-
-            // Directory must still exist — the stale_worktree_record collector
-            // handles the missing-path case.
-            if !worktree.path_available {
-                continue;
-            }
-
-            // Pinned worktrees are explicitly preserved by the user.
-            if !worktree.is_cleanup_eligible {
-                continue;
-            }
-
-            // Never auto-clean a worktree with uncommitted changes.
-            if worktree.has_uncommitted_changes {
-                continue;
-            }
-
-            // Never auto-clean a worktree with unmerged commits.
-            if worktree.has_unmerged_commits {
-                continue;
-            }
-
-            // Skip worktrees protected by a running or orphaned session.
-            if protected_worktree_ids.contains(&worktree.id) {
-                continue;
-            }
-
-            candidates.push(CleanupCandidate {
-                kind: CLEANUP_KIND_STALE_DONE_WORKTREE.to_string(),
-                path: worktree.worktree_path.clone(),
-                project_id: Some(project.id),
-                worktree_id: Some(worktree.id),
-                session_id: None,
-                reason: "worktree work item is done with no active session, uncommitted changes, or unmerged commits"
-                    .to_string(),
-            });
-        }
-    }
-
-    Ok(candidates)
-}
-
-fn collect_protected_worktree_state(
-    state: &AppState,
-) -> Result<(HashSet<i64>, HashSet<String>), String> {
-    let projects = state.list_projects().map_err(|error| error.to_string())?;
-    let mut protected_worktree_ids = HashSet::new();
-    let mut protected_paths = HashSet::new();
-
-    for project in projects {
-        for session in state
-            .list_session_records(project.id)
-            .map_err(|error| error.to_string())?
-        {
-            if !matches!(session.state.as_str(), "running" | "orphaned") {
-                continue;
-            }
-
-            if let Some(worktree_id) = session.worktree_id {
-                protected_worktree_ids.insert(worktree_id);
-            }
-
-            protected_paths.insert(normalize_cleanup_path_key(Path::new(&session.root_path)));
-        }
-    }
-
-    Ok((protected_worktree_ids, protected_paths))
 }
 
 fn normalize_cleanup_path_key(path: &Path) -> String {
@@ -5429,40 +4956,6 @@ fn normalize_cleanup_path_key(path: &Path) -> String {
     } else {
         path
     }
-}
-
-fn remove_cleanup_path(root: &Path, candidate_path: &Path) -> Result<(), RouteError> {
-    if !candidate_path.exists() {
-        return Err(RouteError::not_found(format!(
-            "cleanup path no longer exists: {}",
-            candidate_path.display()
-        )));
-    }
-
-    if !path_is_within(root, candidate_path) {
-        return Err(RouteError::bad_request(format!(
-            "refusing to remove cleanup target outside managed root: {}",
-            candidate_path.display()
-        )));
-    }
-
-    if candidate_path.is_dir() {
-        fs::remove_dir_all(candidate_path).map_err(|error| {
-            RouteError::internal(format!(
-                "failed to remove cleanup directory {}: {error}",
-                candidate_path.display()
-            ))
-        })?;
-    } else {
-        fs::remove_file(candidate_path).map_err(|error| {
-            RouteError::internal(format!(
-                "failed to remove cleanup file {}: {error}",
-                candidate_path.display()
-            ))
-        })?;
-    }
-
-    Ok(())
 }
 
 fn remove_empty_ancestor_dirs(root: &Path, start: &Path) -> Result<(), RouteError> {
@@ -5890,68 +5383,6 @@ fn path_is_within(root: &Path, candidate: &Path) -> bool {
     candidate.starts_with(root)
 }
 
-fn append_supervisor_session_event<T>(
-    state: &AppState,
-    session: &project_commander_lib::db::SessionRecord,
-    event_type: &str,
-    source: &str,
-    payload: &T,
-) where
-    T: Serialize,
-{
-    let payload_json = match serde_json::to_string(payload) {
-        Ok(payload_json) => payload_json,
-        Err(error) => {
-            log::error!("failed to encode session event payload: {error}");
-            return;
-        }
-    };
-
-    if let Err(error) = state.append_session_event(AppendSessionEventInput {
-        project_id: session.project_id,
-        session_id: Some(session.id),
-        event_type: event_type.to_string(),
-        entity_type: Some("session".to_string()),
-        entity_id: Some(session.id),
-        source: source.to_string(),
-        payload_json,
-    }) {
-        log::error!("failed to append session event: {error}");
-    }
-}
-
-fn append_project_audit_event<T>(
-    state: &AppState,
-    project_id: i64,
-    event_type: &str,
-    entity_type: &str,
-    entity_id: i64,
-    source: &str,
-    payload: &T,
-) where
-    T: Serialize,
-{
-    let payload_json = match serde_json::to_string(payload) {
-        Ok(payload_json) => payload_json,
-        Err(error) => {
-            log::error!("failed to encode audit payload: {error}");
-            return;
-        }
-    };
-
-    if let Err(error) = state.append_session_event(AppendSessionEventInput {
-        project_id,
-        session_id: None,
-        event_type: event_type.to_string(),
-        entity_type: Some(entity_type.to_string()),
-        entity_id: Some(entity_id),
-        source: source.to_string(),
-        payload_json,
-    }) {
-        log::error!("failed to append audit event: {error}");
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Project event helpers
 // ---------------------------------------------------------------------------
@@ -6062,22 +5493,7 @@ where
     })
 }
 
-fn wait_for_process_exit(process_id: u32, timeout: Duration) -> bool {
-    let started_at = Instant::now();
-
-    loop {
-        if !supervisor_process_is_alive(process_id) {
-            return true;
-        }
-
-        if started_at.elapsed() >= timeout {
-            return false;
-        }
-
-        std::thread::sleep(Duration::from_millis(100));
-    }
-}
-
+#[cfg(test)]
 fn supervisor_process_is_alive(process_id: u32) -> bool {
     #[cfg(windows)]
     {
@@ -6102,40 +5518,6 @@ fn supervisor_process_is_alive(process_id: u32) -> bool {
             .status()
             .map(|status| status.success())
             .unwrap_or(false)
-    }
-}
-
-fn terminate_process_tree(process_id: u32) -> Result<(), String> {
-    #[cfg(windows)]
-    {
-        let mut cmd = ProcessCommand::new("taskkill");
-        cmd.stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .args(["/PID", &process_id.to_string(), "/T", "/F"]);
-        cmd.creation_flags(CREATE_NO_WINDOW);
-        let status = cmd
-            .status()
-            .map_err(|error| format!("failed to run taskkill: {error}"))?;
-
-        if status.success() {
-            return Ok(());
-        }
-
-        return Err(format!("taskkill exited with status {status}"));
-    }
-
-    #[cfg(not(windows))]
-    {
-        let status = ProcessCommand::new("kill")
-            .args(["-9", &process_id.to_string()])
-            .status()
-            .map_err(|error| format!("failed to run kill: {error}"))?;
-
-        if status.success() {
-            return Ok(());
-        }
-
-        Err(format!("kill exited with status {status}"))
     }
 }
 
@@ -6192,53 +5574,6 @@ fn write_runtime_file(path: &Path, runtime: &SupervisorRuntimeInfo) -> Result<()
         .map_err(|error| format!("failed to finalize supervisor runtime file: {error}"))
 }
 
-fn build_crash_recovery_manifest(
-    state: &AppState,
-    reconciled: &[SessionRecord],
-) -> Result<CrashRecoveryManifest, String> {
-    let interrupted_sessions: Vec<SessionRecord> = reconciled
-        .iter()
-        .filter(|s| s.state == "interrupted")
-        .cloned()
-        .collect();
-
-    let orphaned_sessions: Vec<SessionRecord> = reconciled
-        .iter()
-        .filter(|s| s.state == "orphaned")
-        .cloned()
-        .collect();
-
-    // Collect the worktrees linked to any reconciled session.
-    let mut affected_worktrees: Vec<WorktreeRecord> = Vec::new();
-    let mut seen_worktree_ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
-    for session in reconciled {
-        if let Some(worktree_id) = session.worktree_id {
-            if seen_worktree_ids.insert(worktree_id) {
-                match state.get_worktree(worktree_id) {
-                    Ok(worktree) => affected_worktrees.push(worktree),
-                    Err(error) => {
-                        log::warn!(
-                            "failed to load worktree {worktree_id} for crash manifest: {error}"
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    let affected_work_items = state.list_in_progress_work_items().map_err(|error| {
-        format!("failed to load in-progress work items for crash manifest: {error}")
-    })?;
-
-    Ok(CrashRecoveryManifest {
-        was_crash: true,
-        interrupted_sessions,
-        orphaned_sessions,
-        affected_worktrees,
-        affected_work_items,
-    })
-}
-
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
@@ -6247,7 +5582,9 @@ mod tests {
         CreateSessionRecordInput, CreateWorkItemInput, LaunchProfileRecord, ProjectRecord,
         SessionRecord, UpdateAppSettingsInput, UpdateLaunchProfileInput, UpdateProjectInput,
     };
+    use project_commander_lib::session_recovery::dedupe_recovery_sessions_by_target;
     use project_commander_lib::supervisor_api::ProjectWorktreeTarget;
+    use project_commander_lib::workflow::AdoptCatalogEntryInput;
     use reqwest::blocking::Client;
     use rusqlite::{params, Connection};
     use std::process::Child;
@@ -6341,6 +5678,27 @@ mod tests {
             self.state
                 .get_launch_profile(connection.last_insert_rowid())
                 .expect("launch profile should load")
+        }
+
+        fn write_library_workflow(&self, file_name: &str, yaml: &str) {
+            let storage = self.state.storage();
+            let workflow_dir =
+                project_commander_lib::workflow::workflow_dir(Path::new(&storage.app_data_dir));
+            fs::create_dir_all(&workflow_dir)
+                .expect("workflow library directory should be created");
+            fs::write(workflow_dir.join(file_name), yaml)
+                .expect("workflow definition should be written");
+        }
+
+        fn adopt_workflow(&self, project_id: i64, slug: &str) {
+            self.state
+                .adopt_catalog_entry(AdoptCatalogEntryInput {
+                    project_id,
+                    entity_type: "workflow".to_string(),
+                    slug: slug.to_string(),
+                    mode: None,
+                })
+                .expect("workflow should be adopted");
         }
     }
 
@@ -6798,6 +6156,7 @@ mod tests {
                 root_path: harness.project_root.display().to_string(),
                 system_prompt: None,
                 base_branch: None,
+                default_workflow_slug: None,
             })
             .send()
             .expect("project update request should succeed")
@@ -6986,6 +6345,50 @@ mod tests {
     }
 
     #[test]
+    fn resolve_worktree_launch_profile_uses_codex_worker_for_openai_model_hints() {
+        let harness = TestHarness::new("resolve-worktree-profile-codex-model", false);
+        let bootstrap = harness
+            .state
+            .bootstrap()
+            .expect("bootstrap should load seeded launch profiles");
+        let codex_profile = bootstrap
+            .launch_profiles
+            .iter()
+            .find(|profile| profile.provider == "codex_sdk")
+            .expect("codex worker profile should be seeded");
+
+        let resolved =
+            resolve_worktree_launch_profile_id(&harness.state, None, None, Some("gpt-5.4"))
+                .expect("openai model hint should resolve a codex worker profile");
+
+        assert_eq!(resolved, codex_profile.id);
+    }
+
+    #[test]
+    fn resolve_worktree_launch_profile_uses_claude_worker_for_claude_model_hints() {
+        let harness = TestHarness::new("resolve-worktree-profile-claude-model", false);
+        let bootstrap = harness
+            .state
+            .bootstrap()
+            .expect("bootstrap should load seeded launch profiles");
+        let claude_profile = bootstrap
+            .launch_profiles
+            .iter()
+            .find(|profile| profile.provider == "claude_agent_sdk")
+            .expect("claude worker profile should be seeded");
+
+        let resolved = resolve_worktree_launch_profile_id(
+            &harness.state,
+            None,
+            None,
+            Some("claude-sonnet-4-6"),
+        )
+        .expect("claude model hint should resolve a claude worker profile");
+
+        assert_eq!(resolved, claude_profile.id);
+    }
+
+    #[test]
     fn supervisor_routes_return_bad_request_for_invalid_work_item_payloads() {
         let harness = TestHarness::new("invalid-work-item-route", false);
         let project = harness.create_project("Commander");
@@ -7048,9 +6451,7 @@ mod tests {
             })
             .expect("running session record should be created");
 
-        let reconciled = harness
-            .state
-            .reconcile_orphaned_running_sessions()
+        let reconciled = reconcile_orphaned_running_sessions(&harness.state)
             .expect("startup reconciliation should succeed");
         let records = harness
             .state
@@ -7096,9 +6497,7 @@ mod tests {
             })
             .expect("running session record should be created");
 
-        let reconciled = harness
-            .state
-            .reconcile_orphaned_running_sessions()
+        let reconciled = reconcile_orphaned_running_sessions(&harness.state)
             .expect("startup reconciliation should succeed");
         let records = harness
             .state
@@ -7902,6 +7301,195 @@ mod tests {
     }
 
     #[test]
+    fn workflow_run_start_route_completes_a_single_stage_through_supervisor_messaging() {
+        let harness = TestHarness::new("workflow-run-route", true);
+        let project = harness.create_project("Commander");
+        let work_item = harness.create_work_item(project.id, "Prove workflow integration");
+        let _profile = harness.insert_launch_profile(
+            "Workflow Custom Worker",
+            "cmd.exe",
+            launch_long_running_args(),
+        );
+        harness.write_library_workflow(
+            "route-proof.yaml",
+            r#"
+name: route-proof
+kind: meta
+version: 1
+description: Workflow route integration proof
+categories:
+  - META
+stages:
+  - name: implement
+    role: generator
+    provider: custom
+"#,
+        );
+        harness.adopt_workflow(project.id, "route-proof");
+
+        let (runtime, handle) = spawn_route_server(harness.state.clone(), 2);
+        let started = authorized_client(&runtime)
+            .post(supervisor_url(&runtime, "/workflow/run/start"))
+            .header("x-project-commander-token", &runtime.token)
+            .header("x-project-commander-source", "integration_test")
+            .json(&StartWorkflowRunInput {
+                project_id: project.id,
+                workflow_slug: "route-proof".to_string(),
+                root_work_item_id: work_item.id,
+                root_worktree_id: None,
+            })
+            .send()
+            .expect("workflow run start request should succeed")
+            .error_for_status()
+            .expect("workflow run start route should return success");
+        let started =
+            unwrap_envelope::<WorkflowRunRecord>(started, "workflow run start should decode");
+
+        wait_for("workflow stage dispatch", || {
+            harness
+                .state
+                .list_project_workflow_runs(project.id)
+                .expect("workflow runs should load")
+                .runs
+                .into_iter()
+                .find(|run| run.id == started.id)
+                .and_then(|run| run.stages.into_iter().next())
+                .map(|stage| {
+                    stage.status == "running"
+                        && stage.session_id.is_some()
+                        && stage.thread_id.is_some()
+                        && stage.agent_name.is_some()
+                })
+                .unwrap_or(false)
+        });
+
+        let dispatched = harness
+            .state
+            .list_project_workflow_runs(project.id)
+            .expect("workflow runs should load")
+            .runs
+            .into_iter()
+            .find(|run| run.id == started.id)
+            .expect("started workflow run should be present");
+        let stage = dispatched
+            .stages
+            .first()
+            .expect("workflow run should include the dispatched stage");
+        let stage_session_id = stage
+            .session_id
+            .expect("dispatched stage should persist its session id");
+        let stage_thread_id = stage
+            .thread_id
+            .clone()
+            .expect("dispatched stage should persist its thread id");
+
+        let completion = authorized_client(&runtime)
+            .post(supervisor_url(&runtime, "/message/send"))
+            .header("x-project-commander-token", &runtime.token)
+            .header("x-project-commander-source", "integration_test")
+            .header(
+                "x-project-commander-session-id",
+                stage_session_id.to_string(),
+            )
+            .json(&SendAgentMessageApiInput {
+                project_id: project.id,
+                to_agent: "dispatcher".to_string(),
+                thread_id: Some(stage_thread_id.clone()),
+                reply_to_message_id: None,
+                message_type: "complete".to_string(),
+                body: "stage finished cleanly".to_string(),
+                context_json: Some(
+                    json!({
+                        "workflowRunId": started.id,
+                        "stageName": "implement",
+                    })
+                    .to_string(),
+                ),
+            })
+            .send()
+            .expect("workflow stage completion message should send")
+            .error_for_status()
+            .expect("workflow stage completion route should return success");
+        let reply = unwrap_envelope::<AgentMessageRecord>(
+            completion,
+            "workflow stage completion should decode",
+        );
+
+        wait_for("workflow run completion", || {
+            harness
+                .state
+                .list_project_workflow_runs(project.id)
+                .expect("workflow runs should load")
+                .runs
+                .into_iter()
+                .find(|run| run.id == started.id)
+                .map(|run| run.status == "completed")
+                .unwrap_or(false)
+        });
+
+        handle
+            .join()
+            .expect("workflow route server should stop cleanly");
+
+        let completed = harness
+            .state
+            .list_project_workflow_runs(project.id)
+            .expect("workflow runs should load")
+            .runs
+            .into_iter()
+            .find(|run| run.id == started.id)
+            .expect("completed workflow run should be present");
+        let stage = completed
+            .stages
+            .first()
+            .expect("completed workflow run should keep its stage");
+        let worktree = harness
+            .state
+            .get_worktree(
+                completed
+                    .root_worktree_id
+                    .expect("workflow run should resolve a root worktree"),
+            )
+            .expect("workflow worktree should load");
+        let session = harness
+            .state
+            .get_session_record(stage_session_id)
+            .expect("workflow stage session should load");
+        let event_types = harness
+            .state
+            .list_session_events(project.id, 30)
+            .expect("session events should load")
+            .into_iter()
+            .map(|event| event.event_type)
+            .collect::<Vec<_>>();
+
+        assert_eq!(started.status, "queued");
+        assert_eq!(completed.status, "completed");
+        assert_eq!(completed.workflow_slug, "route-proof");
+        assert_eq!(completed.root_work_item_id, work_item.id);
+        assert_eq!(completed.root_worktree_id, Some(worktree.id));
+        assert_eq!(stage.stage_name, "implement");
+        assert_eq!(stage.status, "completed");
+        assert_eq!(stage.session_id, Some(stage_session_id));
+        assert_eq!(stage.thread_id.as_deref(), Some(stage_thread_id.as_str()));
+        assert_eq!(stage.response_message_id, Some(reply.id));
+        assert_eq!(stage.completion_message_type.as_deref(), Some("complete"));
+        assert_eq!(
+            stage.completion_summary.as_deref(),
+            Some("stage finished cleanly")
+        );
+        assert_eq!(session.state, "terminated");
+        assert_eq!(session.worktree_id, Some(worktree.id));
+        assert_eq!(reply.status, "delivered");
+        assert_eq!(reply.from_agent, worktree.agent_name);
+        assert_eq!(reply.to_agent, "dispatcher");
+        assert!(event_types.contains(&"workflow.run_started".to_string()));
+        assert!(event_types.contains(&"workflow.stage_dispatched".to_string()));
+        assert!(event_types.contains(&"workflow.stage_completed".to_string()));
+        assert!(event_types.contains(&"workflow.run_completed".to_string()));
+    }
+
+    #[test]
     fn session_registry_launches_reattaches_and_terminates_project_sessions() {
         let harness = TestHarness::new("session-runtime", false);
         let project = harness.create_project("Commander");
@@ -8230,5 +7818,89 @@ mod tests {
         assert_eq!(stored.state, "interrupted");
         assert!(stored.ended_at.is_some());
         assert!(event_types.contains(&"session.orphan_cleanup_requested".to_string()));
+    }
+
+    #[test]
+    fn dedupe_recovery_sessions_by_target_keeps_only_latest_target_record() {
+        let dispatcher_old = SessionRecord {
+            id: 260,
+            project_id: 1,
+            launch_profile_id: Some(1),
+            worktree_id: None,
+            process_id: None,
+            supervisor_pid: None,
+            provider: "claude_code".to_string(),
+            provider_session_id: Some("dispatcher-old".to_string()),
+            profile_label: "Claude Code / YOLO".to_string(),
+            root_path: "E:\\repo".to_string(),
+            state: "interrupted".to_string(),
+            startup_prompt: "dispatcher".to_string(),
+            started_at: "2026-04-14 19:00:00".to_string(),
+            ended_at: Some("2026-04-14 19:10:00".to_string()),
+            exit_code: Some(1),
+            exit_success: Some(false),
+            created_at: "2026-04-14 19:00:00".to_string(),
+            updated_at: "2026-04-14 19:10:00".to_string(),
+            last_heartbeat_at: Some("2026-04-14 19:09:59".to_string()),
+        };
+        let dispatcher_new = SessionRecord {
+            id: 265,
+            provider_session_id: Some("dispatcher-new".to_string()),
+            started_at: "2026-04-14 20:00:00".to_string(),
+            ended_at: Some("2026-04-14 20:10:00".to_string()),
+            created_at: "2026-04-14 20:00:00".to_string(),
+            updated_at: "2026-04-14 20:10:00".to_string(),
+            last_heartbeat_at: Some("2026-04-14 20:09:59".to_string()),
+            ..dispatcher_old.clone()
+        };
+        let worktree_old = SessionRecord {
+            id: 267,
+            worktree_id: Some(125),
+            provider: "claude_agent_sdk".to_string(),
+            provider_session_id: Some("worker-old".to_string()),
+            profile_label: "Claude Agent SDK / Local".to_string(),
+            root_path: "E:\\repo\\worktree".to_string(),
+            startup_prompt: String::new(),
+            started_at: "2026-04-14 20:18:37".to_string(),
+            ended_at: Some("2026-04-14 20:40:55".to_string()),
+            created_at: "2026-04-14 20:18:37".to_string(),
+            updated_at: "2026-04-14 20:40:55".to_string(),
+            last_heartbeat_at: Some("2026-04-14 20:40:54".to_string()),
+            ..dispatcher_old.clone()
+        };
+        let worktree_new = SessionRecord {
+            id: 268,
+            state: "orphaned".to_string(),
+            provider_session_id: Some("worker-new".to_string()),
+            started_at: "2026-04-14 20:18:38".to_string(),
+            ended_at: Some("2026-04-14 20:40:56".to_string()),
+            created_at: "2026-04-14 20:18:38".to_string(),
+            updated_at: "2026-04-14 20:40:56".to_string(),
+            last_heartbeat_at: Some("2026-04-14 20:40:55".to_string()),
+            ..worktree_old.clone()
+        };
+
+        let deduped = dedupe_recovery_sessions_by_target(&[
+            dispatcher_old,
+            dispatcher_new,
+            worktree_old,
+            worktree_new,
+        ]);
+
+        assert_eq!(deduped.len(), 2);
+        assert_eq!(
+            deduped
+                .iter()
+                .find(|session| session.worktree_id.is_none())
+                .expect("dispatcher session should remain")
+                .id,
+            265
+        );
+        let worktree = deduped
+            .iter()
+            .find(|session| session.worktree_id == Some(125))
+            .expect("worktree session should remain");
+        assert_eq!(worktree.id, 268);
+        assert_eq!(worktree.state, "orphaned");
     }
 }

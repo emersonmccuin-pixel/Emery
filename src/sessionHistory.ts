@@ -60,7 +60,31 @@ export function getLatestSessionForTarget(
   records: SessionRecord[],
   worktreeId: number | null,
 ): SessionRecord | null {
-  return records.find((record) => (record.worktreeId ?? null) === worktreeId) ?? null
+  let latest: SessionRecord | null = null
+  let latestTimestamp = Number.NEGATIVE_INFINITY
+
+  for (const record of records) {
+    if ((record.worktreeId ?? null) !== worktreeId) {
+      continue
+    }
+
+    const recordTimestamp =
+      parseTimestamp(record.endedAt) ??
+      parseTimestamp(record.updatedAt) ??
+      parseTimestamp(record.startedAt) ??
+      Number.NEGATIVE_INFINITY
+
+    if (
+      latest === null ||
+      recordTimestamp > latestTimestamp ||
+      (recordTimestamp === latestTimestamp && record.id > latest.id)
+    ) {
+      latest = record
+      latestTimestamp = recordTimestamp
+    }
+  }
+
+  return latest
 }
 
 export function getSessionTargetLabel(

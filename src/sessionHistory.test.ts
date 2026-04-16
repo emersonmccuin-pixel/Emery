@@ -79,6 +79,56 @@ describe('getLatestSessionForTarget', () => {
 
     expect(getLatestSessionForTarget(records, 44)?.id).toBe(3)
   })
+
+  it('does not depend on the caller providing records in newest-first order', () => {
+    const records = [
+      createSessionRecord({
+        id: 1,
+        worktreeId: 44,
+        state: 'terminated',
+        startedAt: '1712769600',
+        updatedAt: '2026-04-10 10:01:00',
+      }),
+      createSessionRecord({
+        id: 4,
+        worktreeId: 44,
+        state: 'interrupted',
+        startedAt: '1712773200',
+        updatedAt: '2026-04-10 11:05:00',
+      }),
+      createSessionRecord({
+        id: 2,
+        worktreeId: null,
+        state: 'terminated',
+      }),
+      createSessionRecord({
+        id: 3,
+        worktreeId: 44,
+        state: 'failed',
+        startedAt: '1712771400',
+        updatedAt: '2026-04-10 10:35:00',
+      }),
+    ]
+
+    expect(getLatestSessionForTarget(records, 44)?.id).toBe(4)
+  })
+
+  it('breaks equal timestamps by newer record id', () => {
+    const records = [
+      createSessionRecord({
+        id: 7,
+        worktreeId: null,
+        updatedAt: '2026-04-10 10:05:00',
+      }),
+      createSessionRecord({
+        id: 8,
+        worktreeId: null,
+        updatedAt: '2026-04-10 10:05:00',
+      }),
+    ]
+
+    expect(getLatestSessionForTarget(records, null)?.id).toBe(8)
+  })
 })
 
 describe('session recovery helpers', () => {

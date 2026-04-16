@@ -3,6 +3,7 @@ import { createDiagnosticsCorrelationId, recordDiagnosticsEntry } from '@/diagno
 import type { AppStore, UiSlice } from './types'
 import { defaultThemeId, getTheme } from '../themes'
 import { applyTheme } from '../themeEngine'
+import { normalizeWorkspaceViewForTarget } from './workspaceRouting'
 
 const THEME_STORAGE_KEY = 'project-commander-theme-id'
 
@@ -35,7 +36,10 @@ export const createUiSlice: StateCreator<AppStore, [], [], UiSlice> = (set, get)
   isAppSettingsOpen: false,
   appSettingsInitialTab: 'appearance',
 
-  setActiveView: (value) => set({ activeView: value }),
+  setActiveView: (value) =>
+    set((state) => ({
+      activeView: normalizeWorkspaceViewForTarget(value, state.selectedTerminalWorktreeId),
+    })),
   setActiveThemeId: (id) => {
     const theme = getTheme(id)
     applyTheme(theme)

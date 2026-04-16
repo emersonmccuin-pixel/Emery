@@ -8,6 +8,7 @@ import type {
   CleanupRepairOutput,
   SessionHistoryOutput,
   SessionRecord,
+  SessionSnapshot,
 } from '../types'
 import type { AppStore, HistorySlice } from './types'
 import {
@@ -160,6 +161,7 @@ export const createHistorySlice: StateCreator<AppStore, [], [], HistorySlice> = 
   },
 
   openSessionTarget: (record) => {
+    get().focusTerminalTarget(record.worktreeId ?? null, 'terminal')
     set((state) => ({
       selectedLaunchProfileId:
         (record.worktreeId ?? null) === null &&
@@ -167,10 +169,13 @@ export const createHistorySlice: StateCreator<AppStore, [], [], HistorySlice> = 
         record.launchProfileId !== undefined
           ? record.launchProfileId
           : state.selectedLaunchProfileId,
-      selectedTerminalWorktreeId: record.worktreeId ?? null,
-      activeView: 'terminal',
-    }))
+      }))
   },
+
+  resumeRecoverableSession: async (record) =>
+    record.state === 'orphaned'
+      ? await get().recoverOrphanedSession(record)
+      : await get().resumeSessionRecord(record),
 
   terminateRecoveredSession: async (sessionId) => {
     const state = get()
@@ -209,12 +214,12 @@ export const createHistorySlice: StateCreator<AppStore, [], [], HistorySlice> = 
     }
   },
 
-  recoverOrphanedSession: async (record) => {
+  recoverOrphanedSession: async (record): Promise<SessionSnapshot | null> => {
     const state = get()
     const selectedProject = state.projects.find((p) => p.id === state.selectedProjectId) ?? null
 
     if (!selectedProject || record.projectId !== selectedProject.id) {
-      return
+      return null
     }
 
     const details = await get().fetchSessionRecoveryDetails(selectedProject.id, record.id)
@@ -262,8 +267,10 @@ export const createHistorySlice: StateCreator<AppStore, [], [], HistorySlice> = 
             ? `Supervisor terminated orphaned session #${record.id}.`
             : `Supervisor reconciled orphaned session #${record.id}.`,
       })
+      return replacement
     } catch (error) {
       set({ historyError: getErrorMessage(error, 'Failed to recover the orphaned session.') })
+      return null
     } finally {
       set({ activeOrphanSessionId: null })
     }

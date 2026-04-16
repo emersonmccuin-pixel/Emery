@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { invoke as tauriInvoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useShallow } from 'zustand/react/shallow'
 import {
@@ -25,14 +26,12 @@ import { getFirstDispatcherLaunchProfile } from './store/utils'
 import {
   useSelectedProject,
   useSelectedLaunchProfile,
-  useVisibleWorktrees,
 } from './store'
 import WorkspaceShell from './components/WorkspaceShell'
 
 function App() {
   const selectedProject = useSelectedProject()
   const selectedLaunchProfile = useSelectedLaunchProfile()
-  const visibleWorktrees = useVisibleWorktrees()
 
   const {
     projects,
@@ -42,12 +41,13 @@ function App() {
     autoRepairSetting,
     selectedProjectId,
     selectedTerminalWorktreeId,
-    stagedWorktreesLength,
-    worktreesLength,
+    stagedWorktrees,
+    worktrees,
     liveSessionCount,
     activeView,
     isAgentGuideOpen,
     selectedHistorySessionId,
+    isAppSettingsOpen,
     sessionRecords,
     isLoadingWorkItems,
     isLoadingDocuments,
@@ -62,12 +62,13 @@ function App() {
       autoRepairSetting: s.appSettings.autoRepairSafeCleanupOnStartup,
       selectedProjectId: s.selectedProjectId,
       selectedTerminalWorktreeId: s.selectedTerminalWorktreeId,
-      stagedWorktreesLength: s.stagedWorktrees.length,
-      worktreesLength: s.worktrees.length,
+      stagedWorktrees: s.stagedWorktrees,
+      worktrees: s.worktrees,
       liveSessionCount: s.liveSessionSnapshots.length,
       activeView: s.activeView,
       isAgentGuideOpen: s.isAgentGuideOpen,
       selectedHistorySessionId: s.selectedHistorySessionId,
+      isAppSettingsOpen: s.isAppSettingsOpen,
       sessionRecords: s.sessionRecords,
       isLoadingWorkItems: s.isLoadingWorkItems,
       isLoadingDocuments: s.isLoadingDocuments,
@@ -85,6 +86,8 @@ function App() {
   const visibleContextRefreshPendingRef = useRef(false)
   const visibleContextRefreshPendingReasonRef = useRef('pending-update')
   const visibleContextRefreshPendingIdRef = useRef('refresh-pending')
+  const deferredHistoryHydrationTimeoutRef = useRef<number | null>(null)
+  const hydratedHistorySurfaceProjectIdRef = useRef<number | null>(null)
   const activeViewLoadRef = useRef<{
     loadId: string
     view: string
@@ -96,6 +99,33 @@ function App() {
       window.clearTimeout(visibleContextRefreshTimeoutRef.current)
       visibleContextRefreshTimeoutRef.current = null
     }
+  }
+
+  const clearDeferredHistoryHydrationTimer = () => {
+    if (deferredHistoryHydrationTimeoutRef.current !== null) {
+      window.clearTimeout(deferredHistoryHydrationTimeoutRef.current)
+      deferredHistoryHydrationTimeoutRef.current = null
+    }
+  }
+
+  const hydrateHistorySurface = (projectId: number) => {
+    clearDeferredHistoryHydrationTimer()
+    const store = useAppStore.getState()
+
+    if (store.selectedProjectId !== projectId) {
+      return
+    }
+
+    if (
+      hydratedHistorySurfaceProjectIdRef.current === projectId ||
+      store.isLoadingHistory
+    ) {
+      return
+    }
+
+    hydratedHistorySurfaceProjectIdRef.current = projectId
+    void store.loadCleanupCandidates()
+    void store.loadSessionHistory(projectId)
   }
 
   const refreshVisibleProjectContext = async (
@@ -123,8 +153,9 @@ function App() {
     const shouldRefreshHistory = store.activeView === 'history'
     const shouldRefreshWork =
       store.activeView === 'workItems' || store.activeView === 'worktreeWorkItem' || store.isAgentGuideOpen
+    const shouldRefreshWorkflowRuns = store.activeView === 'workflows'
 
-    if (!shouldRefreshHistory && !shouldRefreshWork) {
+    if (!shouldRefreshHistory && !shouldRefreshWork && !shouldRefreshWorkflowRuns) {
       recordDiagnosticsEntry({
         event: 'refresh.visible-context',
         source: 'refresh',
@@ -142,7 +173,9 @@ function App() {
 
     const targets: ProjectRefreshTarget[] = shouldRefreshHistory
       ? ['history', 'orphanedSessions', 'cleanupCandidates']
-      : ['workItems', 'documents']
+      : shouldRefreshWork
+        ? ['workItems', 'documents']
+        : ['workflowRuns']
     const startedAt = performance.now()
 
     try {
@@ -255,6 +288,11 @@ function App() {
         : activeView === 'terminal'
           ? isLoadingWorktrees
           : false
+  const startupBlockingLoad =
+    isLoadingWorkItems ||
+    isLoadingDocuments ||
+    isLoadingWorktrees ||
+    (activeView === 'history' && isLoadingHistory)
 
   // Bootstrap
   useEffect(() => {
@@ -464,26 +502,20 @@ function App() {
     }
   }, [defaultLaunchProfileId, launchProfiles, selectedLaunchProfile])
 
-  // Sync: clear selected worktree if removed
-  useEffect(() => {
-    if (
-      selectedTerminalWorktreeId !== null &&
-      !visibleWorktrees.some((w) => w.id === selectedTerminalWorktreeId)
-    ) {
-      useAppStore.setState({ selectedTerminalWorktreeId: null })
-    }
-  }, [selectedTerminalWorktreeId, visibleWorktrees])
-
   // Sync: clean up staged worktrees
   useEffect(() => {
-    if (stagedWorktreesLength === 0 || worktreesLength === 0) return
+    if (stagedWorktrees.length === 0) return
 
-    useAppStore.setState((s) => ({
-      stagedWorktrees: s.stagedWorktrees.filter(
-        (staged) => !s.worktrees.some((w) => w.id === staged.id),
-      ),
-    }))
-  }, [stagedWorktreesLength, worktreesLength])
+    const persistedIds = new Set(worktrees.map((worktree) => worktree.id))
+    const nextStagedWorktrees =
+      persistedIds.size === 0
+        ? []
+        : stagedWorktrees.filter((staged) => !persistedIds.has(staged.id))
+
+    if (nextStagedWorktrees.length === stagedWorktrees.length) return
+
+    useAppStore.setState({ stagedWorktrees: nextStagedWorktrees })
+  }, [stagedWorktrees, worktrees])
 
   // Load live sessions on project change
   useEffect(() => {
@@ -525,10 +557,7 @@ function App() {
   }, [selectedProjectId])
 
   useEffect(() => {
-    const hasVisibleLoad =
-      isLoadingWorkItems || isLoadingDocuments || isLoadingHistory || isLoadingWorktrees
-
-    if (hasVisibleLoad) {
+    if (startupBlockingLoad) {
       startupObservedLoadingRef.current = true
     }
 
@@ -536,7 +565,7 @@ function App() {
       return
     }
 
-    if (hasVisibleLoad) {
+    if (startupBlockingLoad) {
       projectSwitchObservedLoadingRef.current = true
       return
     }
@@ -555,10 +584,7 @@ function App() {
     }
   }, [
     selectedProjectId,
-    isLoadingWorkItems,
-    isLoadingDocuments,
-    isLoadingHistory,
-    isLoadingWorktrees,
+    startupBlockingLoad,
   ])
 
   useEffect(() => {
@@ -640,15 +666,12 @@ function App() {
       return
     }
 
-    const hasVisibleLoad =
-      isLoadingWorkItems || isLoadingDocuments || isLoadingHistory || isLoadingWorktrees
-
     if (selectedProjectId === null) {
       finishTrackedPerfSpan('app-startup', { projectCount: projects.length, emptyState: true })
       return
     }
 
-    if (hasVisibleLoad) {
+    if (startupBlockingLoad) {
       startupObservedLoadingRef.current = true
       return
     }
@@ -670,15 +693,13 @@ function App() {
     startupBootstrapComplete,
     selectedProjectId,
     projects.length,
-    isLoadingWorkItems,
-    isLoadingDocuments,
-    isLoadingHistory,
-    isLoadingWorktrees,
+    startupBlockingLoad,
   ])
 
   const shouldRefreshWorkContext =
     activeView === 'workItems' || activeView === 'worktreeWorkItem' || isAgentGuideOpen
   const shouldRefreshHistoryContext = activeView === 'history'
+  const shouldRefreshWorkflowContext = activeView === 'workflows'
 
   // Reconcile runtime state on focus/visibility and with a low-frequency fallback interval so
   // out-of-band supervisor/MCP changes surface without tying visible context refreshes to polling.
@@ -726,15 +747,28 @@ function App() {
         })
     }
 
+    const syncTerminalSurfaceActivity = () => {
+      const active =
+        activeView === 'terminal' &&
+        !isAppSettingsOpen &&
+        document.visibilityState === 'visible'
+
+      void tauriInvoke<void>('set_terminal_surface_active', { active }).catch(() => {})
+    }
+
     const handleWindowFocus = () => {
+      syncTerminalSurfaceActivity()
       reconcileRuntimeState('focus')
     }
 
     const handleVisibilityChange = () => {
+      syncTerminalSurfaceActivity()
       if (document.visibilityState === 'visible') {
         reconcileRuntimeState('visibility')
       }
     }
+
+    syncTerminalSurfaceActivity()
 
     window.addEventListener('focus', handleWindowFocus)
     document.addEventListener('visibilitychange', handleVisibilityChange)
@@ -748,14 +782,14 @@ function App() {
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       window.clearInterval(intervalId)
     }
-  }, [selectedProjectId])
+  }, [activeView, isAppSettingsOpen, selectedProjectId])
 
   useEffect(() => {
     if (selectedProjectId === null || liveSessionCount === 0) {
       return
     }
 
-    if (!shouldRefreshHistoryContext && !shouldRefreshWorkContext) {
+    if (!shouldRefreshHistoryContext && !shouldRefreshWorkContext && !shouldRefreshWorkflowContext) {
       return
     }
 
@@ -765,9 +799,13 @@ function App() {
     selectedProjectId,
     shouldRefreshHistoryContext,
     shouldRefreshWorkContext,
+    shouldRefreshWorkflowContext,
   ])
 
   useEffect(() => {
+    clearDeferredHistoryHydrationTimer()
+    hydratedHistorySurfaceProjectIdRef.current = null
+
     if (selectedProjectId === null) {
       useAppStore.setState((s) => ({
         documents: [],
@@ -784,14 +822,49 @@ function App() {
       return
     }
 
+    useAppStore.setState({
+      cleanupCandidates: [],
+      sessionRecords: [],
+      sessionEvents: [],
+      selectedHistorySessionId: null,
+    })
+
     const store = useAppStore.getState()
     void store.loadDocuments(selectedProjectId)
     void store.refreshWorktrees(selectedProjectId)
     void store.loadOrphanedSessions(selectedProjectId)
-    void store.loadCleanupCandidates()
-    void store.loadSessionHistory(selectedProjectId)
     void store.loadWorkItems(selectedProjectId)
+
+    if (store.activeView === 'history') {
+      hydrateHistorySurface(selectedProjectId)
+    }
   }, [selectedProjectId])
+
+  useEffect(() => {
+    if (selectedProjectId === null) {
+      clearDeferredHistoryHydrationTimer()
+      return
+    }
+
+    if (activeView === 'history') {
+      hydrateHistorySurface(selectedProjectId)
+      return
+    }
+
+    if (!startupBootstrapComplete || startupBlockingLoad) {
+      return
+    }
+
+    clearDeferredHistoryHydrationTimer()
+    deferredHistoryHydrationTimeoutRef.current = window.setTimeout(() => {
+      deferredHistoryHydrationTimeoutRef.current = null
+      hydrateHistorySurface(selectedProjectId)
+    }, 250)
+
+    return () => {
+      clearDeferredHistoryHydrationTimer()
+    }
+  }, [activeView, selectedProjectId, startupBlockingLoad, startupBootstrapComplete])
 
   useEffect(() => {
     if (selectedProjectId === null) {
@@ -804,19 +877,6 @@ function App() {
 
     const bind = async () => {
       outputUnlisten = await listen<TerminalOutputEvent>('terminal-output', (event) => {
-        const outputEventId = createDiagnosticsCorrelationId('terminal-output')
-        recordDiagnosticsEntry({
-          event: 'tauri.event.terminal-output',
-          source: 'tauri-event',
-          summary: 'terminal-output received',
-          metadata: {
-            outputEventId,
-            projectId: event.payload.projectId,
-            worktreeId: event.payload.worktreeId ?? null,
-            bytes: event.payload.data.length,
-          },
-        })
-
         if (disposed || event.payload.projectId !== selectedProjectId) {
           return
         }
@@ -843,6 +903,7 @@ function App() {
           store.activeView === 'history' ||
           store.activeView === 'workItems' ||
           store.activeView === 'worktreeWorkItem' ||
+          store.activeView === 'workflows' ||
           store.isAgentGuideOpen
 
         if (shouldRefreshVisibleContext) {

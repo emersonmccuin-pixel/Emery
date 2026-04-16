@@ -13,8 +13,7 @@ function RecoveryBannerHost() {
   )
 
   const {
-    recoverOrphanedSession,
-    resumeSessionRecord,
+    resumeRecoverableSession,
     skipSession,
     dismissRecovery,
   } = useAppStore.getState()
@@ -25,22 +24,21 @@ function RecoveryBannerHost() {
     return null
   }
 
-  const manifest = crashManifest
+  const allSessions = [...crashManifest.interruptedSessions, ...crashManifest.orphanedSessions]
 
   async function handleResume(session: SessionRecord) {
+    if (activeSessionId !== null) {
+      return
+    }
+
     setActiveSessionId(session.id)
     try {
-      if (session.state === 'orphaned') {
-        await recoverOrphanedSession(session)
-      } else {
-        await resumeSessionRecord(session)
-      }
-      useAppStore.setState((s) => ({
-        recoveryResults: { ...s.recoveryResults, [session.id]: 'resumed' as const },
-      }))
-    } catch {
-      useAppStore.setState((s) => ({
-        recoveryResults: { ...s.recoveryResults, [session.id]: 'failed' as const },
+      const snapshot = await resumeRecoverableSession(session)
+      useAppStore.setState((state) => ({
+        recoveryResults: {
+          ...state.recoveryResults,
+          [session.id]: snapshot ? ('resumed' as const) : ('failed' as const),
+        },
       }))
     } finally {
       setActiveSessionId(null)
@@ -48,17 +46,33 @@ function RecoveryBannerHost() {
   }
 
   async function handleResumeAll() {
-    const allSessions = [...manifest.interruptedSessions, ...manifest.orphanedSessions]
-    for (const session of allSessions) {
-      if (!recoveryResults[session.id] || recoveryResults[session.id] === 'pending') {
-        await handleResume(session)
+    if (activeSessionId !== null) {
+      return
+    }
+
+    setActiveSessionId(-1)
+    try {
+      for (const session of allSessions) {
+        const result = useAppStore.getState().recoveryResults[session.id]
+        if (!result || result === 'pending') {
+          setActiveSessionId(session.id)
+          const snapshot = await resumeRecoverableSession(session)
+          useAppStore.setState((state) => ({
+            recoveryResults: {
+              ...state.recoveryResults,
+              [session.id]: snapshot ? ('resumed' as const) : ('failed' as const),
+            },
+          }))
+        }
       }
+    } finally {
+      setActiveSessionId(null)
     }
   }
 
   return (
     <RecoveryBanner
-      manifest={manifest}
+      manifest={crashManifest}
       recoveryResults={recoveryResults}
       activeSessionId={activeSessionId}
       onResume={(session) => void handleResume(session)}

@@ -19,6 +19,7 @@ import {
   getErrorMessage,
   isWorkerLaunchProfileProvider,
 } from './utils'
+import { normalizeWorkspaceViewForTarget } from './workspaceRouting'
 
 const terminationKey = (projectId: number, worktreeId: number | null) =>
   `${projectId}:${worktreeId ?? 'null'}`
@@ -27,6 +28,7 @@ const AUTO_RESTART_DELAY_MS = 3_000
 const AUTO_RESTART_WINDOW_MS = 5 * 60_000
 const AUTO_RESTART_MAX_RECENT_FAILURES = 3
 const autoRestartTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const inFlightSessionLaunches = new Map<string, Promise<SessionSnapshot | null>>()
 
 function clearAutoRestartTimer(key: string) {
   const timer = autoRestartTimers.get(key)
@@ -360,63 +362,82 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
       return null
     }
 
+    const launchKey = terminationKey(selectedProject.id, targetWorktreeId)
+    const existingLaunch = inFlightSessionLaunches.get(launchKey)
+
     set((current) => ({
       sessionError: null,
       isLaunchingSession: true,
       activeView: shouldActivateTerminal ? 'terminal' : current.activeView,
     }))
 
-    try {
-      const snapshot = await withPerfSpan(
-        'session_launch',
-        {
-          projectId: selectedProject.id,
-          worktreeId: targetWorktreeId,
-          launchProfileId: targetLaunchProfile.id,
-          target: targetWorktreeId === null ? 'project' : 'worktree',
-        },
-        () =>
-          invoke<SessionSnapshot>('launch_project_session', {
-            input: {
-              projectId: selectedProject.id,
-              worktreeId: targetWorktreeId,
-              launchProfileId: targetLaunchProfile.id,
-              cols: 120,
-              rows: 32,
-              startupPrompt: options?.startupPrompt,
-              resumeSessionId: options?.resumeSessionId,
-            },
-          }),
-      )
-
-      set({ selectedLaunchProfileId: targetLaunchProfile.id })
-      if (shouldAttachSnapshot) {
-        set({ sessionSnapshot: snapshot })
+    if (existingLaunch) {
+      const snapshot = await existingLaunch
+      if (snapshot) {
+        set({ selectedLaunchProfileId: targetLaunchProfile.id })
+        if (shouldAttachSnapshot) {
+          set({ sessionSnapshot: snapshot })
+        }
       }
-      const key = terminationKey(selectedProject.id, targetWorktreeId)
-      clearAutoRestartTimer(key)
-      set((current) => ({
-        sessionError:
-          current.selectedProjectId === selectedProject.id &&
-          (current.selectedTerminalWorktreeId ?? null) === targetWorktreeId
-            ? null
-            : current.sessionError,
-        sessionAutoRestart: omitAutoRestartEntry(current.sessionAutoRestart, key),
-      }))
-      await get().refreshSelectedProjectData([
-        'liveSessions',
-        'worktrees',
-        'history',
-        'orphanedSessions',
-        'cleanupCandidates',
-      ])
       return snapshot
-    } catch (error) {
-      set({ sessionError: getErrorMessage(error, 'Failed to launch Claude Code.') })
-      return null
-    } finally {
-      set({ isLaunchingSession: false })
     }
+
+    const launchPromise = (async () => {
+      try {
+        const snapshot = await withPerfSpan(
+          'session_launch',
+          {
+            projectId: selectedProject.id,
+            worktreeId: targetWorktreeId,
+            launchProfileId: targetLaunchProfile.id,
+            target: targetWorktreeId === null ? 'project' : 'worktree',
+          },
+          () =>
+            invoke<SessionSnapshot>('launch_project_session', {
+              input: {
+                projectId: selectedProject.id,
+                worktreeId: targetWorktreeId,
+                launchProfileId: targetLaunchProfile.id,
+                cols: 120,
+                rows: 32,
+                startupPrompt: options?.startupPrompt,
+                resumeSessionId: options?.resumeSessionId,
+              },
+            }),
+        )
+
+        set({ selectedLaunchProfileId: targetLaunchProfile.id })
+        if (shouldAttachSnapshot) {
+          set({ sessionSnapshot: snapshot })
+        }
+        clearAutoRestartTimer(launchKey)
+        set((current) => ({
+          sessionError:
+            current.selectedProjectId === selectedProject.id &&
+            (current.selectedTerminalWorktreeId ?? null) === targetWorktreeId
+              ? null
+              : current.sessionError,
+          sessionAutoRestart: omitAutoRestartEntry(current.sessionAutoRestart, launchKey),
+        }))
+        await get().refreshSelectedProjectData([
+          'liveSessions',
+          'worktrees',
+          'history',
+          'orphanedSessions',
+          'cleanupCandidates',
+        ])
+        return snapshot
+      } catch (error) {
+        set({ sessionError: getErrorMessage(error, 'Failed to launch Claude Code.') })
+        return null
+      } finally {
+        inFlightSessionLaunches.delete(launchKey)
+        set({ isLaunchingSession: inFlightSessionLaunches.size > 0 })
+      }
+    })()
+
+    inFlightSessionLaunches.set(launchKey, launchPromise)
+    return await launchPromise
   },
 
   stopSession: async () => {
@@ -602,21 +623,26 @@ export const createSessionSlice: StateCreator<AppStore, [], [], SessionSlice> = 
     }))
   },
 
+  focusTerminalTarget: (worktreeId, preferredView) => {
+    set((state) => ({
+      selectedTerminalWorktreeId: worktreeId,
+      activeView: normalizeWorkspaceViewForTarget(
+        preferredView ?? state.activeView,
+        worktreeId,
+      ),
+    }))
+  },
+
   restartSessionTargetNow: async (projectId, worktreeId) => {
     await restartSessionTargetNowImpl(set, get, projectId, worktreeId)
   },
 
   selectMainTerminal: () => {
-    set({ selectedTerminalWorktreeId: null, activeView: 'terminal' })
+    get().focusTerminalTarget(null, 'terminal')
   },
 
   selectWorktreeTerminal: (worktreeId) => {
-    const currentView = get().activeView
-    const worktreeViews = ['terminal', 'worktreeWorkItem']
-    set({
-      selectedTerminalWorktreeId: worktreeId,
-      activeView: worktreeViews.includes(currentView) ? currentView : 'terminal',
-    })
+    get().focusTerminalTarget(worktreeId)
   },
 
   sendPromptToSession: async (projectId, worktreeId, prompt, successMessage) => {

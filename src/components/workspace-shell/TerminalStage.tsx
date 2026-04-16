@@ -61,11 +61,9 @@ function TerminalStage() {
     openHistoryForSession,
     launchWorkspaceGuide,
     stopSession,
-    resumeSessionRecord,
-    recoverOrphanedSession,
+    resumeRecoverableSession,
     copyTerminalOutput,
     handleSessionExit,
-    continueSession,
     fetchSessionRecoveryDetails,
     cancelSessionAutoRestart,
     restartSessionTargetNow,
@@ -317,7 +315,7 @@ function TerminalStage() {
                         variant="outline"
                         size="sm"
                         className="h-8 px-4 text-[9px] font-black uppercase tracking-[0.2em] border-hud-cyan text-hud-cyan hover:bg-hud-cyan/10 shadow-[0_0_12px_rgba(58,240,224,0.25)]"
-                        onClick={() => continueSession(selectedTargetHistoryRecord.id)}
+                        onClick={() => void resumeRecoverableSession(selectedTargetHistoryRecord)}
                       >
                         {selectedTargetHasNativeResume ? 'RESUME SESSION' : 'RELAUNCH WITH CONTEXT'}
                       </Button>
@@ -328,7 +326,7 @@ function TerminalStage() {
                         size="sm"
                         className="h-8 text-[9px] font-black uppercase tracking-[0.2em] border-hud-magenta/50 text-hud-magenta hover:bg-hud-magenta/20"
                         disabled={activeOrphanSessionId === selectedTargetHistoryRecord.id}
-                        onClick={() => void recoverOrphanedSession(selectedTargetHistoryRecord)}
+                        onClick={() => void resumeRecoverableSession(selectedTargetHistoryRecord)}
                       >
                         {activeOrphanSessionId === selectedTargetHistoryRecord.id
                           ? 'RECOVERING...'
@@ -341,7 +339,7 @@ function TerminalStage() {
                         variant="outline"
                         size="sm"
                         className="h-8 text-[9px] font-black uppercase tracking-[0.2em] border-hud-magenta/50 text-hud-magenta hover:bg-hud-magenta/20"
-                        onClick={() => void resumeSessionRecord(selectedTargetHistoryRecord)}
+                        onClick={() => void resumeRecoverableSession(selectedTargetHistoryRecord)}
                       >
                         {selectedTargetHasNativeResume ? 'RESUME SESSION' : 'RELAUNCH WITH CONTEXT'}
                       </Button>

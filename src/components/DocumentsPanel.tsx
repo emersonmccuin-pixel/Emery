@@ -149,7 +149,7 @@ function DocumentsPanel({
   }
 
   return (
-    <div className="flex flex-col h-[500px] overflow-hidden">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-card/50">
         <div className="flex items-center gap-3">
           <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Knowledge Base</span>
@@ -168,7 +168,7 @@ function DocumentsPanel({
 
       {error ? <PanelBanner className="border-x-0 border-t-0" message={error} /> : null}
 
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 min-h-0 overflow-hidden">
         {isCreateOpen ? (
           <ScrollArea className="h-full">
             <div className="p-4">
@@ -236,9 +236,9 @@ function DocumentsPanel({
             </div>
           </ScrollArea>
         ) : (
-          <div className="flex h-full">
+          <div className="flex h-full min-h-0">
             {/* List Pane */}
-            <div className="w-1/3 border-r border-hud-cyan/20 bg-black/30">
+            <div className="w-1/3 min-h-0 border-r border-hud-cyan/20 bg-black/30">
               <ScrollArea className="h-full">
                 <div className="p-1.5 space-y-0.5">
                   {!hasDocuments ? (
@@ -304,7 +304,7 @@ function DocumentsPanel({
             </div>
 
             {/* Detail Pane */}
-            <div className="flex-1 bg-hud-cyan/10">
+            <div className="flex-1 min-h-0 bg-hud-cyan/10">
               {selectedDocument ? (
                 <ScrollArea className="h-full">
                   <div className="p-4">

@@ -346,21 +346,19 @@ export const createWorkItemSlice: StateCreator<AppStore, [], [], WorkItemSlice> 
 
       flushSync(() => {
         get().upsertTrackedWorktree(worktree)
+        get().focusTerminalTarget(worktree.id, 'terminal')
         set({
-          selectedTerminalWorktreeId: worktree.id,
           sessionSnapshot: session,
           terminalPromptDraft: null,
-          activeView: 'terminal',
         })
       })
       await get().refreshWorktrees(selectedProject.id)
       await get().refreshLiveSessions(selectedProject.id)
       await get().refreshSessionHistory(selectedProject.id)
       flushSync(() => {
+        get().focusTerminalTarget(worktree.id, 'terminal')
         set({
-          selectedTerminalWorktreeId: worktree.id,
           sessionSnapshot: session as SessionSnapshot,
-          activeView: 'terminal',
         })
       })
       set({

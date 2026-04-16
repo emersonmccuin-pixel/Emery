@@ -6,6 +6,17 @@ const INBOX_WAIT_TIMEOUT_MS = 30_000
 const WORKER_HEARTBEAT_INTERVAL_MS = 25_000
 const MAX_AUTO_FORWARD_TEXT_LENGTH = 4000
 const BROKER_MESSAGE_SENTINEL = 'PROJECT_COMMANDER_MESSAGE'
+const PROJECT_COMMANDER_TOOL_NAMES = [
+  'project-commander/send_message',
+  'project-commander/get_messages',
+  'project-commander/wait_for_messages',
+  'project-commander/list_messages',
+  'project-commander/search_work_items',
+  'project-commander/get_work_item',
+  'project-commander/list_work_items',
+  'project-commander/update_work_item',
+  'project-commander/close_work_item',
+]
 const VALID_DISPATCHER_MESSAGE_TYPES = new Set([
   'question',
   'blocked',
@@ -296,6 +307,7 @@ function buildSupervisorMcpArgs() {
 
 function buildCodexConfigOverrides() {
   return {
+    show_raw_agent_reasoning: true,
     mcp_servers: {
       'project-commander': {
         command: config.supervisorBinary,
@@ -314,6 +326,17 @@ function buildThreadOptions() {
   }
 }
 
+function buildProjectCommanderToolInstructions() {
+  return [
+    'Project Commander MCP server is already connected for this session.',
+    `Use only these Project Commander tools when you need tracker or broker actions: ${PROJECT_COMMANDER_TOOL_NAMES.join(', ')}.`,
+    'For broker replies, call project-commander/send_message.',
+    'For semantic tracker lookups, call project-commander/search_work_items.',
+    'Never call wcp/*, wcp_*, or any non-project-commander tracker tool in this session.',
+    'Do not search the repository to discover tool names.',
+  ].join('\n')
+}
+
 function formatQueuedPrompt(message) {
   let prompt = [
     `[${message.fromAgent}] (${message.messageType}): ${message.body}`,
@@ -325,7 +348,7 @@ function formatQueuedPrompt(message) {
     'Important: the dispatcher does NOT receive plain-text terminal replies.',
     'You must use the Project Commander send_message MCP tool for any response that should be delivered.',
     `If send_message is unavailable in your tool list, output exactly one line in this format instead: ${BROKER_MESSAGE_SENTINEL} {"messageType":"complete","body":"...","contextJson":{}}`,
-    'Do NOT search the repository to discover Project Commander tools. They are already available in your tool list.',
+    'When calling the tool, use project-commander/send_message.',
     'If the directive is fully self-contained, handle it directly instead of doing extra repository exploration first.',
   ].join('\n')
 
@@ -567,7 +590,7 @@ function buildRecoveryPrompt(originalMessage, undeliveredReply) {
 }
 
 function buildCodexTurnPrompt(prompt, { includeStartupPrompt = false } = {}) {
-  const sections = [config.bridgeSystemPrompt]
+  const sections = [config.bridgeSystemPrompt, buildProjectCommanderToolInstructions()]
 
   if (includeStartupPrompt && config.startupPrompt) {
     sections.push(`Launch-time instructions:\n${config.startupPrompt}`)

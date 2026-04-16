@@ -19,111 +19,114 @@ Project Commander is the control plane. You register a project, break work into 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────┐
-│            Tauri Desktop Window               │
-│                                               │
-│   ┌─────────┬──────────────┬──────────────┐  │
-│   │ Project │  Terminal /   │  Worktree    │  │
-│   │  Rail   │  Work Items / │  & Session   │  │
-│   │         │  Backlog /    │  Rail        │  │
-│   │         │  History /    │              │  │
-│   │         │  Settings     │              │  │
-│   └─────────┴──────────────┴──────────────┘  │
-└───────────────────┬──────────────────────────┘
-                    │ Tauri IPC
-                    ▼
-┌──────────────────────────────────────────────┐
-│          Supervisor Process (Rust)            │
-│                                               │
-│   HTTP API · PTY Registry · SQLite Writer     │
-│   Event Log · Crash Recovery · MCP Server     │
-└───────────┬────────────────┬─────────────────┘
-            │                │
-     ┌──────▼──────┐  ┌─────▼──────────┐
-     │  Dispatcher  │  │ Worktree Agent │ ×N
-     │  Session     │  │ Sessions       │
-     │  (project    │  │ (isolated      │
-     │   root)      │  │  branches)     │
-     └──────────────┘  └────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                     Tauri Desktop Client                     │
+│                                                              │
+│  App.tsx                                                     │
+│  bootstrap · selected-project loads · targeted refreshes     │
+│  runtime reconciliation · terminal event follow-up           │
+│                                                              │
+│  WorkspaceShell + workspace-shell/*                          │
+│  project rail · terminal/history/work-item stages            │
+│  session rail · recovery banner · settings modal             │
+│                                                              │
+│  Zustand slices + shared UI primitives                       │
+│  tabs · panel-state · virtual-list · diagnostics/perf hooks  │
+└──────────────────────────────┬───────────────────────────────┘
+                               │ Tauri IPC
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│                    Rust Command Boundary                     │
+│  lib.rs -> SupervisorClient -> long-lived supervisor runtime │
+└──────────────────────────────┬───────────────────────────────┘
+                               │ local HTTP + pollers
+                               ▼
+┌──────────────────────────────────────────────────────────────┐
+│                Supervisor Runtime (Rust)                     │
+│                                                              │
+│  session registry · PTY/session host · workflow runner       │
+│  SQLite persistence · crash recovery · diagnostics/logging   │
+│  vault/backup services · MCP surface                         │
+└───────────────┬──────────────────────┬───────────────────────┘
+                │                      │
+        ┌───────▼────────┐    ┌───────▼──────────────────────┐
+        │ Dispatcher      │    │ Worktree / Workflow Agents   │ ×N
+        │ project-root    │    │ isolated worktrees or stages │
+        │ session         │    │ provider-specific launchers  │
+        └────────────────┘    └──────────────────────────────┘
 ```
 
-**Key design decision:** the supervisor is a standalone process that survives UI restarts. Sessions, PTYs, and database writes all live there — the Tauri window is a stateless client that can reconnect at any time.
+**Key design decision:** the supervisor is a standalone process that survives UI restarts. Sessions, PTYs, workflow execution, diagnostics, and database writes live there; the Tauri window is a reconnecting client that bootstraps state, subscribes to terminal events, and performs narrow follow-up refreshes instead of broad polling.
 
 ---
 
 ## Core Components
 
-### Supervisor
+### Frontend Shell And State
 
-A long-lived Rust binary that owns the runtime:
+The shipped frontend is no longer one oversized shell component:
 
-- **Session lifecycle** — launch, monitor, reattach, terminate Claude Code instances via PTY
-- **Single database writer** — all mutations (work items, documents, worktrees, sessions) go through one authority
-- **Append-only event log** — every mutation is recorded for audit and recovery
-- **Crash recovery** — detects orphaned sessions, stale worktrees, and artifact corruption on startup; offers guided repair
-- **MCP server** — runs as a stdio Model Context Protocol server so launched agents get native tool access back into Project Commander
+- `App.tsx` owns selected-project bootstrap, runtime reconciliation, and visible-context refreshes triggered by `terminal-output` and `terminal-exit`
+- `src/components/WorkspaceShell.tsx` is a thin layout wrapper around `src/components/workspace-shell/*`
+- `src/components/workspace-shell/*` owns the project rail, session rail, terminal/history/work-item stages, recovery banner host, and settings/project-create modal hosts
+- `src/store/*` holds domain slices for projects, sessions, history, recovery, work items, documents, workflows, and UI coordination
+- shared UI/state primitives live under `src/components/ui/*`, `src/diagnostics.ts`, and `src/perf.ts`
 
-### Work Item Management
+The refresh model is intentionally narrow. Project Commander now uses targeted invalidation through `refreshSelectedProjectData()`, terminal-activity follow-up refreshes for the currently visible context, and low-frequency runtime reconciliation for out-of-band supervisor changes.
 
-Track bugs, tasks, features, and notes with automatic call sign generation:
+### Supervisor Runtime
 
-- **Call signs** — human-readable IDs derived from the project name (e.g. `PJTCMD-1`, `PJTCMD-1.a` for children)
-- **Hierarchy** — flat parent items with dotted child items
-- **Status flow** — `backlog` → `in_progress` → `blocked` / `parked` → `done`
-- **Full CRUD** from both the UI and from within agent sessions via MCP tools
+The runtime is a long-lived Rust supervisor process accessed through a Tauri command boundary:
 
-### Agent Orchestration
+- `src-tauri/src/lib.rs` exposes the desktop command surface and diagnostics/log plumbing
+- `src-tauri/src/session.rs` is the desktop-side `SupervisorClient`, including supervisor bootstrapping and terminal pollers
+- `src-tauri/src/bin/project-commander-supervisor.rs` serves the supervisor HTTP API and runtime routes
+- `src-tauri/src/session_host.rs` owns session launch planning, PTY/session orchestration, runtime metadata, cleanup, and provider-specific launch behavior
+- `src-tauri/src/db.rs` persists projects, work items, documents, worktrees, sessions, events, and related metadata
 
-Launch and coordinate multiple Claude Code instances:
+### Session Model
 
-- **Dispatcher session** — a project-rooted session for triage, planning, and coordination
-- **Worktree agent sessions** — each gets an isolated git worktree, its own branch, and a focused work item
-- **Launch profiles** — configurable executable, args, and environment per provider
-- **MCP integration** — agents call back into the supervisor for work items, documents, worktree management, and messaging
-- **CLI bridge** — fallback `project-commander-cli` binary on `PATH` for non-MCP agents
+Project Commander currently operates with several related session families:
 
-### Git Worktree Isolation
+- **Dispatcher session** — the project-root session, modeled as `worktreeId = null`
+- **Worktree agent session** — an isolated worktree-backed session tied to a work item
+- **Workflow-stage session** — operationally a worktree-backed session launched by the workflow runtime
+- **Recovery states** — interrupted, failed, or orphaned prior sessions surfaced back into the UI for resume, relaunch, or cleanup
 
-Every active work item gets its own worktree:
+Launch behavior is provider-specific. The shipped app supports Claude Code CLI, Claude Agent SDK, Codex SDK, and wrapped fallback launchers. Resume behavior, startup-prompt handling, and terminal interactivity differ by provider family.
 
-- Automatic branch creation (`worktree-CALLSIGN`)
-- Bootstrap commit for unborn repos (so `HEAD` exists before first worktree)
-- Dirty/unmerged state tracking in the UI
-- Pin worktrees to prevent cleanup
-- Supervisor-managed create/recreate/remove lifecycle
+### Workflows, Vault, Backup, And Diagnostics
 
-### Inter-Agent Messaging
+The app now includes additional subsystems that materially affect runtime behavior:
 
-Agents communicate through a mailbox system:
+- **Workflow execution** — multi-stage agent workflows with per-stage launch and persistence
+- **Vault delivery** — Stronghold-backed secrets that can be injected as env or file bindings during launch
+- **Backup and restore** — staged backup/restore flow for database and app-data state
+- **Diagnostics** — persisted supervisor logs, diagnostics history, crash artifacts, and exportable debug bundles
 
-- `send_message` / `get_messages` / `ack_messages` MCP tools
-- Project-scoped sender/receiver addressing
-- Read receipts via acknowledgment
-- Designed for dispatcher ↔ worker coordination patterns
+### Work Item Management And Worktree Isolation
 
-### Terminal Integration
+Work items and worktrees remain the main operator control plane:
 
-Full PTY-backed terminal in the UI via xterm.js:
+- call-sign based work tracking with parent/child hierarchy
+- isolated git worktrees per focused work item
+- pinned cleanup protection and recreate/remove lifecycle
+- worktree/session coupling surfaced back into the shell and history views
 
-- Live output streaming from supervisor-owned sessions
-- Paste and input forwarding
-- Session snapshot polling
-- Reconnect to surviving sessions after UI restart
+### Messaging And Terminal Integration
 
-### Crash Recovery
+Launched agents can call back into Project Commander through the MCP surface, and operators interact with live sessions through xterm.js:
 
-Startup diagnostics with guided repair:
-
-- Detects interrupted and orphaned sessions
-- Finds stale worktree directories without DB records
-- Recovery banner with resume/skip/terminate options per session
-- Optional auto-repair for safe cleanup on startup
+- mailbox-style agent messaging for dispatcher-to-worker coordination
+- PTY-backed terminal rendering in the desktop client
+- desktop-side pollers that translate supervisor session output/exit state into `terminal-output` and `terminal-exit` events
+- reconnect/recovery flows that reopen saved provider sessions or relaunch targets with recovery context after app restart or crashes
 
 ---
 
 ## MCP Tools
 
-Agents launched by Project Commander get a `project-commander` MCP server with these tools:
+Agents launched by Project Commander get a `project-commander` MCP server with tools in this family:
 
 | Tool | Purpose |
 |------|---------|
@@ -187,43 +190,61 @@ npm run prod:run
 ```
 src/                        React frontend
 ├── components/
-│   ├── WorkspaceShell.tsx      Three-panel layout
-│   ├── LiveTerminal.tsx        xterm.js terminal
-│   ├── WorkItemsPanel.tsx      Work item CRUD
-│   ├── DocumentsPanel.tsx      Document management
-│   ├── HistoryPanel.tsx        Session history
-│   ├── ConfigurationPanel.tsx  Settings
-│   └── ui/                     Shared primitives (tabs, etc.)
-├── store/                  Zustand state (slices per domain)
-└── App.tsx                 Bootstrap + polling
+│   ├── WorkspaceShell.tsx      Thin shell wrapper
+│   ├── workspace-shell/        Rails, stages, recovery host, modal hosts
+│   ├── workflow/               Workflow surface and run UI
+│   ├── LiveTerminal.tsx        xterm.js session client
+│   ├── HistoryPanel.tsx        Session history and recovery views
+│   └── ui/                     Shared tabs, panel-state, virtual-list, etc.
+├── store/                  Zustand slices, selectors, shared refresh helpers
+├── lib/                    Frontend runtime helpers
+├── diagnostics.ts          Frontend diagnostics feed helpers
+├── perf.ts                 Performance spans and timings
+└── App.tsx                 Bootstrap, targeted refresh, runtime reconciliation
 
 src-tauri/                  Rust backend
 ├── src/
-│   ├── lib.rs                  Tauri command surface
-│   ├── db.rs                   SQLite schema + CRUD
-│   ├── session_host.rs         PTY management
+│   ├── lib.rs                  Tauri command surface + diagnostics glue
+│   ├── session.rs              Desktop supervisor client + pollers
+│   ├── session_host.rs         Session launch/runtime orchestration
+│   ├── db.rs                   Persistence and query layer
+│   ├── workflow.rs             Workflow runtime/persistence
+│   ├── vault.rs                Stronghold-backed secret storage
+│   ├── backup.rs               Backup/restore staging
 │   ├── supervisor_mcp.rs       MCP protocol handler
 │   └── bin/
-│       ├── project-commander-supervisor.rs   HTTP server + runtime
-│       ├── project-commander-cli.rs          CLI bridge
-│       └── project-commander-mcp.rs          MCP stdio entry
+│       ├── project-commander-supervisor.rs      Supervisor HTTP server + runtime
+│       ├── project-commander-session-wrapper.rs Provider wrapper process
+│       ├── project-commander-cli.rs             CLI bridge
+│       └── project-commander-mcp.rs             MCP stdio entry
 └── tauri.conf.json         App configuration
 
 scripts/                    Dev/release helper scripts
-docs/                       Architecture and status docs
+docs/                       Architecture docs + audit workspace
+└── audit/                  Repair-planning system map, checklists, session audits
 ```
 
 ---
 
 ## Data Storage
 
-Dev and production share the same Tauri app-data directory:
+Dev and production share the same Tauri app-data root. On Windows the main database path is typically:
 
 ```
 %LOCALAPPDATA%/project-commander/db/project-commander.sqlite3
 ```
 
-All state — projects, work items, documents, sessions, events — lives in this single SQLite file, owned exclusively by the supervisor process.
+The SQLite database remains the main durable store for projects, work items, documents, sessions, events, workflows, and related metadata, but the shipped app also uses adjacent app-data directories for runtime state and diagnostics:
+
+- `db/` — SQLite database plus diagnostics logs
+- `runtime/` — live supervisor runtime metadata
+- `worktrees/` — managed worktree roots
+- `session-output/` — terminal/session output artifacts
+- `crash-reports/` — crash evidence and manifests
+- vault storage under app-data for Stronghold-backed secrets
+- backup/restore staging files under app-data during restore operations
+
+Treat the app-data directory as the runtime boundary, not just the SQLite file.
 
 ---
 

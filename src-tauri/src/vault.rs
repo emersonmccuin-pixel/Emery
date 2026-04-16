@@ -23,6 +23,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+use crate::db::AppState;
+use crate::error::{AppError, AppResult};
 
 const VAULT_DIR_NAME: &str = "vault";
 const VAULT_SNAPSHOT_FILE_NAME: &str = "project-commander-vault.hold";
@@ -709,6 +711,7 @@ pub fn upsert_entry(
 ) -> Result<(), String> {
     ensure_vault_storage(app_data_dir)?;
 
+    let is_update = input.id.is_some();
     let name = normalize_required(&input.name, "vault entry name")?.to_string();
     let kind = normalize_required(&input.kind, "vault entry kind")?.to_string();
     let description = input
@@ -718,16 +721,72 @@ pub fn upsert_entry(
         .trim()
         .to_string();
     let scope_tags = normalize_string_list(&input.scope_tags);
+    let scope_tags_json = serialize_json(&scope_tags)?;
     let gate_policy =
         normalize_gate_policy(input.gate_policy.as_deref().unwrap_or("confirm_session"))?;
+    let mut provided_value = input.value.take();
+
+    if let Some(value) = provided_value.as_ref() {
+        if value.is_empty() {
+            return Err("vault entry value cannot be empty".to_string());
+        }
+    } else if !is_update {
+        return Err("vault entry value is required when creating a new secret".to_string());
+    }
+
+    let entry_id = if let Some(id) = input.id {
+        load_entry_by_id(connection, id)?;
+        id
+    } else {
+        connection
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(|error| format!("failed to begin vault create transaction: {error}"))?;
+
+        let create_result = (|| {
+            connection
+                .execute(
+                    "
+                    INSERT INTO vault_entries (
+                        name, kind, description, scope_tags_json, gate_policy
+                    ) VALUES (?1, ?2, ?3, ?4, ?5)
+                    ",
+                    params![name, kind, description, scope_tags_json, gate_policy],
+                )
+                .map_err(|error| format!("failed to create vault entry {name}: {error}"))?;
+            Ok(connection.last_insert_rowid())
+        })();
+
+        match create_result {
+            Ok(entry_id) => {
+                connection.execute_batch("COMMIT").map_err(|error| {
+                    format!("failed to commit vault create transaction: {error}")
+                })?;
+                entry_id
+            }
+            Err(error) => {
+                let _ = connection.execute_batch("ROLLBACK");
+                return Err(error);
+            }
+        }
+    };
+
+    if let Some(mut value) = provided_value.take() {
+        if let Err(error) = save_secret_value(app_data_dir, entry_id, &value) {
+            value.zeroize();
+            if !is_update {
+                let _ = connection.execute("DELETE FROM vault_entries WHERE id = ?1", [entry_id]);
+            }
+            return Err(error);
+        }
+        value.zeroize();
+    }
 
     connection
         .execute_batch("BEGIN IMMEDIATE")
         .map_err(|error| format!("failed to begin vault update transaction: {error}"))?;
 
     let result = (|| {
-        let entry_id = if let Some(id) = input.id {
-            load_entry_by_id(connection, id)?;
+        if is_update {
             connection
                 .execute(
                     "
@@ -744,52 +803,19 @@ pub fn upsert_entry(
                         name,
                         kind,
                         description,
-                        serialize_json(&scope_tags)?,
+                        scope_tags_json,
                         gate_policy,
-                        id,
+                        entry_id,
                     ],
                 )
-                .map_err(|error| format!("failed to update vault entry {id}: {error}"))?;
-            id
-        } else {
-            connection
-                .execute(
-                    "
-                    INSERT INTO vault_entries (
-                        name, kind, description, scope_tags_json, gate_policy
-                    ) VALUES (?1, ?2, ?3, ?4, ?5)
-                    ",
-                    params![
-                        name,
-                        kind,
-                        description,
-                        serialize_json(&scope_tags)?,
-                        gate_policy,
-                    ],
-                )
-                .map_err(|error| format!("failed to create vault entry {name}: {error}"))?;
-            connection.last_insert_rowid()
-        };
-
-        if let Some(mut value) = input.value.take() {
-            if value.is_empty() {
-                return Err("vault entry value cannot be empty".to_string());
-            }
-            save_secret_value(app_data_dir, entry_id, &value)?;
-            value.zeroize();
-        } else if input.id.is_none() {
-            return Err("vault entry value is required when creating a new secret".to_string());
+                .map_err(|error| format!("failed to update vault entry {entry_id}: {error}"))?;
         }
 
         append_audit_event(
             connection,
             Some(entry_id),
             &name,
-            if input.id.is_some() {
-                "update"
-            } else {
-                "deposit"
-            },
+            if is_update { "update" } else { "deposit" },
             "settings",
             "local-ui",
             "approved",
@@ -971,6 +997,97 @@ where
             Err(error)
         }
     }
+}
+
+/// Backend-only vault release path for in-process Rust consumers
+/// (e.g. embeddings, backup). Resolves a vault entry by canonical name,
+/// records an audit row tagged with `consumer`, and returns the raw value
+/// wrapped in [`Zeroizing`]. Returns `Ok(None)` when the named entry does
+/// not exist.
+///
+/// MUST NOT be exposed over Tauri IPC or any agent-facing surface.
+pub fn release_for_internal(
+    state: &AppState,
+    consumer: &str,
+    name: &str,
+) -> AppResult<Option<Zeroizing<String>>> {
+    let consumer = consumer.trim();
+    if consumer.is_empty() {
+        return Err(AppError::invalid_input(
+            "release_for_internal requires a non-empty consumer label",
+        ));
+    }
+    let lookup = name.trim();
+    if lookup.is_empty() {
+        return Err(AppError::invalid_input(
+            "release_for_internal requires a non-empty vault entry name",
+        ));
+    }
+
+    let connection = state.connect_internal().map_err(AppError::database)?;
+
+    let entry = match load_entry_by_name(&connection, lookup) {
+        Ok(entry) => entry,
+        Err(error) if error.contains("does not exist") => return Ok(None),
+        Err(error) => return Err(AppError::database(error)),
+    };
+
+    let value = load_secret_value(state.app_data_dir(), entry.id).map_err(AppError::io)?;
+
+    connection
+        .execute(
+            "
+            UPDATE vault_entries
+            SET last_accessed_at = CURRENT_TIMESTAMP
+            WHERE id = ?1
+            ",
+            [entry.id],
+        )
+        .map_err(|error| {
+            AppError::database(format!(
+                "failed to update last_accessed_at for vault entry {}: {error}",
+                entry.name
+            ))
+        })?;
+
+    append_audit_event(
+        &connection,
+        Some(entry.id),
+        &entry.name,
+        "release",
+        consumer,
+        "internal",
+        "approved",
+        None,
+    )
+    .map_err(AppError::database)?;
+
+    Ok(Some(value))
+}
+
+/// Backend-only metadata probe for in-process Rust consumers that need to know
+/// whether a named vault entry exists without releasing the secret value or
+/// recording an access audit row. This is appropriate for lightweight status
+/// surfaces, not for any path that actually consumes the secret.
+pub fn has_entry_for_internal(state: &AppState, name: &str) -> AppResult<bool> {
+    let lookup = normalize_required(name, "vault entry name")
+        .map_err(AppError::invalid_input)?
+        .to_string();
+
+    let connection = state.connect_internal().map_err(AppError::database)?;
+    let exists = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM vault_entries WHERE name = ?1)",
+            [lookup],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| {
+            AppError::database(format!(
+                "failed to probe vault entry existence for internal consumer: {error}"
+            ))
+        })?;
+
+    Ok(exists != 0)
 }
 
 fn append_audit_event(
