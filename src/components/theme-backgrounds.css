@@ -243,10 +243,52 @@
   opacity: 0.16;
 }
 
-/* HERO: aurora curtain animation — Wave 1f will add keyframes */
+/* HERO: aurora curtain animation — Wave 1f
+   Three angled gradient layers simulate flowing curtain folds.
+   Animated via background-position drift, hue-rotate color cycling,
+   and subtle scaleX breathing. Masked to top ~60% with soft fadeout.
+*/
 .theme-aurora #app::after {
   content: '';
-  /* Wave 1f: animated aurora curtain overlay goes here */
+  background:
+    /* Curtain fold 1 — broad sweeping bands */
+    linear-gradient(
+      132deg,
+      transparent 8%,
+      rgba(116, 243, 161, 0.14) 18%,
+      rgba(58, 240, 224, 0.10) 30%,
+      transparent 42%,
+      rgba(217, 70, 184, 0.12) 54%,
+      rgba(116, 243, 161, 0.09) 66%,
+      transparent 80%
+    ),
+    /* Curtain fold 2 — offset narrow wisps */
+    linear-gradient(
+      108deg,
+      transparent 5%,
+      rgba(58, 240, 224, 0.10) 16%,
+      rgba(116, 243, 161, 0.14) 28%,
+      transparent 40%,
+      rgba(255, 51, 153, 0.08) 52%,
+      rgba(58, 240, 224, 0.11) 64%,
+      transparent 78%
+    ),
+    /* Curtain fold 3 — deep ambient glow */
+    linear-gradient(
+      155deg,
+      transparent 12%,
+      rgba(217, 70, 184, 0.07) 28%,
+      transparent 44%,
+      rgba(116, 243, 161, 0.09) 60%,
+      rgba(58, 240, 224, 0.06) 76%,
+      transparent 92%
+    );
+  background-size: 300% 120%, 250% 130%, 350% 110%;
+  mask-image: linear-gradient(to bottom, white 0%, white 42%, transparent 62%);
+  -webkit-mask-image: linear-gradient(to bottom, white 0%, white 42%, transparent 62%);
+  opacity: 0.9;
+  animation: aurora-curtain 25s ease-in-out infinite;
+  will-change: transform, filter;
 }
 
 /* ── Silhouette + pattern — Synthwave theme ──
@@ -301,10 +343,79 @@
   opacity: 0.12;
 }
 
-/* HERO: slow glyph-drift animation — Wave 1f will add keyframes */
+/* HERO: matrix glyph rain — Wave 1f
+   Three repeating-linear-gradient layers create glyph-cell dashes at
+   varying densities. A column mask (repeating horizontal gradient)
+   reveals thin vertical strips at irregular spacing/opacity, composited
+   with a vertical fade for soft top/bottom edges. The whole layer
+   extends 600px above the viewport and translates downward by one
+   tile period for a seamless loop — GPU-friendly transform-only drift.
+*/
 .theme-matrix #app::after {
   content: '';
-  /* Wave 1f: animated glyph rain overlay goes here */
+  top: -600px;
+  background-image:
+    /* Primary glyph cells — dense stream */
+    repeating-linear-gradient(
+      to bottom,
+      rgba(0, 255, 65, 0.22) 0px,
+      rgba(0, 255, 65, 0.05) 10px,
+      transparent 10px,
+      transparent 18px
+    ),
+    /* Secondary glyph cells — sparser offset */
+    repeating-linear-gradient(
+      to bottom,
+      rgba(0, 255, 65, 0.12) 0px,
+      rgba(0, 255, 65, 0.03) 8px,
+      transparent 8px,
+      transparent 30px
+    ),
+    /* Bright accent heads — rare highlights */
+    repeating-linear-gradient(
+      to bottom,
+      rgba(170, 255, 170, 0.18) 0px,
+      transparent 4px,
+      transparent 44px
+    );
+  background-size: 100% 200px, 100% 300px, 100% 200px;
+  mask-image:
+    /* Vertical fade: soft edges at top and bottom of visible area */
+    linear-gradient(to bottom, transparent, white 4%, white 90%, transparent),
+    /* Column strips: thin vertical lines at irregular spacing + brightness */
+    repeating-linear-gradient(
+      to right,
+      rgba(255,255,255, 0.85) 0px, rgba(255,255,255, 0.85) 2px,
+      transparent 2px, transparent 28px,
+      rgba(255,255,255, 0.40) 28px, rgba(255,255,255, 0.40) 30px,
+      transparent 30px, transparent 46px,
+      rgba(255,255,255, 0.65) 46px, rgba(255,255,255, 0.65) 48px,
+      transparent 48px, transparent 66px,
+      rgba(255,255,255, 0.90) 66px, rgba(255,255,255, 0.90) 68px,
+      transparent 68px, transparent 90px,
+      rgba(255,255,255, 0.50) 90px, rgba(255,255,255, 0.50) 92px,
+      transparent 92px, transparent 120px
+    );
+  -webkit-mask-image:
+    linear-gradient(to bottom, transparent, white 4%, white 90%, transparent),
+    repeating-linear-gradient(
+      to right,
+      rgba(255,255,255, 0.85) 0px, rgba(255,255,255, 0.85) 2px,
+      transparent 2px, transparent 28px,
+      rgba(255,255,255, 0.40) 28px, rgba(255,255,255, 0.40) 30px,
+      transparent 30px, transparent 46px,
+      rgba(255,255,255, 0.65) 46px, rgba(255,255,255, 0.65) 48px,
+      transparent 48px, transparent 66px,
+      rgba(255,255,255, 0.90) 66px, rgba(255,255,255, 0.90) 68px,
+      transparent 68px, transparent 90px,
+      rgba(255,255,255, 0.50) 90px, rgba(255,255,255, 0.50) 92px,
+      transparent 92px, transparent 120px
+    );
+  mask-composite: intersect;
+  -webkit-mask-composite: source-in;
+  opacity: 0.8;
+  animation: matrix-rain 18s linear infinite;
+  will-change: transform;
 }
 
 /* ── Silhouette + pattern — Nebula theme ──
@@ -388,11 +499,60 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+   Wave 1f — Hero Animation Keyframes
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── AURORA curtain: drift + hue cycle + breathing ────────────────
+   Three background layers drift at different rates via background-position.
+   filter: hue-rotate cycles the palette: green → cyan → magenta → green.
+   Subtle scaleX/translateX adds organic curtain "breathing".
+   25s ease-in-out loop — slow enough to feel ambient, not distracting.
+*/
+@keyframes aurora-curtain {
+  0%, 100% {
+    background-position: 0% 0%, 100% 0%, 50% 0%;
+    filter: hue-rotate(0deg);
+    transform: scaleX(1) translateX(0);
+  }
+  33% {
+    background-position: 50% 8%, 25% -5%, 85% 5%;
+    filter: hue-rotate(80deg);
+    transform: scaleX(1.03) translateX(-1.5%);
+  }
+  66% {
+    background-position: 100% -4%, 60% 8%, 20% -3%;
+    filter: hue-rotate(200deg);
+    transform: scaleX(0.97) translateX(1%);
+  }
+}
+
+/* ── MATRIX rain: seamless downward drift ─────────────────────────
+   The ::after element extends 600px above the viewport (top: -600px).
+   Translating down by exactly 600px returns to the same visual state
+   because all background layers tile at factors of 600px (200, 300).
+   18s linear loop — steady, machine-like descent.
+*/
+@keyframes matrix-rain {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(600px);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
    Accessibility: respect reduced motion
    ═══════════════════════════════════════════════════════════════════ */
 @media (prefers-reduced-motion: reduce) {
   #app::after {
     animation: none !important;
     transition: none !important;
+    filter: none !important;
+  }
+  /* Reset MATRIX extended positioning when animation disabled */
+  .theme-matrix #app::after {
+    top: 0;
+    transform: none;
   }
 }
