@@ -1,3 +1,6 @@
+/* Silhouette + animation layers disabled — opaque panels occlude #app background,
+   making body-level composition invisible. Assets preserved for future architecture. */
+
 /* ═══════════════════════════════════════════════════════════════════
    Background Composition System — Wave 1c
 
@@ -5,8 +8,8 @@
    1. Base        — solid --hud-bg on #app (existing)
    2. Gradient    — radial/linear gradients via --bg-gradient-* (existing)
    3. Pattern     — CSS-only scanlines/grid/circuit overlays (inline on #app)
-   4. Silhouette  — SVG artwork via #app::before
-   5. Animation   — motion layer via #app::after (stub, Wave 1f)
+   4. Silhouette  — SVG artwork via #app::before  [DISABLED — Wave 1g]
+   5. Animation   — motion layer via #app::after   [DISABLED — Wave 1g]
 
    Theme class on <html> (e.g. .theme-command) scopes everything.
    Themes without silhouettes/animations gracefully fall back — the
@@ -63,10 +66,7 @@
     radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
 }
 
-/* ── Silhouette layer — Command theme ──
-   Circuit traces + crosshair reticles in 4 corners.
-   Uses currentColor for tinting via the color property.
-*/
+/* ── Silhouette layer — Command theme ── [DISABLED]
 .theme-command #app::before {
   background-image: url('../assets/themes/command/silhouette.svg');
   background-size: cover;
@@ -75,10 +75,8 @@
   color: var(--primary);
   opacity: 0.10;
 }
-
-/* ── Animation layer — Command theme ──
-   Stub: no animation for Command. Wave 1f adds this for hero themes.
 */
+
 .theme-command #app::after {
   content: none;
 }
@@ -91,9 +89,7 @@
    Pattern layers and gradient stacking are theme-specific.
    ═══════════════════════════════════════════════════════════════════ */
 
-/* ── Silhouette + pattern — Midnight theme ──
-   Star field + constellation lines across full background.
-*/
+/* ── Midnight theme ── */
 .theme-midnight #app {
   background-image:
     radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
@@ -102,6 +98,7 @@
     radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
 }
 
+/* [DISABLED — Wave 1g]
 .theme-midnight #app::before {
   background-image: url('../assets/themes/midnight/silhouette.svg');
   background-size: cover;
@@ -110,14 +107,13 @@
   color: var(--primary);
   opacity: 0.08;
 }
+*/
 
 .theme-midnight #app::after {
   content: none;
 }
 
-/* ── Silhouette + pattern — Ember theme ──
-   Burning city skyline + smoke plumes along the bottom strip.
-*/
+/* ── Ember theme ── */
 .theme-ember #app {
   background-image:
     radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
@@ -126,6 +122,7 @@
     radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
 }
 
+/* [DISABLED — Wave 1g]
 .theme-ember #app::before {
   background-image: url('../assets/themes/ember/silhouette.svg');
   background-size: cover;
@@ -134,14 +131,13 @@
   color: var(--primary);
   opacity: 0.16;
 }
+*/
 
 .theme-ember #app::after {
   content: none;
 }
 
-/* ── Silhouette + pattern — Arctic theme ──
-   Mountain ridge at bottom + aurora band at top.
-*/
+/* ── Arctic theme ── */
 .theme-arctic #app {
   background-image:
     radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
@@ -150,6 +146,7 @@
     radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
 }
 
+/* [DISABLED — Wave 1g]
 .theme-arctic #app::before {
   background-image: url('../assets/themes/arctic/silhouette.svg');
   background-size: cover;
@@ -158,14 +155,13 @@
   color: var(--primary);
   opacity: 0.20;
 }
+*/
 
 .theme-arctic #app::after {
   content: none;
 }
 
-/* ── Silhouette + pattern — Phantom theme ──
-   Twisted gothic spires on left + right edges with fog wisps.
-*/
+/* ── Phantom theme ── */
 .theme-phantom #app {
   background-image:
     radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
@@ -174,6 +170,7 @@
     radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
 }
 
+/* [DISABLED — Wave 1g]
 .theme-phantom #app::before {
   background-image: url('../assets/themes/phantom/silhouette.svg');
   background-size: cover;
@@ -182,6 +179,7 @@
   color: var(--primary);
   opacity: 0.12;
 }
+*/
 
 .theme-phantom #app::after {
   content: none;
@@ -191,9 +189,7 @@
    Wave 1e — New themes (7)
    ═══════════════════════════════════════════════════════════════════ */
 
-/* ── Silhouette + pattern — Neon theme ──
-   Tokyo skyline + neon sign clusters. Hot pink scanlines.
-*/
+/* ── Neon theme ── */
 .theme-neon #app {
   background-image:
     /* Pattern: neon scanlines */
@@ -210,6 +206,7 @@
     radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
 }
 
+/* [DISABLED — Wave 1g]
 .theme-neon #app::before {
   background-image: url('../assets/themes/neon/silhouette.svg');
   background-size: cover;
@@ -218,14 +215,13 @@
   color: var(--primary);
   opacity: 0.14;
 }
+*/
 
 .theme-neon #app::after {
   content: none;
 }
 
-/* ── Silhouette + pattern — Aurora theme (HERO) ──
-   Pine forest silhouette (bottom) + aurora curtain wisps (top).
-*/
+/* ── Aurora theme (HERO) ── */
 .theme-aurora #app {
   background-image:
     radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
@@ -234,6 +230,7 @@
     radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
 }
 
+/* [DISABLED — Wave 1g]
 .theme-aurora #app::before {
   background-image: url('../assets/themes/aurora/silhouette.svg');
   background-size: cover;
@@ -242,16 +239,12 @@
   color: var(--primary);
   opacity: 0.16;
 }
-
-/* HERO: aurora curtain animation — Wave 1f
-   Three angled gradient layers simulate flowing curtain folds.
-   Animated via background-position drift, hue-rotate color cycling,
-   and subtle scaleX breathing. Masked to top ~60% with soft fadeout.
 */
+
+/* [DISABLED — Wave 1g] HERO: aurora curtain animation
 .theme-aurora #app::after {
   content: '';
   background:
-    /* Curtain fold 1 — broad sweeping bands */
     linear-gradient(
       132deg,
       transparent 8%,
@@ -262,7 +255,6 @@
       rgba(116, 243, 161, 0.09) 66%,
       transparent 80%
     ),
-    /* Curtain fold 2 — offset narrow wisps */
     linear-gradient(
       108deg,
       transparent 5%,
@@ -273,7 +265,6 @@
       rgba(58, 240, 224, 0.11) 64%,
       transparent 78%
     ),
-    /* Curtain fold 3 — deep ambient glow */
     linear-gradient(
       155deg,
       transparent 12%,
@@ -290,10 +281,13 @@
   animation: aurora-curtain 25s ease-in-out infinite;
   will-change: transform, filter;
 }
-
-/* ── Silhouette + pattern — Synthwave theme ──
-   Sun + grid horizon + palm silhouettes.
 */
+
+.theme-aurora #app::after {
+  content: none;
+}
+
+/* ── Synthwave theme ── */
 .theme-synthwave #app {
   background-image:
     radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
@@ -302,6 +296,7 @@
     radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
 }
 
+/* [DISABLED — Wave 1g]
 .theme-synthwave #app::before {
   background-image: url('../assets/themes/synthwave/silhouette.svg');
   background-size: cover;
@@ -310,14 +305,13 @@
   color: var(--primary);
   opacity: 0.14;
 }
+*/
 
 .theme-synthwave #app::after {
   content: none;
 }
 
-/* ── Silhouette + pattern — Matrix theme (HERO) ──
-   Cascading glyph columns. Green scanline pattern.
-*/
+/* ── Matrix theme (HERO) ── */
 .theme-matrix #app {
   background-image:
     /* Pattern: green CRT scanlines */
@@ -334,6 +328,7 @@
     radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
 }
 
+/* [DISABLED — Wave 1g]
 .theme-matrix #app::before {
   background-image: url('../assets/themes/matrix/silhouette.svg');
   background-size: cover;
@@ -342,20 +337,13 @@
   color: var(--primary);
   opacity: 0.12;
 }
-
-/* HERO: matrix glyph rain — Wave 1f
-   Three repeating-linear-gradient layers create glyph-cell dashes at
-   varying densities. A column mask (repeating horizontal gradient)
-   reveals thin vertical strips at irregular spacing/opacity, composited
-   with a vertical fade for soft top/bottom edges. The whole layer
-   extends 600px above the viewport and translates downward by one
-   tile period for a seamless loop — GPU-friendly transform-only drift.
 */
+
+/* [DISABLED — Wave 1g] HERO: matrix glyph rain animation
 .theme-matrix #app::after {
   content: '';
   top: -600px;
   background-image:
-    /* Primary glyph cells — dense stream */
     repeating-linear-gradient(
       to bottom,
       rgba(0, 255, 65, 0.22) 0px,
@@ -363,7 +351,6 @@
       transparent 10px,
       transparent 18px
     ),
-    /* Secondary glyph cells — sparser offset */
     repeating-linear-gradient(
       to bottom,
       rgba(0, 255, 65, 0.12) 0px,
@@ -371,7 +358,6 @@
       transparent 8px,
       transparent 30px
     ),
-    /* Bright accent heads — rare highlights */
     repeating-linear-gradient(
       to bottom,
       rgba(170, 255, 170, 0.18) 0px,
@@ -380,9 +366,7 @@
     );
   background-size: 100% 200px, 100% 300px, 100% 200px;
   mask-image:
-    /* Vertical fade: soft edges at top and bottom of visible area */
     linear-gradient(to bottom, transparent, white 4%, white 90%, transparent),
-    /* Column strips: thin vertical lines at irregular spacing + brightness */
     repeating-linear-gradient(
       to right,
       rgba(255,255,255, 0.85) 0px, rgba(255,255,255, 0.85) 2px,
@@ -417,10 +401,13 @@
   animation: matrix-rain 18s linear infinite;
   will-change: transform;
 }
-
-/* ── Silhouette + pattern — Nebula theme ──
-   Silhouetted planet + galaxy dust clouds.
 */
+
+.theme-matrix #app::after {
+  content: none;
+}
+
+/* ── Nebula theme ── */
 .theme-nebula #app {
   background-image:
     radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
@@ -429,6 +416,7 @@
     radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
 }
 
+/* [DISABLED — Wave 1g]
 .theme-nebula #app::before {
   background-image: url('../assets/themes/nebula/silhouette.svg');
   background-size: cover;
@@ -437,14 +425,13 @@
   color: var(--primary);
   opacity: 0.14;
 }
+*/
 
 .theme-nebula #app::after {
   content: none;
 }
 
-/* ── Silhouette + pattern — Vaporwave theme ──
-   Roman bust silhouette (corner) + pastel checker.
-*/
+/* ── Vaporwave theme ── */
 .theme-vaporwave #app {
   background-image:
     radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
@@ -453,6 +440,7 @@
     radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
 }
 
+/* [DISABLED — Wave 1g]
 .theme-vaporwave #app::before {
   background-image: url('../assets/themes/vaporwave/silhouette.svg');
   background-size: cover;
@@ -461,14 +449,13 @@
   color: var(--primary);
   opacity: 0.12;
 }
+*/
 
 .theme-vaporwave #app::after {
   content: none;
 }
 
-/* ── Silhouette + pattern — Hologram theme ──
-   Scanline grid + prism refraction bars.
-*/
+/* ── Hologram theme ── */
 .theme-hologram #app {
   background-image:
     /* Pattern: fine scanlines */
@@ -485,6 +472,7 @@
     radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
 }
 
+/* [DISABLED — Wave 1g]
 .theme-hologram #app::before {
   background-image: url('../assets/themes/hologram/silhouette.svg');
   background-size: cover;
@@ -493,6 +481,7 @@
   color: var(--primary);
   opacity: 0.10;
 }
+*/
 
 .theme-hologram #app::after {
   content: none;
@@ -500,14 +489,9 @@
 
 /* ═══════════════════════════════════════════════════════════════════
    Wave 1f — Hero Animation Keyframes
+   (Preserved for future architecture — currently unused)
    ═══════════════════════════════════════════════════════════════════ */
 
-/* ── AURORA curtain: drift + hue cycle + breathing ────────────────
-   Three background layers drift at different rates via background-position.
-   filter: hue-rotate cycles the palette: green → cyan → magenta → green.
-   Subtle scaleX/translateX adds organic curtain "breathing".
-   25s ease-in-out loop — slow enough to feel ambient, not distracting.
-*/
 @keyframes aurora-curtain {
   0%, 100% {
     background-position: 0% 0%, 100% 0%, 50% 0%;
@@ -526,12 +510,6 @@
   }
 }
 
-/* ── MATRIX rain: seamless downward drift ─────────────────────────
-   The ::after element extends 600px above the viewport (top: -600px).
-   Translating down by exactly 600px returns to the same visual state
-   because all background layers tile at factors of 600px (200, 300).
-   18s linear loop — steady, machine-like descent.
-*/
 @keyframes matrix-rain {
   from {
     transform: translateY(0);
@@ -550,7 +528,6 @@
     transition: none !important;
     filter: none !important;
   }
-  /* Reset MATRIX extended positioning when animation disabled */
   .theme-matrix #app::after {
     top: 0;
     transform: none;
