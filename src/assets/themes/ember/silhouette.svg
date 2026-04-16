@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" fill="currentColor" stroke="currentColor">
+  <!-- Burning city skyline — blocky geometric buildings along bottom -->
+  <g stroke="none">
+    <!-- Building cluster 1: left -->
+    <rect x="0" y="920" width="60" height="160"/>
+    <rect x="70" y="880" width="45" height="200"/>
+    <rect x="125" y="850" width="70" height="230"/>
+    <rect x="205" y="900" width="40" height="180"/>
+    <rect x="255" y="870" width="55" height="210"/>
+    <!-- Tall tower -->
+    <rect x="130" y="780" width="20" height="70"/>
+    <rect x="125" y="770" width="30" height="15"/>
+    <!-- Antenna -->
+    <line x1="140" y1="770" x2="140" y2="740" stroke-width="1.5" fill="none"/>
+
+    <!-- Building cluster 2: left-center -->
+    <rect x="340" y="890" width="80" height="190"/>
+    <rect x="430" y="840" width="50" height="240"/>
+    <rect x="490" y="870" width="65" height="210"/>
+    <rect x="565" y="910" width="40" height="170"/>
+    <!-- Tall spire -->
+    <rect x="445" y="760" width="20" height="80"/>
+    <polygon points="445,760 465,760 455,720"/>
+
+    <!-- Building cluster 3: center -->
+    <rect x="660" y="860" width="90" height="220"/>
+    <rect x="760" y="830" width="60" height="250"/>
+    <rect x="830" y="880" width="70" height="200"/>
+    <rect x="910" y="850" width="50" height="230"/>
+    <rect x="970" y="890" width="80" height="190"/>
+    <!-- Central tower -->
+    <rect x="775" y="740" width="30" height="90"/>
+    <rect x="770" y="730" width="40" height="15"/>
+    <polygon points="770,730 810,730 790,690"/>
+
+    <!-- Building cluster 4: right-center -->
+    <rect x="1100" y="870" width="55" height="210"/>
+    <rect x="1165" y="840" width="75" height="240"/>
+    <rect x="1250" y="890" width="45" height="190"/>
+    <rect x="1305" y="860" width="60" height="220"/>
+    <!-- Tower -->
+    <rect x="1185" y="760" width="25" height="80"/>
+    <line x1="1197" y1="760" x2="1197" y2="725" stroke-width="1.5" fill="none"/>
+
+    <!-- Building cluster 5: right -->
+    <rect x="1420" y="900" width="70" height="180"/>
+    <rect x="1500" y="860" width="50" height="220"/>
+    <rect x="1560" y="880" width="80" height="200"/>
+    <rect x="1650" y="850" width="45" height="230"/>
+    <rect x="1705" y="890" width="60" height="190"/>
+    <rect x="1775" y="870" width="55" height="210"/>
+    <rect x="1840" y="910" width="80" height="170"/>
+    <!-- Tower -->
+    <rect x="1660" y="770" width="20" height="80"/>
+    <polygon points="1660,770 1680,770 1670,740"/>
+  </g>
+
+  <!-- Window dots on buildings — tiny rectangles suggesting lit windows -->
+  <g stroke="none" opacity="0.6">
+    <!-- Cluster 1 windows -->
+    <rect x="135" y="870" width="4" height="6"/>
+    <rect x="150" y="870" width="4" height="6"/>
+    <rect x="135" y="890" width="4" height="6"/>
+    <rect x="150" y="890" width="4" height="6"/>
+    <rect x="135" y="910" width="4" height="6"/>
+    <rect x="150" y="910" width="4" height="6"/>
+    <!-- Cluster 3 windows -->
+    <rect x="685" y="880" width="5" height="7"/>
+    <rect x="705" y="880" width="5" height="7"/>
+    <rect x="725" y="880" width="5" height="7"/>
+    <rect x="685" y="900" width="5" height="7"/>
+    <rect x="705" y="900" width="5" height="7"/>
+    <rect x="725" y="900" width="5" height="7"/>
+    <rect x="685" y="920" width="5" height="7"/>
+    <rect x="705" y="920" width="5" height="7"/>
+    <!-- Cluster 5 windows -->
+    <rect x="1570" y="900" width="5" height="7"/>
+    <rect x="1590" y="900" width="5" height="7"/>
+    <rect x="1610" y="900" width="5" height="7"/>
+    <rect x="1570" y="920" width="5" height="7"/>
+    <rect x="1590" y="920" width="5" height="7"/>
+  </g>
+
+  <!-- Smoke plumes — rising curved wisps -->
+  <g fill="none" stroke-width="1.2" opacity="0.5">
+    <!-- Plume from cluster 1 -->
+    <path d="M140 740 Q130 680 150 620 Q140 560 160 500"/>
+    <path d="M155 735 Q170 670 150 610 Q165 550 145 490"/>
+    <!-- Plume from cluster 3 central tower -->
+    <path d="M790 690 Q775 620 800 550 Q785 480 810 410"/>
+    <path d="M805 685 Q825 620 800 555 Q820 490 795 420"/>
+    <path d="M780 695 Q755 640 775 575 Q760 510 780 445"/>
+    <!-- Plume from cluster 4 -->
+    <path d="M1197 725 Q1185 660 1210 600 Q1195 540 1215 480"/>
+    <!-- Plume from cluster 5 -->
+    <path d="M1670 740 Q1655 670 1680 610 Q1665 550 1685 490"/>
+    <path d="M1680 735 Q1700 680 1675 620 Q1695 560 1670 500"/>
+  </g>
+
+  <!-- Ember particles — tiny dots floating above the skyline -->
+  <g stroke="none" opacity="0.4">
+    <circle cx="160" cy="470" r="1.5"/>
+    <circle cx="145" cy="430" r="1"/>
+    <circle cx="175" cy="510" r="1"/>
+    <circle cx="800" cy="380" r="1.5"/>
+    <circle cx="820" cy="350" r="1"/>
+    <circle cx="770" cy="400" r="1"/>
+    <circle cx="785" cy="320" r="1.5"/>
+    <circle cx="1210" cy="450" r="1"/>
+    <circle cx="1195" cy="420" r="1.5"/>
+    <circle cx="1680" cy="460" r="1.5"/>
+    <circle cx="1665" cy="430" r="1"/>
+    <circle cx="1695" cy="480" r="1"/>
+  </g>
+</svg>

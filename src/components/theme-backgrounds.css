@@ -91,7 +91,9 @@
    Pattern layers and gradient stacking are theme-specific.
    ═══════════════════════════════════════════════════════════════════ */
 
-/* Midnight — no silhouette yet (Wave 1d), add subtle hex grid pattern */
+/* ── Silhouette + pattern — Midnight theme ──
+   Star field + constellation lines across full background.
+*/
 .theme-midnight #app {
   background-image:
     radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
@@ -101,14 +103,21 @@
 }
 
 .theme-midnight #app::before {
-  content: none;
+  background-image: url('../assets/themes/midnight/silhouette.svg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  color: var(--primary);
+  opacity: 0.08;
 }
 
 .theme-midnight #app::after {
   content: none;
 }
 
-/* Ember — no silhouette yet (Wave 1d) */
+/* ── Silhouette + pattern — Ember theme ──
+   Burning city skyline + smoke plumes along the bottom strip.
+*/
 .theme-ember #app {
   background-image:
     radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
@@ -118,14 +127,21 @@
 }
 
 .theme-ember #app::before {
-  content: none;
+  background-image: url('../assets/themes/ember/silhouette.svg');
+  background-size: cover;
+  background-position: bottom center;
+  background-repeat: no-repeat;
+  color: var(--primary);
+  opacity: 0.16;
 }
 
 .theme-ember #app::after {
   content: none;
 }
 
-/* Arctic — no silhouette yet (Wave 1d) */
+/* ── Silhouette + pattern — Arctic theme ──
+   Mountain ridge at bottom + aurora band at top.
+*/
 .theme-arctic #app {
   background-image:
     radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
@@ -135,14 +151,21 @@
 }
 
 .theme-arctic #app::before {
-  content: none;
+  background-image: url('../assets/themes/arctic/silhouette.svg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  color: var(--primary);
+  opacity: 0.20;
 }
 
 .theme-arctic #app::after {
   content: none;
 }
 
-/* Phantom — no silhouette yet (Wave 1d) */
+/* ── Silhouette + pattern — Phantom theme ──
+   Twisted gothic spires on left + right edges with fog wisps.
+*/
 .theme-phantom #app {
   background-image:
     radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
@@ -152,7 +175,12 @@
 }
 
 .theme-phantom #app::before {
-  content: none;
+  background-image: url('../assets/themes/phantom/silhouette.svg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  color: var(--primary);
+  opacity: 0.12;
 }
 
 .theme-phantom #app::after {

@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" fill="currentColor" stroke="currentColor">
+  <!-- Left edge: gothic spires rising from bottom-left -->
+  <g stroke="none">
+    <!-- Spire 1: tallest, leftmost -->
+    <polygon points="0,1080 0,280 20,260 40,280 40,1080"/>
+    <polygon points="5,300 20,180 35,300"/>
+    <polygon points="10,200 20,100 30,200"/>
+    <!-- Spire 1 finial -->
+    <line x1="20" y1="100" x2="20" y2="60" stroke-width="1.5" fill="none"/>
+    <polygon points="15,65 20,40 25,65"/>
+
+    <!-- Spire 2 -->
+    <polygon points="50,1080 50,380 70,360 90,380 90,1080"/>
+    <polygon points="55,400 70,300 85,400"/>
+    <polygon points="60,320 70,240 80,320"/>
+    <line x1="70" y1="240" x2="70" y2="200" stroke-width="1" fill="none"/>
+
+    <!-- Spire 3: shorter, wider base -->
+    <polygon points="95,1080 95,500 120,470 145,500 145,1080"/>
+    <polygon points="100,520 120,420 140,520"/>
+    <polygon points="108,440 120,360 132,440"/>
+
+    <!-- Buttress arches connecting spires -->
+    <path d="M40 600 Q60 550 50 600" fill="none" stroke-width="1"/>
+    <path d="M90 650 Q110 600 95 650" fill="none" stroke-width="1"/>
+
+    <!-- Gothic window cutouts (filled shapes suggesting pointed arch windows) -->
+    <ellipse cx="20" cy="500" rx="6" ry="12" opacity="0.3"/>
+    <ellipse cx="20" cy="600" rx="6" ry="12" opacity="0.3"/>
+    <ellipse cx="20" cy="700" rx="6" ry="12" opacity="0.3"/>
+    <ellipse cx="70" cy="550" rx="5" ry="10" opacity="0.3"/>
+    <ellipse cx="70" cy="650" rx="5" ry="10" opacity="0.3"/>
+    <ellipse cx="120" cy="620" rx="5" ry="10" opacity="0.3"/>
+  </g>
+
+  <!-- Right edge: mirrored gothic spires -->
+  <g stroke="none" transform="translate(1920 0) scale(-1 1)">
+    <!-- Spire 1: tallest -->
+    <polygon points="0,1080 0,320 20,300 40,320 40,1080"/>
+    <polygon points="5,340 20,220 35,340"/>
+    <polygon points="10,240 20,140 30,240"/>
+    <line x1="20" y1="140" x2="20" y2="90" stroke-width="1.5" fill="none"/>
+    <polygon points="15,95 20,65 25,95"/>
+
+    <!-- Spire 2 -->
+    <polygon points="50,1080 50,420 70,400 90,420 90,1080"/>
+    <polygon points="55,440 70,340 85,440"/>
+    <polygon points="60,360 70,270 80,360"/>
+    <line x1="70" y1="270" x2="70" y2="230" stroke-width="1" fill="none"/>
+
+    <!-- Spire 3 -->
+    <polygon points="95,1080 95,540 120,510 145,540 145,1080"/>
+    <polygon points="100,560 120,460 140,560"/>
+    <polygon points="108,480 120,390 132,480"/>
+
+    <!-- Buttress arches -->
+    <path d="M40 640 Q60 590 50 640" fill="none" stroke-width="1"/>
+    <path d="M90 690 Q110 640 95 690" fill="none" stroke-width="1"/>
+
+    <!-- Gothic windows -->
+    <ellipse cx="20" cy="540" rx="6" ry="12" opacity="0.3"/>
+    <ellipse cx="20" cy="640" rx="6" ry="12" opacity="0.3"/>
+    <ellipse cx="20" cy="740" rx="6" ry="12" opacity="0.3"/>
+    <ellipse cx="70" cy="590" rx="5" ry="10" opacity="0.3"/>
+    <ellipse cx="70" cy="690" rx="5" ry="10" opacity="0.3"/>
+    <ellipse cx="120" cy="660" rx="5" ry="10" opacity="0.3"/>
+  </g>
+
+  <!-- Fog wisps — horizontal flowing curves across left and right edges -->
+  <g fill="none" stroke-width="1" opacity="0.4">
+    <!-- Left-side fog -->
+    <path d="M0 400 Q80 380 160 410 Q240 440 320 400 Q400 360 480 390"/>
+    <path d="M0 550 Q100 530 200 560 Q300 590 400 550 Q500 510 560 540" stroke-width="0.8"/>
+    <path d="M0 750 Q120 720 240 760 Q360 800 480 750" stroke-width="0.6"/>
+    <path d="M0 900 Q80 870 160 900 Q240 930 360 890" stroke-width="0.5"/>
+
+    <!-- Right-side fog -->
+    <path d="M1920 350 Q1840 330 1760 360 Q1680 390 1600 350 Q1520 310 1440 340"/>
+    <path d="M1920 500 Q1820 480 1720 510 Q1620 540 1520 500 Q1420 460 1360 490" stroke-width="0.8"/>
+    <path d="M1920 700 Q1800 670 1680 710 Q1560 750 1440 700" stroke-width="0.6"/>
+    <path d="M1920 860 Q1840 830 1760 860 Q1680 890 1560 850" stroke-width="0.5"/>
+  </g>
+
+  <!-- Fog particles — scattered dots in the fog areas -->
+  <g stroke="none" opacity="0.2">
+    <circle cx="100" cy="390" r="1.5"/>
+    <circle cx="220" cy="420" r="1"/>
+    <circle cx="350" cy="380" r="1.5"/>
+    <circle cx="80" cy="540" r="1"/>
+    <circle cx="250" cy="570" r="1.5"/>
+    <circle cx="150" cy="740" r="1"/>
+    <circle cx="300" cy="770" r="1.5"/>
+    <circle cx="1820" cy="340" r="1.5"/>
+    <circle cx="1700" cy="370" r="1"/>
+    <circle cx="1550" cy="330" r="1.5"/>
+    <circle cx="1750" cy="490" r="1"/>
+    <circle cx="1620" cy="520" r="1.5"/>
+    <circle cx="1780" cy="690" r="1"/>
+    <circle cx="1650" cy="720" r="1.5"/>
+  </g>
+</svg>

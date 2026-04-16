@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" fill="currentColor" stroke="currentColor">
+  <!-- Mountain ridge silhouette — jagged peaks along the bottom -->
+  <g stroke="none">
+    <!-- Main mountain range — single continuous polygon -->
+    <polygon points="
+      0,1080
+      0,920
+      80,880
+      140,840
+      200,900
+      260,830
+      340,780
+      400,850
+      440,810
+      520,720
+      580,760
+      620,700
+      680,740
+      720,680
+      800,640
+      860,700
+      920,660
+      960,600
+      1020,650
+      1060,620
+      1120,580
+      1160,640
+      1200,610
+      1260,660
+      1320,620
+      1360,680
+      1400,720
+      1440,690
+      1500,740
+      1540,780
+      1600,730
+      1660,770
+      1700,820
+      1760,790
+      1820,850
+      1880,830
+      1920,870
+      1920,1080
+    "/>
+
+    <!-- Secondary ridge behind — slightly higher, partial visibility -->
+    <polygon points="
+      300,1080
+      300,850
+      380,800
+      440,830
+      500,770
+      560,810
+      600,750
+      660,780
+      700,730
+      740,760
+      780,700
+      840,730
+      880,690
+      940,650
+      1000,680
+      1040,640
+      1100,610
+      1140,570
+      1200,600
+      1240,560
+      1300,590
+      1360,620
+      1400,580
+      1440,610
+      1480,640
+      1500,680
+      1500,1080
+    " opacity="0.4"/>
+  </g>
+
+  <!-- Mountain ridge detail lines — geological strata hints -->
+  <g fill="none" stroke-width="0.5" opacity="0.3">
+    <polyline points="520,720 560,740 620,700 660,720"/>
+    <polyline points="920,660 960,640 1020,650 1060,630"/>
+    <polyline points="1120,580 1160,600 1200,590 1260,620"/>
+    <polyline points="1500,740 1540,760 1600,730 1660,750"/>
+  </g>
+
+  <!-- Snow caps — lighter filled triangles at peaks -->
+  <g stroke="none" opacity="0.5">
+    <polygon points="520,720 540,735 500,735"/>
+    <polygon points="720,680 740,700 700,700"/>
+    <polygon points="960,600 985,625 935,625"/>
+    <polygon points="1120,580 1145,605 1095,605"/>
+    <polygon points="1240,560 1260,580 1220,580" opacity="0.4"/>
+  </g>
+
+  <!-- Aurora band — flowing curves across the top -->
+  <g fill="none" stroke-width="2" opacity="0.6">
+    <!-- Primary aurora ribbon -->
+    <path d="M0 120 Q200 60 400 100 Q600 140 800 80 Q1000 20 1200 70 Q1400 120 1600 60 Q1800 0 1920 40"/>
+    <!-- Secondary ribbon, offset -->
+    <path d="M0 160 Q250 100 500 150 Q700 200 900 130 Q1100 60 1300 110 Q1500 160 1700 90 Q1850 40 1920 80" stroke-width="1.5"/>
+    <!-- Tertiary, thinner -->
+    <path d="M0 80 Q150 40 350 70 Q550 100 750 50 Q950 0 1150 35 Q1350 70 1550 30 Q1750 -10 1920 20" stroke-width="1" opacity="0.4"/>
+  </g>
+
+  <!-- Aurora shimmer — faint vertical streaks from the bands -->
+  <g fill="none" stroke-width="0.4" opacity="0.25">
+    <line x1="200" y1="60" x2="210" y2="180"/>
+    <line x1="400" y1="100" x2="390" y2="220"/>
+    <line x1="600" y1="140" x2="610" y2="260"/>
+    <line x1="800" y1="80" x2="790" y2="200"/>
+    <line x1="1000" y1="20" x2="1010" y2="140"/>
+    <line x1="1200" y1="70" x2="1190" y2="190"/>
+    <line x1="1400" y1="120" x2="1410" y2="240"/>
+    <line x1="1600" y1="60" x2="1590" y2="180"/>
+    <line x1="1800" y1="0" x2="1810" y2="120"/>
+  </g>
+</svg>

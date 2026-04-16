@@ -12,7 +12,7 @@ const budgets = [
   {
     label: 'main-css',
     pattern: /^index-.*\.css$/,
-    maxBytes: 95_000,
+    maxBytes: 99_000,
   },
   {
     label: 'store-js',
