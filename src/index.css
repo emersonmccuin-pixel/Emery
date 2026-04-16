@@ -1002,7 +1002,7 @@
 
 /* ── Static text glow on active chrome ── */
 .theme-neon .center-stage__header {
-  text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 45%, transparent);
+  text-shadow: 0 0 12px color-mix(in srgb, var(--accent) 67%, transparent);
 }
 
 /* ── 1. Neon borders + double-ring on active cards ── */
@@ -1010,83 +1010,99 @@
   border-color: var(--accent);
   border-width: 2px;
   box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.55),
     0 0 0 1px var(--accent),
-    0 0 24px color-mix(in srgb, var(--accent) 70%, transparent),
-    inset 0 0 18px color-mix(in srgb, var(--accent) 14%, transparent);
+    0 0 36px color-mix(in srgb, var(--accent) 100%, transparent),
+    inset 0 0 27px color-mix(in srgb, var(--accent) 21%, transparent);
 }
 
 .theme-neon .session-card--active {
   border-color: var(--hud-magenta);
   border-width: 2px;
   box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.55),
     0 0 0 1px var(--hud-magenta),
-    0 0 24px color-mix(in srgb, var(--hud-magenta) 70%, transparent),
-    inset 0 0 18px color-mix(in srgb, var(--hud-magenta) 14%, transparent);
+    0 0 36px color-mix(in srgb, var(--hud-magenta) 100%, transparent),
+    inset 0 0 27px color-mix(in srgb, var(--hud-magenta) 21%, transparent);
 }
 
 .theme-neon .project-card--minimal.project-card--active {
   border-left-width: 3px;
   border-left-color: var(--accent);
-  text-shadow: 0 0 10px color-mix(in srgb, var(--accent) 50%, transparent);
+  text-shadow: 0 0 15px color-mix(in srgb, var(--accent) 75%, transparent);
 }
 
 .theme-neon .workspace-tab--active {
   color: var(--hud-green);
   border-bottom-width: 3px;
   border-bottom-color: var(--hud-green);
-  text-shadow: 0 0 10px color-mix(in srgb, var(--hud-green) 55%, transparent);
+  text-shadow: 0 0 15px color-mix(in srgb, var(--hud-green) 82%, transparent);
 }
 
 /* ── 1b. Subtle glow borders on all resting-state cards & tabs ── */
 .theme-neon .project-card--minimal {
-  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.35),
+    0 0 12px color-mix(in srgb, var(--accent) 15%, transparent);
   transition: border-color var(--motion-base) var(--easing-standard),
               box-shadow var(--motion-base) var(--easing-standard);
 }
 
 .theme-neon .project-card--minimal:hover {
-  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 52%, transparent);
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.45),
+    0 0 18px color-mix(in srgb, var(--accent) 27%, transparent);
 }
 
 .theme-neon .session-card {
-  border: 1px solid color-mix(in srgb, var(--hud-magenta) 20%, transparent);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--hud-magenta) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--hud-magenta) 30%, transparent);
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.35),
+    0 0 12px color-mix(in srgb, var(--hud-magenta) 15%, transparent);
   transition: border-color var(--motion-base) var(--easing-standard),
               box-shadow var(--motion-base) var(--easing-standard);
 }
 
 .theme-neon .session-card:hover {
-  border-color: color-mix(in srgb, var(--hud-magenta) 35%, transparent);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--hud-magenta) 18%, transparent);
+  border-color: color-mix(in srgb, var(--hud-magenta) 52%, transparent);
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.45),
+    0 0 18px color-mix(in srgb, var(--hud-magenta) 27%, transparent);
 }
 
 .theme-neon .workspace-tab {
-  border: 1px solid color-mix(in srgb, var(--hud-green) 20%, transparent);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--hud-green) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--hud-green) 30%, transparent);
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.35),
+    0 0 12px color-mix(in srgb, var(--hud-green) 15%, transparent);
   transition: border-color var(--motion-base) var(--easing-standard),
               box-shadow var(--motion-base) var(--easing-standard);
 }
 
 .theme-neon .workspace-tab:hover {
-  border-color: color-mix(in srgb, var(--hud-green) 35%, transparent);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--hud-green) 18%, transparent);
+  border-color: color-mix(in srgb, var(--hud-green) 52%, transparent);
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.45),
+    0 0 18px color-mix(in srgb, var(--hud-green) 27%, transparent);
 }
 
 /* ── 2. Breathing glow — slow pulse on active cards ── */
 @keyframes neon-breath {
   0%, 100% {
     box-shadow:
+      0 4px 12px rgba(0, 0, 0, 0.35),
       0 0 0 1px var(--neon-breath-color),
-      0 0 18px color-mix(in srgb, var(--neon-breath-color) 35%, transparent),
-      inset 0 0 12px color-mix(in srgb, var(--neon-breath-color) 10%, transparent);
+      0 0 27px color-mix(in srgb, var(--neon-breath-color) 52%, transparent),
+      inset 0 0 18px color-mix(in srgb, var(--neon-breath-color) 15%, transparent);
   }
   50% {
     box-shadow:
+      0 8px 24px rgba(0, 0, 0, 0.55),
       0 0 0 2px var(--neon-breath-color),
-      0 0 50px color-mix(in srgb, var(--neon-breath-color) 85%, transparent),
-      inset 0 0 32px color-mix(in srgb, var(--neon-breath-color) 35%, transparent);
+      0 0 75px color-mix(in srgb, var(--neon-breath-color) 100%, transparent),
+      inset 0 0 48px color-mix(in srgb, var(--neon-breath-color) 52%, transparent);
   }
 }
 
@@ -1137,11 +1153,11 @@
 /* ── 4. Rail header label buzz ── */
 @keyframes neon-text-buzz {
   0%, 100% {
-    text-shadow: 0 0 6px color-mix(in srgb, var(--accent) 40%, transparent);
+    text-shadow: 0 0 9px color-mix(in srgb, var(--accent) 60%, transparent);
   }
   50% {
-    text-shadow: 0 0 14px color-mix(in srgb, var(--accent) 70%, transparent),
-                 0 0 24px color-mix(in srgb, var(--accent) 30%, transparent);
+    text-shadow: 0 0 21px color-mix(in srgb, var(--accent) 100%, transparent),
+                 0 0 36px color-mix(in srgb, var(--accent) 45%, transparent);
   }
 }
 
@@ -1152,11 +1168,11 @@
 /* ── 5. Active tab text-shadow pulse ── */
 @keyframes neon-tab-pulse {
   0%, 100% {
-    text-shadow: 0 0 8px color-mix(in srgb, var(--hud-green) 45%, transparent);
+    text-shadow: 0 0 12px color-mix(in srgb, var(--hud-green) 67%, transparent);
   }
   50% {
-    text-shadow: 0 0 16px color-mix(in srgb, var(--hud-green) 70%, transparent),
-                 0 0 28px color-mix(in srgb, var(--hud-green) 25%, transparent);
+    text-shadow: 0 0 24px color-mix(in srgb, var(--hud-green) 100%, transparent),
+                 0 0 42px color-mix(in srgb, var(--hud-green) 37%, transparent);
   }
 }
 
@@ -1208,26 +1224,28 @@
   }
   /* Static peak text glow for rail labels */
   .theme-neon .rail-label {
-    text-shadow: 0 0 14px color-mix(in srgb, var(--accent) 70%, transparent),
-                 0 0 24px color-mix(in srgb, var(--accent) 30%, transparent);
+    text-shadow: 0 0 21px color-mix(in srgb, var(--accent) 100%, transparent),
+                 0 0 36px color-mix(in srgb, var(--accent) 45%, transparent);
   }
   /* Static peak glow for active tab */
   .theme-neon .workspace-tab--active {
-    text-shadow: 0 0 16px color-mix(in srgb, var(--hud-green) 70%, transparent),
-                 0 0 28px color-mix(in srgb, var(--hud-green) 25%, transparent);
+    text-shadow: 0 0 24px color-mix(in srgb, var(--hud-green) 100%, transparent),
+                 0 0 42px color-mix(in srgb, var(--hud-green) 37%, transparent);
   }
   /* Static peak box-shadow for active cards */
   .theme-neon .dispatcher-card--active {
     box-shadow:
+      0 8px 24px rgba(0, 0, 0, 0.55),
       0 0 0 2px var(--accent),
-      0 0 50px color-mix(in srgb, var(--accent) 85%, transparent),
-      inset 0 0 32px color-mix(in srgb, var(--accent) 35%, transparent);
+      0 0 75px color-mix(in srgb, var(--accent) 100%, transparent),
+      inset 0 0 48px color-mix(in srgb, var(--accent) 52%, transparent);
   }
   .theme-neon .session-card--active {
     box-shadow:
+      0 8px 24px rgba(0, 0, 0, 0.55),
       0 0 0 2px var(--hud-magenta),
-      0 0 50px color-mix(in srgb, var(--hud-magenta) 85%, transparent),
-      inset 0 0 32px color-mix(in srgb, var(--hud-magenta) 35%, transparent);
+      0 0 75px color-mix(in srgb, var(--hud-magenta) 100%, transparent),
+      inset 0 0 48px color-mix(in srgb, var(--hud-magenta) 52%, transparent);
   }
 }
 
