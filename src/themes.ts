@@ -374,9 +374,9 @@ const neon: Theme = {
   '--hud-bg': '#0a0612',
   '--hud-panel-bg': 'rgba(16, 8, 24, 0.95)',
 
-  '--rail-projects-tint': '#ff3399',
+  '--rail-projects-tint': '#4400aa',
   '--rail-sessions-tint': '#4400aa',
-  '--center-tint': '#3af0e0',
+  '--center-tint': '#4400aa',
 
   '--fg-hot': '#fff0fa',
   '--fg-dim': '#6a4a7a',
