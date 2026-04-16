@@ -723,6 +723,60 @@ const hologram: Theme = {
   '--bg-grid-opacity': '0.05',
 }
 
+const vellum: Theme = {
+  label: 'Vellum',
+
+  '--background': '#080604',
+  '--foreground': '#f0e4c4',
+  '--card': 'rgba(8, 6, 4, 0.96)',
+  '--card-foreground': '#f0e4c4',
+  '--primary': '#f0d080',
+  '--primary-foreground': '#080604',
+  '--secondary': '#d8a848',
+  '--secondary-foreground': '#080604',
+  '--muted': '#1a1610',
+  '--muted-foreground': '#9a8e7a',
+  '--accent': '#f5e8c8',
+  '--accent-foreground': '#080604',
+  '--destructive': '#c74a3a',
+  '--destructive-foreground': '#ffffff',
+  '--border': 'rgba(240, 208, 128, 0.30)',
+  '--input': 'rgba(240, 208, 128, 0.25)',
+  '--ring': 'rgba(240, 208, 128, 0.5)',
+
+  '--hud-cyan': '#f5e8c8',
+  '--hud-magenta': '#d8a848',
+  '--hud-green': '#8cb06a',
+  '--hud-amber': '#d8a848',
+  '--hud-purple': '#f0d080',
+  '--hud-bg': '#080604',
+  '--hud-panel-bg': 'rgba(8, 6, 4, 0.96)',
+
+  '--rail-projects-tint': '#3a2a1a',
+  '--rail-sessions-tint': '#2a2410',
+  '--center-tint': '#322414',
+
+  '--fg-hot': '#f0e4c4',
+  '--fg-dim': '#7a6e5a',
+
+  '--surface-0': 'rgba(8, 6, 4, 0.96)',
+  '--surface-1': 'rgba(240, 208, 128, 0.04)',
+  '--surface-2': 'rgba(240, 208, 128, 0.08)',
+  '--surface-3': 'color-mix(in srgb, #f0d080 20%, transparent)',
+
+  '--success': '#8cb06a',
+  '--warning': '#d8a848',
+  '--info': '#f0d080',
+  '--danger': '#c74a3a',
+
+  '--bg-gradient-1': 'rgba(240, 208, 128, 0.06)',
+  '--bg-gradient-2': 'rgba(216, 168, 72, 0.04)',
+  '--bg-gradient-3': 'rgba(245, 232, 200, 0.03)',
+  '--bg-gradient-4': 'rgba(140, 176, 106, 0.02)',
+  '--bg-grid-color': '240, 208, 128',
+  '--bg-grid-opacity': '0.03',
+}
+
 /* ════════════════════════════════════════════════════════════════════
    Exports
    ════════════════════════════════════════════════════════════════════ */
@@ -740,6 +794,7 @@ export const themes: Record<string, Theme> = {
   nebula,
   vaporwave,
   hologram,
+  vellum,
 }
 
 export const defaultThemeId = 'command'

@@ -487,6 +487,17 @@
   content: none;
 }
 
+/* ── Vellum — flat dark background, no patterns, no gradients ── */
+.theme-vellum #app {
+  background: var(--background);
+}
+.theme-vellum #app::before {
+  content: none;
+}
+.theme-vellum #app::after {
+  content: none;
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    Wave 1f — Hero Animation Keyframes
    (Preserved for future architecture — currently unused)

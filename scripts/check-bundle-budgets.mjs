@@ -17,7 +17,7 @@ const budgets = [
   {
     label: 'store-js',
     pattern: /^store-.*\.js$/,
-    maxBytes: 75_000,
+    maxBytes: 77_000,
   },
   {
     label: 'vendor-js',

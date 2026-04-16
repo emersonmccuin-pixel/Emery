@@ -1147,6 +1147,132 @@
   );
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   VELLUM overrides — kill glow, curves, shadows, animations.
+   Classic minimalist: crisp 1px borders, flat panels, no gradients.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── Kill all curves ── */
+.theme-vellum {
+  --radius: 0;
+  --radius-xs: 0;
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --panel-radius: 0;
+}
+
+/* ── Kill glows, shadows, animations on chrome ── */
+.theme-vellum .dispatcher-card--active,
+.theme-vellum .session-card--active,
+.theme-vellum .dispatcher-card,
+.theme-vellum .session-card,
+.theme-vellum .project-card--minimal,
+.theme-vellum .project-card--minimal.project-card--active,
+.theme-vellum .workspace-tab,
+.theme-vellum .workspace-tab--active,
+.theme-vellum .rail-label,
+.theme-vellum .center-stage__header {
+  box-shadow: none;
+  text-shadow: none;
+  animation: none;
+}
+
+/* ── Crisp 1px borders — inactive cards ── */
+.theme-vellum .project-card--minimal {
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+}
+.theme-vellum .project-card--minimal:hover {
+  border: 1px solid color-mix(in srgb, var(--primary) 55%, transparent);
+  box-shadow: none;
+}
+.theme-vellum .project-card--minimal.project-card--active {
+  border: 1px solid var(--primary);
+  border-left-width: 3px;
+  border-left-color: var(--primary);
+}
+
+.theme-vellum .session-card {
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+  box-shadow: none;
+}
+.theme-vellum .session-card:hover {
+  border-color: color-mix(in srgb, var(--primary) 55%, transparent);
+  box-shadow: none;
+}
+
+/* ── Active cards — full gold 1px border, no halo ── */
+.theme-vellum .dispatcher-card--active {
+  border: 1px solid var(--primary);
+  border-width: 1px;
+}
+.theme-vellum .session-card--active {
+  border: 1px solid var(--primary);
+  border-width: 1px;
+}
+
+/* ── Panel backgrounds — flat, no gradient ── */
+.theme-vellum .side-rail--projects,
+.theme-vellum .center-stage,
+.theme-vellum .side-rail--sessions {
+  background: var(--hud-panel-bg);
+  border: 1px solid color-mix(in srgb, var(--primary) 25%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--primary) 40%, transparent);
+  box-shadow: none;
+}
+
+/* ── Tabs — uniform, crisp, underline-only ── */
+.theme-vellum .workspace-tab {
+  border: none;
+  border-bottom: 1px solid transparent;
+  padding: 0 16px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+.theme-vellum .workspace-tab:hover {
+  border-bottom-color: color-mix(in srgb, var(--primary) 45%, transparent);
+  color: var(--fg-hot);
+  text-shadow: none;
+  box-shadow: none;
+}
+.theme-vellum .workspace-tab--active {
+  border: none;
+  border-bottom: 1px solid var(--primary);
+  color: var(--primary);
+}
+
+/* ── Buttons ── */
+.theme-vellum .hud-button--primary,
+.theme-vellum button[data-variant="default"] {
+  border: 1px solid var(--primary);
+}
+.theme-vellum .hud-button--primary:hover,
+.theme-vellum button[data-variant="default"]:hover {
+  filter: brightness(1.1);
+}
+
+/* ── Inputs — flat, 1px gold border ── */
+.theme-vellum input,
+.theme-vellum textarea,
+.theme-vellum select {
+  border: 1px solid color-mix(in srgb, var(--primary) 25%, transparent);
+  box-shadow: none;
+}
+.theme-vellum input:focus,
+.theme-vellum textarea:focus,
+.theme-vellum select:focus {
+  border-color: var(--primary);
+  box-shadow: none;
+  outline: none;
+}
+
+/* ── Focus rings — 1px solid, no halo ── */
+.theme-vellum *:focus-visible {
+  outline: 1px solid var(--primary);
+  outline-offset: 1px;
+  box-shadow: none;
+}
+
 /* ── 6. prefers-reduced-motion — disable animations, keep peak static glow ── */
 @media (prefers-reduced-motion: reduce) {
   .dispatcher-card--active,
