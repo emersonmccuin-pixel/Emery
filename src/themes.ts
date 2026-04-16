@@ -345,6 +345,384 @@ const phantom: Theme = {
   '--bg-grid-opacity': '0.05',
 }
 
+const neon: Theme = {
+  label: 'Neon',
+
+  '--background': '#0a0612',
+  '--foreground': '#f0e0f8',
+  '--card': 'rgba(16, 8, 24, 0.95)',
+  '--card-foreground': '#f0e0f8',
+  '--primary': '#ff3399',
+  '--primary-foreground': '#ffffff',
+  '--secondary': '#6600cc',
+  '--secondary-foreground': '#ffffff',
+  '--muted': '#1a0e28',
+  '--muted-foreground': '#7a5a8a',
+  '--accent': '#3af0e0',
+  '--accent-foreground': '#0a0612',
+  '--destructive': '#ff2222',
+  '--destructive-foreground': '#ffffff',
+  '--border': 'rgba(255, 51, 153, 0.35)',
+  '--input': 'rgba(58, 240, 224, 0.25)',
+  '--ring': 'rgba(58, 240, 224, 0.5)',
+
+  '--hud-cyan': '#3af0e0',
+  '--hud-magenta': '#ff3399',
+  '--hud-green': '#74f3a1',
+  '--hud-amber': '#f0c040',
+  '--hud-purple': '#b467f7',
+  '--hud-bg': '#0a0612',
+  '--hud-panel-bg': 'rgba(16, 8, 24, 0.95)',
+
+  '--rail-projects-tint': '#ff3399',
+  '--rail-sessions-tint': '#4400aa',
+  '--center-tint': '#3af0e0',
+
+  '--fg-hot': '#fff0fa',
+  '--fg-dim': '#6a4a7a',
+
+  '--surface-0': 'rgba(16, 8, 24, 0.95)',
+  '--surface-1': 'rgba(255, 255, 255, 0.04)',
+  '--surface-2': 'rgba(255, 255, 255, 0.08)',
+  '--surface-3': 'color-mix(in srgb, #ff3399 20%, transparent)',
+
+  '--success': '#74f3a1',
+  '--warning': '#f0c040',
+  '--info': '#3af0e0',
+  '--danger': '#ff2222',
+
+  '--bg-gradient-1': 'rgba(255, 51, 153, 0.22)',
+  '--bg-gradient-2': 'rgba(58, 240, 224, 0.16)',
+  '--bg-gradient-3': 'rgba(102, 0, 204, 0.18)',
+  '--bg-gradient-4': 'rgba(180, 103, 247, 0.12)',
+  '--bg-grid-color': '255, 51, 153',
+  '--bg-grid-opacity': '0.06',
+}
+
+const aurora: Theme = {
+  label: 'Aurora',
+
+  '--background': '#040e08',
+  '--foreground': '#d8f5e8',
+  '--card': 'rgba(8, 20, 14, 0.95)',
+  '--card-foreground': '#d8f5e8',
+  '--primary': '#74f3a1',
+  '--primary-foreground': '#040e08',
+  '--secondary': '#d946b8',
+  '--secondary-foreground': '#ffffff',
+  '--muted': '#0c2218',
+  '--muted-foreground': '#5a8a6e',
+  '--accent': '#ff3399',
+  '--accent-foreground': '#040e08',
+  '--destructive': '#ff4444',
+  '--destructive-foreground': '#ffffff',
+  '--border': 'rgba(116, 243, 161, 0.30)',
+  '--input': 'rgba(255, 51, 153, 0.25)',
+  '--ring': 'rgba(255, 51, 153, 0.5)',
+
+  '--hud-cyan': '#3af0e0',
+  '--hud-magenta': '#ff3399',
+  '--hud-green': '#74f3a1',
+  '--hud-amber': '#f0c040',
+  '--hud-purple': '#b467f7',
+  '--hud-bg': '#040e08',
+  '--hud-panel-bg': 'rgba(8, 20, 14, 0.95)',
+
+  '--rail-projects-tint': '#74f3a1',
+  '--rail-sessions-tint': '#ff3399',
+  '--center-tint': '#3af0e0',
+
+  '--fg-hot': '#e8fff0',
+  '--fg-dim': '#5a7a68',
+
+  '--surface-0': 'rgba(8, 20, 14, 0.95)',
+  '--surface-1': 'rgba(255, 255, 255, 0.04)',
+  '--surface-2': 'rgba(255, 255, 255, 0.08)',
+  '--surface-3': 'color-mix(in srgb, #74f3a1 20%, transparent)',
+
+  '--success': '#74f3a1',
+  '--warning': '#f0c040',
+  '--info': '#3af0e0',
+  '--danger': '#ff4444',
+
+  '--bg-gradient-1': 'rgba(116, 243, 161, 0.20)',
+  '--bg-gradient-2': 'rgba(58, 240, 224, 0.16)',
+  '--bg-gradient-3': 'rgba(255, 51, 153, 0.14)',
+  '--bg-gradient-4': 'rgba(180, 103, 247, 0.10)',
+  '--bg-grid-color': '116, 243, 161',
+  '--bg-grid-opacity': '0.05',
+}
+
+const synthwave: Theme = {
+  label: 'Synthwave',
+
+  '--background': '#0c0620',
+  '--foreground': '#f0d8f8',
+  '--card': 'rgba(18, 10, 38, 0.95)',
+  '--card-foreground': '#f0d8f8',
+  '--primary': '#ff3399',
+  '--primary-foreground': '#ffffff',
+  '--secondary': '#8800cc',
+  '--secondary-foreground': '#ffffff',
+  '--muted': '#1e1038',
+  '--muted-foreground': '#7a5a90',
+  '--accent': '#3af0e0',
+  '--accent-foreground': '#0c0620',
+  '--destructive': '#ff3333',
+  '--destructive-foreground': '#ffffff',
+  '--border': 'rgba(255, 51, 153, 0.30)',
+  '--input': 'rgba(58, 240, 224, 0.25)',
+  '--ring': 'rgba(58, 240, 224, 0.5)',
+
+  '--hud-cyan': '#3af0e0',
+  '--hud-magenta': '#ff3399',
+  '--hud-green': '#74f3a1',
+  '--hud-amber': '#f0c040',
+  '--hud-purple': '#b467f7',
+  '--hud-bg': '#0c0620',
+  '--hud-panel-bg': 'rgba(18, 10, 38, 0.95)',
+
+  '--rail-projects-tint': '#ff3399',
+  '--rail-sessions-tint': '#6600cc',
+  '--center-tint': '#3af0e0',
+
+  '--fg-hot': '#fff0fa',
+  '--fg-dim': '#6a4a80',
+
+  '--surface-0': 'rgba(18, 10, 38, 0.95)',
+  '--surface-1': 'rgba(255, 255, 255, 0.04)',
+  '--surface-2': 'rgba(255, 255, 255, 0.08)',
+  '--surface-3': 'color-mix(in srgb, #ff3399 20%, transparent)',
+
+  '--success': '#74f3a1',
+  '--warning': '#f0c040',
+  '--info': '#3af0e0',
+  '--danger': '#ff3333',
+
+  '--bg-gradient-1': 'rgba(255, 51, 153, 0.22)',
+  '--bg-gradient-2': 'rgba(136, 0, 204, 0.20)',
+  '--bg-gradient-3': 'rgba(58, 240, 224, 0.14)',
+  '--bg-gradient-4': 'rgba(180, 103, 247, 0.12)',
+  '--bg-grid-color': '255, 51, 153',
+  '--bg-grid-opacity': '0.06',
+}
+
+const matrix: Theme = {
+  label: 'Matrix',
+
+  '--background': '#000a00',
+  '--foreground': '#c0f0c0',
+  '--card': 'rgba(0, 16, 0, 0.95)',
+  '--card-foreground': '#c0f0c0',
+  '--primary': '#00ff41',
+  '--primary-foreground': '#000a00',
+  '--secondary': '#008830',
+  '--secondary-foreground': '#ffffff',
+  '--muted': '#0a1e0a',
+  '--muted-foreground': '#407040',
+  '--accent': '#aaffaa',
+  '--accent-foreground': '#000a00',
+  '--destructive': '#ff3333',
+  '--destructive-foreground': '#ffffff',
+  '--border': 'rgba(0, 255, 65, 0.30)',
+  '--input': 'rgba(170, 255, 170, 0.20)',
+  '--ring': 'rgba(170, 255, 170, 0.5)',
+
+  '--hud-cyan': '#aaffaa',
+  '--hud-magenta': '#00cc55',
+  '--hud-green': '#00ff41',
+  '--hud-amber': '#88ff44',
+  '--hud-purple': '#00aa66',
+  '--hud-bg': '#000a00',
+  '--hud-panel-bg': 'rgba(0, 16, 0, 0.95)',
+
+  '--rail-projects-tint': '#00ff41',
+  '--rail-sessions-tint': '#00aa66',
+  '--center-tint': '#44dd44',
+
+  '--fg-hot': '#e0ffe0',
+  '--fg-dim': '#2a5a2a',
+
+  '--surface-0': 'rgba(0, 16, 0, 0.95)',
+  '--surface-1': 'rgba(0, 255, 65, 0.04)',
+  '--surface-2': 'rgba(0, 255, 65, 0.08)',
+  '--surface-3': 'color-mix(in srgb, #00ff41 20%, transparent)',
+
+  '--success': '#00ff41',
+  '--warning': '#88ff44',
+  '--info': '#aaffaa',
+  '--danger': '#ff3333',
+
+  '--bg-gradient-1': 'rgba(0, 255, 65, 0.18)',
+  '--bg-gradient-2': 'rgba(0, 170, 102, 0.16)',
+  '--bg-gradient-3': 'rgba(68, 221, 68, 0.12)',
+  '--bg-gradient-4': 'rgba(0, 136, 48, 0.10)',
+  '--bg-grid-color': '0, 255, 65',
+  '--bg-grid-opacity': '0.06',
+}
+
+const nebula: Theme = {
+  label: 'Nebula',
+
+  '--background': '#08060e',
+  '--foreground': '#e0d8f0',
+  '--card': 'rgba(14, 10, 22, 0.95)',
+  '--card-foreground': '#e0d8f0',
+  '--primary': '#b467f7',
+  '--primary-foreground': '#ffffff',
+  '--secondary': '#d946a8',
+  '--secondary-foreground': '#ffffff',
+  '--muted': '#1a1228',
+  '--muted-foreground': '#6a5a80',
+  '--accent': '#ffd68f',
+  '--accent-foreground': '#08060e',
+  '--destructive': '#ff4444',
+  '--destructive-foreground': '#ffffff',
+  '--border': 'rgba(180, 103, 247, 0.30)',
+  '--input': 'rgba(255, 214, 143, 0.25)',
+  '--ring': 'rgba(255, 214, 143, 0.5)',
+
+  '--hud-cyan': '#3af0e0',
+  '--hud-magenta': '#d946a8',
+  '--hud-green': '#74f3a1',
+  '--hud-amber': '#ffd68f',
+  '--hud-purple': '#b467f7',
+  '--hud-bg': '#08060e',
+  '--hud-panel-bg': 'rgba(14, 10, 22, 0.95)',
+
+  '--rail-projects-tint': '#b467f7',
+  '--rail-sessions-tint': '#d946a8',
+  '--center-tint': '#4ab5c6',
+
+  '--fg-hot': '#f0e8ff',
+  '--fg-dim': '#5a4a70',
+
+  '--surface-0': 'rgba(14, 10, 22, 0.95)',
+  '--surface-1': 'rgba(255, 255, 255, 0.04)',
+  '--surface-2': 'rgba(255, 255, 255, 0.08)',
+  '--surface-3': 'color-mix(in srgb, #b467f7 20%, transparent)',
+
+  '--success': '#74f3a1',
+  '--warning': '#ffd68f',
+  '--info': '#3af0e0',
+  '--danger': '#ff4444',
+
+  '--bg-gradient-1': 'rgba(180, 103, 247, 0.22)',
+  '--bg-gradient-2': 'rgba(217, 70, 168, 0.18)',
+  '--bg-gradient-3': 'rgba(74, 181, 198, 0.14)',
+  '--bg-gradient-4': 'rgba(255, 214, 143, 0.10)',
+  '--bg-grid-color': '180, 103, 247',
+  '--bg-grid-opacity': '0.05',
+}
+
+const vaporwave: Theme = {
+  label: 'Vaporwave',
+
+  '--background': '#0e0818',
+  '--foreground': '#f0e0f0',
+  '--card': 'rgba(20, 12, 30, 0.95)',
+  '--card-foreground': '#f0e0f0',
+  '--primary': '#ffa0d0',
+  '--primary-foreground': '#0e0818',
+  '--secondary': '#a060e0',
+  '--secondary-foreground': '#ffffff',
+  '--muted': '#201430',
+  '--muted-foreground': '#7a5a8a',
+  '--accent': '#a0e0ff',
+  '--accent-foreground': '#0e0818',
+  '--destructive': '#ff5555',
+  '--destructive-foreground': '#ffffff',
+  '--border': 'rgba(255, 160, 208, 0.30)',
+  '--input': 'rgba(160, 224, 255, 0.25)',
+  '--ring': 'rgba(160, 224, 255, 0.5)',
+
+  '--hud-cyan': '#a0e0ff',
+  '--hud-magenta': '#ffa0d0',
+  '--hud-green': '#74f3a1',
+  '--hud-amber': '#f0c040',
+  '--hud-purple': '#c080ff',
+  '--hud-bg': '#0e0818',
+  '--hud-panel-bg': 'rgba(20, 12, 30, 0.95)',
+
+  '--rail-projects-tint': '#ffa0d0',
+  '--rail-sessions-tint': '#a060e0',
+  '--center-tint': '#a0e0ff',
+
+  '--fg-hot': '#fff0f8',
+  '--fg-dim': '#6a4a7a',
+
+  '--surface-0': 'rgba(20, 12, 30, 0.95)',
+  '--surface-1': 'rgba(255, 255, 255, 0.04)',
+  '--surface-2': 'rgba(255, 255, 255, 0.08)',
+  '--surface-3': 'color-mix(in srgb, #ffa0d0 20%, transparent)',
+
+  '--success': '#74f3a1',
+  '--warning': '#f0c040',
+  '--info': '#a0e0ff',
+  '--danger': '#ff5555',
+
+  '--bg-gradient-1': 'rgba(255, 160, 208, 0.20)',
+  '--bg-gradient-2': 'rgba(160, 96, 224, 0.18)',
+  '--bg-gradient-3': 'rgba(160, 224, 255, 0.14)',
+  '--bg-gradient-4': 'rgba(192, 128, 255, 0.10)',
+  '--bg-grid-color': '255, 160, 208',
+  '--bg-grid-opacity': '0.05',
+}
+
+const hologram: Theme = {
+  label: 'Hologram',
+
+  '--background': '#060810',
+  '--foreground': '#e8eef8',
+  '--card': 'rgba(10, 14, 24, 0.95)',
+  '--card-foreground': '#e8eef8',
+  '--primary': '#40e0ff',
+  '--primary-foreground': '#060810',
+  '--secondary': '#ff60c0',
+  '--secondary-foreground': '#ffffff',
+  '--muted': '#101828',
+  '--muted-foreground': '#5a7090',
+  '--accent': '#ffffff',
+  '--accent-foreground': '#060810',
+  '--destructive': '#ff4444',
+  '--destructive-foreground': '#ffffff',
+  '--border': 'rgba(64, 224, 255, 0.30)',
+  '--input': 'rgba(255, 255, 255, 0.20)',
+  '--ring': 'rgba(255, 255, 255, 0.5)',
+
+  '--hud-cyan': '#40e0ff',
+  '--hud-magenta': '#ff60c0',
+  '--hud-green': '#60ff90',
+  '--hud-amber': '#ffe060',
+  '--hud-purple': '#c080ff',
+  '--hud-bg': '#060810',
+  '--hud-panel-bg': 'rgba(10, 14, 24, 0.95)',
+
+  '--rail-projects-tint': '#40e0ff',
+  '--rail-sessions-tint': '#ff60c0',
+  '--center-tint': '#c080ff',
+
+  '--fg-hot': '#f0f4ff',
+  '--fg-dim': '#4a6080',
+
+  '--surface-0': 'rgba(10, 14, 24, 0.95)',
+  '--surface-1': 'rgba(255, 255, 255, 0.04)',
+  '--surface-2': 'rgba(255, 255, 255, 0.08)',
+  '--surface-3': 'color-mix(in srgb, #40e0ff 20%, transparent)',
+
+  '--success': '#60ff90',
+  '--warning': '#ffe060',
+  '--info': '#40e0ff',
+  '--danger': '#ff4444',
+
+  '--bg-gradient-1': 'rgba(64, 224, 255, 0.20)',
+  '--bg-gradient-2': 'rgba(255, 96, 192, 0.16)',
+  '--bg-gradient-3': 'rgba(192, 128, 255, 0.14)',
+  '--bg-gradient-4': 'rgba(96, 255, 144, 0.10)',
+  '--bg-grid-color': '64, 224, 255',
+  '--bg-grid-opacity': '0.05',
+}
+
 /* ════════════════════════════════════════════════════════════════════
    Exports
    ════════════════════════════════════════════════════════════════════ */
@@ -355,6 +733,13 @@ export const themes: Record<string, Theme> = {
   ember,
   arctic,
   phantom,
+  neon,
+  aurora,
+  synthwave,
+  matrix,
+  nebula,
+  vaporwave,
+  hologram,
 }
 
 export const defaultThemeId = 'command'

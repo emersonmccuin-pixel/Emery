@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" fill="none" stroke="currentColor" stroke-width="1">
+  <!-- Tokyo skyline silhouette along bottom -->
+  <g opacity="1">
+    <!-- Skyline buildings -->
+    <path d="M0 1080 V820 H60 V780 H90 V820 H140 V750 H170 V700 H200 V750 H240 V820 H280 V790 H320 V820 H360 V760 H400 V720 H420 V680 H440 V720 H460 V760 H500 V800 H540 V750 H560 V700 H580 V650 H600 V700 H620 V750 H660 V810 H700 V770 H730 V730 H750 V690 H770 V650 H790 V610 H810 V650 H830 V690 H850 V730 H880 V770 H920 V810 H960 V760 H990 V710 H1010 V660 H1030 V620 H1050 V580 H1070 V540 H1090 V580 H1110 V620 H1130 V660 H1160 V710 H1190 V760 H1220 V800 H1260 V760 H1290 V720 H1310 V760 H1340 V800 H1370 V770 H1400 V730 H1420 V690 H1440 V730 H1460 V770 H1500 V810 H1540 V780 H1570 V740 H1600 V780 H1640 V820 H1680 V790 H1720 V750 H1750 V790 H1780 V820 H1820 V800 H1860 V830 H1920 V1080 Z" fill="currentColor" stroke="none" opacity="0.6"/>
+    <!-- Tokyo Tower silhouette (center-left) -->
+    <g transform="translate(450 0)">
+      <path d="M0 680 L20 400 L25 380 L30 400 L50 680" stroke-width="1.5"/>
+      <line x1="5" y1="600" x2="45" y2="600" stroke-width="1"/>
+      <line x1="10" y1="530" x2="40" y2="530" stroke-width="1"/>
+      <line x1="15" y1="460" x2="35" y2="460" stroke-width="0.8"/>
+      <!-- Antenna -->
+      <line x1="25" y1="380" x2="25" y2="320"/>
+      <line x1="22" y1="340" x2="28" y2="340" stroke-width="0.5"/>
+    </g>
+    <!-- Neon sign clusters -->
+    <!-- Sign 1 (right area) -->
+    <g transform="translate(1300 640)">
+      <rect x="0" y="0" width="50" height="25" rx="2" stroke-width="1.2"/>
+      <rect x="5" y="5" width="40" height="3" rx="1" fill="currentColor" stroke="none" opacity="0.5"/>
+      <rect x="8" y="12" width="34" height="3" rx="1" fill="currentColor" stroke="none" opacity="0.4"/>
+      <rect x="5" y="19" width="40" height="2" rx="1" fill="currentColor" stroke="none" opacity="0.3"/>
+    </g>
+    <!-- Sign 2 -->
+    <g transform="translate(800 580)">
+      <rect x="0" y="0" width="40" height="20" rx="2" stroke-width="1"/>
+      <circle cx="20" cy="10" r="6" stroke-width="0.8" fill="currentColor" stroke="none" opacity="0.4"/>
+    </g>
+    <!-- Sign 3 (vertical) -->
+    <g transform="translate(1100 500)">
+      <rect x="0" y="0" width="15" height="60" rx="1" stroke-width="1"/>
+      <rect x="3" y="4" width="9" height="9" rx="1" fill="currentColor" stroke="none" opacity="0.5"/>
+      <rect x="3" y="17" width="9" height="9" rx="1" fill="currentColor" stroke="none" opacity="0.4"/>
+      <rect x="3" y="30" width="9" height="9" rx="1" fill="currentColor" stroke="none" opacity="0.3"/>
+      <rect x="3" y="43" width="9" height="9" rx="1" fill="currentColor" stroke="none" opacity="0.25"/>
+    </g>
+    <!-- Window grid on tall building -->
+    <g transform="translate(1040 590)" opacity="0.35">
+      <rect x="3" y="3" width="4" height="4" fill="currentColor" stroke="none"/>
+      <rect x="11" y="3" width="4" height="4" fill="currentColor" stroke="none"/>
+      <rect x="3" y="11" width="4" height="4" fill="currentColor" stroke="none"/>
+      <rect x="11" y="11" width="4" height="4" fill="currentColor" stroke="none"/>
+      <rect x="3" y="19" width="4" height="4" fill="currentColor" stroke="none"/>
+      <rect x="11" y="19" width="4" height="4" fill="currentColor" stroke="none"/>
+      <rect x="3" y="27" width="4" height="4" fill="currentColor" stroke="none"/>
+      <rect x="11" y="27" width="4" height="4" fill="currentColor" stroke="none"/>
+    </g>
+    <!-- Scattered window lights on other buildings -->
+    <g opacity="0.3">
+      <rect x="170" y="710" width="6" height="5" fill="currentColor" stroke="none"/>
+      <rect x="182" y="718" width="5" height="4" fill="currentColor" stroke="none"/>
+      <rect x="175" y="728" width="4" height="4" fill="currentColor" stroke="none"/>
+      <rect x="565" y="660" width="5" height="5" fill="currentColor" stroke="none"/>
+      <rect x="575" y="672" width="4" height="4" fill="currentColor" stroke="none"/>
+      <rect x="568" y="685" width="5" height="4" fill="currentColor" stroke="none"/>
+      <rect x="760" y="660" width="5" height="5" fill="currentColor" stroke="none"/>
+      <rect x="770" y="670" width="4" height="5" fill="currentColor" stroke="none"/>
+      <rect x="1425" y="700" width="5" height="4" fill="currentColor" stroke="none"/>
+      <rect x="1435" y="710" width="4" height="5" fill="currentColor" stroke="none"/>
+    </g>
+    <!-- Power lines across top of skyline -->
+    <path d="M100 640 Q300 630 500 635 Q700 628 900 632 Q1100 625 1300 630 Q1500 622 1700 628" stroke-width="0.4" opacity="0.3"/>
+  </g>
+</svg>

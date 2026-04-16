@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" fill="currentColor" stroke="none">
+  <!-- Matrix: cascading glyph columns -->
+  <g opacity="1">
+    <!-- Column 1 -->
+    <g transform="translate(80 0)" opacity="0.5">
+      <text font-family="monospace" font-size="14" y="40">0</text>
+      <text font-family="monospace" font-size="14" y="70">1</text>
+      <text font-family="monospace" font-size="14" y="100">0</text>
+      <text font-family="monospace" font-size="14" y="130">1</text>
+      <text font-family="monospace" font-size="14" y="160">1</text>
+      <text font-family="monospace" font-size="14" y="190">0</text>
+    </g>
+    <!-- Column 2 -->
+    <g transform="translate(200 120)" opacity="0.4">
+      <text font-family="monospace" font-size="14" y="0">1</text>
+      <text font-family="monospace" font-size="14" y="30">0</text>
+      <text font-family="monospace" font-size="14" y="60">0</text>
+      <text font-family="monospace" font-size="14" y="90">1</text>
+      <text font-family="monospace" font-size="14" y="120">1</text>
+      <text font-family="monospace" font-size="14" y="150">0</text>
+      <text font-family="monospace" font-size="14" y="180">1</text>
+    </g>
+    <!-- Column 3 -->
+    <g transform="translate(350 60)" opacity="0.55">
+      <text font-family="monospace" font-size="14" y="0">0</text>
+      <text font-family="monospace" font-size="14" y="30">1</text>
+      <text font-family="monospace" font-size="14" y="60">1</text>
+      <text font-family="monospace" font-size="14" y="90">0</text>
+      <text font-family="monospace" font-size="14" y="120">1</text>
+    </g>
+    <!-- Column 4 -->
+    <g transform="translate(480 200)" opacity="0.35">
+      <text font-family="monospace" font-size="14" y="0">1</text>
+      <text font-family="monospace" font-size="14" y="30">1</text>
+      <text font-family="monospace" font-size="14" y="60">0</text>
+      <text font-family="monospace" font-size="14" y="90">1</text>
+      <text font-family="monospace" font-size="14" y="120">0</text>
+      <text font-family="monospace" font-size="14" y="150">0</text>
+      <text font-family="monospace" font-size="14" y="180">1</text>
+      <text font-family="monospace" font-size="14" y="210">0</text>
+    </g>
+    <!-- Column 5 -->
+    <g transform="translate(600 0)" opacity="0.45">
+      <text font-family="monospace" font-size="14" y="30">0</text>
+      <text font-family="monospace" font-size="14" y="60">1</text>
+      <text font-family="monospace" font-size="14" y="90">0</text>
+      <text font-family="monospace" font-size="14" y="120">0</text>
+      <text font-family="monospace" font-size="14" y="150">1</text>
+      <text font-family="monospace" font-size="14" y="180">1</text>
+    </g>
+    <!-- Column 6 -->
+    <g transform="translate(750 150)" opacity="0.5">
+      <text font-family="monospace" font-size="14" y="0">1</text>
+      <text font-family="monospace" font-size="14" y="30">0</text>
+      <text font-family="monospace" font-size="14" y="60">1</text>
+      <text font-family="monospace" font-size="14" y="90">1</text>
+      <text font-family="monospace" font-size="14" y="120">0</text>
+    </g>
+    <!-- Column 7 -->
+    <g transform="translate(900 80)" opacity="0.4">
+      <text font-family="monospace" font-size="14" y="0">0</text>
+      <text font-family="monospace" font-size="14" y="30">0</text>
+      <text font-family="monospace" font-size="14" y="60">1</text>
+      <text font-family="monospace" font-size="14" y="90">0</text>
+      <text font-family="monospace" font-size="14" y="120">1</text>
+      <text font-family="monospace" font-size="14" y="150">1</text>
+      <text font-family="monospace" font-size="14" y="180">0</text>
+    </g>
+    <!-- Column 8 -->
+    <g transform="translate(1050 0)" opacity="0.55">
+      <text font-family="monospace" font-size="14" y="50">1</text>
+      <text font-family="monospace" font-size="14" y="80">0</text>
+      <text font-family="monospace" font-size="14" y="110">1</text>
+      <text font-family="monospace" font-size="14" y="140">0</text>
+      <text font-family="monospace" font-size="14" y="170">1</text>
+    </g>
+    <!-- Column 9 -->
+    <g transform="translate(1180 180)" opacity="0.35">
+      <text font-family="monospace" font-size="14" y="0">0</text>
+      <text font-family="monospace" font-size="14" y="30">1</text>
+      <text font-family="monospace" font-size="14" y="60">0</text>
+      <text font-family="monospace" font-size="14" y="90">1</text>
+      <text font-family="monospace" font-size="14" y="120">1</text>
+      <text font-family="monospace" font-size="14" y="150">0</text>
+    </g>
+    <!-- Column 10 -->
+    <g transform="translate(1320 40)" opacity="0.45">
+      <text font-family="monospace" font-size="14" y="0">1</text>
+      <text font-family="monospace" font-size="14" y="30">1</text>
+      <text font-family="monospace" font-size="14" y="60">0</text>
+      <text font-family="monospace" font-size="14" y="90">1</text>
+      <text font-family="monospace" font-size="14" y="120">0</text>
+      <text font-family="monospace" font-size="14" y="150">1</text>
+      <text font-family="monospace" font-size="14" y="180">0</text>
+    </g>
+    <!-- Column 11 -->
+    <g transform="translate(1460 100)" opacity="0.5">
+      <text font-family="monospace" font-size="14" y="0">0</text>
+      <text font-family="monospace" font-size="14" y="30">1</text>
+      <text font-family="monospace" font-size="14" y="60">1</text>
+      <text font-family="monospace" font-size="14" y="90">0</text>
+      <text font-family="monospace" font-size="14" y="120">0</text>
+      <text font-family="monospace" font-size="14" y="150">1</text>
+    </g>
+    <!-- Column 12 -->
+    <g transform="translate(1600 0)" opacity="0.4">
+      <text font-family="monospace" font-size="14" y="20">1</text>
+      <text font-family="monospace" font-size="14" y="50">0</text>
+      <text font-family="monospace" font-size="14" y="80">1</text>
+      <text font-family="monospace" font-size="14" y="110">1</text>
+      <text font-family="monospace" font-size="14" y="140">0</text>
+    </g>
+    <!-- Column 13 -->
+    <g transform="translate(1750 160)" opacity="0.35">
+      <text font-family="monospace" font-size="14" y="0">0</text>
+      <text font-family="monospace" font-size="14" y="30">0</text>
+      <text font-family="monospace" font-size="14" y="60">1</text>
+      <text font-family="monospace" font-size="14" y="90">0</text>
+      <text font-family="monospace" font-size="14" y="120">1</text>
+    </g>
+    <!-- Column 14 -->
+    <g transform="translate(1870 60)" opacity="0.45">
+      <text font-family="monospace" font-size="14" y="0">1</text>
+      <text font-family="monospace" font-size="14" y="30">0</text>
+      <text font-family="monospace" font-size="14" y="60">1</text>
+      <text font-family="monospace" font-size="14" y="90">0</text>
+    </g>
+  </g>
+</svg>

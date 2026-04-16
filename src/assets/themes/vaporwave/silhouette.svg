@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" fill="none" stroke="currentColor" stroke-width="1">
+  <!-- Vaporwave: Roman bust silhouette (corner) + pastel checker -->
+  <g opacity="1">
+    <!-- Roman bust silhouette (bottom-left corner) -->
+    <g transform="translate(120 620)" opacity="0.5">
+      <!-- Head -->
+      <ellipse cx="60" cy="40" rx="42" ry="52" fill="currentColor" stroke="none"/>
+      <!-- Neck -->
+      <rect x="40" y="88" width="40" height="35" fill="currentColor" stroke="none" rx="4"/>
+      <!-- Shoulders/pedestal base -->
+      <path d="M-20 120 Q0 110 40 118 L80 118 Q120 110 140 120 L150 180 Q130 175 75 172 L45 172 Q-10 175 -30 180 Z" fill="currentColor" stroke="none"/>
+      <!-- Pedestal -->
+      <rect x="-10" y="178" width="140" height="60" fill="currentColor" stroke="none" rx="2"/>
+      <rect x="-20" y="235" width="160" height="12" fill="currentColor" stroke="none" rx="1"/>
+      <!-- Nose hint -->
+      <path d="M70 30 Q78 40 74 55" stroke-width="1.2" opacity="0.4"/>
+      <!-- Eye hint -->
+      <ellipse cx="52" cy="32" rx="8" ry="3" stroke-width="0.8" opacity="0.3"/>
+      <!-- Hair curls -->
+      <path d="M25 15 Q20 -5 35 -10 Q50 -15 55 0" stroke-width="1" opacity="0.35"/>
+      <path d="M55 0 Q60 -15 75 -12 Q90 -8 85 10" stroke-width="1" opacity="0.35"/>
+      <path d="M85 10 Q95 0 100 15" stroke-width="1" opacity="0.3"/>
+    </g>
+    <!-- Pastel checker pattern (subtle, spread across) -->
+    <g opacity="0.08">
+      <!-- Row 1 -->
+      <rect x="400" y="100" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="520" y="100" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="640" y="100" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="760" y="100" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="880" y="100" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="1000" y="100" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="1120" y="100" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="1240" y="100" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="1360" y="100" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="1480" y="100" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="1600" y="100" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="1720" y="100" width="60" height="60" fill="currentColor" stroke="none"/>
+      <!-- Row 2 offset -->
+      <rect x="460" y="160" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="580" y="160" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="700" y="160" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="820" y="160" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="940" y="160" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="1060" y="160" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="1180" y="160" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="1300" y="160" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="1420" y="160" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="1540" y="160" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="1660" y="160" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="1780" y="160" width="60" height="60" fill="currentColor" stroke="none"/>
+      <!-- Row 3 -->
+      <rect x="400" y="220" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="520" y="220" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="640" y="220" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="760" y="220" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="880" y="220" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="1000" y="220" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="1120" y="220" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="1240" y="220" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="1360" y="220" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="1480" y="220" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="1600" y="220" width="60" height="60" fill="currentColor" stroke="none"/>
+      <rect x="1720" y="220" width="60" height="60" fill="currentColor" stroke="none"/>
+    </g>
+    <!-- Decorative column (far right) -->
+    <g transform="translate(1750 500)" opacity="0.2">
+      <!-- Column shaft -->
+      <rect x="0" y="0" width="30" height="200" fill="currentColor" stroke="none" rx="2"/>
+      <!-- Capital -->
+      <rect x="-8" y="-12" width="46" height="14" fill="currentColor" stroke="none" rx="3"/>
+      <!-- Fluting lines -->
+      <line x1="6" y1="10" x2="6" y2="190" stroke-width="0.5" opacity="0.5"/>
+      <line x1="15" y1="10" x2="15" y2="190" stroke-width="0.5" opacity="0.5"/>
+      <line x1="24" y1="10" x2="24" y2="190" stroke-width="0.5" opacity="0.5"/>
+      <!-- Base -->
+      <rect x="-5" y="200" width="40" height="10" fill="currentColor" stroke="none" rx="1"/>
+    </g>
+  </g>
+</svg>

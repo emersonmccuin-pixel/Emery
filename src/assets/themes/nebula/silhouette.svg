@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" fill="none" stroke="currentColor" stroke-width="1">
+  <!-- Nebula: silhouetted planet + galaxy dust -->
+  <g opacity="1">
+    <!-- Large planet silhouette (bottom-right) -->
+    <g transform="translate(1450 750)">
+      <circle cx="0" cy="0" r="200" fill="currentColor" stroke="none" opacity="0.35"/>
+      <!-- Planet ring / atmosphere edge -->
+      <ellipse cx="0" cy="0" rx="240" ry="60" stroke-width="1.5" opacity="0.4" transform="rotate(-15)"/>
+      <ellipse cx="0" cy="0" rx="260" ry="65" stroke-width="0.5" opacity="0.2" transform="rotate(-15)"/>
+      <!-- Surface detail lines -->
+      <path d="M-160 -50 Q-80 -70 0 -40 Q80 -10 160 -30" stroke-width="0.8" opacity="0.2"/>
+      <path d="M-140 20 Q-60 40 20 15 Q100 -10 170 10" stroke-width="0.6" opacity="0.15"/>
+    </g>
+    <!-- Galaxy dust clouds -->
+    <!-- Cloud cluster 1 (top-left) -->
+    <g transform="translate(300 200)" opacity="0.25">
+      <ellipse cx="0" cy="0" rx="80" ry="30" fill="currentColor" stroke="none"/>
+      <ellipse cx="40" cy="15" rx="60" ry="20" fill="currentColor" stroke="none"/>
+      <ellipse cx="-30" cy="-10" rx="50" ry="18" fill="currentColor" stroke="none"/>
+    </g>
+    <!-- Cloud cluster 2 (center-top) -->
+    <g transform="translate(900 120)" opacity="0.2">
+      <ellipse cx="0" cy="0" rx="100" ry="25" fill="currentColor" stroke="none"/>
+      <ellipse cx="50" cy="10" rx="70" ry="20" fill="currentColor" stroke="none"/>
+      <ellipse cx="-40" cy="-8" rx="60" ry="15" fill="currentColor" stroke="none"/>
+    </g>
+    <!-- Cloud cluster 3 (left-center) -->
+    <g transform="translate(150 500)" opacity="0.18">
+      <ellipse cx="0" cy="0" rx="70" ry="35" fill="currentColor" stroke="none"/>
+      <ellipse cx="30" cy="20" rx="50" ry="25" fill="currentColor" stroke="none"/>
+    </g>
+    <!-- Scattered stars -->
+    <g opacity="0.4">
+      <circle cx="120" cy="80" r="1.5" fill="currentColor" stroke="none"/>
+      <circle cx="450" cy="150" r="1" fill="currentColor" stroke="none"/>
+      <circle cx="680" cy="60" r="1.5" fill="currentColor" stroke="none"/>
+      <circle cx="800" cy="300" r="1" fill="currentColor" stroke="none"/>
+      <circle cx="1100" cy="180" r="1.5" fill="currentColor" stroke="none"/>
+      <circle cx="1300" cy="100" r="1" fill="currentColor" stroke="none"/>
+      <circle cx="1600" cy="200" r="1.5" fill="currentColor" stroke="none"/>
+      <circle cx="1800" cy="120" r="1" fill="currentColor" stroke="none"/>
+      <circle cx="200" cy="350" r="1" fill="currentColor" stroke="none"/>
+      <circle cx="550" cy="400" r="1.5" fill="currentColor" stroke="none"/>
+      <circle cx="1000" cy="450" r="1" fill="currentColor" stroke="none"/>
+      <circle cx="1250" cy="350" r="1.5" fill="currentColor" stroke="none"/>
+      <circle cx="1700" cy="400" r="1" fill="currentColor" stroke="none"/>
+      <circle cx="350" cy="600" r="1" fill="currentColor" stroke="none"/>
+      <circle cx="700" cy="550" r="1.5" fill="currentColor" stroke="none"/>
+      <circle cx="1050" cy="620" r="1" fill="currentColor" stroke="none"/>
+    </g>
+    <!-- Thin nebula filaments -->
+    <path d="M0 300 Q200 280 400 310 Q600 290 800 320 Q1000 300 1200 280" stroke-width="0.5" opacity="0.15"/>
+    <path d="M500 500 Q700 480 900 510 Q1100 490 1300 520 Q1500 500 1700 480" stroke-width="0.4" opacity="0.12"/>
+    <path d="M100 700 Q300 690 500 710 Q700 700 900 720" stroke-width="0.5" opacity="0.15"/>
+  </g>
+</svg>

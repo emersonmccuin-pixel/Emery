@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" fill="none" stroke="currentColor" stroke-width="1">
+  <!-- Pine forest silhouette along bottom -->
+  <g opacity="1">
+    <!-- Dense pine tree line — staggered heights -->
+    <!-- Group 1: left cluster -->
+    <path d="M0 1080 V880 L20 780 L40 880 L50 810 L60 880 L80 860 L90 780 L100 860 L110 820 L125 720 L140 820 L155 790 L170 700 L185 790 L200 830 L215 760 L230 830 L250 870 L270 810 L280 740 L290 810 L310 850 L325 790 L335 730 L345 790 L360 840 L380 880" fill="currentColor" stroke="none" opacity="0.7"/>
+    <!-- Group 2: center-left -->
+    <path d="M380 880 L400 820 L415 750 L430 820 L445 860 L460 790 L470 720 L480 790 L495 840 L510 780 L520 700 L530 780 L545 830 L560 770 L575 680 L590 770 L605 820 L620 760 L630 690 L640 760 L660 810 L680 850 L700 800 L710 740 L720 800 L740 850 L760 880" fill="currentColor" stroke="none" opacity="0.65"/>
+    <!-- Group 3: center -->
+    <path d="M760 880 L780 830 L795 770 L810 830 L825 790 L835 720 L845 790 L860 840 L880 780 L895 710 L910 780 L925 830 L940 770 L950 700 L960 770 L975 820 L990 760 L1005 680 L1020 760 L1035 810 L1055 780 L1065 720 L1075 780 L1090 830 L1110 870" fill="currentColor" stroke="none" opacity="0.7"/>
+    <!-- Group 4: center-right -->
+    <path d="M1110 870 L1130 820 L1145 750 L1160 820 L1175 860 L1190 800 L1200 740 L1210 800 L1225 840 L1240 780 L1255 710 L1270 780 L1285 830 L1300 770 L1310 700 L1320 770 L1340 820 L1360 860 L1375 810 L1385 750 L1395 810 L1410 850 L1430 880" fill="currentColor" stroke="none" opacity="0.6"/>
+    <!-- Group 5: right cluster -->
+    <path d="M1430 880 L1450 830 L1465 770 L1480 830 L1500 860 L1515 800 L1525 730 L1535 800 L1555 840 L1575 790 L1590 720 L1605 790 L1620 840 L1640 800 L1650 750 L1660 800 L1680 840 L1700 870 L1720 820 L1735 760 L1750 820 L1770 860 L1790 880 L1810 840 L1825 790 L1840 840 L1860 870 L1880 900 L1920 880 V1080 H0" fill="currentColor" stroke="none" opacity="0.7"/>
+    <!-- Individual prominent trees poking above the mass -->
+    <path d="M170 700 L175 640 L180 700" fill="currentColor" stroke="none" opacity="0.5"/>
+    <path d="M520 700 L527 620 L534 700" fill="currentColor" stroke="none" opacity="0.45"/>
+    <path d="M895 710 L903 630 L911 710" fill="currentColor" stroke="none" opacity="0.5"/>
+    <path d="M1255 710 L1262 640 L1269 710" fill="currentColor" stroke="none" opacity="0.45"/>
+    <path d="M1590 720 L1597 650 L1604 720" fill="currentColor" stroke="none" opacity="0.5"/>
+    <!-- Aurora curtain wisps at top -->
+    <path d="M200 40 Q400 80 600 30 Q800 60 1000 20 Q1200 50 1400 25 Q1600 55 1800 35" stroke-width="2" opacity="0.25"/>
+    <path d="M100 80 Q350 120 550 70 Q750 100 950 60 Q1150 90 1350 55 Q1550 85 1750 65" stroke-width="1.5" opacity="0.18"/>
+    <path d="M300 120 Q500 150 700 110 Q900 140 1100 100 Q1300 130 1500 95 Q1700 120 1900 105" stroke-width="1" opacity="0.12"/>
+  </g>
+</svg>

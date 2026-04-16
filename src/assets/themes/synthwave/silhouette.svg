@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" fill="none" stroke="currentColor" stroke-width="1">
+  <!-- Synthwave: Sun + grid horizon + palm silhouettes -->
+  <g opacity="1">
+    <!-- Setting sun (half circle at horizon) -->
+    <g transform="translate(960 620)">
+      <path d="M-120 0 A120 120 0 0 1 120 0" fill="currentColor" stroke="none" opacity="0.4"/>
+      <!-- Horizontal slice lines through sun -->
+      <line x1="-115" y1="-10" x2="115" y2="-10" stroke-width="6" stroke="currentColor" opacity="0.3"/>
+      <line x1="-105" y1="-25" x2="105" y2="-25" stroke-width="5" stroke="currentColor" opacity="0.3"/>
+      <line x1="-90" y1="-40" x2="90" y2="-40" stroke-width="5" stroke="currentColor" opacity="0.3"/>
+      <line x1="-75" y1="-55" x2="75" y2="-55" stroke-width="4" stroke="currentColor" opacity="0.3"/>
+      <line x1="-55" y1="-70" x2="55" y2="-70" stroke-width="4" stroke="currentColor" opacity="0.3"/>
+      <line x1="-35" y1="-85" x2="35" y2="-85" stroke-width="3" stroke="currentColor" opacity="0.3"/>
+      <line x1="-18" y1="-98" x2="18" y2="-98" stroke-width="3" stroke="currentColor" opacity="0.3"/>
+    </g>
+    <!-- Perspective grid below horizon -->
+    <g opacity="0.35">
+      <!-- Horizontal grid lines (closer together near horizon) -->
+      <line x1="0" y1="640" x2="1920" y2="640" stroke-width="0.5"/>
+      <line x1="0" y1="660" x2="1920" y2="660" stroke-width="0.5"/>
+      <line x1="0" y1="685" x2="1920" y2="685" stroke-width="0.6"/>
+      <line x1="0" y1="715" x2="1920" y2="715" stroke-width="0.7"/>
+      <line x1="0" y1="755" x2="1920" y2="755" stroke-width="0.8"/>
+      <line x1="0" y1="805" x2="1920" y2="805" stroke-width="0.9"/>
+      <line x1="0" y1="870" x2="1920" y2="870" stroke-width="1"/>
+      <line x1="0" y1="955" x2="1920" y2="955" stroke-width="1.2"/>
+      <line x1="0" y1="1060" x2="1920" y2="1060" stroke-width="1.4"/>
+      <!-- Vertical perspective lines radiating from vanishing point -->
+      <line x1="960" y1="620" x2="0" y2="1080" stroke-width="0.5"/>
+      <line x1="960" y1="620" x2="160" y2="1080" stroke-width="0.5"/>
+      <line x1="960" y1="620" x2="320" y2="1080" stroke-width="0.5"/>
+      <line x1="960" y1="620" x2="480" y2="1080" stroke-width="0.5"/>
+      <line x1="960" y1="620" x2="640" y2="1080" stroke-width="0.5"/>
+      <line x1="960" y1="620" x2="800" y2="1080" stroke-width="0.5"/>
+      <line x1="960" y1="620" x2="1120" y2="1080" stroke-width="0.5"/>
+      <line x1="960" y1="620" x2="1280" y2="1080" stroke-width="0.5"/>
+      <line x1="960" y1="620" x2="1440" y2="1080" stroke-width="0.5"/>
+      <line x1="960" y1="620" x2="1600" y2="1080" stroke-width="0.5"/>
+      <line x1="960" y1="620" x2="1760" y2="1080" stroke-width="0.5"/>
+      <line x1="960" y1="620" x2="1920" y2="1080" stroke-width="0.5"/>
+    </g>
+    <!-- Palm tree left -->
+    <g transform="translate(200 0)">
+      <!-- Trunk -->
+      <path d="M30 1080 Q35 800 40 620 Q42 580 45 560" stroke-width="3" fill="none"/>
+      <!-- Fronds -->
+      <path d="M45 560 Q90 520 140 540" stroke-width="1.5"/>
+      <path d="M45 560 Q100 500 160 510" stroke-width="1.5"/>
+      <path d="M45 560 Q80 490 130 480" stroke-width="1.5"/>
+      <path d="M45 560 Q20 500 -30 510" stroke-width="1.5"/>
+      <path d="M45 560 Q10 490 -40 500" stroke-width="1.5"/>
+      <path d="M45 560 Q30 480 -10 470" stroke-width="1.5"/>
+      <!-- Drooping leaf tips -->
+      <path d="M140 540 Q150 555 155 570" stroke-width="1"/>
+      <path d="M160 510 Q170 525 175 545" stroke-width="1"/>
+      <path d="M-30 510 Q-40 525 -45 545" stroke-width="1"/>
+      <path d="M-40 500 Q-50 515 -55 535" stroke-width="1"/>
+    </g>
+    <!-- Palm tree right -->
+    <g transform="translate(1650 0)">
+      <path d="M30 1080 Q25 820 20 640 Q18 600 15 580" stroke-width="3" fill="none"/>
+      <path d="M15 580 Q60 540 110 560" stroke-width="1.5"/>
+      <path d="M15 580 Q70 520 120 530" stroke-width="1.5"/>
+      <path d="M15 580 Q50 510 100 500" stroke-width="1.5"/>
+      <path d="M15 580 Q-20 520 -60 530" stroke-width="1.5"/>
+      <path d="M15 580 Q-30 510 -70 520" stroke-width="1.5"/>
+      <path d="M15 580 Q-10 500 -50 490" stroke-width="1.5"/>
+      <path d="M110 560 Q120 575 125 590" stroke-width="1"/>
+      <path d="M120 530 Q130 545 135 560" stroke-width="1"/>
+      <path d="M-60 530 Q-70 545 -75 560" stroke-width="1"/>
+      <path d="M-70 520 Q-80 535 -85 555" stroke-width="1"/>
+    </g>
+  </g>
+</svg>

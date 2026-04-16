@@ -188,6 +188,206 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════
+   Wave 1e — New themes (7)
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Silhouette + pattern — Neon theme ──
+   Tokyo skyline + neon sign clusters. Hot pink scanlines.
+*/
+.theme-neon #app {
+  background-image:
+    /* Pattern: neon scanlines */
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0px,
+      transparent 3px,
+      rgba(255, 51, 153, 0.02) 3px,
+      rgba(255, 51, 153, 0.02) 4px
+    ),
+    radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
+    radial-gradient(ellipse 500px 500px at 90% 80%, var(--bg-gradient-2), transparent),
+    radial-gradient(ellipse 400px 600px at 50% 50%, var(--bg-gradient-3), transparent),
+    radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
+}
+
+.theme-neon #app::before {
+  background-image: url('../assets/themes/neon/silhouette.svg');
+  background-size: cover;
+  background-position: bottom center;
+  background-repeat: no-repeat;
+  color: var(--primary);
+  opacity: 0.14;
+}
+
+.theme-neon #app::after {
+  content: none;
+}
+
+/* ── Silhouette + pattern — Aurora theme (HERO) ──
+   Pine forest silhouette (bottom) + aurora curtain wisps (top).
+*/
+.theme-aurora #app {
+  background-image:
+    radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
+    radial-gradient(ellipse 500px 500px at 90% 80%, var(--bg-gradient-2), transparent),
+    radial-gradient(ellipse 400px 600px at 50% 50%, var(--bg-gradient-3), transparent),
+    radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
+}
+
+.theme-aurora #app::before {
+  background-image: url('../assets/themes/aurora/silhouette.svg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  color: var(--primary);
+  opacity: 0.16;
+}
+
+/* HERO: aurora curtain animation — Wave 1f will add keyframes */
+.theme-aurora #app::after {
+  content: '';
+  /* Wave 1f: animated aurora curtain overlay goes here */
+}
+
+/* ── Silhouette + pattern — Synthwave theme ──
+   Sun + grid horizon + palm silhouettes.
+*/
+.theme-synthwave #app {
+  background-image:
+    radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
+    radial-gradient(ellipse 500px 500px at 90% 80%, var(--bg-gradient-2), transparent),
+    radial-gradient(ellipse 400px 600px at 50% 50%, var(--bg-gradient-3), transparent),
+    radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
+}
+
+.theme-synthwave #app::before {
+  background-image: url('../assets/themes/synthwave/silhouette.svg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  color: var(--primary);
+  opacity: 0.14;
+}
+
+.theme-synthwave #app::after {
+  content: none;
+}
+
+/* ── Silhouette + pattern — Matrix theme (HERO) ──
+   Cascading glyph columns. Green scanline pattern.
+*/
+.theme-matrix #app {
+  background-image:
+    /* Pattern: green CRT scanlines */
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0px,
+      transparent 2px,
+      rgba(0, 255, 65, 0.02) 2px,
+      rgba(0, 255, 65, 0.02) 3px
+    ),
+    radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
+    radial-gradient(ellipse 500px 500px at 90% 80%, var(--bg-gradient-2), transparent),
+    radial-gradient(ellipse 400px 600px at 50% 50%, var(--bg-gradient-3), transparent),
+    radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
+}
+
+.theme-matrix #app::before {
+  background-image: url('../assets/themes/matrix/silhouette.svg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  color: var(--primary);
+  opacity: 0.12;
+}
+
+/* HERO: slow glyph-drift animation — Wave 1f will add keyframes */
+.theme-matrix #app::after {
+  content: '';
+  /* Wave 1f: animated glyph rain overlay goes here */
+}
+
+/* ── Silhouette + pattern — Nebula theme ──
+   Silhouetted planet + galaxy dust clouds.
+*/
+.theme-nebula #app {
+  background-image:
+    radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
+    radial-gradient(ellipse 500px 500px at 90% 80%, var(--bg-gradient-2), transparent),
+    radial-gradient(ellipse 400px 600px at 50% 50%, var(--bg-gradient-3), transparent),
+    radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
+}
+
+.theme-nebula #app::before {
+  background-image: url('../assets/themes/nebula/silhouette.svg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  color: var(--primary);
+  opacity: 0.14;
+}
+
+.theme-nebula #app::after {
+  content: none;
+}
+
+/* ── Silhouette + pattern — Vaporwave theme ──
+   Roman bust silhouette (corner) + pastel checker.
+*/
+.theme-vaporwave #app {
+  background-image:
+    radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
+    radial-gradient(ellipse 500px 500px at 90% 80%, var(--bg-gradient-2), transparent),
+    radial-gradient(ellipse 400px 600px at 50% 50%, var(--bg-gradient-3), transparent),
+    radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
+}
+
+.theme-vaporwave #app::before {
+  background-image: url('../assets/themes/vaporwave/silhouette.svg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  color: var(--primary);
+  opacity: 0.12;
+}
+
+.theme-vaporwave #app::after {
+  content: none;
+}
+
+/* ── Silhouette + pattern — Hologram theme ──
+   Scanline grid + prism refraction bars.
+*/
+.theme-hologram #app {
+  background-image:
+    /* Pattern: fine scanlines */
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0px,
+      transparent 2px,
+      rgba(64, 224, 255, 0.015) 2px,
+      rgba(64, 224, 255, 0.015) 3px
+    ),
+    radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
+    radial-gradient(ellipse 500px 500px at 90% 80%, var(--bg-gradient-2), transparent),
+    radial-gradient(ellipse 400px 600px at 50% 50%, var(--bg-gradient-3), transparent),
+    radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
+}
+
+.theme-hologram #app::before {
+  background-image: url('../assets/themes/hologram/silhouette.svg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  color: var(--primary);
+  opacity: 0.10;
+}
+
+.theme-hologram #app::after {
+  content: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
    Accessibility: respect reduced motion
    ═══════════════════════════════════════════════════════════════════ */
 @media (prefers-reduced-motion: reduce) {
