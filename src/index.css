@@ -155,8 +155,8 @@
   height: 100vh;
   width: 100vw;
   background-color: var(--hud-bg);
+  /* Default gradient layers — theme-backgrounds.css overrides per-theme */
   background-image:
-    /* Radial color splashes visible between panels */
     radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
     radial-gradient(ellipse 500px 500px at 90% 80%, var(--bg-gradient-2), transparent);
   background-size: 100% 100%, 100% 100%;

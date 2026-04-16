@@ -25,7 +25,7 @@ function persistThemeId(id: string): void {
 
 // Apply the persisted theme immediately on module load so there's no flash
 const initialThemeId = loadPersistedThemeId()
-applyTheme(getTheme(initialThemeId))
+applyTheme(getTheme(initialThemeId), initialThemeId)
 
 export const createUiSlice: StateCreator<AppStore, [], [], UiSlice> = (set, get) => ({
   activeView: 'overview',
@@ -42,7 +42,7 @@ export const createUiSlice: StateCreator<AppStore, [], [], UiSlice> = (set, get)
     })),
   setActiveThemeId: (id) => {
     const theme = getTheme(id)
-    applyTheme(theme)
+    applyTheme(theme, id)
     persistThemeId(id)
     set({ activeThemeId: id })
   },

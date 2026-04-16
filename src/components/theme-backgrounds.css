@@ -1,0 +1,170 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Background Composition System — Wave 1c
+
+   Layers (bottom → top):
+   1. Base        — solid --hud-bg on #app (existing)
+   2. Gradient    — radial/linear gradients via --bg-gradient-* (existing)
+   3. Pattern     — CSS-only scanlines/grid/circuit overlays (inline on #app)
+   4. Silhouette  — SVG artwork via #app::before
+   5. Animation   — motion layer via #app::after (stub, Wave 1f)
+
+   Theme class on <html> (e.g. .theme-command) scopes everything.
+   Themes without silhouettes/animations gracefully fall back — the
+   pseudo-elements simply have no content.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Layer host setup ──
+   #app::before = silhouette layer (z-index: 0)
+   #app::after  = animation layer  (z-index: 0)
+   Both sit behind all content via pointer-events: none + z-index layering.
+   #app already has overflow: hidden so these won't cause scroll.
+*/
+#app {
+  position: relative;
+  isolation: isolate;
+}
+
+#app::before,
+#app::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Ensure actual content sits above the composition layers */
+#app > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Pattern overlay layer ──
+   Applied directly on #app via background-image stacking.
+   The existing gradient layers remain; pattern sits on top.
+   Each theme can opt into a pattern via custom property.
+*/
+
+/* Command theme: subtle scanline overlay */
+.theme-command #app {
+  background-image:
+    /* Pattern: faint scanlines */
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0px,
+      transparent 3px,
+      rgba(116, 243, 161, 0.015) 3px,
+      rgba(116, 243, 161, 0.015) 4px
+    ),
+    /* Existing gradient layers */
+    radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
+    radial-gradient(ellipse 500px 500px at 90% 80%, var(--bg-gradient-2), transparent),
+    radial-gradient(ellipse 400px 600px at 50% 50%, var(--bg-gradient-3), transparent),
+    radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
+}
+
+/* ── Silhouette layer — Command theme ──
+   Circuit traces + crosshair reticles in 4 corners.
+   Uses currentColor for tinting via the color property.
+*/
+.theme-command #app::before {
+  background-image: url('../assets/themes/command/silhouette.svg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  color: var(--primary);
+  opacity: 0.10;
+}
+
+/* ── Animation layer — Command theme ──
+   Stub: no animation for Command. Wave 1f adds this for hero themes.
+*/
+.theme-command #app::after {
+  content: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Other themes — graceful fallback
+
+   Themes without silhouettes simply don't define #app::before
+   background-image, so the empty pseudo-element is invisible.
+   Pattern layers and gradient stacking are theme-specific.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Midnight — no silhouette yet (Wave 1d), add subtle hex grid pattern */
+.theme-midnight #app {
+  background-image:
+    radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
+    radial-gradient(ellipse 500px 500px at 90% 80%, var(--bg-gradient-2), transparent),
+    radial-gradient(ellipse 400px 600px at 50% 50%, var(--bg-gradient-3), transparent),
+    radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
+}
+
+.theme-midnight #app::before {
+  content: none;
+}
+
+.theme-midnight #app::after {
+  content: none;
+}
+
+/* Ember — no silhouette yet (Wave 1d) */
+.theme-ember #app {
+  background-image:
+    radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
+    radial-gradient(ellipse 500px 500px at 90% 80%, var(--bg-gradient-2), transparent),
+    radial-gradient(ellipse 400px 600px at 50% 50%, var(--bg-gradient-3), transparent),
+    radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
+}
+
+.theme-ember #app::before {
+  content: none;
+}
+
+.theme-ember #app::after {
+  content: none;
+}
+
+/* Arctic — no silhouette yet (Wave 1d) */
+.theme-arctic #app {
+  background-image:
+    radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
+    radial-gradient(ellipse 500px 500px at 90% 80%, var(--bg-gradient-2), transparent),
+    radial-gradient(ellipse 400px 600px at 50% 50%, var(--bg-gradient-3), transparent),
+    radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
+}
+
+.theme-arctic #app::before {
+  content: none;
+}
+
+.theme-arctic #app::after {
+  content: none;
+}
+
+/* Phantom — no silhouette yet (Wave 1d) */
+.theme-phantom #app {
+  background-image:
+    radial-gradient(ellipse 600px 400px at 10% 20%, var(--bg-gradient-1), transparent),
+    radial-gradient(ellipse 500px 500px at 90% 80%, var(--bg-gradient-2), transparent),
+    radial-gradient(ellipse 400px 600px at 50% 50%, var(--bg-gradient-3), transparent),
+    radial-gradient(ellipse 500px 400px at 80% 20%, var(--bg-gradient-4), transparent);
+}
+
+.theme-phantom #app::before {
+  content: none;
+}
+
+.theme-phantom #app::after {
+  content: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Accessibility: respect reduced motion
+   ═══════════════════════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  #app::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
