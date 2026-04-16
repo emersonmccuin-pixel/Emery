@@ -2,10 +2,13 @@ import type { StateCreator } from 'zustand'
 import { createDiagnosticsCorrelationId, recordDiagnosticsEntry } from '@/diagnostics'
 import type { AppStore, UiSlice } from './types'
 import { defaultThemeId, getTheme } from '../themes'
-import { applyTheme } from '../themeEngine'
+import { applyTheme, applyFonts } from '../themeEngine'
+import { defaultUiFontId, defaultTerminalFontId, getFontStack, uiFonts, terminalFonts } from '../fonts'
 import { normalizeWorkspaceViewForTarget } from './workspaceRouting'
 
 const THEME_STORAGE_KEY = 'project-commander-theme-id'
+const UI_FONT_STORAGE_KEY = 'project-commander-ui-font-id'
+const TERMINAL_FONT_STORAGE_KEY = 'project-commander-terminal-font-id'
 
 function loadPersistedThemeId(): string {
   try {
@@ -23,13 +26,37 @@ function persistThemeId(id: string): void {
   }
 }
 
-// Apply the persisted theme immediately on module load so there's no flash
+function loadPersistedFontId(key: string, fallback: string): string {
+  try {
+    return localStorage.getItem(key) ?? fallback
+  } catch {
+    return fallback
+  }
+}
+
+function persistFontId(key: string, id: string): void {
+  try {
+    localStorage.setItem(key, id)
+  } catch {
+    // storage unavailable — silently ignore
+  }
+}
+
+// Apply the persisted theme + fonts immediately on module load so there's no flash
 const initialThemeId = loadPersistedThemeId()
+const initialUiFontId = loadPersistedFontId(UI_FONT_STORAGE_KEY, defaultUiFontId)
+const initialTerminalFontId = loadPersistedFontId(TERMINAL_FONT_STORAGE_KEY, defaultTerminalFontId)
 applyTheme(getTheme(initialThemeId), initialThemeId)
+applyFonts(
+  getFontStack(initialUiFontId, uiFonts),
+  getFontStack(initialTerminalFontId, terminalFonts),
+)
 
 export const createUiSlice: StateCreator<AppStore, [], [], UiSlice> = (set, get) => ({
   activeView: 'overview',
   activeThemeId: initialThemeId,
+  uiFontId: initialUiFontId,
+  terminalFontId: initialTerminalFontId,
   isProjectRailCollapsed: false,
   isSessionRailCollapsed: false,
   isAgentGuideOpen: false,
@@ -45,6 +72,20 @@ export const createUiSlice: StateCreator<AppStore, [], [], UiSlice> = (set, get)
     applyTheme(theme, id)
     persistThemeId(id)
     set({ activeThemeId: id })
+  },
+  setUiFontId: (id) => {
+    const stack = getFontStack(id, uiFonts)
+    const termStack = getFontStack(get().terminalFontId, terminalFonts)
+    applyFonts(stack, termStack)
+    persistFontId(UI_FONT_STORAGE_KEY, id)
+    set({ uiFontId: id })
+  },
+  setTerminalFontId: (id) => {
+    const uiStack = getFontStack(get().uiFontId, uiFonts)
+    const stack = getFontStack(id, terminalFonts)
+    applyFonts(uiStack, stack)
+    persistFontId(TERMINAL_FONT_STORAGE_KEY, id)
+    set({ terminalFontId: id })
   },
   setIsProjectRailCollapsed: (value) => set({ isProjectRailCollapsed: value }),
   setIsSessionRailCollapsed: (value) => set({ isSessionRailCollapsed: value }),

@@ -151,3 +151,73 @@
   font-size: 0.85rem;
   font-weight: 700;
 }
+
+/* ── Font picker ── */
+
+.font-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.font-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01));
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+
+.font-card:hover:not(.font-card--active) {
+  border-color: rgba(255, 255, 255, 0.24);
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03));
+}
+
+.font-card--active {
+  border-color: var(--center-tint);
+  box-shadow: 0 0 0 1px var(--center-tint), 0 0 12px color-mix(in srgb, var(--center-tint) 35%, transparent);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--center-tint) 10%, transparent), color-mix(in srgb, var(--center-tint) 4%, transparent));
+}
+
+.font-card__label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--foreground);
+}
+
+.font-card__preview {
+  font-size: 0.8rem;
+  color: var(--muted-foreground);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.font-card__check {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--center-tint);
+}
+
+.font-card__badge {
+  display: inline-block;
+  font-size: 0.55rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  opacity: 0.7;
+}

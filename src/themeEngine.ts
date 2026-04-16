@@ -32,3 +32,14 @@ export function applyTheme(theme: Theme, themeId?: string): void {
     root.classList.add(`${THEME_CLASS_PREFIX}${themeId}`)
   }
 }
+
+/**
+ * Apply user-selected font stacks as CSS custom properties.
+ * `--font-ui` controls all non-terminal UI text.
+ * `--font-mono` controls terminal, code blocks, and monospaced elements.
+ */
+export function applyFonts(uiStack: string, monoStack: string): void {
+  const root = document.documentElement
+  root.style.setProperty('--font-ui', uiStack)
+  root.style.setProperty('--font-mono', monoStack)
+}

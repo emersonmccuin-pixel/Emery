@@ -360,6 +360,8 @@ export type ProjectRefreshTarget =
 export type UiSlice = {
   activeView: WorkspaceView;
   activeThemeId: string;
+  uiFontId: string;
+  terminalFontId: string;
   isProjectRailCollapsed: boolean;
   isSessionRailCollapsed: boolean;
   isAgentGuideOpen: boolean;
@@ -368,6 +370,8 @@ export type UiSlice = {
 
   setActiveView: (value: WorkspaceView) => void;
   setActiveThemeId: (id: string) => void;
+  setUiFontId: (id: string) => void;
+  setTerminalFontId: (id: string) => void;
   setIsProjectRailCollapsed: (value: boolean) => void;
   setIsSessionRailCollapsed: (value: boolean) => void;
   setIsAgentGuideOpen: (value: boolean) => void;

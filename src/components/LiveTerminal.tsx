@@ -6,6 +6,8 @@ import type { ILink, ILinkProvider } from '@xterm/xterm'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { invoke } from '@/lib/tauri'
+import { useAppStore } from '@/store'
+import { getFontStack, terminalFonts } from '@/fonts'
 import { CallSignHoverCard } from './CallSignHoverCard'
 import type { SessionSnapshot, TerminalExitEvent, TerminalOutputEvent } from '../types'
 
@@ -93,6 +95,7 @@ function LiveTerminal({ snapshot, onSessionExit, workItemPrefix, readOnly = fals
   const fitAddonRef = useRef<FitAddon | null>(null)
   const onSessionExitRef = useRef(onSessionExit)
   const workItemPrefixRef = useRef(workItemPrefix)
+  const terminalFontId = useAppStore((s) => s.terminalFontId)
   const [terminalError, setTerminalError] = useState<string | null>(null)
   const [hoverState, setHoverState] = useState<HoverState | null>(null)
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null)
@@ -137,7 +140,7 @@ function LiveTerminal({ snapshot, onSessionExit, workItemPrefix, readOnly = fals
       // redraws do not smear or duplicate lines in the watch console.
       convertEol: false,
       disableStdin: readOnly,
-      fontFamily: 'JetBrains Mono, Consolas, monospace',
+      fontFamily: getFontStack(useAppStore.getState().terminalFontId, terminalFonts),
       fontSize: 13,
       lineHeight: 1.35,
       theme: {
@@ -581,6 +584,17 @@ function LiveTerminal({ snapshot, onSessionExit, workItemPrefix, readOnly = fals
       dataDisposable.dispose()
     }
   }, [readOnly, sessionKey, snapshot.isRunning, snapshot.projectId, snapshot.worktreeId])
+
+  // Update xterm font when the user changes the terminal font setting
+  useEffect(() => {
+    const terminal = terminalRef.current
+    const fitAddon = fitAddonRef.current
+    if (!terminal) return
+
+    const stack = getFontStack(terminalFontId, terminalFonts)
+    terminal.options.fontFamily = stack
+    fitAddon?.fit()
+  }, [terminalFontId])
 
   return (
     <div className="terminal-shell flex h-full min-h-0 flex-col gap-3">
