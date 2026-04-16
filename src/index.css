@@ -987,17 +987,183 @@
   }
 }
 
-/* ── NEON theme overrides ── */
+/* ══════════════════════════════════════════════════════════════════════
+   Wave 1j — NEON neon-sign aesthetic
+   Scoped entirely under .theme-neon. Other themes untouched.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── Token overrides ── */
 .theme-neon {
   --glow-primary: color-mix(in srgb, var(--primary) 65%, transparent);
   --glow-accent: color-mix(in srgb, var(--accent) 65%, transparent);
+  --neon-breath-dur: 3.8s;
+  --neon-text-buzz-dur: 4s;
 }
 
-.theme-neon .rail-label,
-.theme-neon .dispatcher-card--active,
-.theme-neon .workspace-tab--active,
+/* ── Static text glow on active chrome ── */
 .theme-neon .center-stage__header {
   text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* ── 1. Thick neon borders + double-ring on active cards ── */
+.theme-neon .dispatcher-card--active {
+  border-color: var(--accent);
+  border-width: 3px;
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 0 24px color-mix(in srgb, var(--accent) 55%, transparent),
+    inset 0 0 18px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.theme-neon .session-card--active {
+  border-color: var(--hud-magenta);
+  border-width: 3px;
+  box-shadow:
+    0 0 0 1px var(--hud-magenta),
+    0 0 24px color-mix(in srgb, var(--hud-magenta) 55%, transparent),
+    inset 0 0 18px color-mix(in srgb, var(--hud-magenta) 14%, transparent);
+}
+
+.theme-neon .project-card--minimal.project-card--active {
+  border-left-width: 3px;
+  border-left-color: var(--accent);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+.theme-neon .workspace-tab--active {
+  color: var(--hud-green);
+  border-bottom-width: 3px;
+  border-bottom-color: var(--hud-green);
+  text-shadow: 0 0 10px color-mix(in srgb, var(--hud-green) 55%, transparent);
+}
+
+/* ── 2. Breathing glow — slow pulse on active cards ── */
+@keyframes neon-breath {
+  0%, 100% {
+    box-shadow:
+      0 0 0 1px var(--neon-breath-color),
+      0 0 20px color-mix(in srgb, var(--neon-breath-color) 45%, transparent),
+      inset 0 0 14px color-mix(in srgb, var(--neon-breath-color) 12%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px var(--neon-breath-color),
+      0 0 38px color-mix(in srgb, var(--neon-breath-color) 65%, transparent),
+      inset 0 0 28px color-mix(in srgb, var(--neon-breath-color) 22%, transparent);
+  }
+}
+
+.theme-neon .dispatcher-card--active {
+  --neon-breath-color: var(--accent);
+  animation: neon-breath var(--neon-breath-dur) ease-in-out infinite;
+}
+
+.theme-neon .session-card--active {
+  --neon-breath-color: var(--hud-magenta);
+  animation: neon-breath var(--neon-breath-dur) ease-in-out infinite;
+}
+
+/* ── 3. Traveling-light perimeter on active dispatcher card ── */
+@keyframes neon-travel {
+  from { --neon-travel-angle: 0deg; }
+  to   { --neon-travel-angle: 360deg; }
+}
+
+.theme-neon .dispatcher-card--active {
+  position: relative;
+  overflow: visible;
+}
+
+.theme-neon .dispatcher-card--active::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: inherit;
+  background: conic-gradient(
+    from var(--neon-travel-angle, 0deg),
+    transparent 0%,
+    var(--accent) 8%,
+    transparent 25%
+  );
+  filter: blur(4px);
+  opacity: 0.45;
+  z-index: -1;
+  animation: neon-travel 5s linear infinite;
+}
+
+@property --neon-travel-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+/* ── 4. Rail header label buzz ── */
+@keyframes neon-text-buzz {
+  0%, 100% {
+    text-shadow: 0 0 6px color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+  50% {
+    text-shadow: 0 0 14px color-mix(in srgb, var(--accent) 70%, transparent),
+                 0 0 24px color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+}
+
+.theme-neon .rail-label {
+  animation: neon-text-buzz var(--neon-text-buzz-dur) ease-in-out infinite;
+}
+
+/* ── 5. Active tab text-shadow pulse ── */
+@keyframes neon-tab-pulse {
+  0%, 100% {
+    text-shadow: 0 0 8px color-mix(in srgb, var(--hud-green) 45%, transparent);
+  }
+  50% {
+    text-shadow: 0 0 16px color-mix(in srgb, var(--hud-green) 70%, transparent),
+                 0 0 28px color-mix(in srgb, var(--hud-green) 25%, transparent);
+  }
+}
+
+.theme-neon .workspace-tab--active {
+  animation: neon-tab-pulse var(--neon-text-buzz-dur) ease-in-out infinite;
+}
+
+/* ── 6. prefers-reduced-motion — disable animations, keep peak static glow ── */
+@media (prefers-reduced-motion: reduce) {
+  .theme-neon .dispatcher-card--active,
+  .theme-neon .session-card--active,
+  .theme-neon .rail-label,
+  .theme-neon .workspace-tab--active {
+    animation: none !important;
+  }
+  .theme-neon .dispatcher-card--active::before {
+    animation: none !important;
+    /* Show static peak glow */
+    background: conic-gradient(from 45deg, transparent 0%, var(--accent) 8%, transparent 25%);
+    opacity: 0.35;
+  }
+  /* Static peak text glow for rail labels */
+  .theme-neon .rail-label {
+    text-shadow: 0 0 14px color-mix(in srgb, var(--accent) 70%, transparent),
+                 0 0 24px color-mix(in srgb, var(--accent) 30%, transparent);
+  }
+  /* Static peak glow for active tab */
+  .theme-neon .workspace-tab--active {
+    text-shadow: 0 0 16px color-mix(in srgb, var(--hud-green) 70%, transparent),
+                 0 0 28px color-mix(in srgb, var(--hud-green) 25%, transparent);
+  }
+  /* Static peak box-shadow for active cards */
+  .theme-neon .dispatcher-card--active {
+    box-shadow:
+      0 0 0 2px var(--accent),
+      0 0 38px color-mix(in srgb, var(--accent) 65%, transparent),
+      inset 0 0 28px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  .theme-neon .session-card--active {
+    box-shadow:
+      0 0 0 2px var(--hud-magenta),
+      0 0 38px color-mix(in srgb, var(--hud-magenta) 65%, transparent),
+      inset 0 0 28px color-mix(in srgb, var(--hud-magenta) 22%, transparent);
+  }
 }
 
 @media (max-width: 860px) {
