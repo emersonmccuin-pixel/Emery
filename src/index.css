@@ -115,8 +115,9 @@
   --easing-decelerate: cubic-bezier(0, 0, 0.2, 1);
 
   /* ── Glow colors — consumer applies blur/offset ── */
-  --glow-primary: color-mix(in srgb, var(--primary) 55%, transparent);
-  --glow-accent: color-mix(in srgb, var(--accent) 55%, transparent);
+  --glow-primary: color-mix(in srgb, var(--primary) 65%, transparent);
+  --glow-accent: color-mix(in srgb, var(--accent) 65%, transparent);
+  --label-buzz-dur: 4s;
   --glow-danger: color-mix(in srgb, var(--destructive) 60%, transparent);
   --glow-soft: rgba(255, 255, 255, 0.12);
 
@@ -988,24 +989,17 @@
 }
 
 /* ══════════════════════════════════════════════════════════════════════
-   Wave 1j — NEON neon-sign aesthetic
-   Scoped entirely under .theme-neon. Other themes untouched.
+   Wave 1o — Promoted structural template (formerly NEON-only, Wave 1j)
+   Applies to ALL themes. Colors driven by per-theme tokens.
    ══════════════════════════════════════════════════════════════════════ */
 
-/* ── Token overrides ── */
-.theme-neon {
-  --glow-primary: color-mix(in srgb, var(--primary) 65%, transparent);
-  --glow-accent: color-mix(in srgb, var(--accent) 65%, transparent);
-  --neon-text-buzz-dur: 4s;
-}
-
 /* ── Static text glow on active chrome ── */
-.theme-neon .center-stage__header {
+.center-stage__header {
   text-shadow: 0 0 12px color-mix(in srgb, var(--accent) 67%, transparent);
 }
 
-/* ── 1. Neon borders + static peak glow on active cards ── */
-.theme-neon .dispatcher-card--active {
+/* ── 1. Strong borders + static peak glow on active cards ── */
+.dispatcher-card--active {
   border-color: var(--accent);
   border-width: 2px;
   box-shadow:
@@ -1013,10 +1007,10 @@
     0 0 0 2px var(--accent),
     0 0 75px color-mix(in srgb, var(--accent) 100%, transparent),
     inset 0 0 48px color-mix(in srgb, var(--accent) 52%, transparent);
-  animation: neon-border-pulse 3s ease-in-out infinite;
+  animation: active-border-pulse 3s ease-in-out infinite;
 }
 
-.theme-neon .session-card--active {
+.session-card--active {
   border-color: var(--hud-magenta);
   border-width: 2px;
   box-shadow:
@@ -1024,25 +1018,26 @@
     0 0 0 2px var(--hud-magenta),
     0 0 75px color-mix(in srgb, var(--hud-magenta) 100%, transparent),
     inset 0 0 48px color-mix(in srgb, var(--hud-magenta) 52%, transparent);
-  animation: neon-border-pulse 3s ease-in-out infinite;
+  animation: active-border-pulse 3s ease-in-out infinite;
 }
 
-.theme-neon .project-card--minimal.project-card--active {
+.project-card--minimal.project-card--active {
   border-left-width: 3px;
   border-left-color: var(--accent);
   text-shadow: 0 0 15px color-mix(in srgb, var(--accent) 75%, transparent);
 }
 
-.theme-neon .workspace-tab--active {
+.workspace-tab--active {
   color: var(--hud-green);
   border: none;
   border-bottom: 3px solid var(--hud-green);
   box-shadow: none;
   text-shadow: 0 0 15px color-mix(in srgb, var(--hud-green) 82%, transparent);
+  animation: tab-active-pulse var(--label-buzz-dur) ease-in-out infinite;
 }
 
-/* ── 1b. Subtle glow borders on all resting-state cards & tabs ── */
-.theme-neon .project-card--minimal {
+/* ── 1b. Subtle glow borders on resting-state cards & tabs ── */
+.project-card--minimal {
   border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
   box-shadow:
     0 2px 8px rgba(0, 0, 0, 0.18),
@@ -1051,14 +1046,14 @@
               box-shadow var(--motion-base) var(--easing-standard);
 }
 
-.theme-neon .project-card--minimal:hover {
+.project-card--minimal:hover {
   border-color: color-mix(in srgb, var(--accent) 65%, transparent);
   box-shadow:
     0 3px 12px rgba(0, 0, 0, 0.22),
     0 0 24px color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
-.theme-neon .session-card {
+.session-card {
   border: 1px solid color-mix(in srgb, var(--hud-magenta) 40%, transparent);
   box-shadow:
     0 2px 8px rgba(0, 0, 0, 0.18),
@@ -1067,14 +1062,14 @@
               box-shadow var(--motion-base) var(--easing-standard);
 }
 
-.theme-neon .session-card:hover {
+.session-card:hover {
   border-color: color-mix(in srgb, var(--hud-magenta) 65%, transparent);
   box-shadow:
     0 3px 12px rgba(0, 0, 0, 0.22),
     0 0 24px color-mix(in srgb, var(--hud-magenta) 40%, transparent);
 }
 
-.theme-neon .workspace-tab {
+.workspace-tab {
   border: none;
   border-bottom: 2px solid color-mix(in srgb, var(--hud-green) 25%, transparent);
   box-shadow: none;
@@ -1082,14 +1077,14 @@
               text-shadow var(--motion-base) var(--easing-standard);
 }
 
-.theme-neon .workspace-tab:hover {
+.workspace-tab:hover {
   border-bottom-color: color-mix(in srgb, var(--hud-green) 45%, transparent);
   text-shadow: 0 0 8px color-mix(in srgb, var(--hud-green) 35%, transparent);
   box-shadow: none;
 }
 
 /* ── 2. Border-color pulse — slow subtle breathe on active cards ── */
-@keyframes neon-border-pulse {
+@keyframes active-border-pulse {
   0%, 100% {
     border-color: var(--accent);
   }
@@ -1098,8 +1093,8 @@
   }
 }
 
-/* ── 4. Rail header label buzz ── */
-@keyframes neon-text-buzz {
+/* ── 3. Rail header label buzz ── */
+@keyframes rail-label-buzz {
   0%, 100% {
     text-shadow: 0 0 9px color-mix(in srgb, var(--accent) 60%, transparent);
   }
@@ -1109,12 +1104,12 @@
   }
 }
 
-.theme-neon .rail-label {
-  animation: neon-text-buzz var(--neon-text-buzz-dur) ease-in-out infinite;
+.rail-label {
+  animation: rail-label-buzz var(--label-buzz-dur) ease-in-out infinite;
 }
 
-/* ── 5. Active tab text-shadow pulse ── */
-@keyframes neon-tab-pulse {
+/* ── 4. Active tab text-shadow pulse ── */
+@keyframes tab-active-pulse {
   0%, 100% {
     text-shadow: 0 0 12px color-mix(in srgb, var(--hud-green) 67%, transparent);
   }
@@ -1124,12 +1119,8 @@
   }
 }
 
-.theme-neon .workspace-tab--active {
-  animation: neon-tab-pulse var(--neon-text-buzz-dur) ease-in-out infinite;
-}
-
-/* ── 6. Panel fade-to-black — deeper in NEON ── */
-.theme-neon .side-rail--projects {
+/* ── 5. Panel fade-to-black — deeper gradient ── */
+.side-rail--projects {
   background: linear-gradient(170deg,
     color-mix(in srgb, var(--rail-projects-tint) 55%, transparent) 0%,
     color-mix(in srgb, var(--rail-projects-tint) 40%, transparent) 35%,
@@ -1138,7 +1129,7 @@
   );
 }
 
-.theme-neon .center-stage {
+.center-stage {
   background: linear-gradient(180deg,
     color-mix(in srgb, var(--center-tint) 55%, transparent) 0%,
     color-mix(in srgb, var(--center-tint) 40%, transparent) 35%,
@@ -1147,7 +1138,7 @@
   );
 }
 
-.theme-neon .side-rail--sessions {
+.side-rail--sessions {
   background: linear-gradient(190deg,
     color-mix(in srgb, var(--rail-sessions-tint) 55%, transparent) 0%,
     color-mix(in srgb, var(--rail-sessions-tint) 40%, transparent) 35%,
@@ -1156,25 +1147,25 @@
   );
 }
 
-/* ── 7. prefers-reduced-motion — disable animations, keep peak static glow ── */
+/* ── 6. prefers-reduced-motion — disable animations, keep peak static glow ── */
 @media (prefers-reduced-motion: reduce) {
-  .theme-neon .dispatcher-card--active,
-  .theme-neon .session-card--active,
-  .theme-neon .rail-label,
-  .theme-neon .workspace-tab--active {
+  .dispatcher-card--active,
+  .session-card--active,
+  .rail-label,
+  .workspace-tab--active {
     animation: none !important;
   }
-  .theme-neon .dispatcher-card--active,
-  .theme-neon .session-card--active {
+  .dispatcher-card--active,
+  .session-card--active {
     border-color: var(--accent);
   }
   /* Static peak text glow for rail labels */
-  .theme-neon .rail-label {
+  .rail-label {
     text-shadow: 0 0 21px color-mix(in srgb, var(--accent) 100%, transparent),
                  0 0 36px color-mix(in srgb, var(--accent) 45%, transparent);
   }
   /* Static peak glow for active tab */
-  .theme-neon .workspace-tab--active {
+  .workspace-tab--active {
     text-shadow: 0 0 24px color-mix(in srgb, var(--hud-green) 100%, transparent),
                  0 0 42px color-mix(in srgb, var(--hud-green) 37%, transparent);
   }
