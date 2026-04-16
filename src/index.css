@@ -123,6 +123,10 @@
   --focus-ring-color: var(--accent);
   --focus-ring-halo: 0 0 12px color-mix(in srgb, var(--accent) 50%, transparent);
 
+  /* ── Foreground contrast ── */
+  --fg-hot: var(--foreground);
+  --fg-dim: var(--muted-foreground);
+
   /* ── Surface elevation ── */
   --surface-0: var(--hud-panel-bg);
   --surface-1: rgba(255, 255, 255, 0.04);
